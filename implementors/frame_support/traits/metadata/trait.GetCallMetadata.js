@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["subspace_runtime"] = [{"text":"impl GetCallMetadata for <a class=\"enum\" href=\"subspace_runtime/enum.Call.html\" title=\"enum subspace_runtime::Call\">Call</a>","synthetic":false,"types":["subspace_runtime::Call"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

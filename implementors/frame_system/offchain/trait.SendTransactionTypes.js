@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["subspace_runtime"] = [{"text":"impl&lt;C&gt; SendTransactionTypes&lt;C&gt; for <a class=\"struct\" href=\"subspace_runtime/struct.Runtime.html\" title=\"struct subspace_runtime::Runtime\">Runtime</a> <span class=\"where fmt-newline\">where<br>&nbsp;&nbsp;&nbsp;&nbsp;<a class=\"enum\" href=\"subspace_runtime/enum.Call.html\" title=\"enum subspace_runtime::Call\">Call</a>: <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/convert/trait.From.html\" title=\"trait core::convert::From\">From</a>&lt;C&gt;,&nbsp;</span>","synthetic":false,"types":["subspace_runtime::Runtime"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

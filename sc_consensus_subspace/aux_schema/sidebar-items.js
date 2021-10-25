@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["load_block_weight","Load the cumulative chain-weight associated with a block."],["load_epoch_changes","Load or initialize persistent epoch change data from backend."]]});

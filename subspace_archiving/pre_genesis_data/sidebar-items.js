@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["from_seed","Derives a single object blob of a given size from given seed and index, which is intended to be used as pre-genesis object (blockchain seed data)"]]});

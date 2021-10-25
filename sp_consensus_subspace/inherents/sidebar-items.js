@@ -1,0 +1,1 @@
+initSidebarItems({"constant":[["INHERENT_IDENTIFIER","The Subspace inherent identifier."]],"struct":[["InherentDataProvider","Provides the slot duration inherent data for Subspace."]],"trait":[["SubspaceInherentData","Auxiliary trait to extract Subspace inherent data."]],"type":[["InherentType","The type of the Subspace inherent."]]});

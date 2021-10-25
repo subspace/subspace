@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["sp_consensus_subspace"] = [{"text":"impl SlotData for <a class=\"struct\" href=\"sp_consensus_subspace/struct.SubspaceGenesisConfiguration.html\" title=\"struct sp_consensus_subspace::SubspaceGenesisConfiguration\">SubspaceGenesisConfiguration</a>","synthetic":false,"types":["sp_consensus_subspace::SubspaceGenesisConfiguration"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

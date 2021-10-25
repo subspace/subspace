@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["sc_consensus_subspace"] = [{"text":"impl&lt;B:&nbsp;BlockT&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/future/future/trait.Future.html\" title=\"trait core::future::future::Future\">Future</a> for <a class=\"struct\" href=\"sc_consensus_subspace/struct.SubspaceWorker.html\" title=\"struct sc_consensus_subspace::SubspaceWorker\">SubspaceWorker</a>&lt;B&gt;","synthetic":false,"types":["sc_consensus_subspace::SubspaceWorker"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

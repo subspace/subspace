@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["sc_consensus_subspace"] = [{"text":"impl Epoch for <a class=\"struct\" href=\"sc_consensus_subspace/struct.Epoch.html\" title=\"struct sc_consensus_subspace::Epoch\">Epoch</a>","synthetic":false,"types":["sc_consensus_subspace::Epoch"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
