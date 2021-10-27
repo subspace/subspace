@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["Identity",""]]});
+initSidebarItems({"enum":[["CommitmentError",""],["ObjectMappingError",""],["PlotError",""]],"fn":[["farm","Start farming by using plot in specified path and connecting to WebSocket server at specified address."]],"struct":[["Commitments",""],["Identity",""],["ObjectMappings",""],["Plot","`Plot` struct is an abstraction on top of both plot and tags database."],["RpcClient","`WsClient` wrapper."]]});
