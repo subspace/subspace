@@ -852,6 +852,8 @@
 <span id="852">852</span>
 <span id="853">853</span>
 <span id="854">854</span>
+<span id="855">855</span>
+<span id="856">856</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -880,13 +882,20 @@
     <span class="ident">BlockObject</span>, <span class="ident">BlockObjectMapping</span>, <span class="ident">PieceObject</span>, <span class="ident">PieceObjectMapping</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
-    <span class="ident">crypto</span>, <span class="ident">LastArchivedBlock</span>, <span class="ident">Piece</span>, <span class="ident">RootBlock</span>, <span class="ident">Sha256Hash</span>, <span class="ident">PIECE_SIZE</span>, <span class="ident">SHA256_HASH_SIZE</span>,
+    <span class="ident">crypto</span>, <span class="ident">ArchivedBlockProgress</span>, <span class="ident">LastArchivedBlock</span>, <span class="ident">Piece</span>, <span class="ident">RootBlock</span>, <span class="ident">Sha256Hash</span>, <span class="ident">PIECE_SIZE</span>,
+    <span class="ident">SHA256_HASH_SIZE</span>,
 };
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
 
 <span class="kw">const</span> <span class="ident">INITIAL_LAST_ARCHIVED_BLOCK</span>: <span class="ident">LastArchivedBlock</span> <span class="op">=</span> <span class="ident">LastArchivedBlock</span> {
     <span class="ident">number</span>: <span class="number">0</span>,
-    <span class="ident">bytes</span>: <span class="prelude-val">Some</span>(<span class="number">0</span>),
+    <span class="comment">// Special case for the genesis block.</span>
+    <span class="comment">//</span>
+    <span class="comment">// When we start archiving process with pre-genesis objects, we do not yet have any blocks</span>
+    <span class="comment">// archived, but `LastArchivedBlock` is required for `RootBlock`s to be produced, so</span>
+    <span class="comment">// `ArchivedBlockProgress::Partial(0)` indicates that we have archived 0 bytes of block `0` (see</span>
+    <span class="comment">// field above), meaning we did not in fact archive actual blocks yet.</span>
+    <span class="ident">archived_progress</span>: <span class="ident">ArchivedBlockProgress::Partial</span>(<span class="number">0</span>),
 };
 
 <span class="doccomment">/// Segment represents a collection of items stored in archival history of the Subspace blockchain</span>
@@ -1200,7 +1209,7 @@
                         <span class="comment">// archived</span>
                         <span class="ident">last_archived_block</span>.<span class="ident">number</span> <span class="op">+</span><span class="op">=</span> <span class="number">1</span>;
                     }
-                    <span class="ident">last_archived_block</span>.<span class="ident">bytes</span> <span class="op">=</span> <span class="prelude-val">None</span>;
+                    <span class="ident">last_archived_block</span>.<span class="ident">set_complete</span>();
                 }
                 <span class="ident">SegmentItem::BlockStart</span> { .. } =&gt; {
                     <span class="macro">unreachable!</span>(<span class="string">&quot;Buffer never contains SegmentItem::BlockStart; qed&quot;</span>);
@@ -1209,11 +1218,11 @@
                     <span class="comment">// Same block, but assume for now that the whole block was archived, but</span>
                     <span class="comment">// also store the number of bytes as opposed to `None`, we&#39;ll transform</span>
                     <span class="comment">// it into `None` if needed later</span>
-                    <span class="kw">let</span> <span class="ident">archived_bytes</span> <span class="op">=</span> <span class="ident">last_archived_block</span>.<span class="ident">bytes</span>.<span class="ident">expect</span>(
+                    <span class="kw">let</span> <span class="ident">archived_bytes</span> <span class="op">=</span> <span class="ident">last_archived_block</span>.<span class="ident">partial_archived</span>().<span class="ident">expect</span>(
                         <span class="string">&quot;Block continuation implies that there are some bytes \
                                 archived already; qed&quot;</span>,
                     );
-                    <span class="ident">last_archived_block</span>.<span class="ident">bytes</span>.<span class="ident">replace</span>(
+                    <span class="ident">last_archived_block</span>.<span class="ident">set_partial_archived</span>(
                         <span class="ident">archived_bytes</span>
                             <span class="op">+</span> <span class="ident">u32::try_from</span>(<span class="ident">bytes</span>.<span class="ident">len</span>())
                                 .<span class="ident">expect</span>(<span class="string">&quot;Blocks length is never bigger than u32; qed&quot;</span>),
@@ -1297,7 +1306,7 @@
                     };
 
                     <span class="comment">// Update last archived block to include partial archiving info</span>
-                    <span class="ident">last_archived_block</span>.<span class="ident">bytes</span>.<span class="ident">replace</span>(
+                    <span class="ident">last_archived_block</span>.<span class="ident">set_partial_archived</span>(
                         <span class="ident">u32::try_from</span>(<span class="ident">bytes</span>.<span class="ident">len</span>())
                             .<span class="ident">expect</span>(<span class="string">&quot;Blocks length is never bigger than u32; qed&quot;</span>),
                     );
@@ -1347,11 +1356,11 @@
 
                     <span class="comment">// Above code assumed that block was archived fully, now remove spilled-over</span>
                     <span class="comment">// bytes from the size</span>
-                    <span class="kw">let</span> <span class="ident">archived_bytes</span> <span class="op">=</span> <span class="ident">last_archived_block</span>.<span class="ident">bytes</span>.<span class="ident">expect</span>(
+                    <span class="kw">let</span> <span class="ident">archived_bytes</span> <span class="op">=</span> <span class="ident">last_archived_block</span>.<span class="ident">partial_archived</span>().<span class="ident">expect</span>(
                         <span class="string">&quot;Block continuation implies that there are some bytes archived \
                         already; qed&quot;</span>,
                     );
-                    <span class="ident">last_archived_block</span>.<span class="ident">bytes</span>.<span class="ident">replace</span>(
+                    <span class="ident">last_archived_block</span>.<span class="ident">set_partial_archived</span>(
                         <span class="ident">archived_bytes</span>
                             <span class="op">-</span> <span class="ident">u32::try_from</span>(<span class="ident">spill_over</span>)
                                 .<span class="ident">expect</span>(<span class="string">&quot;Blocks length is never bigger than u32; qed&quot;</span>),
@@ -1381,7 +1390,7 @@
         } <span class="kw">else</span> {
             <span class="comment">// Above code added bytes length even though it was assumed that all continuation bytes</span>
             <span class="comment">// fit into the segment, now we need to tweak that</span>
-            <span class="ident">last_archived_block</span>.<span class="ident">bytes</span>.<span class="ident">take</span>();
+            <span class="ident">last_archived_block</span>.<span class="ident">set_complete</span>();
         }
 
         <span class="self">self</span>.<span class="ident">last_archived_block</span> <span class="op">=</span> <span class="ident">last_archived_block</span>;
@@ -1521,22 +1530,17 @@
             })
             .<span class="ident">collect</span>();
 
-        <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">segment_index</span>;
-        <span class="kw">let</span> <span class="ident">merkle_tree_root</span> <span class="op">=</span> <span class="ident">merkle_tree</span>.<span class="ident">root</span>();
-
         <span class="comment">// Now produce root block</span>
         <span class="kw">let</span> <span class="ident">root_block</span> <span class="op">=</span> <span class="ident">RootBlock::V0</span> {
-            <span class="ident">segment_index</span>,
-            <span class="ident">merkle_tree_root</span>,
+            <span class="ident">segment_index</span>: <span class="self">self</span>.<span class="ident">segment_index</span>,
+            <span class="ident">records_root</span>: <span class="ident">merkle_tree</span>.<span class="ident">root</span>(),
             <span class="ident">prev_root_block_hash</span>: <span class="self">self</span>.<span class="ident">prev_root_block_hash</span>,
             <span class="ident">last_archived_block</span>: <span class="self">self</span>.<span class="ident">last_archived_block</span>,
         };
 
-        <span class="kw">let</span> <span class="ident">root_block_hash</span> <span class="op">=</span> <span class="ident">root_block</span>.<span class="ident">hash</span>();
-
         <span class="comment">// Update state</span>
-        <span class="self">self</span>.<span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">segment_index</span> <span class="op">+</span> <span class="number">1</span>;
-        <span class="self">self</span>.<span class="ident">prev_root_block_hash</span> <span class="op">=</span> <span class="ident">root_block_hash</span>;
+        <span class="self">self</span>.<span class="ident">segment_index</span> <span class="op">+</span><span class="op">=</span> <span class="number">1</span>;
+        <span class="self">self</span>.<span class="ident">prev_root_block_hash</span> <span class="op">=</span> <span class="ident">root_block</span>.<span class="ident">hash</span>();
 
         <span class="comment">// Add root block to the beginning of the buffer to be the first thing included in the next</span>
         <span class="comment">// segment</span>
@@ -1616,7 +1620,7 @@
             .<span class="ident">buffer</span>
             .<span class="ident">push_back</span>(<span class="ident">SegmentItem::RootBlock</span>(<span class="ident">root_block</span>));
 
-        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">archived_block_bytes</span>) <span class="op">=</span> <span class="ident">archiver</span>.<span class="ident">last_archived_block</span>.<span class="ident">bytes</span> {
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">archived_block_bytes</span>) <span class="op">=</span> <span class="ident">archiver</span>.<span class="ident">last_archived_block</span>.<span class="ident">partial_archived</span>() {
             <span class="kw">let</span> <span class="ident">encoded_block</span> <span class="op">=</span> <span class="ident">encoded_block</span>.<span class="ident">as_ref</span>();
             <span class="kw">let</span> <span class="ident">encoded_block_bytes</span> <span class="op">=</span> <span class="ident">u32::try_from</span>(<span class="ident">encoded_block</span>.<span class="ident">len</span>())
                 .<span class="ident">expect</span>(<span class="string">&quot;Blocks length is never bigger than u32; qed&quot;</span>);
