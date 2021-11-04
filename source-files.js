@@ -2,7 +2,7 @@ var N = null;var sourcesIndex = {};
 sourcesIndex["pallet_feeds"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
-sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["aux_schema.rs","lib.rs","notification.rs","verification.rs"]};
+sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["archiver.rs","authorship.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs","verification.rs"]};
 sourcesIndex["sc_consensus_subspace_rpc"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs"]};
