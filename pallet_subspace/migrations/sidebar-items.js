@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["add_epoch_configuration","A storage migration that adds the current epoch configuration for Subspace to storage."]],"trait":[["SubspacePalletPrefix","Something that can return the storage prefix of the `Subspace` pallet."]]});
