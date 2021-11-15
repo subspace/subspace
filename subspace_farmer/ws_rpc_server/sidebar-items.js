@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["RpcServerImpl","Farmer RPC server implementation."]],"trait":[["RpcClient","Client implementation for the `Rpc` RPC API."],["RpcServer","Server trait implementation for the `Rpc` RPC API."]]});
