@@ -248,14 +248,10 @@
 <span id="248">248</span>
 <span id="249">249</span>
 <span id="250">250</span>
-<span id="251">251</span>
-<span id="252">252</span>
-<span id="253">253</span>
-<span id="254">254</span>
-<span id="255">255</span>
-<span id="256">256</span>
-<span id="257">257</span>
-</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::commitments::Commitments</span>;
+</pre><pre class="rust"><code><span class="doccomment">//! A farming process, that is interruptable (via dropping it)</span>
+<span class="doccomment">//! and possible to wait on (custom `wait` method)</span>
+
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::commitments::Commitments</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::identity::Identity</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot::Plot</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc::RpcClient</span>;
@@ -276,38 +272,58 @@
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Plot read error: {0}&quot;</span>)]</span>
     <span class="ident">PlotRead</span>(<span class="ident">std::io::Error</span>),
 }
-
-<span class="doccomment">/// Farming Instance to store the necessary information for the farming operations,</span>
-<span class="doccomment">/// and also a channel to stop/pause the background farming task</span>
+<span class="doccomment">/// `Farming` struct is the abstraction of the farming process</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// Farming Instance that stores a channel to stop/pause the background farming task</span>
+<span class="doccomment">/// and a handle to make it possible to wait on this background task</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Farming</span> {
-    <span class="ident">sender</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">async_oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">stop_sender</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">async_oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">handle</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">JoinHandle</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
+<span class="doccomment">/// Assumes `plot`, `commitment`, `client` and `identity` are already initialized</span>
 <span class="kw">impl</span> <span class="ident">Farming</span> {
-    <span class="doccomment">/// returns an instance of farming, and also starts a concurrent background farming task</span>
+    <span class="doccomment">/// Returns an instance of farming, and also starts a concurrent background farming task</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">start</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span>(
         <span class="ident">plot</span>: <span class="ident">Plot</span>,
         <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
         <span class="ident">client</span>: <span class="ident">T</span>,
         <span class="ident">identity</span>: <span class="ident">Identity</span>,
     ) -&gt; <span class="self">Self</span> {
-        <span class="kw">let</span> (<span class="ident">sender</span>, <span class="ident">receiver</span>) <span class="op">=</span> <span class="ident">async_oneshot::oneshot</span>();
+        <span class="comment">// Oneshot channels, that will be used for interrupt/stop the process</span>
+        <span class="kw">let</span> (<span class="ident">stop_sender</span>, <span class="ident">stop_receiver</span>) <span class="op">=</span> <span class="ident">async_oneshot::oneshot</span>();
 
-        <span class="kw">let</span> <span class="ident">farming_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="ident">background_farming</span>(
-            <span class="ident">client</span>,
-            <span class="ident">plot</span>,
-            <span class="ident">commitments</span>,
-            <span class="ident">identity</span>,
-            <span class="ident">receiver</span>,
-        ));
+        <span class="comment">// Get a handle for the background task, so that we can wait on it later if we want to</span>
+        <span class="kw">let</span> <span class="ident">farming_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> {
+            <span class="kw">match</span> <span class="ident">future::select</span>(
+                <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
+                    <span class="ident">subscribe_to_slot_info</span>(<span class="kw-2">&amp;</span><span class="ident">client</span>, <span class="kw-2">&amp;</span><span class="ident">plot</span>, <span class="kw-2">&amp;</span><span class="ident">commitments</span>, <span class="kw-2">&amp;</span><span class="ident">identity</span>).<span class="kw">await</span>
+                }),
+                <span class="ident">stop_receiver</span>,
+            )
+            .<span class="kw">await</span>
+            {
+                <span class="ident">Either::Left</span>((<span class="ident">farming_result</span>, <span class="kw">_</span>)) =&gt; {
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">val</span>) <span class="op">=</span> <span class="ident">farming_result</span> {
+                        <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">val</span>);
+                    }
+                }
+                <span class="comment">// either Sender is dropped, or a stop message is received.</span>
+                <span class="comment">// in both cases, we stop the process and return Ok(())</span>
+                <span class="ident">Either::Right</span>((<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
+                    <span class="macro">info!</span>(<span class="string">&quot;Farming stopped!&quot;</span>);
+                }
+            }
+            <span class="prelude-val">Ok</span>(())
+        });
 
         <span class="ident">Farming</span> {
-            <span class="ident">sender</span>: <span class="prelude-val">Some</span>(<span class="ident">sender</span>),
+            <span class="ident">stop_sender</span>: <span class="prelude-val">Some</span>(<span class="ident">stop_sender</span>),
             <span class="ident">handle</span>: <span class="prelude-val">Some</span>(<span class="ident">farming_handle</span>),
         }
     }
 
+    <span class="doccomment">/// Waits for the background farming to finish</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">wait</span>(<span class="kw-2">mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="ident">handle</span>
             .<span class="ident">take</span>()
@@ -319,47 +335,18 @@
 
 <span class="kw">impl</span> <span class="ident">Drop</span> <span class="kw">for</span> <span class="ident">Farming</span> {
     <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
-        <span class="comment">// we don&#39;t have to do anything in here</span>
-        <span class="comment">// this is for clarity and verbosity</span>
-        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">sender</span>.<span class="ident">take</span>().<span class="ident">unwrap</span>().<span class="ident">send</span>(());
+        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">stop_sender</span>.<span class="ident">take</span>().<span class="ident">unwrap</span>().<span class="ident">send</span>(());
     }
 }
 
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">background_farming</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span> <span class="op">+</span> <span class="ident">Send</span><span class="op">&gt;</span>(
-    <span class="ident">client</span>: <span class="ident">T</span>,
-    <span class="ident">plot</span>: <span class="ident">Plot</span>,
-    <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
-    <span class="ident">identity</span>: <span class="ident">Identity</span>,
-    <span class="ident">receiver</span>: <span class="ident">async_oneshot::Receiver</span><span class="op">&lt;</span>()<span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span> {
-    <span class="kw">match</span> <span class="ident">future::select</span>(
-        <span class="ident">Box::pin</span>(
-            <span class="kw">async</span> <span class="kw">move</span> { <span class="ident">subscribe_to_slot_info</span>(<span class="kw-2">&amp;</span><span class="ident">client</span>, <span class="kw-2">&amp;</span><span class="ident">plot</span>, <span class="kw-2">&amp;</span><span class="ident">commitments</span>, <span class="kw-2">&amp;</span><span class="ident">identity</span>).<span class="kw">await</span> },
-        ),
-        <span class="ident">receiver</span>,
-    )
-    .<span class="kw">await</span>
-    {
-        <span class="ident">Either::Left</span>((<span class="ident">farming_result</span>, <span class="kw">_</span>)) =&gt; {
-            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">val</span>) <span class="op">=</span> <span class="ident">farming_result</span> {
-                <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">val</span>);
-            }
-        }
-        <span class="comment">// either Sender is dropped, or a stop message is received.</span>
-        <span class="comment">// in both cases, we stop the process and return Ok(())</span>
-        <span class="ident">Either::Right</span>((<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
-            <span class="macro">info!</span>(<span class="string">&quot;Farming stopped!&quot;</span>);
-        }
-    }
-    <span class="prelude-val">Ok</span>(())
-}
-
+<span class="doccomment">/// Salts will change, this struct allows to keep track of them</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Default</span>)]</span>
 <span class="kw">struct</span> <span class="ident">Salts</span> {
     <span class="ident">current</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Salt</span><span class="op">&gt;</span>,
     <span class="ident">next</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Salt</span><span class="op">&gt;</span>,
 }
 
+<span class="doccomment">/// Subscribes to slots, and tries to find a solution for them</span>
 <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">subscribe_to_slot_info</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span><span class="op">&gt;</span>(
     <span class="ident">client</span>: <span class="kw-2">&amp;</span><span class="ident">T</span>,
     <span class="ident">plot</span>: <span class="kw-2">&amp;</span><span class="ident">Plot</span>,
@@ -374,7 +361,6 @@
 
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">salts</span> <span class="op">=</span> <span class="ident">Salts::default</span>();
 
-    <span class="comment">// could also import futures mpsc, and call `try_next`, but without await. I think this is more robust</span>
     <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">slot_info</span>) <span class="op">=</span> <span class="ident">new_slots</span>.<span class="ident">recv</span>().<span class="kw">await</span> {
         <span class="macro">debug!</span>(<span class="string">&quot;New slot: {:?}&quot;</span>, <span class="ident">slot_info</span>);
 
@@ -382,6 +368,7 @@
 
         <span class="kw">let</span> <span class="ident">local_challenge</span> <span class="op">=</span> <span class="ident">derive_local_challenge</span>(<span class="ident">slot_info</span>.<span class="ident">global_challenge</span>, <span class="ident">identity</span>);
 
+        <span class="comment">// for the current challenge, we will either find `Some(solution)` or we can&#39;t find one (`None`)</span>
         <span class="kw">let</span> <span class="ident">maybe_solution</span> <span class="op">=</span> <span class="kw">match</span> <span class="ident">commitments</span>
             .<span class="ident">find_by_range</span>(
                 <span class="ident">local_challenge</span>.<span class="ident">derive_target</span>(),
@@ -439,9 +426,8 @@
     <span class="kw">if</span> <span class="ident">salts</span>.<span class="ident">current</span> <span class="op">!</span><span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">slot_info</span>.<span class="ident">salt</span>) {
         <span class="ident">salts</span>.<span class="ident">current</span>.<span class="ident">replace</span>(<span class="ident">slot_info</span>.<span class="ident">salt</span>);
 
+        <span class="comment">// If previous `salts.next` is not the same as current (expected behavior), need to re-commit</span>
         <span class="kw">if</span> <span class="ident">salts</span>.<span class="ident">next</span> <span class="op">!</span><span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">slot_info</span>.<span class="ident">salt</span>) {
-            <span class="comment">// If previous `salts.next` is the same as current (expected behavior), need to re-commit</span>
-
             <span class="ident">tokio::spawn</span>({
                 <span class="kw">let</span> <span class="ident">salt</span> <span class="op">=</span> <span class="ident">slot_info</span>.<span class="ident">salt</span>;
                 <span class="kw">let</span> <span class="ident">plot</span> <span class="op">=</span> <span class="ident">plot</span>.<span class="ident">clone</span>();

@@ -420,6 +420,12 @@
 <span id="420">420</span>
 <span id="421">421</span>
 <span id="422">422</span>
+<span id="423">423</span>
+<span id="424">424</span>
+<span id="425">425</span>
+<span id="426">426</span>
+<span id="427">427</span>
+<span id="428">428</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::commitments::Commitments</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings::ObjectMappings</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot::Plot</span>;
@@ -458,13 +464,18 @@
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Plot write error: {0}&quot;</span>)]</span>
     <span class="ident">PlotWrite</span>(<span class="ident">std::io::Error</span>),
 }
-
+<span class="doccomment">/// `Plotting` struct is the abstraction of the plotting process</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// Plotting Instance that stores a channel to stop/pause the background farming task</span>
+<span class="doccomment">/// and a handle to make it possible to wait on this background task</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Plotting</span> {
-    <span class="ident">sender</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">stop_sender</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">handle</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">JoinHandle</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">PlottingError</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
+<span class="doccomment">/// Assumes `plot`, `commitment`, `object_mappings`, `client` and `identity` are already initialized</span>
 <span class="kw">impl</span> <span class="ident">Plotting</span> {
+    <span class="doccomment">/// Returns an instance of plotting, and also starts a concurrent background plotting task</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">start</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span> <span class="op">+</span> <span class="ident">Clone</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span>(
         <span class="ident">plot</span>: <span class="ident">Plot</span>,
         <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
@@ -472,8 +483,10 @@
         <span class="ident">client</span>: <span class="ident">T</span>,
         <span class="ident">subspace_codec</span>: <span class="ident">SubspaceCodec</span>,
     ) -&gt; <span class="self">Self</span> {
-        <span class="kw">let</span> (<span class="ident">sender</span>, <span class="ident">receiver</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
+        <span class="comment">// Oneshot channels, that will be used for interrupt/stop the process</span>
+        <span class="kw">let</span> (<span class="ident">stop_sender</span>, <span class="ident">stop_receiver</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
 
+        <span class="comment">// Get a handle for the background task, so that we can wait on it later if we want to</span>
         <span class="kw">let</span> <span class="ident">plotting_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> <span class="kw">move</span> {
             <span class="ident">background_plotting</span>(
                 <span class="ident">client</span>,
@@ -481,17 +494,18 @@
                 <span class="ident">commitments</span>,
                 <span class="ident">object_mappings</span>,
                 <span class="ident">subspace_codec</span>,
-                <span class="ident">receiver</span>,
+                <span class="ident">stop_receiver</span>,
             )
             .<span class="kw">await</span>
         });
 
         <span class="ident">Plotting</span> {
-            <span class="ident">sender</span>: <span class="prelude-val">Some</span>(<span class="ident">sender</span>),
+            <span class="ident">stop_sender</span>: <span class="prelude-val">Some</span>(<span class="ident">stop_sender</span>),
             <span class="ident">handle</span>: <span class="prelude-val">Some</span>(<span class="ident">plotting_handle</span>),
         }
     }
 
+    <span class="doccomment">/// Waits for the background plotting to finish</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">wait</span>(<span class="kw-2">mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">PlottingError</span><span class="op">&gt;</span> {
         <span class="self">self</span>.<span class="ident">handle</span>
             .<span class="ident">take</span>()
@@ -503,9 +517,7 @@
 
 <span class="kw">impl</span> <span class="ident">Drop</span> <span class="kw">for</span> <span class="ident">Plotting</span> {
     <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
-        <span class="comment">// we don&#39;t have to do anything in here</span>
-        <span class="comment">// these are for clarity and verbosity</span>
-        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">sender</span>.<span class="ident">take</span>().<span class="ident">unwrap</span>().<span class="ident">send</span>(());
+        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">stop_sender</span>.<span class="ident">take</span>().<span class="ident">unwrap</span>().<span class="ident">send</span>(());
     }
 }
 
@@ -518,7 +530,7 @@
     <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
     <span class="ident">object_mappings</span>: <span class="ident">ObjectMappings</span>,
     <span class="ident">subspace_codec</span>: <span class="ident">SubspaceCodec</span>,
-    <span class="kw-2">mut</span> <span class="ident">receiver</span>: <span class="ident">Receiver</span><span class="op">&lt;</span>()<span class="op">&gt;</span>,
+    <span class="kw-2">mut</span> <span class="ident">stop_receiver</span>: <span class="ident">Receiver</span><span class="op">&lt;</span>()<span class="op">&gt;</span>,
 ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">PlottingError</span><span class="op">&gt;</span> {
     <span class="kw">let</span> <span class="ident">weak_plot</span> <span class="op">=</span> <span class="ident">plot</span>.<span class="ident">downgrade</span>();
     <span class="kw">let</span> <span class="ident">FarmerMetadata</span> {
@@ -800,7 +812,7 @@
     <span class="comment">// receiver.fuse();</span>
     <span class="kw">loop</span> {
         <span class="macro">tokio::select!</span> {
-            <span class="kw">_</span> <span class="op">=</span> <span class="kw-2">&amp;mut</span> <span class="ident">receiver</span> =&gt; {
+            <span class="kw">_</span> <span class="op">=</span> <span class="kw-2">&amp;mut</span> <span class="ident">stop_receiver</span> =&gt; {
                 <span class="macro">info!</span>(<span class="string">&quot;Plotting stopped!&quot;</span>);
                 <span class="kw">break</span>;
             }
