@@ -1743,10 +1743,6 @@
 <span id="1743">1743</span>
 <span id="1744">1744</span>
 <span id="1745">1745</span>
-<span id="1746">1746</span>
-<span id="1747">1747</span>
-<span id="1748">1748</span>
-<span id="1749">1749</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -1797,12 +1793,21 @@
 <span class="attribute">#![<span class="ident">forbid</span>(<span class="ident">unsafe_code</span>)]</span>
 <span class="attribute">#![<span class="ident">warn</span>(<span class="ident">missing_docs</span>)]</span>
 
-<span class="kw">pub</span> <span class="kw">use</span> <span class="ident"><span class="self">self</span>::archiver::start_subspace_archiver</span>;
+<span class="kw">mod</span> <span class="ident">archiver</span>;
+<span class="kw">mod</span> <span class="ident">authorship</span>;
+<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">aux_schema</span>;
+<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">notification</span>;
+<span class="kw">mod</span> <span class="ident">slot_worker</span>;
+<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
+<span class="kw">mod</span> <span class="ident">tests</span>;
+<span class="kw">mod</span> <span class="ident">verification</span>;
+
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::notification</span>::{<span class="ident">SubspaceNotificationSender</span>, <span class="ident">SubspaceNotificationStream</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::slot_worker::SubspaceSlotWorker</span>;
+<span class="kw">pub</span> <span class="kw">use</span> <span class="ident">archiver::start_subspace_archiver</span>;
 <span class="kw">use</span> <span class="ident">codec</span>::{<span class="ident">Decode</span>, <span class="ident">Encode</span>};
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
-<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">FutureExt</span>, <span class="ident">SinkExt</span>, <span class="ident">StreamExt</span>, <span class="ident">TryFutureExt</span>};
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">FutureExt</span>, <span class="ident">SinkExt</span>, <span class="ident">StreamExt</span>};
 <span class="kw">use</span> <span class="ident">log</span>::{<span class="ident">debug</span>, <span class="ident">info</span>, <span class="ident">log</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
 <span class="kw">use</span> <span class="ident">lru::LruCache</span>;
 <span class="kw">use</span> <span class="ident">parking_lot::Mutex</span>;
@@ -1811,7 +1816,6 @@
 <span class="kw">use</span> <span class="ident">sc_consensus</span>::{
     <span class="ident">block_import</span>::{
         <span class="ident">BlockCheckParams</span>, <span class="ident">BlockImport</span>, <span class="ident">BlockImportParams</span>, <span class="ident">ForkChoiceStrategy</span>, <span class="ident">ImportResult</span>,
-        <span class="ident">StateAction</span>,
     },
     <span class="ident">import_queue</span>::{<span class="ident">BasicQueue</span>, <span class="ident">BoxJustificationImport</span>, <span class="ident">DefaultImportQueue</span>, <span class="ident">Verifier</span>},
 };
@@ -1820,12 +1824,11 @@
 };
 <span class="kw">use</span> <span class="ident">sc_consensus_slots</span>::{
     <span class="ident">check_equivocation</span>, <span class="ident">BackoffAuthoringBlocksStrategy</span>, <span class="ident">CheckedHeader</span>, <span class="ident">InherentDataProviderExt</span>,
-    <span class="ident">SimpleSlotWorker</span>, <span class="ident">SlotInfo</span>, <span class="ident">SlotProportion</span>, <span class="ident">StorageChanges</span>,
+    <span class="ident">SlotProportion</span>,
 };
 <span class="kw">use</span> <span class="ident">sc_telemetry</span>::{<span class="ident">telemetry</span>, <span class="ident">TelemetryHandle</span>, <span class="ident">CONSENSUS_DEBUG</span>, <span class="ident">CONSENSUS_TRACE</span>};
-<span class="kw">use</span> <span class="ident">sc_utils::mpsc</span>::{<span class="ident">tracing_unbounded</span>, <span class="ident">TracingUnboundedReceiver</span>, <span class="ident">TracingUnboundedSender</span>};
+<span class="kw">use</span> <span class="ident">sc_utils::mpsc::TracingUnboundedSender</span>;
 <span class="kw">use</span> <span class="ident">schnorrkel::context::SigningContext</span>;
-<span class="kw">use</span> <span class="ident">schnorrkel::SecretKey</span>;
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiExt</span>, <span class="ident">NumberFor</span>, <span class="ident">ProvideRuntimeApi</span>};
 <span class="kw">use</span> <span class="ident">sp_block_builder::BlockBuilder</span> <span class="kw">as</span> <span class="ident">BlockBuilderApi</span>;
 <span class="kw">use</span> <span class="ident">sp_blockchain</span>::{
@@ -1837,34 +1840,23 @@
 };
 <span class="kw">use</span> <span class="ident">sp_consensus_slots::Slot</span>;
 <span class="kw">use</span> <span class="ident">sp_consensus_subspace::digests</span>::{
-    <span class="ident">CompatibleDigestItem</span>, <span class="ident">NextConfigDescriptor</span>, <span class="ident">NextEpochDescriptor</span>, <span class="ident">NextSaltDescriptor</span>,
-    <span class="ident">NextSolutionRangeDescriptor</span>, <span class="ident">PreDigest</span>, <span class="ident">SaltDescriptor</span>, <span class="ident">Solution</span>, <span class="ident">SolutionRangeDescriptor</span>,
+    <span class="ident">CompatibleDigestItem</span>, <span class="ident">NextConfigDescriptor</span>, <span class="ident">NextEpochDescriptor</span>, <span class="ident">PreDigest</span>, <span class="ident">SaltDescriptor</span>,
+    <span class="ident">Solution</span>, <span class="ident">SolutionRangeDescriptor</span>,
 };
 <span class="kw">use</span> <span class="ident">sp_consensus_subspace::inherents</span>::{<span class="ident">InherentType</span>, <span class="ident">SubspaceInherentData</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus_subspace</span>::{
     <span class="ident">ConsensusLog</span>, <span class="ident">FarmerPublicKey</span>, <span class="ident">SubspaceApi</span>, <span class="ident">SubspaceEpochConfiguration</span>,
     <span class="ident">SubspaceGenesisConfiguration</span>, <span class="ident">SUBSPACE_ENGINE_ID</span>,
 };
-<span class="kw">use</span> <span class="ident">sp_core::sr25519::Pair</span>;
-<span class="kw">use</span> <span class="ident">sp_core</span>::{<span class="ident">ExecutionContext</span>, <span class="ident">Pair</span> <span class="kw">as</span> <span class="ident">PairTrait</span>};
+<span class="kw">use</span> <span class="ident">sp_core::ExecutionContext</span>;
 <span class="kw">use</span> <span class="ident">sp_inherents</span>::{<span class="ident">CreateInherentDataProviders</span>, <span class="ident">InherentData</span>, <span class="ident">InherentDataProvider</span>};
 <span class="kw">use</span> <span class="ident">sp_runtime::generic</span>::{<span class="ident">BlockId</span>, <span class="ident">OpaqueDigestItemId</span>};
 <span class="kw">use</span> <span class="ident">sp_runtime::traits</span>::{<span class="ident">Block</span> <span class="kw">as</span> <span class="ident">BlockT</span>, <span class="ident">DigestItemFor</span>, <span class="ident">Header</span>, <span class="ident">One</span>, <span class="ident">Zero</span>};
 <span class="kw">use</span> <span class="ident">std::cmp::Ordering</span>;
-<span class="kw">use</span> <span class="ident">std::future::Future</span>;
-<span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">borrow::Cow</span>, <span class="ident">collections::HashMap</span>, <span class="ident">pin::Pin</span>, <span class="ident">sync::Arc</span>, <span class="ident">time::Duration</span>, <span class="ident">u64</span>};
+<span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">borrow::Cow</span>, <span class="ident">collections::HashMap</span>, <span class="ident">pin::Pin</span>, <span class="ident">sync::Arc</span>, <span class="ident">time::Duration</span>};
 <span class="kw">pub</span> <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::ArchivedSegment</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">Randomness</span>, <span class="ident">RootBlock</span>, <span class="ident">Salt</span>, <span class="ident">Tag</span>};
 <span class="kw">use</span> <span class="ident">subspace_solving::SOLUTION_SIGNING_CONTEXT</span>;
-
-<span class="kw">mod</span> <span class="ident">archiver</span>;
-<span class="kw">mod</span> <span class="ident">authorship</span>;
-<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">aux_schema</span>;
-<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">notification</span>;
-<span class="kw">mod</span> <span class="ident">slot_worker</span>;
-<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
-<span class="kw">mod</span> <span class="ident">tests</span>;
-<span class="kw">mod</span> <span class="ident">verification</span>;
 
 <span class="doccomment">/// Information about new slot that just arrived</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Copy</span>, <span class="ident">Clone</span>)]</span>
