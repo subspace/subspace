@@ -1,5 +1,6 @@
 var N = null;var sourcesIndex = {};
 sourcesIndex["pallet_feeds"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["pallet_object_store"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.rs"]};
 sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
