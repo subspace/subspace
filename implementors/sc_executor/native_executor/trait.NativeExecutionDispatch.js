@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["subspace_node"] = [{"text":"impl NativeExecutionDispatch for <a class=\"struct\" href=\"subspace_node/service/struct.ExecutorDispatch.html\" title=\"struct subspace_node::service::ExecutorDispatch\">ExecutorDispatch</a>","synthetic":false,"types":["subspace_node::service::ExecutorDispatch"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
