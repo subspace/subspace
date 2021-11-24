@@ -1,3 +1,4 @@
 (function() {var implementors = {};
+implementors["subspace_runtime_primitives"] = [{"text":"impl MallocSizeOf for <a class=\"struct\" href=\"subspace_runtime_primitives/opaque/struct.Block.html\" title=\"struct subspace_runtime_primitives::opaque::Block\">Block</a>","synthetic":false,"types":["subspace_runtime_primitives::opaque::Block"]}];
 implementors["substrate_test_runtime"] = [{"text":"impl MallocSizeOf for <a class=\"enum\" href=\"substrate_test_runtime/enum.Extrinsic.html\" title=\"enum substrate_test_runtime::Extrinsic\">Extrinsic</a>","synthetic":false,"types":["substrate_test_runtime::Extrinsic"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
