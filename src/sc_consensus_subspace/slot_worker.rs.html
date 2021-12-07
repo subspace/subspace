@@ -418,6 +418,11 @@
 <span id="417">417</span>
 <span id="418">418</span>
 <span id="419">419</span>
+<span id="420">420</span>
+<span id="421">421</span>
+<span id="422">422</span>
+<span id="423">423</span>
+<span id="424">424</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -456,9 +461,9 @@
 <span class="kw">use</span> <span class="ident">sp_consensus</span>::{<span class="ident">BlockOrigin</span>, <span class="ident">Environment</span>, <span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ConsensusError</span>, <span class="ident">Proposer</span>, <span class="ident">SyncOracle</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus_slots::Slot</span>;
 <span class="kw">use</span> <span class="ident">sp_consensus_subspace::digests</span>::{
-    <span class="ident">CompatibleDigestItem</span>, <span class="ident">NextSaltDescriptor</span>, <span class="ident">NextSolutionRangeDescriptor</span>, <span class="ident">PreDigest</span>,
+    <span class="ident">CompatibleDigestItem</span>, <span class="ident">PreDigest</span>, <span class="ident">UpdatedSaltDescriptor</span>, <span class="ident">UpdatedSolutionRangeDescriptor</span>,
 };
-<span class="kw">use</span> <span class="ident">sp_consensus_subspace</span>::{<span class="ident">ConsensusLog</span>, <span class="ident">SubspaceApi</span>, <span class="ident">SUBSPACE_ENGINE_ID</span>};
+<span class="kw">use</span> <span class="ident">sp_consensus_subspace</span>::{<span class="ident">ConsensusLog</span>, <span class="ident">Salts</span>, <span class="ident">SubspaceApi</span>, <span class="ident">SUBSPACE_ENGINE_ID</span>};
 <span class="kw">use</span> <span class="ident">sp_core::sr25519::Pair</span>;
 <span class="kw">use</span> <span class="ident">sp_core::Pair</span> <span class="kw">as</span> <span class="kw">_</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime::generic</span>::{<span class="ident">BlockId</span>, <span class="ident">OpaqueDigestItemId</span>};
@@ -567,22 +572,21 @@
         <span class="comment">// Here we always use parent block as the source of information, thus on the edge of the</span>
         <span class="comment">// eon the very first block of the eon still uses salt from the previous one, but the</span>
         <span class="comment">// block after it uses &quot;next&quot; salt deposited in the first block.</span>
-        <span class="kw">let</span> <span class="ident">salt</span> <span class="op">=</span> <span class="ident">find_next_salt_digest</span>::<span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span>(<span class="ident">parent_header</span>)
+        <span class="kw">let</span> <span class="ident">Salts</span> { <span class="ident">salt</span>, <span class="ident">next_salt</span> } <span class="op">=</span> <span class="ident">find_updated_salt_digest</span>::<span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span>(<span class="ident">parent_header</span>)
             .<span class="ident">ok</span>()<span class="question-mark">?</span>
-            .<span class="ident">map</span>(<span class="op">|</span><span class="ident">d</span><span class="op">|</span> <span class="ident">d</span>.<span class="ident">salt</span>)
+            .<span class="ident">map</span>(<span class="op">|</span><span class="ident">UpdatedSaltDescriptor</span> { <span class="ident">salt</span>, <span class="ident">next_salt</span> }<span class="op">|</span> <span class="ident">Salts</span> { <span class="ident">salt</span>, <span class="ident">next_salt</span> })
             .<span class="ident">or_else</span>(<span class="op">|</span><span class="op">|</span> {
                 <span class="comment">// We use runtime API as it will fallback to default value for genesis when</span>
                 <span class="comment">// there is no salt stored yet</span>
-                <span class="ident">runtime_api</span>.<span class="ident">salt</span>(<span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()
+                <span class="ident">runtime_api</span>.<span class="ident">salts</span>(<span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()
             })<span class="question-mark">?</span>;
 
         <span class="kw">let</span> <span class="ident">new_slot_info</span> <span class="op">=</span> <span class="ident">NewSlotInfo</span> {
             <span class="ident">slot</span>,
             <span class="ident">global_challenge</span>: <span class="ident">subspace_solving::derive_global_challenge</span>(<span class="kw-2">&amp;</span><span class="ident">epoch_randomness</span>, <span class="ident">slot</span>),
-            <span class="ident">salt</span>: <span class="ident">salt</span>.<span class="ident">to_le_bytes</span>(),
-            <span class="comment">// TODO: This will not be the correct way in the future once salt is no longer</span>
-            <span class="comment">//  just an incremented number</span>
-            <span class="ident">next_salt</span>: <span class="prelude-val">Some</span>((<span class="ident">salt</span> <span class="op">+</span> <span class="number">1</span>).<span class="ident">to_le_bytes</span>()),
+            <span class="ident">salt</span>,
+            <span class="comment">// TODO: This probably needs to change from `Option&lt;Salt&gt;` to just `Salt`</span>
+            <span class="ident">next_salt</span>: <span class="prelude-val">Some</span>(<span class="ident">next_salt</span>),
             <span class="ident">solution_range</span>,
         };
         <span class="kw">let</span> (<span class="ident">solution_sender</span>, <span class="kw-2">mut</span> <span class="ident">solution_receiver</span>) <span class="op">=</span>
@@ -658,7 +662,7 @@
                     <span class="ident">epoch_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">epoch_randomness</span>,
                     <span class="ident">solution_range</span>,
                     <span class="ident">slot</span>,
-                    <span class="ident">salt</span>: <span class="ident">salt</span>.<span class="ident">to_le_bytes</span>(),
+                    <span class="ident">salt</span>,
                     <span class="ident">records_root</span>: <span class="kw-2">&amp;</span><span class="ident">records_root</span>,
                     <span class="ident">position</span>,
                     <span class="ident">record_size</span>,
@@ -799,19 +803,21 @@
 <span class="doccomment">/// Extract the next Subspace solution range digest from the given header if it exists.</span>
 <span class="kw">fn</span> <span class="ident">find_next_solution_range_digest</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
     <span class="ident">header</span>: <span class="kw-2">&amp;</span><span class="ident">B::Header</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">NextSolutionRangeDescriptor</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">UpdatedSolutionRangeDescriptor</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">next_solution_range_digest</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span> <span class="op">=</span> <span class="prelude-val">None</span>;
     <span class="kw">for</span> <span class="ident">log</span> <span class="kw">in</span> <span class="ident">header</span>.<span class="ident">digest</span>().<span class="ident">logs</span>() {
         <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checking log {:?}, looking for next solution range digest.&quot;</span>, <span class="ident">log</span>);
         <span class="kw">let</span> <span class="ident">log</span> <span class="op">=</span> <span class="ident">log</span>.<span class="ident">try_to</span>::<span class="op">&lt;</span><span class="ident">ConsensusLog</span><span class="op">&gt;</span>(<span class="ident">OpaqueDigestItemId::Consensus</span>(<span class="kw-2">&amp;</span><span class="ident">SUBSPACE_ENGINE_ID</span>));
         <span class="kw">match</span> (<span class="ident">log</span>, <span class="ident">next_solution_range_digest</span>.<span class="ident">is_some</span>()) {
             (<span class="prelude-val">Some</span>(<span class="ident">ConsensusLog::NextSolutionRangeData</span>(<span class="kw">_</span>)), <span class="bool-val">true</span>) =&gt; {
-                <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">subspace_err</span>(<span class="ident">Error::MultipleNextSolutionRangeDigests</span>))
+                <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">subspace_err</span>(<span class="ident">Error::MultipleNextSolutionRangeDigests</span>));
             }
             (<span class="prelude-val">Some</span>(<span class="ident">ConsensusLog::NextSolutionRangeData</span>(<span class="ident">solution_range</span>)), <span class="bool-val">false</span>) =&gt; {
-                <span class="ident">next_solution_range_digest</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">solution_range</span>)
+                <span class="ident">next_solution_range_digest</span>.<span class="ident">replace</span>(<span class="ident">solution_range</span>);
             }
-            <span class="kw">_</span> =&gt; <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Ignoring digest not meant for us&quot;</span>),
+            <span class="kw">_</span> =&gt; {
+                <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Ignoring digest not meant for us&quot;</span>);
+            }
         }
     }
 
@@ -819,19 +825,23 @@
 }
 
 <span class="doccomment">/// Extract the next Subspace salt digest from the given header if it exists.</span>
-<span class="kw">fn</span> <span class="ident">find_next_salt_digest</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
+<span class="kw">fn</span> <span class="ident">find_updated_salt_digest</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
     <span class="ident">header</span>: <span class="kw-2">&amp;</span><span class="ident">B::Header</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">NextSaltDescriptor</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">UpdatedSaltDescriptor</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">next_salt_digest</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span> <span class="op">=</span> <span class="prelude-val">None</span>;
     <span class="kw">for</span> <span class="ident">log</span> <span class="kw">in</span> <span class="ident">header</span>.<span class="ident">digest</span>().<span class="ident">logs</span>() {
         <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checking log {:?}, looking for salt digest.&quot;</span>, <span class="ident">log</span>);
         <span class="kw">let</span> <span class="ident">log</span> <span class="op">=</span> <span class="ident">log</span>.<span class="ident">try_to</span>::<span class="op">&lt;</span><span class="ident">ConsensusLog</span><span class="op">&gt;</span>(<span class="ident">OpaqueDigestItemId::Consensus</span>(<span class="kw-2">&amp;</span><span class="ident">SUBSPACE_ENGINE_ID</span>));
         <span class="kw">match</span> (<span class="ident">log</span>, <span class="ident">next_salt_digest</span>.<span class="ident">is_some</span>()) {
-            (<span class="prelude-val">Some</span>(<span class="ident">ConsensusLog::NextSaltData</span>(<span class="kw">_</span>)), <span class="bool-val">true</span>) =&gt; {
-                <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">subspace_err</span>(<span class="ident">Error::MultipleSaltDigests</span>))
+            (<span class="prelude-val">Some</span>(<span class="ident">ConsensusLog::UpdatedSaltData</span>(<span class="kw">_</span>)), <span class="bool-val">true</span>) =&gt; {
+                <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">subspace_err</span>(<span class="ident">Error::MultipleSaltDigests</span>));
             }
-            (<span class="prelude-val">Some</span>(<span class="ident">ConsensusLog::NextSaltData</span>(<span class="ident">salt</span>)), <span class="bool-val">false</span>) =&gt; <span class="ident">next_salt_digest</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">salt</span>),
-            <span class="kw">_</span> =&gt; <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Ignoring digest not meant for us&quot;</span>),
+            (<span class="prelude-val">Some</span>(<span class="ident">ConsensusLog::UpdatedSaltData</span>(<span class="ident">salt</span>)), <span class="bool-val">false</span>) =&gt; {
+                <span class="ident">next_salt_digest</span>.<span class="ident">replace</span>(<span class="ident">salt</span>);
+            }
+            <span class="kw">_</span> =&gt; {
+                <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Ignoring digest not meant for us&quot;</span>);
+            }
         }
     }
 
