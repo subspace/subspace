@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["parachain_template_runtime"] = [{"text":"impl <a class=\"trait\" href=\"parachain_template_runtime/trait.BuildStorage.html\" title=\"trait parachain_template_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"parachain_template_runtime/struct.GenesisConfig.html\" title=\"struct parachain_template_runtime::GenesisConfig\">GenesisConfig</a>","synthetic":false,"types":["parachain_template_runtime::GenesisConfig"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

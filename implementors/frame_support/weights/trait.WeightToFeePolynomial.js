@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["parachain_template_runtime"] = [{"text":"impl WeightToFeePolynomial for <a class=\"struct\" href=\"parachain_template_runtime/struct.WeightToFee.html\" title=\"struct parachain_template_runtime::WeightToFee\">WeightToFee</a>","synthetic":false,"types":["parachain_template_runtime::WeightToFee"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

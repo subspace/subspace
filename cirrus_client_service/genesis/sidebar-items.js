@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["generate_genesis_block","Generate the genesis block from a given ChainSpec."]]});

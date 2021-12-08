@@ -1,4 +1,5 @@
 (function() {var implementors = {};
+implementors["parachain_template_runtime"] = [{"text":"impl Dispatchable for <a class=\"enum\" href=\"parachain_template_runtime/enum.Call.html\" title=\"enum parachain_template_runtime::Call\">Call</a>","synthetic":false,"types":["parachain_template_runtime::Call"]}];
 implementors["subspace_runtime"] = [{"text":"impl Dispatchable for <a class=\"enum\" href=\"subspace_runtime/enum.Call.html\" title=\"enum subspace_runtime::Call\">Call</a>","synthetic":false,"types":["subspace_runtime::Call"]}];
 implementors["substrate_test_runtime"] = [{"text":"impl Dispatchable for <a class=\"enum\" href=\"substrate_test_runtime/enum.Extrinsic.html\" title=\"enum substrate_test_runtime::Extrinsic\">Extrinsic</a>","synthetic":false,"types":["substrate_test_runtime::Extrinsic"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

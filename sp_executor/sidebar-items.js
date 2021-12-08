@@ -1,0 +1,1 @@
+initSidebarItems({"trait":[["ExecutorApi","API necessary for executor pallet."]]});

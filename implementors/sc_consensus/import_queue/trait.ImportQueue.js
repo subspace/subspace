@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["cirrus_client_service"] = [{"text":"impl&lt;Block:&nbsp;BlockT&gt; ImportQueue&lt;Block&gt; for <a class=\"struct\" href=\"cirrus_client_service/struct.SharedImportQueue.html\" title=\"struct cirrus_client_service::SharedImportQueue\">SharedImportQueue</a>&lt;Block&gt;","synthetic":false,"types":["cirrus_client_service::SharedImportQueue"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
