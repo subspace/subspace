@@ -12,6 +12,7 @@ sourcesIndex["pallet_object_store"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.rs"]};
 sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
+sourcesIndex["pallet_transaction_fees"] = {"name":"","files":["default_weights.rs","lib.rs"]};
 sourcesIndex["parachain_template_runtime"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["polkadot_node_collation_generation"] = {"name":"","files":["error.rs","lib.rs"]};
 sourcesIndex["polkadot_node_core_chain_api"] = {"name":"","files":["lib.rs"]};
