@@ -348,6 +348,7 @@
 <span id="347">347</span>
 <span id="348">348</span>
 <span id="349">349</span>
+<span id="350">350</span>
 </pre><pre class="rust"><code><span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">tests</span>;
 
@@ -463,10 +464,13 @@
     <span class="comment">// TODO: This assumes fixed size segments, which might not be the case</span>
     <span class="kw">let</span> <span class="ident">merkle_num_leaves</span> <span class="op">=</span> <span class="ident">u64::from</span>(<span class="ident">recorded_history_segment_size</span> <span class="op">/</span> <span class="ident">record_size</span> <span class="op">*</span> <span class="number">2</span>);
 
-    <span class="kw">let</span> <span class="ident">maybe_last_root_block</span> <span class="op">=</span> <span class="ident">plot</span>
-        .<span class="ident">get_last_root_block</span>()
-        .<span class="kw">await</span>
-        .<span class="ident">map_err</span>(<span class="ident">PlottingError::LastBlock</span>)<span class="question-mark">?</span>;
+    <span class="kw">let</span> <span class="ident">maybe_last_root_block</span> <span class="op">=</span> <span class="ident">tokio::task::spawn_blocking</span>({
+        <span class="kw">let</span> <span class="ident">plot</span> <span class="op">=</span> <span class="ident">plot</span>.<span class="ident">clone</span>();
+
+        <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> <span class="ident">plot</span>.<span class="ident">get_last_root_block</span>().<span class="ident">map_err</span>(<span class="ident">PlottingError::LastBlock</span>)
+    })
+    .<span class="kw">await</span>
+    .<span class="ident">unwrap</span>()<span class="question-mark">?</span>;
 
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archiver</span> <span class="op">=</span> <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">last_root_block</span>) <span class="op">=</span> <span class="ident">maybe_last_root_block</span> {
         <span class="comment">// Continuing from existing initial state</span>
@@ -590,14 +594,14 @@
                             <span class="kw">let</span> <span class="ident">pieces</span> <span class="op">=</span> <span class="ident">Arc::new</span>(<span class="ident">pieces</span>);
                             <span class="comment">// TODO: There is no internal mapping between pieces and their indexes yet</span>
                             <span class="comment">// TODO: Then we might want to send indexes as a separate vector</span>
-                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">runtime_handle</span>
-                                .<span class="ident">block_on</span>(<span class="ident">plot</span>.<span class="ident">write_many</span>(<span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="ident">pieces</span>), <span class="ident">piece_index_offset</span>))
+                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span>
+                                <span class="ident">plot</span>.<span class="ident">write_many</span>(<span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="ident">pieces</span>), <span class="ident">piece_index_offset</span>)
                             {
                                 <span class="macro">error!</span>(<span class="string">&quot;Failed to write encoded pieces: {}&quot;</span>, <span class="ident">error</span>);
                             }
-                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">runtime_handle</span>.<span class="ident">block_on</span>(
-                                <span class="ident">commitments</span>.<span class="ident">create_for_pieces</span>(<span class="kw-2">&amp;</span><span class="ident">pieces</span>, <span class="ident">piece_index_offset</span>),
-                            ) {
+                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span>
+                                <span class="ident">commitments</span>.<span class="ident">create_for_pieces</span>(<span class="kw-2">&amp;</span><span class="ident">pieces</span>, <span class="ident">piece_index_offset</span>)
+                            {
                                 <span class="macro">error!</span>(<span class="string">&quot;Failed to create commitments for pieces: {}&quot;</span>, <span class="ident">error</span>);
                             }
                             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">object_mappings</span>.<span class="ident">store</span>(<span class="kw-2">&amp;</span><span class="ident">object_mapping</span>) {
@@ -615,9 +619,7 @@
 
                     <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">last_root_block</span>) <span class="op">=</span> <span class="ident">last_root_block</span> {
                         <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">plot</span>) <span class="op">=</span> <span class="ident">weak_plot</span>.<span class="ident">upgrade</span>() {
-                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span>
-                                <span class="ident">runtime_handle</span>.<span class="ident">block_on</span>(<span class="ident">plot</span>.<span class="ident">set_last_root_block</span>(<span class="kw-2">&amp;</span><span class="ident">last_root_block</span>))
-                            {
+                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">plot</span>.<span class="ident">set_last_root_block</span>(<span class="kw-2">&amp;</span><span class="ident">last_root_block</span>) {
                                 <span class="macro">error!</span>(<span class="string">&quot;Failed to store last root block: {}&quot;</span>, <span class="ident">error</span>);
                             }
                         }
@@ -698,5 +700,5 @@
         .<span class="ident">collect</span>()
 }
 </code></pre></div>
-</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../" data-current-crate="subspace_farmer" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.59.0-nightly (8f117a77d 2021-12-13)" ></div>
+</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../" data-current-crate="subspace_farmer" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.59.0-nightly (404c8471a 2021-12-14)" ></div>
 </body></html>
