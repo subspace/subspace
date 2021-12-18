@@ -1,0 +1,1 @@
+initSidebarItems({"trait":[["StoreExt","Extensions for the [`Store`] type only available on Unix."]]});
