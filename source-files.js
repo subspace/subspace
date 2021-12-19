@@ -1,7 +1,8 @@
 var N = null;var sourcesIndex = {};
-sourcesIndex["cirrus_client_executor"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["cirrus_client_executor"] = {"name":"","files":["lib.rs","processor.rs"]};
 sourcesIndex["cirrus_client_service"] = {"name":"","files":["genesis.rs","lib.rs"]};
 sourcesIndex["cirrus_node_primitives"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["cirrus_primitives"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cumulus_client_cli"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cumulus_client_consensus_common"] = {"name":"","files":["lib.rs","parachain_consensus.rs"]};
 sourcesIndex["cumulus_client_consensus_relay_chain"] = {"name":"","files":["import_queue.rs","lib.rs"]};
