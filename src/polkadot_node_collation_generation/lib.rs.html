@@ -527,6 +527,30 @@
 <span id="526">526</span>
 <span id="527">527</span>
 <span id="528">528</span>
+<span id="529">529</span>
+<span id="530">530</span>
+<span id="531">531</span>
+<span id="532">532</span>
+<span id="533">533</span>
+<span id="534">534</span>
+<span id="535">535</span>
+<span id="536">536</span>
+<span id="537">537</span>
+<span id="538">538</span>
+<span id="539">539</span>
+<span id="540">540</span>
+<span id="541">541</span>
+<span id="542">542</span>
+<span id="543">543</span>
+<span id="544">544</span>
+<span id="545">545</span>
+<span id="546">546</span>
+<span id="547">547</span>
+<span id="548">548</span>
+<span id="549">549</span>
+<span id="550">550</span>
+<span id="551">551</span>
+<span id="552">552</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2020 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Polkadot.</span>
 
@@ -566,7 +590,7 @@
 };
 <span class="kw">use</span> <span class="ident">polkadot_node_subsystem_util</span>::{
 	<span class="ident">metrics</span>::{<span class="self">self</span>, <span class="ident">prometheus</span>},
-	<span class="ident">request_extract_bundles</span>, <span class="ident">request_pending_head</span>,
+	<span class="ident">request_extract_bundles</span>, <span class="ident">request_extrinsics_shuffling_seed</span>, <span class="ident">request_pending_head</span>,
 };
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 
@@ -839,7 +863,31 @@
 
 	<span class="kw">let</span> <span class="ident">bundles</span> <span class="op">=</span> <span class="ident">request_extract_bundles</span>(<span class="ident">block_hash</span>, <span class="ident">extrinsics</span>, <span class="ident">ctx</span>.<span class="ident">sender</span>()).<span class="kw">await</span>.<span class="kw">await</span><span class="question-mark">?</span><span class="question-mark">?</span>;
 
-	<span class="kw">let</span> <span class="ident">execution_receipt</span> <span class="op">=</span> <span class="kw">match</span> (<span class="ident">config</span>.<span class="ident">processor</span>)(<span class="ident">block_hash</span>, <span class="ident">bundles</span>).<span class="kw">await</span> {
+	<span class="kw">let</span> <span class="ident">header</span> <span class="op">=</span> {
+		<span class="kw">let</span> (<span class="ident">tx</span>, <span class="ident">rx</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
+		<span class="ident">ctx</span>.<span class="ident">send_message</span>(<span class="ident">ChainApiMessage::BlockHeader</span>(<span class="ident">block_hash</span>, <span class="ident">tx</span>)).<span class="kw">await</span>;
+		<span class="kw">match</span> <span class="ident">rx</span>.<span class="kw">await</span><span class="question-mark">?</span> {
+			<span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
+				<span class="macro">tracing::error!</span>(
+					<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+					<span class="question-mark">?</span><span class="ident">err</span>,
+					<span class="string">&quot;Chain API subsystem temporarily unreachable&quot;</span>
+				);
+				<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+			},
+			<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+				<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="question-mark">?</span><span class="ident">block_hash</span>, <span class="string">&quot;BlockHeader unavailable&quot;</span>);
+				<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+			},
+			<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">h</span>)) =&gt; <span class="ident">h</span>,
+		}
+	};
+
+	<span class="kw">let</span> <span class="ident">shuffling_seed</span> <span class="op">=</span> <span class="ident">request_extrinsics_shuffling_seed</span>(<span class="ident">block_hash</span>, <span class="ident">header</span>, <span class="ident">ctx</span>.<span class="ident">sender</span>())
+		.<span class="kw">await</span>
+		.<span class="kw">await</span><span class="question-mark">?</span><span class="question-mark">?</span>;
+
+	<span class="kw">let</span> <span class="ident">execution_receipt</span> <span class="op">=</span> <span class="kw">match</span> (<span class="ident">config</span>.<span class="ident">processor</span>)(<span class="ident">block_hash</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>).<span class="kw">await</span> {
 		<span class="prelude-val">Some</span>(<span class="ident">processor_result</span>) =&gt; <span class="ident">processor_result</span>.<span class="ident">to_execution_receipt</span>(),
 		<span class="prelude-val">None</span> =&gt; {
 			<span class="macro">tracing::debug!</span>(
