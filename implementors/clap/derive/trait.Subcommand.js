@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["subspace_node"] = [{"text":"impl Subcommand for <a class=\"enum\" href=\"subspace_node/cli/enum.Subcommand.html\" title=\"enum subspace_node::cli::Subcommand\">Subcommand</a>","synthetic":false,"types":["subspace_node::cli::Subcommand"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
