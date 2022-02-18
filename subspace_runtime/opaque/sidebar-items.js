@@ -1,1 +1,0 @@
-initSidebarItems({"struct":[["Block","Opaque block type. Abstraction over a substrate block."]],"type":[["BlockId","Opaque block identifier type."],["Header","Opaque block header type."]]});
