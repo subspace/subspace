@@ -1,4 +1,5 @@
 (function() {var implementors = {};
+implementors["cirrus_test_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"cirrus_test_runtime/struct.SessionKeys.html\" title=\"struct cirrus_test_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["cirrus_test_runtime::SessionKeys"]}];
 implementors["parachain_template_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"parachain_template_runtime/struct.SessionKeys.html\" title=\"struct parachain_template_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["parachain_template_runtime::SessionKeys"]}];
 implementors["subspace_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"subspace_runtime/struct.SessionKeys.html\" title=\"struct subspace_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["subspace_runtime::SessionKeys"]}];
 implementors["subspace_test_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"subspace_test_runtime/struct.SessionKeys.html\" title=\"struct subspace_test_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["subspace_test_runtime::SessionKeys"]}];
