@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["start_farmer","Run a farmer."]],"mod":[["chain_spec","Chain specification for the test runtime."]],"struct":[["TestExecutorDispatch","Subspace native executor instance."]],"type":[["Client","The client type being used by the test service."]]});
