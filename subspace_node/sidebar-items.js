@@ -1,1 +1,1 @@
-initSidebarItems({"enum":[["Error","Subspace node error."]],"fn":[["run","Parse and run command line arguments"]],"mod":[["cli","Subspace CLI library."]]});
+initSidebarItems({"enum":[["Subcommand","Utilities for working with a node."]],"struct":[["Cli","Subspace Cli."],["ExecutorDispatch","Executor dispatch for subspace runtime"],["RunCmd","Command used to run a Subspace node."]]});

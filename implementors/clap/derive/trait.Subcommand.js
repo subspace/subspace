@@ -1,3 +1,3 @@
 (function() {var implementors = {};
-implementors["subspace_node"] = [{"text":"impl Subcommand for <a class=\"enum\" href=\"subspace_node/cli/enum.Subcommand.html\" title=\"enum subspace_node::cli::Subcommand\">Subcommand</a>","synthetic":false,"types":["subspace_node::cli::Subcommand"]}];
+implementors["subspace_node"] = [{"text":"impl Subcommand for <a class=\"enum\" href=\"subspace_node/enum.Subcommand.html\" title=\"enum subspace_node::Subcommand\">Subcommand</a>","synthetic":false,"types":["subspace_node::Subcommand"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

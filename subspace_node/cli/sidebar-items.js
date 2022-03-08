@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["Subcommand","Utilities for working with a node."]],"struct":[["Cli","Subspace Cli."],["RunCmd","Command used to run a Subspace node."]]});
