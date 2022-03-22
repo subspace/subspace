@@ -3,6 +3,7 @@ sourcesIndex["cirrus_block_builder"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundler.rs","lib.rs","merkle_tree.rs","processor.rs"]};
 sourcesIndex["cirrus_client_executor_gossip"] = {"name":"","files":["lib.rs","worker.rs"]};
 sourcesIndex["cirrus_client_service"] = {"name":"","files":["genesis.rs","lib.rs"]};
+sourcesIndex["cirrus_fraud_proof"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_node_primitives"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_pallet_executive"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_primitives"] = {"name":"","files":["lib.rs"]};
