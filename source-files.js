@@ -38,7 +38,6 @@ sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs"]};
 sourcesIndex["sp_executor"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_archiving"] = {"name":"","dirs":[{"name":"archiver","files":["record_shards.rs"]}],"files":["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]};
-sourcesIndex["subspace_consensus_runtime"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_core_primitives"] = {"name":"","files":["crypto.rs","lib.rs","objects.rs"]};
 sourcesIndex["subspace_farmer"] = {"name":"","dirs":[{"name":"commitments","files":["commitment_databases.rs"]}],"files":["commitments.rs","farming.rs","identity.rs","lib.rs","object_mappings.rs","plot.rs","plotting.rs","rpc.rs","ws_rpc.rs","ws_rpc_server.rs"]};
 sourcesIndex["subspace_networking"] = {"name":"","dirs":[{"name":"behavior","files":["custom_record_store.rs"]}],"files":["behavior.rs","create.rs","lib.rs","multimess.rs","node.rs","node_runner.rs","shared.rs","utils.rs"]};
