@@ -15,6 +15,7 @@ sourcesIndex["cumulus_client_consensus_relay_chain"] = {"name":"","files":["impo
 sourcesIndex["metered_channel"] = {"name":"","files":["bounded.rs","lib.rs","oneshot.rs","unbounded.rs"]};
 sourcesIndex["pallet_executor"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_feeds"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["pallet_grandpa_finality_verifier"] = {"name":"","files":["grandpa.rs","lib.rs"]};
 sourcesIndex["pallet_object_store"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.rs"]};
