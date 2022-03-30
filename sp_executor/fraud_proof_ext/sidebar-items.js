@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["fraud_proof",""]],"struct":[["FraudProofExt","An extension to verify the fraud proof."]],"trait":[["Externalities","Externalities for verifying fraud proof."]]});
