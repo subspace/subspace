@@ -1,1 +1,1 @@
-initSidebarItems({"fn":[["check_execution_proof","Runs the execution using the partial state constructed from the given storage proof and returns the execution result."],["prove_execution","Returns a storage proof which can be used to reconstruct a partial state trie to re-run the execution by someone who does not own the whole state."]],"struct":[["ProofVerifier","Fraud proof verifier."]]});
+initSidebarItems({"struct":[["ExecutionProver","Creates storage proof for verifying an execution without owning the whole state."],["ProofVerifier","Fraud proof verifier."]]});
