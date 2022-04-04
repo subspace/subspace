@@ -261,33 +261,6 @@
 <span id="256">256</span>
 <span id="257">257</span>
 <span id="258">258</span>
-<span id="259">259</span>
-<span id="260">260</span>
-<span id="261">261</span>
-<span id="262">262</span>
-<span id="263">263</span>
-<span id="264">264</span>
-<span id="265">265</span>
-<span id="266">266</span>
-<span id="267">267</span>
-<span id="268">268</span>
-<span id="269">269</span>
-<span id="270">270</span>
-<span id="271">271</span>
-<span id="272">272</span>
-<span id="273">273</span>
-<span id="274">274</span>
-<span id="275">275</span>
-<span id="276">276</span>
-<span id="277">277</span>
-<span id="278">278</span>
-<span id="279">279</span>
-<span id="280">280</span>
-<span id="281">281</span>
-<span id="282">282</span>
-<span id="283">283</span>
-<span id="284">284</span>
-<span id="285">285</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2022 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -306,88 +279,24 @@
 <span class="comment">// GRANDPA verification is mostly taken from Parity&#39;s bridges https://github.com/paritytech/parity-bridges-common/tree/master/primitives/header-chain</span>
 <span class="kw">use</span> <span class="ident">codec</span>::{<span class="ident">Decode</span>, <span class="ident">Encode</span>};
 <span class="kw">use</span> <span class="ident">finality_grandpa::voter_set::VoterSet</span>;
-<span class="kw">use</span> <span class="ident">frame_support::Parameter</span>;
 <span class="kw">use</span> <span class="ident">frame_support::RuntimeDebug</span>;
-<span class="kw">use</span> <span class="ident">num_traits::AsPrimitive</span>;
 <span class="kw">use</span> <span class="ident">scale_info::TypeInfo</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>)]</span>
 <span class="kw">use</span> <span class="ident">serde</span>::{<span class="ident">Deserialize</span>, <span class="ident">Serialize</span>};
-<span class="kw">use</span> <span class="ident">sp_finality_grandpa</span>::{<span class="ident">AuthorityId</span>, <span class="ident">AuthorityList</span>, <span class="ident">AuthoritySignature</span>, <span class="ident">SetId</span>};
-<span class="kw">use</span> <span class="ident">sp_runtime::traits</span>::{
-    <span class="ident">AtLeast32BitUnsigned</span>, <span class="ident">Hash</span> <span class="kw">as</span> <span class="ident">HashT</span>, <span class="ident">Header</span> <span class="kw">as</span> <span class="ident">HeaderT</span>, <span class="ident">MaybeDisplay</span>, <span class="ident">MaybeMallocSizeOf</span>,
-    <span class="ident">MaybeSerializeDeserialize</span>, <span class="ident">Member</span>, <span class="ident">Saturating</span>, <span class="ident">SimpleBitOps</span>, <span class="ident">Verify</span>,
+<span class="kw">use</span> <span class="ident">sp_finality_grandpa</span>::{
+    <span class="ident">AuthorityId</span>, <span class="ident">AuthorityList</span>, <span class="ident">AuthoritySignature</span>, <span class="ident">ConsensusLog</span>, <span class="ident">SetId</span>, <span class="ident">GRANDPA_ENGINE_ID</span>,
 };
+<span class="kw">use</span> <span class="ident">sp_runtime::traits::Header</span> <span class="kw">as</span> <span class="ident">HeaderT</span>;
 <span class="kw">use</span> <span class="ident">sp_std::collections</span>::{<span class="ident">btree_map::BTreeMap</span>, <span class="ident">btree_set::BTreeSet</span>};
 <span class="kw">use</span> <span class="ident">sp_std::prelude</span>::<span class="kw-2">*</span>;
-<span class="kw">use</span> <span class="ident">sp_std</span>::{<span class="ident">hash::Hash</span>, <span class="ident">str::FromStr</span>, <span class="ident">vec::Vec</span>};
-
-<span class="doccomment">/// Minimal Substrate-based chain representation that may be used from no_std environment.</span>
-<span class="kw">pub</span> <span class="kw">trait</span> <span class="ident">Chain</span>: <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span> {
-    <span class="doccomment">/// A type that fulfills the abstract idea of what a Substrate block number is.</span>
-    <span class="comment">// Constraits come from the associated Number type of `sp_runtime::traits::Header`</span>
-    <span class="comment">// See here for more info:</span>
-    <span class="comment">// https://crates.parity.io/sp_runtime/traits/trait.Header.html#associatedtype.Number</span>
-    <span class="comment">//</span>
-    <span class="comment">// Note that the `AsPrimitive&lt;usize&gt;` trait is required by the GRANDPA justification</span>
-    <span class="comment">// verifier, and is not usually part of a Substrate Header&#39;s Number type.</span>
-    <span class="kw">type</span> <span class="ident">BlockNumber</span>: <span class="ident">Parameter</span>
-        <span class="op">+</span> <span class="ident">Member</span>
-        <span class="op">+</span> <span class="ident">MaybeSerializeDeserialize</span>
-        <span class="op">+</span> <span class="ident">Hash</span>
-        <span class="op">+</span> <span class="ident">Copy</span>
-        <span class="op">+</span> <span class="ident">Default</span>
-        <span class="op">+</span> <span class="ident">MaybeDisplay</span>
-        <span class="op">+</span> <span class="ident">AtLeast32BitUnsigned</span>
-        <span class="op">+</span> <span class="ident">FromStr</span>
-        <span class="op">+</span> <span class="ident">MaybeMallocSizeOf</span>
-        <span class="op">+</span> <span class="ident">AsPrimitive</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">Default</span>
-        <span class="op">+</span> <span class="ident">Saturating</span>
-        <span class="comment">// original `sp_runtime::traits::Header::BlockNumber` doesn&#39;t have this trait, but</span>
-        <span class="comment">// `sp_runtime::generic::Era` requires block number -&gt; `u64` conversion.</span>
-        <span class="op">+</span> <span class="ident">Into</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span>;
-
-    <span class="doccomment">/// A type that fulfills the abstract idea of what a Substrate hash is.</span>
-    <span class="comment">// Constraits come from the associated Hash type of `sp_runtime::traits::Header`</span>
-    <span class="comment">// See here for more info:</span>
-    <span class="comment">// https://crates.parity.io/sp_runtime/traits/trait.Header.html#associatedtype.Hash</span>
-    <span class="kw">type</span> <span class="ident">Hash</span>: <span class="ident">Parameter</span>
-        <span class="op">+</span> <span class="ident">Member</span>
-        <span class="op">+</span> <span class="ident">MaybeSerializeDeserialize</span>
-        <span class="op">+</span> <span class="ident">Hash</span>
-        <span class="op">+</span> <span class="ident">Ord</span>
-        <span class="op">+</span> <span class="ident">Copy</span>
-        <span class="op">+</span> <span class="ident">MaybeDisplay</span>
-        <span class="op">+</span> <span class="ident">Default</span>
-        <span class="op">+</span> <span class="ident">SimpleBitOps</span>
-        <span class="op">+</span> <span class="ident">AsRef</span><span class="op">&lt;</span>[<span class="ident">u8</span>]<span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">AsMut</span><span class="op">&lt;</span>[<span class="ident">u8</span>]<span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">MaybeMallocSizeOf</span>;
-
-    <span class="doccomment">/// A type that fulfills the abstract idea of what a Substrate hasher (a type</span>
-    <span class="doccomment">/// that produces hashes) is.</span>
-    <span class="comment">// Constraits come from the associated Hashing type of `sp_runtime::traits::Header`</span>
-    <span class="comment">// See here for more info:</span>
-    <span class="comment">// https://crates.parity.io/sp_runtime/traits/trait.Header.html#associatedtype.Hashing</span>
-    <span class="kw">type</span> <span class="ident">Hasher</span>: <span class="ident">HashT</span><span class="op">&lt;</span><span class="ident">Output</span> <span class="op">=</span> <span class="ident"><span class="self">Self</span>::Hash</span><span class="op">&gt;</span>;
-
-    <span class="doccomment">/// A type that fulfills the abstract idea of what a Substrate header is.</span>
-    <span class="comment">// See here for more info:</span>
-    <span class="comment">// https://crates.parity.io/sp_runtime/traits/trait.Header.html</span>
-    <span class="kw">type</span> <span class="ident">Header</span>: <span class="ident">Parameter</span>
-        <span class="op">+</span> <span class="ident">HeaderT</span><span class="op">&lt;</span><span class="ident">Number</span> <span class="op">=</span> <span class="ident"><span class="self">Self</span>::BlockNumber</span>, <span class="ident">Hash</span> <span class="op">=</span> <span class="ident"><span class="self">Self</span>::Hash</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">MaybeSerializeDeserialize</span>;
-
-    <span class="doccomment">/// Signature type, used on this chain.</span>
-    <span class="kw">type</span> <span class="ident">Signature</span>: <span class="ident">Parameter</span> <span class="op">+</span> <span class="ident">Verify</span>;
-}
+<span class="kw">use</span> <span class="ident">sp_std::vec::Vec</span>;
 
 <span class="doccomment">/// A GRANDPA Justification is a proof that a given header was finalized</span>
 <span class="doccomment">/// at a certain height and with a certain set of authorities.</span>
 <span class="doccomment">///</span>
 <span class="doccomment">/// This particular proof is used to prove that headers on a bridged chain</span>
 <span class="doccomment">/// (so not our chain) have been finalized correctly.</span>
-<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Encode</span>, <span class="ident">Decode</span>, <span class="ident">RuntimeDebug</span>, <span class="ident">Clone</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>, <span class="ident">TypeInfo</span>)]</span>
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Encode</span>, <span class="ident">Decode</span>, <span class="ident">Clone</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>, <span class="ident">TypeInfo</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">GrandpaJustification</span><span class="op">&lt;</span><span class="ident">Header</span>: <span class="ident">HeaderT</span><span class="op">&gt;</span> {
     <span class="doccomment">/// The round (voting period) this justification is valid for.</span>
     <span class="kw">pub</span> <span class="ident">round</span>: <span class="ident">u64</span>,
@@ -476,10 +385,12 @@
     <span class="ident">TooLowCumulativeWeight</span>,
     <span class="doccomment">/// The justification contains extra (unused) headers in its `votes_ancestries` field.</span>
     <span class="ident">ExtraHeadersInVotesAncestries</span>,
+    <span class="doccomment">/// Arithematic overflow</span>
+    <span class="ident">ArithematicOverflow</span>,
 }
 
 <span class="doccomment">/// Verify that justification, that is generated by given authority set, finalizes given header.</span>
-<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">verify_justification</span><span class="op">&lt;</span><span class="ident">Header</span>: <span class="ident">HeaderT</span><span class="op">&gt;</span>(
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">verify_justification</span><span class="op">&lt;</span><span class="ident">Header</span>: <span class="ident">HeaderT</span><span class="op">&gt;</span>(
     <span class="ident">finalized_target</span>: (<span class="ident">Header::Hash</span>, <span class="ident">Header::Number</span>),
     <span class="ident">authorities_set_id</span>: <span class="ident">SetId</span>,
     <span class="ident">authorities_set</span>: <span class="kw-2">&amp;</span><span class="ident">VoterSet</span><span class="op">&lt;</span><span class="ident">AuthorityId</span><span class="op">&gt;</span>,
@@ -538,14 +449,9 @@
         <span class="comment">// there&#39;s a lot of code in the `VoteGraph::insert` method inside `finality-grandpa` crate,</span>
         <span class="comment">// but in the end it is only used to find GHOST, which we don&#39;t care about. The only thing</span>
         <span class="comment">// that we care about is that the justification target has enough weight</span>
-        <span class="ident">cumulative_weight</span> <span class="op">=</span> <span class="ident">cumulative_weight</span>.<span class="ident">checked_add</span>(<span class="ident">authority_info</span>.<span class="ident">weight</span>().<span class="number">0</span>.<span class="ident">into</span>()).<span class="ident">expect</span>(
-            <span class="string">&quot;sum of weights of ALL authorities is expected not to overflow - this is guaranteed by\
-				existence of VoterSet;\
-				the order of loop conditions guarantees that we can account vote from same authority\
-				multiple times;\
-				thus we&#39;ll never overflow the u64::MAX;\
-				qed&quot;</span>,
-        );
+        <span class="ident">cumulative_weight</span> <span class="op">=</span> <span class="ident">cumulative_weight</span>
+            .<span class="ident">checked_add</span>(<span class="ident">authority_info</span>.<span class="ident">weight</span>().<span class="number">0</span>.<span class="ident">into</span>())
+            .<span class="ident">ok_or</span>(<span class="ident">Error::ArithematicOverflow</span>)<span class="question-mark">?</span>;
         <span class="comment">// verify authority signature</span>
         <span class="kw">if</span> <span class="op">!</span><span class="ident">sp_finality_grandpa::check_message_signature_with_buffer</span>(
             <span class="kw-2">&amp;</span><span class="ident">finality_grandpa::Message::Precommit</span>(<span class="ident">signed</span>.<span class="ident">precommit</span>.<span class="ident">clone</span>()),
@@ -572,6 +478,46 @@
     } <span class="kw">else</span> {
         <span class="prelude-val">Err</span>(<span class="ident">Error::TooLowCumulativeWeight</span>)
     }
+}
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">find_scheduled_change</span><span class="op">&lt;</span><span class="ident">H</span>: <span class="ident">HeaderT</span><span class="op">&gt;</span>(
+    <span class="ident">header</span>: <span class="kw-2">&amp;</span><span class="ident">H</span>,
+) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">sp_finality_grandpa::ScheduledChange</span><span class="op">&lt;</span><span class="ident">H::Number</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+    <span class="kw">use</span> <span class="ident">sp_runtime::generic::OpaqueDigestItemId</span>;
+
+    <span class="kw">let</span> <span class="ident">id</span> <span class="op">=</span> <span class="ident">OpaqueDigestItemId::Consensus</span>(<span class="kw-2">&amp;</span><span class="ident">GRANDPA_ENGINE_ID</span>);
+
+    <span class="kw">let</span> <span class="ident">filter_log</span> <span class="op">=</span> <span class="op">|</span><span class="ident">log</span>: <span class="ident">ConsensusLog</span><span class="op">&lt;</span><span class="ident">H::Number</span><span class="op">&gt;</span><span class="op">|</span> <span class="kw">match</span> <span class="ident">log</span> {
+        <span class="ident">ConsensusLog::ScheduledChange</span>(<span class="ident">change</span>) =&gt; <span class="prelude-val">Some</span>(<span class="ident">change</span>),
+        <span class="kw">_</span> =&gt; <span class="prelude-val">None</span>,
+    };
+
+    <span class="comment">// find the first consensus digest with the right ID which converts to</span>
+    <span class="comment">// the right kind of consensus log.</span>
+    <span class="ident">header</span>
+        .<span class="ident">digest</span>()
+        .<span class="ident">convert_first</span>(<span class="op">|</span><span class="ident">l</span><span class="op">|</span> <span class="ident">l</span>.<span class="ident">try_to</span>(<span class="ident">id</span>).<span class="ident">and_then</span>(<span class="ident">filter_log</span>))
+}
+
+<span class="doccomment">/// Checks the given header for a consensus digest signaling a **forced** scheduled change and</span>
+<span class="doccomment">/// extracts it.</span>
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">find_forced_change</span><span class="op">&lt;</span><span class="ident">H</span>: <span class="ident">HeaderT</span><span class="op">&gt;</span>(
+    <span class="ident">header</span>: <span class="kw-2">&amp;</span><span class="ident">H</span>,
+) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span>(<span class="ident">H::Number</span>, <span class="ident">sp_finality_grandpa::ScheduledChange</span><span class="op">&lt;</span><span class="ident">H::Number</span><span class="op">&gt;</span>)<span class="op">&gt;</span> {
+    <span class="kw">use</span> <span class="ident">sp_runtime::generic::OpaqueDigestItemId</span>;
+
+    <span class="kw">let</span> <span class="ident">id</span> <span class="op">=</span> <span class="ident">OpaqueDigestItemId::Consensus</span>(<span class="kw-2">&amp;</span><span class="ident">GRANDPA_ENGINE_ID</span>);
+
+    <span class="kw">let</span> <span class="ident">filter_log</span> <span class="op">=</span> <span class="op">|</span><span class="ident">log</span>: <span class="ident">ConsensusLog</span><span class="op">&lt;</span><span class="ident">H::Number</span><span class="op">&gt;</span><span class="op">|</span> <span class="kw">match</span> <span class="ident">log</span> {
+        <span class="ident">ConsensusLog::ForcedChange</span>(<span class="ident">delay</span>, <span class="ident">change</span>) =&gt; <span class="prelude-val">Some</span>((<span class="ident">delay</span>, <span class="ident">change</span>)),
+        <span class="kw">_</span> =&gt; <span class="prelude-val">None</span>,
+    };
+
+    <span class="comment">// find the first consensus digest with the right ID which converts to</span>
+    <span class="comment">// the right kind of consensus log.</span>
+    <span class="ident">header</span>
+        .<span class="ident">digest</span>()
+        .<span class="ident">convert_first</span>(<span class="op">|</span><span class="ident">l</span><span class="op">|</span> <span class="ident">l</span>.<span class="ident">try_to</span>(<span class="ident">id</span>).<span class="ident">and_then</span>(<span class="ident">filter_log</span>))
 }
 </code></pre></div>
 </section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../" data-current-crate="pallet_grandpa_finality_verifier" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (c5c610aad 2022-02-14)" ></div>
