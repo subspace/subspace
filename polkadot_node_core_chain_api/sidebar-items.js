@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["ChainApiSubsystem","The Chain API Subsystem implementation."]]});
+initSidebarItems({"struct":[["ChainApiSubsystem","The Chain API Subsystem implementation."],["Metrics","Chain API metrics."]]});

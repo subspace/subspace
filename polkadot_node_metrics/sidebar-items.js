@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["metrics","This module reexports Prometheus types and defines the [`Metrics`] trait."],["metronome","Cyclic metric collection support."]]});
