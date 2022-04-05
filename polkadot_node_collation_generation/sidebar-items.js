@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["CollationGenerationSubsystem","Collation Generation Subsystem"]]});
+initSidebarItems({"fn":[["request_execution_wasm_bundle","Rquest `ExecutionWasmBundle` from the runtime"],["request_extract_bundles","Request `ExtractBundles` from the runtime"],["request_extrinsics_shuffling_seed","Request `ExtrinsicsShufflingSeed \"` from the runtime"]],"struct":[["CollationGenerationSubsystem","Collation Generation Subsystem"]]});

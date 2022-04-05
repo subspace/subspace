@@ -505,6 +505,55 @@
 <span id="500">500</span>
 <span id="501">501</span>
 <span id="502">502</span>
+<span id="503">503</span>
+<span id="504">504</span>
+<span id="505">505</span>
+<span id="506">506</span>
+<span id="507">507</span>
+<span id="508">508</span>
+<span id="509">509</span>
+<span id="510">510</span>
+<span id="511">511</span>
+<span id="512">512</span>
+<span id="513">513</span>
+<span id="514">514</span>
+<span id="515">515</span>
+<span id="516">516</span>
+<span id="517">517</span>
+<span id="518">518</span>
+<span id="519">519</span>
+<span id="520">520</span>
+<span id="521">521</span>
+<span id="522">522</span>
+<span id="523">523</span>
+<span id="524">524</span>
+<span id="525">525</span>
+<span id="526">526</span>
+<span id="527">527</span>
+<span id="528">528</span>
+<span id="529">529</span>
+<span id="530">530</span>
+<span id="531">531</span>
+<span id="532">532</span>
+<span id="533">533</span>
+<span id="534">534</span>
+<span id="535">535</span>
+<span id="536">536</span>
+<span id="537">537</span>
+<span id="538">538</span>
+<span id="539">539</span>
+<span id="540">540</span>
+<span id="541">541</span>
+<span id="542">542</span>
+<span id="543">543</span>
+<span id="544">544</span>
+<span id="545">545</span>
+<span id="546">546</span>
+<span id="547">547</span>
+<span id="548">548</span>
+<span id="549">549</span>
+<span id="550">550</span>
+<span id="551">551</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2020 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Polkadot.</span>
 
@@ -536,24 +585,73 @@
 <span class="kw">use</span> <span class="ident">polkadot_node_subsystem</span>::{
 	<span class="ident">messages</span>::{
 		<span class="ident">AllMessages</span>, <span class="ident">ChainApiMessage</span>, <span class="ident">CollationGenerationMessage</span>, <span class="ident">RuntimeApiMessage</span>,
-		<span class="ident">RuntimeApiRequest</span>,
+		<span class="ident">RuntimeApiRequest</span>, <span class="ident">RuntimeApiSender</span>,
 	},
-	<span class="ident">overseer</span>, <span class="ident">ActiveLeavesUpdate</span>, <span class="ident">FromOverseer</span>, <span class="ident">OverseerSignal</span>, <span class="ident">SpawnedSubsystem</span>, <span class="ident">SubsystemContext</span>,
-	<span class="ident">SubsystemError</span>, <span class="ident">SubsystemResult</span>,
+	<span class="ident">overseer</span>, <span class="ident">ActiveLeavesUpdate</span>, <span class="ident">FromOverseer</span>, <span class="ident">OverseerSignal</span>, <span class="ident">RuntimeApiError</span>, <span class="ident">SpawnedSubsystem</span>,
+	<span class="ident">SubsystemContext</span>, <span class="ident">SubsystemError</span>, <span class="ident">SubsystemResult</span>, <span class="ident">SubsystemSender</span>,
 };
-<span class="kw">use</span> <span class="ident">polkadot_node_subsystem_util</span>::{
-	<span class="ident">request_execution_wasm_bundle</span>, <span class="ident">request_extract_bundles</span>, <span class="ident">request_extrinsics_shuffling_seed</span>,
-};
-<span class="kw">use</span> <span class="ident">sp_runtime::generic::DigestItem</span>;
-<span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
+<span class="kw">use</span> <span class="ident">sp_executor::OpaqueBundle</span>;
+<span class="kw">use</span> <span class="ident">sp_runtime</span>::{<span class="ident">generic::DigestItem</span>, <span class="ident">OpaqueExtrinsic</span>};
+<span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">borrow::Cow</span>, <span class="ident">sync::Arc</span>};
 
 <span class="kw">use</span> <span class="ident">cirrus_node_primitives</span>::{<span class="ident">CollationGenerationConfig</span>, <span class="ident">ExecutorSlotInfo</span>};
 <span class="kw">use</span> <span class="ident">sp_executor</span>::{<span class="ident">BundleEquivocationProof</span>, <span class="ident">FraudProof</span>, <span class="ident">InvalidTransactionProof</span>};
-<span class="kw">use</span> <span class="ident">subspace_runtime_primitives::Hash</span>;
+<span class="kw">use</span> <span class="ident">subspace_core_primitives::Randomness</span>;
+<span class="kw">use</span> <span class="ident">subspace_runtime_primitives</span>::{<span class="ident">opaque::Header</span>, <span class="ident">Hash</span>};
 
 <span class="kw">mod</span> <span class="ident">error</span>;
 
 <span class="kw">const</span> <span class="ident">LOG_TARGET</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span> <span class="op">=</span> <span class="string">&quot;parachain::collation-generation&quot;</span>;
+
+<span class="doccomment">/// A type alias for Runtime API receivers.</span>
+<span class="kw">type</span> <span class="ident">RuntimeApiReceiver</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">oneshot::Receiver</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">T</span>, <span class="ident">RuntimeApiError</span><span class="op">&gt;</span><span class="op">&gt;</span>;
+
+<span class="doccomment">/// Request some data from the `RuntimeApi`.</span>
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">request_from_runtime</span><span class="op">&lt;</span><span class="ident">RequestBuilder</span>, <span class="ident">Response</span>, <span class="ident">Sender</span><span class="op">&gt;</span>(
+	<span class="ident">parent</span>: <span class="ident">Hash</span>,
+	<span class="ident">sender</span>: <span class="kw-2">&amp;mut</span> <span class="ident">Sender</span>,
+	<span class="ident">request_builder</span>: <span class="ident">RequestBuilder</span>,
+) -&gt; <span class="ident">RuntimeApiReceiver</span><span class="op">&lt;</span><span class="ident">Response</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+	<span class="ident">RequestBuilder</span>: <span class="ident">FnOnce</span>(<span class="ident">RuntimeApiSender</span><span class="op">&lt;</span><span class="ident">Response</span><span class="op">&gt;</span>) -&gt; <span class="ident">RuntimeApiRequest</span>,
+	<span class="ident">Sender</span>: <span class="ident">SubsystemSender</span>,
+{
+	<span class="kw">let</span> (<span class="ident">tx</span>, <span class="ident">rx</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
+
+	<span class="ident">sender</span>
+		.<span class="ident">send_message</span>(<span class="ident">RuntimeApiMessage::Request</span>(<span class="ident">parent</span>, <span class="ident">request_builder</span>(<span class="ident">tx</span>)).<span class="ident">into</span>())
+		.<span class="kw">await</span>;
+
+	<span class="ident">rx</span>
+}
+
+<span class="doccomment">/// Request `ExtractBundles` from the runtime</span>
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">request_extract_bundles</span>(
+	<span class="ident">parent</span>: <span class="ident">Hash</span>,
+	<span class="ident">extrinsics</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">OpaqueExtrinsic</span><span class="op">&gt;</span>,
+	<span class="ident">sender</span>: <span class="kw-2">&amp;mut</span> <span class="kw">impl</span> <span class="ident">SubsystemSender</span>,
+) -&gt; <span class="ident">RuntimeApiReceiver</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">OpaqueBundle</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+	<span class="ident">request_from_runtime</span>(<span class="ident">parent</span>, <span class="ident">sender</span>, <span class="op">|</span><span class="ident">tx</span><span class="op">|</span> <span class="ident">RuntimeApiRequest::ExtractBundles</span>(<span class="ident">extrinsics</span>, <span class="ident">tx</span>))
+		.<span class="kw">await</span>
+}
+<span class="doccomment">/// Request `ExtrinsicsShufflingSeed &quot;` from the runtime</span>
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">request_extrinsics_shuffling_seed</span>(
+	<span class="ident">parent</span>: <span class="ident">Hash</span>,
+	<span class="ident">header</span>: <span class="ident">Header</span>,
+	<span class="ident">sender</span>: <span class="kw-2">&amp;mut</span> <span class="kw">impl</span> <span class="ident">SubsystemSender</span>,
+) -&gt; <span class="ident">RuntimeApiReceiver</span><span class="op">&lt;</span><span class="ident">Randomness</span><span class="op">&gt;</span> {
+	<span class="ident">request_from_runtime</span>(<span class="ident">parent</span>, <span class="ident">sender</span>, <span class="op">|</span><span class="ident">tx</span><span class="op">|</span> {
+		<span class="ident">RuntimeApiRequest::ExtrinsicsShufflingSeed</span>(<span class="ident">header</span>, <span class="ident">tx</span>)
+	})
+	.<span class="kw">await</span>
+}
+<span class="doccomment">/// Rquest `ExecutionWasmBundle` from the runtime</span>
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">request_execution_wasm_bundle</span>(
+	<span class="ident">parent</span>: <span class="ident">Hash</span>,
+	<span class="ident">sender</span>: <span class="kw-2">&amp;mut</span> <span class="kw">impl</span> <span class="ident">SubsystemSender</span>,
+) -&gt; <span class="ident">RuntimeApiReceiver</span><span class="op">&lt;</span><span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span><span class="op">&gt;</span> {
+	<span class="ident">request_from_runtime</span>(<span class="ident">parent</span>, <span class="ident">sender</span>, <span class="ident">RuntimeApiRequest::ExecutionWasmBundle</span>).<span class="kw">await</span>
+}
 
 <span class="doccomment">/// Collation Generation Subsystem</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">CollationGenerationSubsystem</span> {
