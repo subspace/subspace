@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["MultiFarming","Abstraction around having multiple plots, farmings and plottings"]]});
