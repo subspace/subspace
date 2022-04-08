@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["CollationGenerationMessage","Message to the Collation Generation subsystem."]]});

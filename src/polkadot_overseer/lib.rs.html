@@ -460,14 +460,6 @@
 <span id="455">455</span>
 <span id="456">456</span>
 <span id="457">457</span>
-<span id="458">458</span>
-<span id="459">459</span>
-<span id="460">460</span>
-<span id="461">461</span>
-<span id="462">462</span>
-<span id="463">463</span>
-<span id="464">464</span>
-<span id="465">465</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2020 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Polkadot.</span>
 
@@ -484,114 +476,162 @@
 <span class="comment">// You should have received a copy of the GNU General Public License</span>
 <span class="comment">// along with Polkadot.  If not, see &lt;http://www.gnu.org/licenses/&gt;.</span>
 
-<span class="doccomment">//! # Overseer</span>
-<span class="doccomment">//!</span>
-<span class="doccomment">//! `overseer` implements the Overseer architecture described in the</span>
-<span class="doccomment">//! [implementers-guide](https://w3f.github.io/parachain-implementers-guide/node/index.html).</span>
-<span class="doccomment">//! For the motivations behind implementing the overseer itself you should</span>
-<span class="doccomment">//! check out that guide, documentation in this crate will be mostly discussing</span>
-<span class="doccomment">//! technical stuff.</span>
-<span class="doccomment">//!</span>
-<span class="doccomment">//! An `Overseer` is something that allows spawning/stopping and overseeing</span>
-<span class="doccomment">//! asynchronous tasks as well as establishing a well-defined and easy to use</span>
-<span class="doccomment">//! protocol that the tasks can use to communicate with each other. It is desired</span>
-<span class="doccomment">//! that this protocol is the only way tasks communicate with each other, however</span>
-<span class="doccomment">//! at this moment there are no foolproof guards against other ways of communication.</span>
-<span class="doccomment">//!</span>
-<span class="doccomment">//! The `Overseer` is instantiated with a pre-defined set of `Subsystems` that</span>
-<span class="doccomment">//! share the same behavior from `Overseer`&#39;s point of view.</span>
-<span class="doccomment">//!</span>
-<span class="doccomment">//! ```text</span>
-<span class="doccomment">//!                              +-----------------------------+</span>
-<span class="doccomment">//!                              |         Overseer            |</span>
-<span class="doccomment">//!                              +-----------------------------+</span>
-<span class="doccomment">//!</span>
-<span class="doccomment">//!             ................|  Overseer &quot;holds&quot; these and uses |..............</span>
-<span class="doccomment">//!             .                  them to (re)start things                      .</span>
-<span class="doccomment">//!             .                                                                .</span>
-<span class="doccomment">//!             .  +-------------------+                +---------------------+  .</span>
-<span class="doccomment">//!             .  |   Subsystem1      |                |   Subsystem2        |  .</span>
-<span class="doccomment">//!             .  +-------------------+                +---------------------+  .</span>
-<span class="doccomment">//!             .           |                                       |            .</span>
-<span class="doccomment">//!             ..................................................................</span>
-<span class="doccomment">//!                         |                                       |</span>
-<span class="doccomment">//!                       start()                                 start()</span>
-<span class="doccomment">//!                         V                                       V</span>
-<span class="doccomment">//!             ..................| Overseer &quot;runs&quot; these |.......................</span>
-<span class="doccomment">//!             .  +--------------------+               +---------------------+  .</span>
-<span class="doccomment">//!             .  | SubsystemInstance1 |               | SubsystemInstance2  |  .</span>
-<span class="doccomment">//!             .  +--------------------+               +---------------------+  .</span>
-<span class="doccomment">//!             ..................................................................</span>
-<span class="doccomment">//! ```</span>
-
-<span class="comment">// unused dependencies can not work for test and examples at the same time</span>
-<span class="comment">// yielding false positives</span>
+<span class="doccomment">//! TODO</span>
 <span class="attribute">#![<span class="ident">warn</span>(<span class="ident">missing_docs</span>)]</span>
-<span class="attribute">#![<span class="ident">allow</span>(<span class="ident">clippy::all</span>)]</span>
 
 <span class="kw">use</span> <span class="ident">std</span>::{
-	<span class="ident">collections</span>::{<span class="ident">hash_map</span>, <span class="ident">HashMap</span>},
+	<span class="ident">collections</span>::{<span class="ident">hash_map::Entry</span>, <span class="ident">HashMap</span>},
 	<span class="ident">fmt::Debug</span>,
-	<span class="ident">pin::Pin</span>,
 	<span class="ident">sync::Arc</span>,
-	<span class="ident">time::Duration</span>,
 };
 
-<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future::BoxFuture</span>, <span class="ident">select</span>, <span class="ident">stream::FusedStream</span>, <span class="ident">Future</span>, <span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
-<span class="kw">use</span> <span class="ident">lru::LruCache</span>;
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">channel::mpsc</span>, <span class="ident">select</span>, <span class="ident">stream::FusedStream</span>, <span class="ident">SinkExt</span>, <span class="ident">StreamExt</span>};
 
-<span class="kw">use</span> <span class="ident">client</span>::{<span class="ident">BlockImportNotification</span>, <span class="ident">BlockchainEvents</span>, <span class="ident">FinalityNotification</span>};
+<span class="kw">use</span> <span class="ident">sc_client_api</span>::{<span class="ident">BlockBackend</span>, <span class="ident">BlockImportNotification</span>, <span class="ident">BlockchainEvents</span>};
+<span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiError</span>, <span class="ident">ProvideRuntimeApi</span>};
+<span class="kw">use</span> <span class="ident">sp_blockchain::HeaderBackend</span>;
+<span class="kw">use</span> <span class="ident">sp_runtime::generic::DigestItem</span>;
 
-<span class="kw">use</span> <span class="ident">polkadot_node_subsystem_types::messages::CollationGenerationMessage</span>;
-<span class="kw">pub</span> <span class="kw">use</span> <span class="ident">polkadot_node_subsystem_types</span>::{
-	<span class="ident">errors</span>::{<span class="ident">SubsystemError</span>, <span class="ident">SubsystemResult</span>},
-	<span class="ident">ActivatedLeaf</span>, <span class="ident">ActiveLeavesUpdate</span>, <span class="ident">LeafStatus</span>, <span class="ident">OverseerSignal</span>,
+<span class="kw">use</span> <span class="ident">cirrus_node_primitives</span>::{<span class="ident">CollationGenerationConfig</span>, <span class="ident">ExecutorSlotInfo</span>};
+<span class="kw">use</span> <span class="ident">sp_executor</span>::{<span class="ident">BundleEquivocationProof</span>, <span class="ident">ExecutorApi</span>, <span class="ident">FraudProof</span>, <span class="ident">InvalidTransactionProof</span>};
+<span class="kw">use</span> <span class="ident">subspace_runtime_primitives</span>::{
+	<span class="ident">opaque</span>::{<span class="ident">Block</span>, <span class="ident">BlockId</span>},
+	<span class="ident">BlockNumber</span>, <span class="ident">Hash</span>,
 };
 
-<span class="kw">use</span> <span class="ident">cirrus_node_primitives::ExecutorSlotInfo</span>;
-<span class="kw">use</span> <span class="ident">subspace_runtime_primitives</span>::{<span class="ident">opaque::Block</span>, <span class="ident">BlockNumber</span>, <span class="ident">Hash</span>};
+<span class="doccomment">/// Message to the Collation Generation subsystem.</span>
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
+<span class="kw">enum</span> <span class="ident">CollationGenerationMessage</span> {
+	<span class="doccomment">/// Initialize the collation generation subsystem</span>
+	<span class="ident">Initialize</span>(<span class="ident">CollationGenerationConfig</span>),
+	<span class="doccomment">/// Fraud proof needs to be submitted to primary chain.</span>
+	<span class="ident">FraudProof</span>(<span class="ident">FraudProof</span>),
+	<span class="doccomment">/// Bundle equivocation proof needs to be submitted to primary chain.</span>
+	<span class="ident">BundleEquivocationProof</span>(<span class="ident">BundleEquivocationProof</span>),
+	<span class="doccomment">/// Invalid transaction proof needs to be submitted to primary chain.</span>
+	<span class="ident">InvalidTransactionProof</span>(<span class="ident">InvalidTransactionProof</span>),
+}
 
-<span class="kw">pub</span> <span class="kw">use</span> <span class="ident">polkadot_overseer_gen</span> <span class="kw">as</span> <span class="ident">gen</span>;
-<span class="kw">pub</span> <span class="kw">use</span> <span class="ident">polkadot_overseer_gen</span>::{
-	<span class="ident">overlord</span>, <span class="ident">FromOverseer</span>, <span class="ident">MapSubsystem</span>, <span class="ident">MessagePacket</span>, <span class="ident">SignalsReceived</span>, <span class="ident">SpawnNamed</span>, <span class="ident">Subsystem</span>,
-	<span class="ident">SubsystemContext</span>, <span class="ident">SubsystemIncomingMessages</span>, <span class="ident">SubsystemInstance</span>, <span class="ident">SubsystemMeterReadouts</span>,
-	<span class="ident">SubsystemMeters</span>, <span class="ident">SubsystemSender</span>, <span class="ident">TimeoutExt</span>, <span class="ident">ToOverseer</span>,
-};
+<span class="kw">const</span> <span class="ident">LOG_TARGET</span>: <span class="kw-2">&amp;</span><span class="ident">str</span> <span class="op">=</span> <span class="string">&quot;overseer&quot;</span>;
 
-<span class="doccomment">/// Store 2 days worth of blocks, not accounting for forks,</span>
-<span class="doccomment">/// in the LRU cache. Assumes a 6-second block time.</span>
-<span class="kw">pub</span> <span class="kw">const</span> <span class="ident">KNOWN_LEAVES_CACHE_SIZE</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">2</span> <span class="op">*</span> <span class="number">24</span> <span class="op">*</span> <span class="number">3600</span> <span class="op">/</span> <span class="number">6</span>;
+<span class="doccomment">/// Apply the transaction bundles for given primary block as follows:</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// 1. Extract the transaction bundles from the block.</span>
+<span class="doccomment">/// 2. Pass the bundles to secondary node and do the computation there.</span>
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">process_primary_block</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>(
+	<span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
+	<span class="ident">config</span>: <span class="kw-2">&amp;</span><span class="ident">CollationGenerationConfig</span>,
+	<span class="ident">block_hash</span>: <span class="ident">Hash</span>,
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+	<span class="ident">Client</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">Send</span>
+		<span class="op">+</span> <span class="lifetime">&#39;static</span>
+		<span class="op">+</span> <span class="ident">Sync</span>,
+	<span class="ident">Client::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
+{
+	<span class="kw">let</span> <span class="ident">block_id</span> <span class="op">=</span> <span class="ident">BlockId::Hash</span>(<span class="ident">block_hash</span>);
+	<span class="kw">let</span> <span class="ident">extrinsics</span> <span class="op">=</span> <span class="kw">match</span> <span class="ident">client</span>.<span class="ident">block_body</span>(<span class="kw-2">&amp;</span><span class="ident">block_id</span>) {
+		<span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
+			<span class="macro">tracing::error!</span>(
+				<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+				<span class="question-mark">?</span><span class="ident">err</span>,
+				<span class="string">&quot;Failed to get block body from primary chain&quot;</span>
+			);
+			<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+		},
+		<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+			<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="question-mark">?</span><span class="ident">block_hash</span>, <span class="string">&quot;BlockBody unavailable&quot;</span>);
+			<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+		},
+		<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">body</span>)) =&gt; <span class="ident">body</span>,
+	};
+
+	<span class="kw">let</span> <span class="ident">bundles</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">runtime_api</span>().<span class="ident">extract_bundles</span>(<span class="kw-2">&amp;</span><span class="ident">block_id</span>, <span class="ident">extrinsics</span>)<span class="question-mark">?</span>;
+
+	<span class="kw">let</span> <span class="ident">header</span> <span class="op">=</span> <span class="kw">match</span> <span class="ident">client</span>.<span class="ident">header</span>(<span class="ident">block_id</span>) {
+		<span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
+			<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="question-mark">?</span><span class="ident">err</span>, <span class="string">&quot;Failed to get block from primary chain&quot;</span>);
+			<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+		},
+		<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+			<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="question-mark">?</span><span class="ident">block_hash</span>, <span class="string">&quot;BlockHeader unavailable&quot;</span>);
+			<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+		},
+		<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">header</span>)) =&gt; <span class="ident">header</span>,
+	};
+
+	<span class="kw">let</span> <span class="ident">maybe_new_runtime</span> <span class="op">=</span> <span class="kw">if</span> <span class="ident">header</span>
+		.<span class="ident">digest</span>
+		.<span class="ident">logs</span>
+		.<span class="ident">iter</span>()
+		.<span class="ident">any</span>(<span class="op">|</span><span class="ident">item</span><span class="op">|</span> <span class="kw-2">*</span><span class="ident">item</span> <span class="op">==</span> <span class="ident">DigestItem::RuntimeEnvironmentUpdated</span>)
+	{
+		<span class="prelude-val">Some</span>(<span class="ident">client</span>.<span class="ident">runtime_api</span>().<span class="ident">execution_wasm_bundle</span>(<span class="kw-2">&amp;</span><span class="ident">block_id</span>)<span class="question-mark">?</span>)
+	} <span class="kw">else</span> {
+		<span class="prelude-val">None</span>
+	};
+
+	<span class="kw">let</span> <span class="ident">shuffling_seed</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">runtime_api</span>().<span class="ident">extrinsics_shuffling_seed</span>(<span class="kw-2">&amp;</span><span class="ident">block_id</span>, <span class="ident">header</span>)<span class="question-mark">?</span>;
+
+	<span class="kw">let</span> <span class="ident">opaque_execution_receipt</span> <span class="op">=</span>
+		<span class="kw">match</span> (<span class="ident">config</span>.<span class="ident">processor</span>)(<span class="ident">block_hash</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span>).<span class="kw">await</span> {
+			<span class="prelude-val">Some</span>(<span class="ident">processor_result</span>) =&gt; <span class="ident">processor_result</span>.<span class="ident">to_opaque_execution_receipt</span>(),
+			<span class="prelude-val">None</span> =&gt; {
+				<span class="macro">tracing::debug!</span>(
+					<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+					<span class="string">&quot;Skip sending the execution receipt because executor is not elected&quot;</span>,
+				);
+				<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+			},
+		};
+
+	<span class="kw">let</span> <span class="ident">best_hash</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>;
+
+	<span class="comment">// TODO: Handle returned result?</span>
+	<span class="ident">client</span>
+		.<span class="ident">runtime_api</span>()
+		.<span class="ident">submit_execution_receipt_unsigned</span>(<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">best_hash</span>), <span class="ident">opaque_execution_receipt</span>)<span class="question-mark">?</span>;
+
+	<span class="prelude-val">Ok</span>(())
+}
+
+<span class="doccomment">/// Activated leaf.</span>
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Clone</span>)]</span>
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">ActivatedLeaf</span> {
+	<span class="doccomment">/// The block hash.</span>
+	<span class="kw">pub</span> <span class="ident">hash</span>: <span class="ident">Hash</span>,
+	<span class="doccomment">/// The block number.</span>
+	<span class="kw">pub</span> <span class="ident">number</span>: <span class="ident">BlockNumber</span>,
+}
 
 <span class="doccomment">/// A handle used to communicate with the [`Overseer`].</span>
 <span class="doccomment">///</span>
 <span class="doccomment">/// [`Overseer`]: struct.Overseer.html</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Clone</span>)]</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Handle</span>(<span class="ident">OverseerHandle</span>);
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Handle</span>(<span class="ident">mpsc::Sender</span><span class="op">&lt;</span><span class="ident">Event</span><span class="op">&gt;</span>);
 
 <span class="kw">impl</span> <span class="ident">Handle</span> {
 	<span class="doccomment">/// Create a new [`Handle`].</span>
-	<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">raw</span>: <span class="ident">OverseerHandle</span>) -&gt; <span class="self">Self</span> {
+	<span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">raw</span>: <span class="ident">mpsc::Sender</span><span class="op">&lt;</span><span class="ident">Event</span><span class="op">&gt;</span>) -&gt; <span class="self">Self</span> {
 		<span class="self">Self</span>(<span class="ident">raw</span>)
 	}
 
 	<span class="doccomment">/// Inform the `Overseer` that that some block was imported.</span>
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">block_imported</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">block</span>: <span class="ident">BlockInfo</span>) {
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">block_imported</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">block</span>: <span class="ident">BlockInfo</span>) {
 		<span class="self">self</span>.<span class="ident">send_and_log_error</span>(<span class="ident">Event::BlockImported</span>(<span class="ident">block</span>)).<span class="kw">await</span>
 	}
 
 	<span class="doccomment">/// Send some message to one of the `Subsystem`s.</span>
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">send_msg</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">msg</span>: <span class="kw">impl</span> <span class="ident">Into</span><span class="op">&lt;</span><span class="ident">AllMessages</span><span class="op">&gt;</span>, <span class="ident">origin</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>) {
-		<span class="self">self</span>.<span class="ident">send_and_log_error</span>(<span class="ident">Event::MsgToSubsystem</span> { <span class="ident">msg</span>: <span class="ident">msg</span>.<span class="ident">into</span>(), <span class="ident">origin</span> }).<span class="kw">await</span>
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">send_msg</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">msg</span>: <span class="ident">CollationGenerationMessage</span>) {
+		<span class="self">self</span>.<span class="ident">send_and_log_error</span>(<span class="ident">Event::MsgToSubsystem</span>(<span class="ident">msg</span>)).<span class="kw">await</span>
 	}
 
 	<span class="doccomment">/// Inform the `Overseer` that a new slot was triggered.</span>
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">slot_arrived</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">slot_info</span>: <span class="ident">ExecutorSlotInfo</span>) {
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">slot_arrived</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">slot_info</span>: <span class="ident">ExecutorSlotInfo</span>) {
 		<span class="self">self</span>.<span class="ident">send_and_log_error</span>(<span class="ident">Event::NewSlot</span>(<span class="ident">slot_info</span>)).<span class="kw">await</span>
-	}
-
-	<span class="doccomment">/// Tell `Overseer` to shutdown.</span>
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">stop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
-		<span class="self">self</span>.<span class="ident">send_and_log_error</span>(<span class="ident">Event::Stop</span>).<span class="kw">await</span>;
 	}
 
 	<span class="doccomment">/// Most basic operation, to stop a server.</span>
@@ -599,6 +639,38 @@
 		<span class="kw">if</span> <span class="self">self</span>.<span class="number">0</span>.<span class="ident">send</span>(<span class="ident">event</span>).<span class="kw">await</span>.<span class="ident">is_err</span>() {
 			<span class="macro">tracing::info!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="string">&quot;Failed to send an event to Overseer&quot;</span>);
 		}
+	}
+
+	<span class="doccomment">/// TODO</span>
+	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">initialize</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">config</span>: <span class="ident">CollationGenerationConfig</span>) {
+		<span class="self">self</span>.<span class="ident">send_msg</span>(<span class="ident">CollationGenerationMessage::Initialize</span>(<span class="ident">config</span>)).<span class="kw">await</span>;
+	}
+
+	<span class="doccomment">/// TODO</span>
+	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">submit_bundle_equivocation_proof</span>(
+		<span class="kw-2">&amp;mut</span> <span class="self">self</span>,
+		<span class="ident">bundle_equivocation_proof</span>: <span class="ident">BundleEquivocationProof</span>,
+	) {
+		<span class="self">self</span>.<span class="ident">send_msg</span>(<span class="ident">CollationGenerationMessage::BundleEquivocationProof</span>(
+			<span class="ident">bundle_equivocation_proof</span>,
+		))
+		.<span class="kw">await</span>
+	}
+
+	<span class="doccomment">/// TODO</span>
+	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">submit_fraud_proof</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">fraud_proof</span>: <span class="ident">FraudProof</span>) {
+		<span class="self">self</span>.<span class="ident">send_msg</span>(<span class="ident">CollationGenerationMessage::FraudProof</span>(<span class="ident">fraud_proof</span>)).<span class="kw">await</span>;
+	}
+
+	<span class="doccomment">/// TODO</span>
+	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">submit_invalid_transaction_proof</span>(
+		<span class="kw-2">&amp;mut</span> <span class="self">self</span>,
+		<span class="ident">invalid_transaction_proof</span>: <span class="ident">InvalidTransactionProof</span>,
+	) {
+		<span class="self">self</span>.<span class="ident">send_msg</span>(<span class="ident">CollationGenerationMessage::InvalidTransactionProof</span>(
+			<span class="ident">invalid_transaction_proof</span>,
+		))
+		.<span class="kw">await</span>;
 	}
 }
 
@@ -624,32 +696,19 @@
 	}
 }
 
-<span class="kw">impl</span> <span class="ident">From</span><span class="op">&lt;</span><span class="ident">FinalityNotification</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">BlockInfo</span> {
-	<span class="kw">fn</span> <span class="ident">from</span>(<span class="ident">n</span>: <span class="ident">FinalityNotification</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>) -&gt; <span class="self">Self</span> {
-		<span class="ident">BlockInfo</span> { <span class="ident">hash</span>: <span class="ident">n</span>.<span class="ident">hash</span>, <span class="ident">parent_hash</span>: <span class="ident">n</span>.<span class="ident">header</span>.<span class="ident">parent_hash</span>, <span class="ident">number</span>: <span class="ident">n</span>.<span class="ident">header</span>.<span class="ident">number</span> }
-	}
-}
-
 <span class="doccomment">/// An event from outside the overseer scope, such</span>
 <span class="doccomment">/// as the substrate framework or user interaction.</span>
-<span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">Event</span> {
+<span class="kw">enum</span> <span class="ident">Event</span> {
 	<span class="doccomment">/// A new block was imported.</span>
 	<span class="ident">BlockImported</span>(<span class="ident">BlockInfo</span>),
 	<span class="doccomment">/// A new slot arrived.</span>
 	<span class="ident">NewSlot</span>(<span class="ident">ExecutorSlotInfo</span>),
 	<span class="doccomment">/// Message as sent to a subsystem.</span>
-	<span class="ident">MsgToSubsystem</span> {
-		<span class="doccomment">/// The actual message.</span>
-		<span class="ident">msg</span>: <span class="ident">AllMessages</span>,
-		<span class="doccomment">/// The originating subsystem name.</span>
-		<span class="ident">origin</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>,
-	},
-	<span class="doccomment">/// Stop the overseer on i.e. a UNIX signal.</span>
-	<span class="ident">Stop</span>,
+	<span class="ident">MsgToSubsystem</span>(<span class="ident">CollationGenerationMessage</span>),
 }
 
 <span class="doccomment">/// Glues together the [`Overseer`] and `BlockchainEvents` by forwarding</span>
-<span class="doccomment">/// import and finality notifications into the [`OverseerHandle`].</span>
+<span class="doccomment">/// import and finality notifications to it.</span>
 <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">forward_events</span><span class="op">&lt;</span><span class="ident">P</span>: <span class="ident">BlockchainEvents</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span><span class="op">&gt;</span>(
 	<span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">P</span><span class="op">&gt;</span>,
 	<span class="kw-2">mut</span> <span class="ident">slots</span>: <span class="kw">impl</span> <span class="ident">FusedStream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">ExecutorSlotInfo</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Unpin</span>,
@@ -680,257 +739,182 @@
 	}
 }
 
-<span class="doccomment">/// Create a new instance of the [`Overseer`] with a fixed set of [`Subsystem`]s.</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// This returns the overseer along with an [`OverseerHandle`] which can</span>
-<span class="doccomment">/// be used to send messages from external parts of the codebase.</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// The [`OverseerHandle`] returned from this function is connected to</span>
-<span class="doccomment">/// the returned [`Overseer`].</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// ```text</span>
-<span class="doccomment">///                  +------------------------------------+</span>
-<span class="doccomment">///                  |            Overseer                |</span>
-<span class="doccomment">///                  +------------------------------------+</span>
-<span class="doccomment">///                    /            |             |      \</span>
-<span class="doccomment">///      ................. subsystems...................................</span>
-<span class="doccomment">///      . +-----------+    +-----------+   +----------+   +---------+ .</span>
-<span class="doccomment">///      . |           |    |           |   |          |   |         | .</span>
-<span class="doccomment">///      . +-----------+    +-----------+   +----------+   +---------+ .</span>
-<span class="doccomment">///      ...............................................................</span>
-<span class="doccomment">///                              |</span>
-<span class="doccomment">///                        probably `spawn`</span>
-<span class="doccomment">///                            a `job`</span>
-<span class="doccomment">///                              |</span>
-<span class="doccomment">///                              V</span>
-<span class="doccomment">///                         +-----------+</span>
-<span class="doccomment">///                         |           |</span>
-<span class="doccomment">///                         +-----------+</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// ```</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// [`Subsystem`]: trait.Subsystem.html</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// # Example</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// The [`Subsystems`] may be any type as long as they implement an expected interface.</span>
-<span class="doccomment">/// Here, we create a mock validation subsystem and a few dummy ones and start the `Overseer` with them.</span>
-<span class="doccomment">/// For the sake of simplicity the termination of the example is done with a timeout.</span>
-<span class="doccomment">/// ```</span>
-<span class="doccomment">/// # use std::time::Duration;</span>
-<span class="doccomment">/// # use futures::{executor, pin_mut, select, FutureExt};</span>
-<span class="doccomment">/// # use futures_timer::Delay;</span>
-<span class="doccomment">/// # use polkadot_primitives::v1::Hash;</span>
-<span class="doccomment">/// # use polkadot_overseer::{</span>
-<span class="doccomment">/// # 	self as overseer,</span>
-<span class="doccomment">/// #   OverseerSignal,</span>
-<span class="doccomment">/// # 	SubsystemSender as _,</span>
-<span class="doccomment">/// # 	AllMessages,</span>
-<span class="doccomment">/// # 	HeadSupportsParachains,</span>
-<span class="doccomment">/// # 	Overseer,</span>
-<span class="doccomment">/// # 	SubsystemError,</span>
-<span class="doccomment">/// # 	gen::{</span>
-<span class="doccomment">/// # 		SubsystemContext,</span>
-<span class="doccomment">/// # 		FromOverseer,</span>
-<span class="doccomment">/// # 		SpawnedSubsystem,</span>
-<span class="doccomment">/// # 	},</span>
-<span class="doccomment">/// # };</span>
-<span class="doccomment">/// # use polkadot_node_subsystem_types::messages::{</span>
-<span class="doccomment">/// # 	CandidateValidationMessage, CandidateBackingMessage,</span>
-<span class="doccomment">/// # 	NetworkBridgeMessage,</span>
-<span class="doccomment">/// # };</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// struct ValidationSubsystem;</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// impl&lt;Ctx&gt; overseer::Subsystem&lt;Ctx, SubsystemError&gt; for ValidationSubsystem</span>
-<span class="doccomment">/// where</span>
-<span class="doccomment">///     Ctx: overseer::SubsystemContext&lt;</span>
-<span class="doccomment">///				Message=CandidateValidationMessage,</span>
-<span class="doccomment">///				AllMessages=AllMessages,</span>
-<span class="doccomment">///				Signal=OverseerSignal,</span>
-<span class="doccomment">///				Error=SubsystemError,</span>
-<span class="doccomment">///			&gt;,</span>
-<span class="doccomment">/// {</span>
-<span class="doccomment">///     fn start(</span>
-<span class="doccomment">///         self,</span>
-<span class="doccomment">///         mut ctx: Ctx,</span>
-<span class="doccomment">///     ) -&gt; SpawnedSubsystem&lt;SubsystemError&gt; {</span>
-<span class="doccomment">///         SpawnedSubsystem {</span>
-<span class="doccomment">///             name: &quot;validation-subsystem&quot;,</span>
-<span class="doccomment">///             future: Box::pin(async move {</span>
-<span class="doccomment">///                 loop {</span>
-<span class="doccomment">///                     Delay::new(Duration::from_secs(1)).await;</span>
-<span class="doccomment">///                 }</span>
-<span class="doccomment">///             }),</span>
-<span class="doccomment">///         }</span>
-<span class="doccomment">///     }</span>
-<span class="doccomment">/// }</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// # fn main() { executor::block_on(async move {</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// struct AlwaysSupportsParachains;</span>
-<span class="doccomment">/// impl HeadSupportsParachains for AlwaysSupportsParachains {</span>
-<span class="doccomment">///      fn head_supports_parachains(&amp;self, _head: &amp;Hash) -&gt; bool { true }</span>
-<span class="doccomment">/// }</span>
-<span class="doccomment">/// let spawner = sp_core::testing::TaskExecutor::new();</span>
-<span class="doccomment">/// let (overseer, _handle) = dummy_overseer_builder(spawner, AlwaysSupportsParachains, None)</span>
-<span class="doccomment">///		.unwrap()</span>
-<span class="doccomment">///		.replace_candidate_validation(|_| ValidationSubsystem)</span>
-<span class="doccomment">///		.build()</span>
-<span class="doccomment">///		.unwrap();</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// let timer = Delay::new(Duration::from_millis(50)).fuse();</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// let overseer_fut = overseer.run().fuse();</span>
-<span class="doccomment">/// pin_mut!(timer);</span>
-<span class="doccomment">/// pin_mut!(overseer_fut);</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// select! {</span>
-<span class="doccomment">///     _ = overseer_fut =&gt; (),</span>
-<span class="doccomment">///     _ = timer =&gt; (),</span>
-<span class="doccomment">/// }</span>
-<span class="doccomment">/// #</span>
-<span class="doccomment">/// # 	});</span>
-<span class="doccomment">/// # }</span>
-<span class="doccomment">/// ```</span>
-<span class="attribute">#[<span class="ident">overlord</span>(
-	<span class="ident">gen</span><span class="op">=</span><span class="ident">AllMessages</span>,
-	<span class="ident">event</span><span class="op">=</span><span class="ident">Event</span>,
-	<span class="ident">signal</span><span class="op">=</span><span class="ident">OverseerSignal</span>,
-	<span class="ident">error</span><span class="op">=</span><span class="ident">SubsystemError</span>,
-)]</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Overseer</span> {
-	<span class="attribute">#[<span class="ident">subsystem</span>(<span class="ident">no_dispatch</span>, <span class="ident">CollationGenerationMessage</span>)]</span>
-	<span class="ident">collation_generation</span>: <span class="ident">CollationGeneration</span>,
-
-	<span class="doccomment">/// A set of leaves that `Overseer` starts working with.</span>
-	<span class="doccomment">///</span>
-	<span class="doccomment">/// Drained at the beginning of `run` and never used again.</span>
-	<span class="kw">pub</span> <span class="ident">leaves</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">Hash</span>, <span class="ident">BlockNumber</span>)<span class="op">&gt;</span>,
-
-	<span class="doccomment">/// The set of the &quot;active leaves&quot;.</span>
-	<span class="kw">pub</span> <span class="ident">active_leaves</span>: <span class="ident">HashMap</span><span class="op">&lt;</span><span class="ident">Hash</span>, <span class="ident">BlockNumber</span><span class="op">&gt;</span>,
-
-	<span class="doccomment">/// An LRU cache for keeping track of relay-chain heads that have already been seen.</span>
-	<span class="kw">pub</span> <span class="ident">known_leaves</span>: <span class="ident">LruCache</span><span class="op">&lt;</span><span class="ident">Hash</span>, ()<span class="op">&gt;</span>,
+<span class="doccomment">/// Capacity of a signal channel between a subsystem and the overseer.</span>
+<span class="kw">const</span> <span class="ident">SIGNAL_CHANNEL_CAPACITY</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">64usize</span>;
+<span class="doccomment">/// The overseer.</span>
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Overseer</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span> {
+	<span class="ident">primary_chain_client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
+	<span class="ident">config</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">CollationGenerationConfig</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+	<span class="doccomment">/// A user specified addendum field.</span>
+	<span class="ident">leaves</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">Hash</span>, <span class="ident">BlockNumber</span>)<span class="op">&gt;</span>,
+	<span class="doccomment">/// A user specified addendum field.</span>
+	<span class="ident">active_leaves</span>: <span class="ident">HashMap</span><span class="op">&lt;</span><span class="ident">Hash</span>, <span class="ident">BlockNumber</span><span class="op">&gt;</span>,
+	<span class="doccomment">/// Events that are sent to the overseer from the outside world.</span>
+	<span class="ident">events_rx</span>: <span class="ident">mpsc::Receiver</span><span class="op">&lt;</span><span class="ident">Event</span><span class="op">&gt;</span>,
 }
 
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">S</span><span class="op">&gt;</span> <span class="ident">Overseer</span><span class="op">&lt;</span><span class="ident">S</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">Overseer</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>
 <span class="kw">where</span>
-	<span class="ident">S</span>: <span class="ident">SpawnNamed</span>,
+	<span class="ident">Client</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">Send</span>
+		<span class="op">+</span> <span class="lifetime">&#39;static</span>
+		<span class="op">+</span> <span class="ident">Sync</span>,
+	<span class="ident">Client::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 {
-	<span class="doccomment">/// Stop the overseer.</span>
-	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">stop</span>(<span class="kw-2">mut</span> <span class="self">self</span>) {
-		<span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">wait_terminate</span>(<span class="ident">OverseerSignal::Conclude</span>, <span class="ident">Duration::from_secs</span>(<span class="number">1_u64</span>)).<span class="kw">await</span>;
+	<span class="doccomment">/// Create a new overseer.</span>
+	<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(
+		<span class="ident">primary_chain_client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
+		<span class="ident">leaves</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">Hash</span>, <span class="ident">BlockNumber</span>)<span class="op">&gt;</span>,
+		<span class="ident">active_leaves</span>: <span class="ident">HashMap</span><span class="op">&lt;</span><span class="ident">Hash</span>, <span class="ident">BlockNumber</span><span class="op">&gt;</span>,
+	) -&gt; (<span class="self">Self</span>, <span class="ident">Handle</span>) {
+		<span class="kw">let</span> (<span class="ident">handle</span>, <span class="ident">events_rx</span>) <span class="op">=</span> <span class="ident">mpsc::channel</span>(<span class="ident">SIGNAL_CHANNEL_CAPACITY</span>);
+		<span class="kw">let</span> <span class="ident">overseer</span> <span class="op">=</span>
+			<span class="ident">Overseer</span> { <span class="ident">primary_chain_client</span>, <span class="ident">config</span>: <span class="prelude-val">None</span>, <span class="ident">leaves</span>, <span class="ident">active_leaves</span>, <span class="ident">events_rx</span> };
+		(<span class="ident">overseer</span>, <span class="ident">Handle::new</span>(<span class="ident">handle</span>))
 	}
 
 	<span class="doccomment">/// Run the `Overseer`.</span>
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">mut</span> <span class="self">self</span>) -&gt; <span class="ident">SubsystemResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span> {
 		<span class="comment">// Notify about active leaves on startup before starting the loop</span>
 		<span class="kw">for</span> (<span class="ident">hash</span>, <span class="ident">number</span>) <span class="kw">in</span> <span class="ident">std::mem::take</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">leaves</span>) {
 			<span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">active_leaves</span>.<span class="ident">insert</span>(<span class="ident">hash</span>, <span class="ident">number</span>);
-			<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">status</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">on_head_activated</span>(<span class="kw-2">&amp;</span><span class="ident">hash</span>) {
-				<span class="kw">let</span> <span class="ident">update</span> <span class="op">=</span> <span class="ident">ActiveLeavesUpdate::start_work</span>(<span class="ident">ActivatedLeaf</span> { <span class="ident">hash</span>, <span class="ident">number</span>, <span class="ident">status</span> });
-				<span class="self">self</span>.<span class="ident">broadcast_signal</span>(<span class="ident">OverseerSignal::ActiveLeaves</span>(<span class="ident">update</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+			<span class="kw">let</span> <span class="ident">update</span> <span class="op">=</span> <span class="ident">ActivatedLeaf</span> { <span class="ident">hash</span>, <span class="ident">number</span> };
+			<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">update_activated_leave</span>(<span class="ident">update</span>).<span class="kw">await</span> {
+				<span class="macro">tracing::error!</span>(
+					<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+					<span class="string">&quot;Collation generation processing error: {error}&quot;</span>
+				);
 			}
 		}
 
-		<span class="kw">loop</span> {
-			<span class="macro">select!</span> {
-				<span class="ident">msg</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">events_rx</span>.<span class="ident">select_next_some</span>() =&gt; {
-					<span class="kw">match</span> <span class="ident">msg</span> {
-						<span class="ident">Event::MsgToSubsystem</span> { <span class="ident">msg</span>, <span class="ident">origin</span> } =&gt; {
-							<span class="self">self</span>.<span class="ident">route_message</span>(<span class="ident">msg</span>, <span class="ident">origin</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-						}
-						<span class="ident">Event::Stop</span> =&gt; {
-							<span class="self">self</span>.<span class="ident">stop</span>().<span class="kw">await</span>;
-							<span class="kw">return</span> <span class="prelude-val">Ok</span>(());
-						}
-						<span class="ident">Event::BlockImported</span>(<span class="ident">block</span>) =&gt; {
-							<span class="self">self</span>.<span class="ident">block_imported</span>(<span class="ident">block</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-						}
-						<span class="ident">Event::NewSlot</span>(<span class="ident">slot_info</span>) =&gt; {
-							<span class="self">self</span>.<span class="ident">on_new_slot</span>(<span class="ident">slot_info</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-						}
+		<span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">msg</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">events_rx</span>.<span class="ident">next</span>().<span class="kw">await</span> {
+			<span class="kw">match</span> <span class="ident">msg</span> {
+				<span class="ident">Event::MsgToSubsystem</span>(<span class="ident">message</span>) =&gt; {
+					<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">handle_message</span>(<span class="ident">message</span>).<span class="kw">await</span> {
+						<span class="macro">tracing::error!</span>(
+							<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+							<span class="string">&quot;Collation generation processing error: {error}&quot;</span>
+						);
 					}
 				},
-				<span class="ident">msg</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">to_overseer_rx</span>.<span class="ident">select_next_some</span>() =&gt; {
-					<span class="kw">match</span> <span class="ident">msg</span> {
-						<span class="ident">ToOverseer::SpawnJob</span> { <span class="ident">name</span>, <span class="ident">subsystem</span>, <span class="ident">s</span> } =&gt; {
-							<span class="self">self</span>.<span class="ident">spawn_job</span>(<span class="ident">name</span>, <span class="ident">subsystem</span>, <span class="ident">s</span>);
-						}
-					}
+				<span class="ident">Event::BlockImported</span>(<span class="ident">block</span>) =&gt; {
+					<span class="self">self</span>.<span class="ident">block_imported</span>(<span class="ident">block</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 				},
-				<span class="ident">res</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">running_subsystems</span>.<span class="ident">select_next_some</span>() =&gt; {
-					<span class="macro">tracing::error!</span>(
-						<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
-						<span class="ident">subsystem</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">res</span>,
-						<span class="string">&quot;subsystem finished unexpectedly&quot;</span>,
-					);
-					<span class="self">self</span>.<span class="ident">stop</span>().<span class="kw">await</span>;
-					<span class="kw">return</span> <span class="ident">res</span>;
+				<span class="ident">Event::NewSlot</span>(<span class="ident">slot_info</span>) =&gt; {
+					<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">update_new_slot</span>(<span class="ident">slot_info</span>).<span class="kw">await</span> {
+						<span class="macro">tracing::error!</span>(
+							<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+							<span class="string">&quot;Collation generation processing error: {error}&quot;</span>
+						);
+					}
 				},
 			}
 		}
+
+		<span class="prelude-val">Ok</span>(())
 	}
 
-	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">block_imported</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">block</span>: <span class="ident">BlockInfo</span>) -&gt; <span class="ident">SubsystemResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">update_activated_leave</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">activated_leaf</span>: <span class="ident">ActivatedLeaf</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span> {
+		<span class="comment">// follow the procedure from the guide</span>
+		<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">config</span>) <span class="op">=</span> <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">config</span> {
+			<span class="comment">// TODO: invoke this on finalized block?</span>
+			<span class="ident">process_primary_block</span>(
+				<span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">primary_chain_client</span>),
+				<span class="ident">config</span>,
+				<span class="ident">activated_leaf</span>.<span class="ident">hash</span>,
+			)
+			.<span class="kw">await</span><span class="question-mark">?</span>;
+		}
+
+		<span class="prelude-val">Ok</span>(())
+	}
+
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">update_new_slot</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">slot_info</span>: <span class="ident">ExecutorSlotInfo</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span> {
+		<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">config</span>) <span class="op">=</span> <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">config</span> {
+			<span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">primary_chain_client</span>;
+			<span class="kw">let</span> <span class="ident">best_hash</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>;
+
+			<span class="kw">let</span> <span class="ident">opaque_bundle</span> <span class="op">=</span> <span class="kw">match</span> (<span class="ident">config</span>.<span class="ident">bundler</span>)(<span class="ident">best_hash</span>, <span class="ident">slot_info</span>).<span class="kw">await</span> {
+				<span class="prelude-val">Some</span>(<span class="ident">bundle_result</span>) =&gt; <span class="ident">bundle_result</span>.<span class="ident">to_opaque_bundle</span>(),
+				<span class="prelude-val">None</span> =&gt; {
+					<span class="macro">tracing::debug!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="string">&quot;executor returned no bundle on bundling&quot;</span>,);
+					<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
+				},
+			};
+
+			<span class="comment">// TODO: Handle returned result?</span>
+			<span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">client</span>
+				.<span class="ident">runtime_api</span>()
+				.<span class="ident">submit_transaction_bundle_unsigned</span>(<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">best_hash</span>), <span class="ident">opaque_bundle</span>)<span class="question-mark">?</span>;
+		}
+
+		<span class="prelude-val">Ok</span>(())
+	}
+
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">handle_message</span>(
+		<span class="kw-2">&amp;mut</span> <span class="self">self</span>,
+		<span class="ident">message</span>: <span class="ident">CollationGenerationMessage</span>,
+	) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span> {
+		<span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">primary_chain_client</span>;
+
+		<span class="kw">match</span> <span class="ident">message</span> {
+			<span class="ident">CollationGenerationMessage::Initialize</span>(<span class="ident">config</span>) =&gt;
+				<span class="kw">if</span> <span class="self">self</span>.<span class="ident">config</span>.<span class="ident">is_some</span>() {
+					<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="string">&quot;double initialization&quot;</span>);
+				} <span class="kw">else</span> {
+					<span class="self">self</span>.<span class="ident">config</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">Arc::new</span>(<span class="ident">config</span>));
+				},
+			<span class="ident">CollationGenerationMessage::FraudProof</span>(<span class="ident">fraud_proof</span>) =&gt; {
+				<span class="comment">// TODO: Handle returned result?</span>
+				<span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">runtime_api</span>().<span class="ident">submit_fraud_proof_unsigned</span>(
+					<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>),
+					<span class="ident">fraud_proof</span>,
+				)<span class="question-mark">?</span>;
+			},
+			<span class="ident">CollationGenerationMessage::BundleEquivocationProof</span>(<span class="ident">bundle_equivocation_proof</span>) =&gt; {
+				<span class="comment">// TODO: Handle returned result?</span>
+				<span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">runtime_api</span>().<span class="ident">submit_bundle_equivocation_proof_unsigned</span>(
+					<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>),
+					<span class="ident">bundle_equivocation_proof</span>,
+				)<span class="question-mark">?</span>;
+			},
+			<span class="ident">CollationGenerationMessage::InvalidTransactionProof</span>(<span class="ident">invalid_transaction_proof</span>) =&gt; {
+				<span class="comment">// TODO: Handle returned result?</span>
+				<span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>
+					.<span class="ident">primary_chain_client</span>
+					.<span class="ident">runtime_api</span>()
+					.<span class="ident">submit_invalid_transaction_proof_unsigned</span>(
+						<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>),
+						<span class="ident">invalid_transaction_proof</span>,
+					)<span class="question-mark">?</span>;
+			},
+		}
+
+		<span class="prelude-val">Ok</span>(())
+	}
+
+	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">block_imported</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">block</span>: <span class="ident">BlockInfo</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span> {
 		<span class="kw">match</span> <span class="self">self</span>.<span class="ident">active_leaves</span>.<span class="ident">entry</span>(<span class="ident">block</span>.<span class="ident">hash</span>) {
-			<span class="ident">hash_map::Entry::Vacant</span>(<span class="ident">entry</span>) =&gt; <span class="ident">entry</span>.<span class="ident">insert</span>(<span class="ident">block</span>.<span class="ident">number</span>),
-			<span class="ident">hash_map::Entry::Occupied</span>(<span class="ident">entry</span>) =&gt; {
+			<span class="ident">Entry::Vacant</span>(<span class="ident">entry</span>) =&gt; <span class="ident">entry</span>.<span class="ident">insert</span>(<span class="ident">block</span>.<span class="ident">number</span>),
+			<span class="ident">Entry::Occupied</span>(<span class="ident">entry</span>) =&gt; {
 				<span class="macro">debug_assert_eq!</span>(<span class="kw-2">*</span><span class="ident">entry</span>.<span class="ident">get</span>(), <span class="ident">block</span>.<span class="ident">number</span>);
 				<span class="kw">return</span> <span class="prelude-val">Ok</span>(())
 			},
 		};
 
-		<span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">update</span> <span class="op">=</span> <span class="kw">match</span> <span class="self">self</span>.<span class="ident">on_head_activated</span>(<span class="kw-2">&amp;</span><span class="ident">block</span>.<span class="ident">hash</span>) {
-			<span class="prelude-val">Some</span>(<span class="ident">status</span>) =&gt; <span class="ident">ActiveLeavesUpdate::start_work</span>(<span class="ident">ActivatedLeaf</span> {
-				<span class="ident">hash</span>: <span class="ident">block</span>.<span class="ident">hash</span>,
-				<span class="ident">number</span>: <span class="ident">block</span>.<span class="ident">number</span>,
-				<span class="ident">status</span>,
-			}),
-			<span class="prelude-val">None</span> =&gt; <span class="ident">ActiveLeavesUpdate::default</span>(),
-		};
+		<span class="kw">let</span> <span class="ident">update</span> <span class="op">=</span> <span class="ident">ActivatedLeaf</span> { <span class="ident">hash</span>: <span class="ident">block</span>.<span class="ident">hash</span>, <span class="ident">number</span>: <span class="ident">block</span>.<span class="ident">number</span> };
 
 		<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">number</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">active_leaves</span>.<span class="ident">remove</span>(<span class="kw-2">&amp;</span><span class="ident">block</span>.<span class="ident">parent_hash</span>) {
 			<span class="macro">debug_assert_eq!</span>(<span class="ident">block</span>.<span class="ident">number</span>.<span class="ident">saturating_sub</span>(<span class="number">1</span>), <span class="ident">number</span>);
-			<span class="ident">update</span>.<span class="ident">deactivated</span>.<span class="ident">push</span>(<span class="ident">block</span>.<span class="ident">parent_hash</span>);
 		}
 
-		<span class="self">self</span>.<span class="ident">clean_up_external_listeners</span>();
-
-		<span class="kw">if</span> <span class="op">!</span><span class="ident">update</span>.<span class="ident">is_empty</span>() {
-			<span class="self">self</span>.<span class="ident">broadcast_signal</span>(<span class="ident">OverseerSignal::ActiveLeaves</span>(<span class="ident">update</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+		<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">update_activated_leave</span>(<span class="ident">update</span>).<span class="kw">await</span> {
+			<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="string">&quot;Collation generation processing error: {error}&quot;</span>);
 		}
+
 		<span class="prelude-val">Ok</span>(())
-	}
-
-	<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">on_new_slot</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">slot_info</span>: <span class="ident">ExecutorSlotInfo</span>) -&gt; <span class="ident">SubsystemResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
-		<span class="self">self</span>.<span class="ident">broadcast_signal</span>(<span class="ident">OverseerSignal::NewSlot</span>(<span class="ident">slot_info</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
-		<span class="prelude-val">Ok</span>(())
-	}
-
-	<span class="doccomment">/// Handles a header activation. If the header&#39;s state doesn&#39;t support the parachains API,</span>
-	<span class="doccomment">/// this returns `None`.</span>
-	<span class="kw">fn</span> <span class="ident">on_head_activated</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">hash</span>: <span class="kw-2">&amp;</span><span class="ident">Hash</span>) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">LeafStatus</span><span class="op">&gt;</span> {
-		<span class="kw">let</span> <span class="ident">status</span> <span class="op">=</span> <span class="kw">if</span> <span class="self">self</span>.<span class="ident">known_leaves</span>.<span class="ident">put</span>(<span class="kw-2">*</span><span class="ident">hash</span>, ()).<span class="ident">is_some</span>() {
-			<span class="ident">LeafStatus::Stale</span>
-		} <span class="kw">else</span> {
-			<span class="ident">LeafStatus::Fresh</span>
-		};
-
-		<span class="prelude-val">Some</span>(<span class="ident">status</span>)
-	}
-
-	<span class="kw">fn</span> <span class="ident">clean_up_external_listeners</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {}
-
-	<span class="kw">fn</span> <span class="ident">spawn_job</span>(
-		<span class="kw-2">&amp;mut</span> <span class="self">self</span>,
-		<span class="ident">task_name</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>,
-		<span class="ident">subsystem_name</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span><span class="op">&gt;</span>,
-		<span class="ident">j</span>: <span class="ident">BoxFuture</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, ()<span class="op">&gt;</span>,
-	) {
-		<span class="self">self</span>.<span class="ident">spawner</span>.<span class="ident">spawn</span>(<span class="ident">task_name</span>, <span class="ident">subsystem_name</span>, <span class="ident">j</span>);
 	}
 }
 </code></pre></div>

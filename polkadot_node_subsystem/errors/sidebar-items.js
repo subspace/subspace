@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["SubsystemError","An error type that describes faults that may happen"]],"type":[["SubsystemResult","Ease the use of subsystem errors."]]});
