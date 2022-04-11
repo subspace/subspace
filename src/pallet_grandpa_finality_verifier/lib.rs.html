@@ -303,7 +303,7 @@
 <span class="kw">use</span> <span class="ident">scale_info::TypeInfo</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>)]</span>
 <span class="kw">use</span> <span class="ident">serde</span>::{<span class="ident">Deserialize</span>, <span class="ident">Serialize</span>};
-<span class="kw">use</span> <span class="ident">sp_finality_grandpa</span>::{<span class="ident">AuthorityList</span>, <span class="ident">SetId</span>};
+<span class="kw">use</span> <span class="ident">sp_finality_grandpa::SetId</span>;
 <span class="kw">use</span> <span class="ident">sp_std</span>::{<span class="ident">fmt::Debug</span>, <span class="ident">vec::Vec</span>};
 
 <span class="comment">// Re-export in crate namespace for `construct_runtime!`</span>
@@ -315,8 +315,6 @@
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">InitializationData</span> {
     <span class="doccomment">/// Scale encoded header from which we should start syncing.</span>
     <span class="kw">pub</span> <span class="ident">header</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>,
-    <span class="doccomment">/// The initial authorities of the pallet.</span>
-    <span class="kw">pub</span> <span class="ident">authority_list</span>: <span class="ident">AuthorityList</span>,
     <span class="doccomment">/// The ID of the initial authority set.</span>
     <span class="kw">pub</span> <span class="ident">set_id</span>: <span class="ident">SetId</span>,
 }
@@ -381,18 +379,17 @@
         <span class="ident">UnsupportedScheduledChange</span>,
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">initialize_chain</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">Config</span><span class="op">&gt;</span>(
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">initialize_chain</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">Config</span>, <span class="ident">C</span>: <span class="ident">Chain</span><span class="op">&gt;</span>(
         <span class="ident">chain_id</span>: <span class="ident">T::ChainId</span>,
         <span class="ident">init_params</span>: <span class="ident">InitializationData</span>,
     ) -&gt; <span class="ident">DispatchResult</span> {
-        <span class="kw">let</span> <span class="ident">InitializationData</span> {
-            <span class="ident">header</span>,
-            <span class="ident">authority_list</span>,
-            <span class="ident">set_id</span>,
-        } <span class="op">=</span> <span class="ident">init_params</span>;
+        <span class="kw">let</span> <span class="ident">InitializationData</span> { <span class="ident">header</span>, <span class="ident">set_id</span> } <span class="op">=</span> <span class="ident">init_params</span>;
+        <span class="kw">let</span> <span class="ident">header_decoded</span> <span class="op">=</span> <span class="ident">C::decode_header</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>(<span class="ident">header</span>.<span class="ident">as_slice</span>())<span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">change</span> <span class="op">=</span>
+            <span class="ident">find_scheduled_change</span>(<span class="kw-2">&amp;</span><span class="ident">header_decoded</span>).<span class="ident">ok_or</span>(<span class="ident">Error</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::UnsupportedScheduledChange</span>)<span class="question-mark">?</span>;
         <span class="ident">BestFinalized</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::insert</span>(<span class="ident">chain_id</span>, <span class="ident">header</span>);
         <span class="kw">let</span> <span class="ident">authority_set</span> <span class="op">=</span> <span class="ident">AuthoritySet</span> {
-            <span class="ident">authorities</span>: <span class="ident">authority_list</span>,
+            <span class="ident">authorities</span>: <span class="ident">change</span>.<span class="ident">next_authorities</span>,
             <span class="ident">set_id</span>,
         };
         <span class="ident">CurrentAuthoritySet</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::insert</span>(<span class="ident">chain_id</span>, <span class="ident">authority_set</span>);
@@ -504,13 +501,16 @@
     <span class="doccomment">/// This function is only allowed to be called from a trusted origin and writes to storage</span>
     <span class="doccomment">/// with practically no checks in terms of the validity of the data. It is important that</span>
     <span class="doccomment">/// you ensure that valid data is being passed in.</span>
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">initialize</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">Config</span><span class="op">&gt;</span>(<span class="ident">chain_id</span>: <span class="ident">T::ChainId</span>, <span class="ident">init_data</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>]) -&gt; <span class="ident">DispatchResult</span> {
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">initialize</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">Config</span>, <span class="ident">C</span>: <span class="ident">Chain</span><span class="op">&gt;</span>(
+        <span class="ident">chain_id</span>: <span class="ident">T::ChainId</span>,
+        <span class="ident">init_data</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>],
+    ) -&gt; <span class="ident">DispatchResult</span> {
         <span class="kw">let</span> <span class="ident">data</span> <span class="op">=</span> <span class="ident">InitializationData::decode</span>(<span class="kw-2">&amp;mut</span> <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">init_data</span>).<span class="ident">map_err</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> {
             <span class="macro">log::error!</span>(<span class="string">&quot;Cannot decode init data, error: {:?}&quot;</span>, <span class="ident">error</span>);
             <span class="ident">Error</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::FailedDecodingInitData</span>
         })<span class="question-mark">?</span>;
 
-        <span class="ident">initialize_chain</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>(<span class="ident">chain_id</span>, <span class="ident">data</span>)<span class="question-mark">?</span>;
+        <span class="ident">initialize_chain</span>::<span class="op">&lt;</span><span class="ident">T</span>, <span class="ident">C</span><span class="op">&gt;</span>(<span class="ident">chain_id</span>, <span class="ident">data</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
