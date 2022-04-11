@@ -600,17 +600,6 @@
 <span id="595">595</span>
 <span id="596">596</span>
 <span id="597">597</span>
-<span id="598">598</span>
-<span id="599">599</span>
-<span id="600">600</span>
-<span id="601">601</span>
-<span id="602">602</span>
-<span id="603">603</span>
-<span id="604">604</span>
-<span id="605">605</span>
-<span id="606">606</span>
-<span id="607">607</span>
-<span id="608">608</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later</span>
 
@@ -631,9 +620,10 @@
 
 <span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">rpc</span>;
 
+<span class="kw">use</span> <span class="ident">cirrus_client_executor</span>::{<span class="ident">BlockInfo</span>, <span class="ident">ExecutorSlotInfo</span>, <span class="ident">Overseer</span>, <span class="ident">OverseerHandle</span>};
 <span class="kw">use</span> <span class="ident">futures::channel::mpsc</span>;
-<span class="kw">use</span> <span class="ident">polkadot_overseer</span>::{<span class="ident">BlockInfo</span>, <span class="ident">Handle</span>, <span class="ident">Overseer</span>};
-<span class="kw">use</span> <span class="ident">sc_client_api::ExecutorProvider</span>;
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">pin_mut</span>, <span class="ident">select</span>, <span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
+<span class="kw">use</span> <span class="ident">sc_client_api</span>::{<span class="ident">BlockBackend</span>, <span class="ident">ExecutorProvider</span>};
 <span class="kw">use</span> <span class="ident">sc_consensus::BlockImport</span>;
 <span class="kw">use</span> <span class="ident">sc_consensus_slots::SlotProportion</span>;
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace</span>::{
@@ -643,17 +633,16 @@
 <span class="kw">use</span> <span class="ident">sc_executor</span>::{<span class="ident">NativeElseWasmExecutor</span>, <span class="ident">NativeExecutionDispatch</span>};
 <span class="kw">use</span> <span class="ident">sc_service</span>::{<span class="ident">error::Error</span> <span class="kw">as</span> <span class="ident">ServiceError</span>, <span class="ident">Configuration</span>, <span class="ident">TaskManager</span>};
 <span class="kw">use</span> <span class="ident">sc_telemetry</span>::{<span class="ident">Telemetry</span>, <span class="ident">TelemetryWorker</span>};
-<span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ConstructRuntimeApi</span>, <span class="ident">NumberFor</span>, <span class="ident">TransactionFor</span>};
+<span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ConstructRuntimeApi</span>, <span class="ident">NumberFor</span>, <span class="ident">ProvideRuntimeApi</span>, <span class="ident">TransactionFor</span>};
 <span class="kw">use</span> <span class="ident">sp_blockchain::HeaderBackend</span>;
 <span class="kw">use</span> <span class="ident">sp_consensus</span>::{<span class="ident">CanAuthorWithNativeVersion</span>, <span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ConsensusError</span>, <span class="ident">SelectChain</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus_slots::Slot</span>;
-<span class="kw">use</span> <span class="ident">sp_runtime::traits</span>::{<span class="ident">BlakeTwo256</span>, <span class="ident">Block</span> <span class="kw">as</span> <span class="ident">BlockT</span>, <span class="ident">Header</span> <span class="kw">as</span> <span class="ident">HeaderT</span>};
+<span class="kw">use</span> <span class="ident">sp_executor::ExecutorApi</span>;
+<span class="kw">use</span> <span class="ident">sp_runtime::generic::BlockId</span>;
+<span class="kw">use</span> <span class="ident">sp_runtime::traits</span>::{<span class="ident">BlakeTwo256</span>, <span class="ident">Block</span> <span class="kw">as</span> <span class="ident">BlockT</span>, <span class="ident">Header</span> <span class="kw">as</span> <span class="ident">HeaderT</span>, <span class="ident">One</span>, <span class="ident">Saturating</span>};
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::RootBlock</span>;
-<span class="kw">use</span> <span class="ident">subspace_runtime_primitives</span>::{
-    <span class="ident">opaque</span>::{<span class="ident">Block</span>, <span class="ident">BlockId</span>},
-    <span class="ident">AccountId</span>, <span class="ident">Balance</span>, <span class="ident">Index</span> <span class="kw">as</span> <span class="ident">Nonce</span>,
-};
+<span class="kw">use</span> <span class="ident">subspace_runtime_primitives</span>::{<span class="ident">opaque::Block</span>, <span class="ident">AccountId</span>, <span class="ident">Balance</span>, <span class="ident">Index</span> <span class="kw">as</span> <span class="ident">Nonce</span>};
 
 <span class="doccomment">/// A set of APIs that subspace-like runtimes must implement.</span>
 <span class="kw">pub</span> <span class="kw">trait</span> <span class="ident">RuntimeApiCollection</span>:
@@ -887,18 +876,13 @@
 }
 
 <span class="doccomment">/// Returns the active leaves the overseer should start with.</span>
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">active_leaves</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span>(
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">active_leaves</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>(
     <span class="ident">select_chain</span>: <span class="kw-2">&amp;</span><span class="kw">impl</span> <span class="ident">SelectChain</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
-    <span class="ident">client</span>: <span class="kw-2">&amp;</span><span class="ident">FullClient</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">BlockInfo</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&gt;</span>
+    <span class="ident">client</span>: <span class="kw-2">&amp;</span><span class="ident">Client</span>,
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">BlockInfo</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&gt;</span>
 <span class="kw">where</span>
-    <span class="ident">RuntimeApi</span>: <span class="ident">ConstructRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FullClient</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">Send</span>
-        <span class="op">+</span> <span class="ident">Sync</span>
-        <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    <span class="ident">RuntimeApi::RuntimeApi</span>:
-        <span class="ident">RuntimeApiCollection</span><span class="op">&lt;</span><span class="ident">StateBackend</span> <span class="op">=</span> <span class="ident">sc_client_api::StateBackendFor</span><span class="op">&lt;</span><span class="ident">FullBackend</span>, <span class="ident">Block</span><span class="op">&gt;</span><span class="op">&gt;</span>,
-    <span class="ident">ExecutorDispatch</span>: <span class="ident">NativeExecutionDispatch</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="ident">Block</span>: <span class="ident">BlockT</span>,
+    <span class="ident">Client</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let</span> <span class="ident">best_block</span> <span class="op">=</span> <span class="ident">select_chain</span>.<span class="ident">best_chain</span>().<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -911,11 +895,12 @@
             <span class="kw">let</span> <span class="ident">number</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">number</span>(<span class="ident">hash</span>).<span class="ident">ok</span>()<span class="question-mark">?</span><span class="question-mark">?</span>;
 
             <span class="comment">// Only consider leaves that are in maximum an uncle of the best block.</span>
-            <span class="kw">if</span> <span class="ident">number</span> <span class="op">&lt;</span> <span class="ident">best_block</span>.<span class="ident">number</span>().<span class="ident">saturating_sub</span>(<span class="number">1</span>) <span class="op">|</span><span class="op">|</span> <span class="ident">hash</span> <span class="op">==</span> <span class="ident">best_block</span>.<span class="ident">hash</span>() {
+            <span class="kw">if</span> <span class="ident">number</span> <span class="op">&lt;</span> <span class="ident">best_block</span>.<span class="ident">number</span>().<span class="ident">saturating_sub</span>(<span class="ident">One::one</span>()) <span class="op">|</span><span class="op">|</span> <span class="ident">hash</span> <span class="op">==</span> <span class="ident">best_block</span>.<span class="ident">hash</span>()
+            {
                 <span class="kw">return</span> <span class="prelude-val">None</span>;
             };
 
-            <span class="kw">let</span> <span class="ident">parent_hash</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">header</span>(<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">hash</span>)).<span class="ident">ok</span>()<span class="question-mark">?</span><span class="question-mark">?</span>.<span class="ident">parent_hash</span>;
+            <span class="kw">let</span> <span class="ident">parent_hash</span> <span class="op">=</span> <span class="kw-2">*</span><span class="ident">client</span>.<span class="ident">header</span>(<span class="ident">BlockId::Hash</span>(<span class="ident">hash</span>)).<span class="ident">ok</span>()<span class="question-mark">?</span><span class="question-mark">?</span>.<span class="ident">parent_hash</span>();
 
             <span class="prelude-val">Some</span>(<span class="ident">BlockInfo</span> {
                 <span class="ident">hash</span>,
@@ -1137,8 +1122,8 @@
 
 <span class="doccomment">/// TODO: This should change name and probably contents as well since we don&#39;t have proper overseer</span>
 <span class="doccomment">///  anymore</span>
-<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">create_overseer</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span>, <span class="ident">SC</span><span class="op">&gt;</span>(
-    <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">FullClient</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">create_overseer</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span>, <span class="ident">SC</span><span class="op">&gt;</span>(
+    <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
     <span class="ident">task_manager</span>: <span class="kw-2">&amp;</span><span class="ident">TaskManager</span>,
     <span class="ident">select_chain</span>: <span class="ident">SC</span>,
     <span class="ident">new_slot_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">NewSlotNotification</span><span class="op">&gt;</span>,
@@ -1146,15 +1131,11 @@
         <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
         <span class="ident">mpsc::Sender</span><span class="op">&lt;</span><span class="ident">RootBlock</span><span class="op">&gt;</span>,
     )<span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Handle</span>, <span class="ident">Error</span><span class="op">&gt;</span>
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">OverseerHandle</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&gt;</span>
 <span class="kw">where</span>
-    <span class="ident">RuntimeApi</span>: <span class="ident">ConstructRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FullClient</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">Send</span>
-        <span class="op">+</span> <span class="ident">Sync</span>
-        <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    <span class="ident">RuntimeApi::RuntimeApi</span>:
-        <span class="ident">RuntimeApiCollection</span><span class="op">&lt;</span><span class="ident">StateBackend</span> <span class="op">=</span> <span class="ident">sc_client_api::StateBackendFor</span><span class="op">&lt;</span><span class="ident">FullBackend</span>, <span class="ident">Block</span><span class="op">&gt;</span><span class="op">&gt;</span>,
-    <span class="ident">ExecutorDispatch</span>: <span class="ident">NativeExecutionDispatch</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="ident">Block</span>: <span class="ident">BlockT</span>,
+    <span class="ident">Client</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="ident">Client::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
     <span class="ident">SC</span>: <span class="ident">SelectChain</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 {
     <span class="kw">let</span> <span class="ident">active_leaves</span> <span class="op">=</span> <span class="ident">active_leaves</span>(<span class="kw-2">&amp;</span><span class="ident">select_chain</span>, <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">client</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1180,10 +1161,7 @@
             <span class="string">&quot;collation-generation-subsystem&quot;</span>,
             <span class="prelude-val">Some</span>(<span class="string">&quot;collation-generation-subsystem&quot;</span>),
             <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
-                <span class="kw">use</span> <span class="ident">cirrus_node_primitives::ExecutorSlotInfo</span>;
-                <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">pin_mut</span>, <span class="ident">select</span>, <span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
-
-                <span class="kw">let</span> <span class="ident">forward</span> <span class="op">=</span> <span class="ident">polkadot_overseer::forward_events</span>(
+                <span class="kw">let</span> <span class="ident">forward</span> <span class="op">=</span> <span class="ident">cirrus_client_executor::forward_events</span>(
                     <span class="ident">client</span>,
                     <span class="ident">Box::pin</span>(
                         <span class="ident">imported_block_notification_stream</span>

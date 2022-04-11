@@ -1,9 +1,8 @@
 var N = null;var sourcesIndex = {};
 sourcesIndex["cirrus_block_builder"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundler.rs","lib.rs","merkle_tree.rs","processor.rs"]};
+sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundler.rs","lib.rs","merkle_tree.rs","overseer.rs","processor.rs"]};
 sourcesIndex["cirrus_client_executor_gossip"] = {"name":"","files":["lib.rs","worker.rs"]};
 sourcesIndex["cirrus_client_service"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["cirrus_node_primitives"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_pallet_executive"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_primitives"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_test_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
@@ -20,7 +19,6 @@ sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.r
 sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
 sourcesIndex["pallet_transaction_fees"] = {"name":"","files":["default_weights.rs","lib.rs"]};
 sourcesIndex["parachain_template_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
-sourcesIndex["polkadot_overseer"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs","verification.rs"]};
 sourcesIndex["sc_consensus_subspace_rpc"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
