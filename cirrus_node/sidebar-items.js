@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["cli","Secondary chain CLI."],["service","Service and ServiceFactory implementation. Specialized wrapper over substrate service."]]});

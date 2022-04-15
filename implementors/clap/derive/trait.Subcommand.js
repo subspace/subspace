@@ -1,3 +1,4 @@
 (function() {var implementors = {};
+implementors["cirrus_node"] = [{"text":"impl Subcommand for <a class=\"enum\" href=\"cirrus_node/cli/enum.Subcommand.html\" title=\"enum cirrus_node::cli::Subcommand\">Subcommand</a>","synthetic":false,"types":["cirrus_node::cli::Subcommand"]}];
 implementors["subspace_node"] = [{"text":"impl Subcommand for <a class=\"enum\" href=\"subspace_node/enum.Subcommand.html\" title=\"enum subspace_node::Subcommand\">Subcommand</a>","synthetic":false,"types":["subspace_node::Subcommand"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

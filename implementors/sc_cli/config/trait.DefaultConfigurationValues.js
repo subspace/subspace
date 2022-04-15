@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["cirrus_node"] = [{"text":"impl DefaultConfigurationValues for <a class=\"struct\" href=\"cirrus_node/cli/struct.RelayChainCli.html\" title=\"struct cirrus_node::cli::RelayChainCli\">RelayChainCli</a>","synthetic":false,"types":["cirrus_node::cli::RelayChainCli"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

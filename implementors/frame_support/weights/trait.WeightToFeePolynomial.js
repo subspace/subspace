@@ -1,4 +1,4 @@
 (function() {var implementors = {};
+implementors["cirrus_runtime"] = [{"text":"impl WeightToFeePolynomial for <a class=\"struct\" href=\"cirrus_runtime/struct.WeightToFee.html\" title=\"struct cirrus_runtime::WeightToFee\">WeightToFee</a>","synthetic":false,"types":["cirrus_runtime::runtime::WeightToFee"]}];
 implementors["cirrus_test_runtime"] = [{"text":"impl WeightToFeePolynomial for <a class=\"struct\" href=\"cirrus_test_runtime/struct.WeightToFee.html\" title=\"struct cirrus_test_runtime::WeightToFee\">WeightToFee</a>","synthetic":false,"types":["cirrus_test_runtime::runtime::WeightToFee"]}];
-implementors["parachain_template_runtime"] = [{"text":"impl WeightToFeePolynomial for <a class=\"struct\" href=\"parachain_template_runtime/struct.WeightToFee.html\" title=\"struct parachain_template_runtime::WeightToFee\">WeightToFee</a>","synthetic":false,"types":["parachain_template_runtime::runtime::WeightToFee"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
