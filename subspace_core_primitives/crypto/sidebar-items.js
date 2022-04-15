@@ -1,1 +1,1 @@
-initSidebarItems({"fn":[["hmac_sha256","Hmac with Sha2-256 hash function."],["sha256_hash","Simple Sha2-256 hashing."]]});
+initSidebarItems({"fn":[["hmac_sha256","Hmac with Sha2-256 hash function."],["sha256_hash","Simple Sha2-256 hashing."],["sha256_hash_pair","Simple Sha2-256 hashing of a pair of values."]]});
