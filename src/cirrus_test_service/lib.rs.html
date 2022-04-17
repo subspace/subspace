@@ -622,6 +622,17 @@
 <span id="617">617</span>
 <span id="618">618</span>
 <span id="619">619</span>
+<span id="620">620</span>
+<span id="621">621</span>
+<span id="622">622</span>
+<span id="623">623</span>
+<span id="624">624</span>
+<span id="625">625</span>
+<span id="626">626</span>
+<span id="627">627</span>
+<span id="628">628</span>
+<span id="629">629</span>
+<span id="630">630</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Cumulus.</span>
 
@@ -645,7 +656,7 @@
 <span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">chain_spec</span>;
 
 <span class="kw">use</span> <span class="ident">cirrus_client_executor::ExecutorSlotInfo</span>;
-<span class="kw">use</span> <span class="ident">cirrus_client_service::StartExecutorParams</span>;
+<span class="kw">use</span> <span class="ident">cirrus_client_executor_gossip::ExecutorGossipParams</span>;
 <span class="kw">use</span> <span class="ident">cirrus_test_runtime</span>::{<span class="ident">opaque::Block</span>, <span class="ident">Hash</span>, <span class="ident">RuntimeApi</span>};
 <span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
 <span class="kw">use</span> <span class="ident">sc_client_api::execution_extensions::ExecutionStrategies</span>;
@@ -658,9 +669,10 @@
 	<span class="ident">BasePath</span>, <span class="ident">ChainSpec</span>, <span class="ident">Configuration</span>, <span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ServiceError</span>, <span class="ident">NetworkStarter</span>, <span class="ident">PartialComponents</span>,
 	<span class="ident">Role</span>, <span class="ident">RpcHandlers</span>, <span class="ident">TFullBackend</span>, <span class="ident">TFullClient</span>, <span class="ident">TaskManager</span>,
 };
+<span class="kw">use</span> <span class="ident">sc_utils::mpsc::tracing_unbounded</span>;
 <span class="kw">use</span> <span class="ident">sp_arithmetic::traits::SaturatedConversion</span>;
 <span class="kw">use</span> <span class="ident">sp_blockchain::HeaderBackend</span>;
-<span class="kw">use</span> <span class="ident">sp_core::H256</span>;
+<span class="kw">use</span> <span class="ident">sp_core</span>::{<span class="ident">traits::SpawnEssentialNamed</span>, <span class="ident">H256</span>};
 <span class="kw">use</span> <span class="ident">sp_keyring::Sr25519Keyring</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime</span>::{<span class="ident">codec::Encode</span>, <span class="ident">generic</span>, <span class="ident">traits::BlakeTwo256</span>, <span class="ident">OpaqueExtrinsic</span>};
 <span class="kw">use</span> <span class="ident">sp_trie::PrefixedMemoryDB</span>;
@@ -774,10 +786,9 @@
 <span class="doccomment">///</span>
 <span class="doccomment">/// This is the actual implementation that is abstract over the executor and the runtime api.</span>
 <span class="attribute">#[<span class="ident">sc_tracing::logging::prefix_logs_with</span>(<span class="ident">parachain_config</span>.<span class="ident">network</span>.<span class="ident">node_name</span>.<span class="ident">as_str</span>())]</span>
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">start_node_impl</span><span class="op">&lt;</span><span class="ident">RB</span><span class="op">&gt;</span>(
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">start_node_impl</span>(
 	<span class="kw-2">mut</span> <span class="ident">parachain_config</span>: <span class="ident">Configuration</span>,
 	<span class="ident">relay_chain_config</span>: <span class="ident">Configuration</span>,
-	<span class="ident">rpc_ext_builder</span>: <span class="ident">RB</span>,
 ) -&gt; <span class="ident">sc_service::error::Result</span><span class="op">&lt;</span>(
 	<span class="ident">TaskManager</span>,
 	<span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
@@ -786,12 +797,7 @@
 	<span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">NetworkService</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">H256</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 	<span class="ident">RpcHandlers</span>,
 	<span class="ident">Executor</span>,
-)<span class="op">&gt;</span>
-<span class="kw">where</span>
-	<span class="ident">RB</span>: <span class="ident">Fn</span>(<span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">jsonrpc_core::IoHandler</span><span class="op">&lt;</span><span class="ident">sc_rpc::Metadata</span><span class="op">&gt;</span>, <span class="ident">sc_service::Error</span><span class="op">&gt;</span>
-		<span class="op">+</span> <span class="ident">Send</span>
-		<span class="op">+</span> <span class="lifetime">&#39;static</span>,
-{
+)<span class="op">&gt;</span> {
 	<span class="kw">if</span> <span class="macro">matches!</span>(<span class="ident">parachain_config</span>.<span class="ident">role</span>, <span class="ident">Role::Light</span>) {
 		<span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="string">&quot;Light client not supported!&quot;</span>.<span class="ident">into</span>())
 	}
@@ -800,6 +806,7 @@
 	<span class="comment">// parachain_config.announce_block = false;</span>
 
 	<span class="kw">let</span> <span class="ident">params</span> <span class="op">=</span> <span class="ident">new_partial</span>(<span class="kw-2">&amp;mut</span> <span class="ident">parachain_config</span>)<span class="question-mark">?</span>;
+	<span class="kw">let</span> <span class="ident">code_executor</span> <span class="op">=</span> <span class="ident">params</span>.<span class="ident">other</span>;
 
 	<span class="kw">let</span> <span class="ident">validator</span> <span class="op">=</span> <span class="ident">parachain_config</span>.<span class="ident">role</span>.<span class="ident">is_authority</span>();
 	<span class="kw">let</span> <span class="ident">transaction_pool</span> <span class="op">=</span> <span class="ident">params</span>.<span class="ident">transaction_pool</span>.<span class="ident">clone</span>();
@@ -833,11 +840,8 @@
 			<span class="ident">warp_sync</span>: <span class="prelude-val">None</span>,
 		})<span class="question-mark">?</span>;
 
-	<span class="kw">let</span> <span class="ident">rpc_extensions_builder</span> <span class="op">=</span> {
-		<span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">clone</span>();
-
-		<span class="ident">Box::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="kw">_</span>, <span class="kw">_</span><span class="op">|</span> <span class="ident">rpc_ext_builder</span>(<span class="ident">client</span>.<span class="ident">clone</span>()))
-	};
+	<span class="kw">let</span> <span class="ident">rpc_extensions_builder</span> <span class="op">=</span>
+		<span class="ident">Box::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="kw">_</span>, <span class="kw">_</span><span class="op">|</span> <span class="prelude-val">Ok</span>(<span class="ident">jsonrpc_core::IoHandler</span>::<span class="op">&lt;</span><span class="ident">sc_rpc::Metadata</span><span class="op">&gt;</span><span class="ident">::default</span>()));
 
 	<span class="kw">let</span> <span class="ident">rpc_handlers</span> <span class="op">=</span> <span class="ident">sc_service::spawn_tasks</span>(<span class="ident">sc_service::SpawnTasksParams</span> {
 		<span class="ident">rpc_extensions_builder</span>,
@@ -852,35 +856,53 @@
 		<span class="ident">telemetry</span>: <span class="prelude-val">None</span>,
 	})<span class="question-mark">?</span>;
 
-	<span class="kw">let</span> <span class="ident">code_executor</span> <span class="op">=</span> <span class="ident">Arc::new</span>(<span class="ident">params</span>.<span class="ident">other</span>);
-	<span class="kw">let</span> <span class="ident">params</span> <span class="op">=</span> <span class="ident">StartExecutorParams</span> {
-		<span class="ident">primary_chain_client</span>: <span class="ident">primary_chain_full_node</span>.<span class="ident">client</span>.<span class="ident">clone</span>(),
-		<span class="ident">spawn_essential</span>: <span class="kw-2">&amp;</span><span class="ident">task_manager</span>.<span class="ident">spawn_essential_handle</span>(),
-		<span class="ident">select_chain</span>: <span class="kw-2">&amp;</span><span class="ident">primary_chain_full_node</span>.<span class="ident">select_chain</span>,
-		<span class="ident">imported_block_notification_stream</span>: <span class="ident">primary_chain_full_node</span>
-			.<span class="ident">imported_block_notification_stream</span>
-			.<span class="ident">subscribe</span>()
-			.<span class="ident">then</span>(<span class="op">|</span>(<span class="ident">block_number</span>, <span class="kw">_</span>)<span class="op">|</span> <span class="kw">async</span> <span class="kw">move</span> { <span class="ident">block_number</span> }),
-		<span class="ident">new_slot_notification_stream</span>: <span class="ident">primary_chain_full_node</span>
-			.<span class="ident">new_slot_notification_stream</span>
-			.<span class="ident">subscribe</span>()
-			.<span class="ident">then</span>(<span class="op">|</span><span class="ident">slot_notification</span><span class="op">|</span> <span class="kw">async</span> <span class="kw">move</span> {
-				<span class="kw">let</span> <span class="ident">slot_info</span> <span class="op">=</span> <span class="ident">slot_notification</span>.<span class="ident">new_slot_info</span>;
-				<span class="ident">ExecutorSlotInfo</span> {
-					<span class="ident">slot</span>: <span class="ident">slot_info</span>.<span class="ident">slot</span>,
-					<span class="ident">global_challenge</span>: <span class="ident">slot_info</span>.<span class="ident">global_challenge</span>,
-				}
-			}),
-		<span class="ident">client</span>: <span class="ident">client</span>.<span class="ident">clone</span>(),
-		<span class="ident">spawner</span>: <span class="ident">Box::new</span>(<span class="ident">task_manager</span>.<span class="ident">spawn_handle</span>()),
-		<span class="ident">transaction_pool</span>,
-		<span class="ident">network</span>: <span class="ident">network</span>.<span class="ident">clone</span>(),
-		<span class="ident">backend</span>: <span class="ident">backend</span>.<span class="ident">clone</span>(),
-		<span class="ident">code_executor</span>: <span class="ident">code_executor</span>.<span class="ident">clone</span>(),
-		<span class="ident">is_authority</span>: <span class="ident">validator</span>,
-	};
+	<span class="kw">let</span> <span class="ident">code_executor</span> <span class="op">=</span> <span class="ident">Arc::new</span>(<span class="ident">code_executor</span>);
 
-	<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="ident">cirrus_client_service::start_executor</span>(<span class="ident">params</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+	<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> {
+		<span class="kw">let</span> <span class="ident">spawn_essential</span> <span class="op">=</span> <span class="ident">task_manager</span>.<span class="ident">spawn_essential_handle</span>();
+		<span class="kw">let</span> (<span class="ident">bundle_sender</span>, <span class="ident">bundle_receiver</span>) <span class="op">=</span> <span class="ident">tracing_unbounded</span>(<span class="string">&quot;transaction_bundle_stream&quot;</span>);
+		<span class="kw">let</span> (<span class="ident">execution_receipt_sender</span>, <span class="ident">execution_receipt_receiver</span>) <span class="op">=</span>
+			<span class="ident">tracing_unbounded</span>(<span class="string">&quot;execution_receipt_stream&quot;</span>);
+
+		<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="ident">Executor::new</span>(
+			<span class="ident">primary_chain_full_node</span>.<span class="ident">client</span>.<span class="ident">clone</span>(),
+			<span class="kw-2">&amp;</span><span class="ident">spawn_essential</span>,
+			<span class="kw-2">&amp;</span><span class="ident">primary_chain_full_node</span>.<span class="ident">select_chain</span>,
+			<span class="ident">primary_chain_full_node</span>
+				.<span class="ident">imported_block_notification_stream</span>
+				.<span class="ident">subscribe</span>()
+				.<span class="ident">then</span>(<span class="op">|</span>(<span class="ident">block_number</span>, <span class="kw">_</span>)<span class="op">|</span> <span class="kw">async</span> <span class="kw">move</span> { <span class="ident">block_number</span> }),
+			<span class="ident">primary_chain_full_node</span>.<span class="ident">new_slot_notification_stream</span>.<span class="ident">subscribe</span>().<span class="ident">then</span>(
+				<span class="op">|</span><span class="ident">slot_notification</span><span class="op">|</span> <span class="kw">async</span> <span class="kw">move</span> {
+					<span class="kw">let</span> <span class="ident">slot_info</span> <span class="op">=</span> <span class="ident">slot_notification</span>.<span class="ident">new_slot_info</span>;
+					<span class="ident">ExecutorSlotInfo</span> {
+						<span class="ident">slot</span>: <span class="ident">slot_info</span>.<span class="ident">slot</span>,
+						<span class="ident">global_challenge</span>: <span class="ident">slot_info</span>.<span class="ident">global_challenge</span>,
+					}
+				},
+			),
+			<span class="ident">client</span>.<span class="ident">clone</span>(),
+			<span class="ident">Box::new</span>(<span class="ident">task_manager</span>.<span class="ident">spawn_handle</span>()),
+			<span class="ident">transaction_pool</span>,
+			<span class="ident">Arc::new</span>(<span class="ident">bundle_sender</span>),
+			<span class="ident">Arc::new</span>(<span class="ident">execution_receipt_sender</span>),
+			<span class="ident">backend</span>.<span class="ident">clone</span>(),
+			<span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="ident">code_executor</span>),
+			<span class="ident">validator</span>,
+		)
+		.<span class="kw">await</span><span class="question-mark">?</span>;
+
+		<span class="kw">let</span> <span class="ident">executor_gossip</span> <span class="op">=</span>
+			<span class="ident">cirrus_client_executor_gossip::start_gossip_worker</span>(<span class="ident">ExecutorGossipParams</span> {
+				<span class="ident">network</span>: <span class="ident">network</span>.<span class="ident">clone</span>(),
+				<span class="ident">executor</span>: <span class="ident">executor</span>.<span class="ident">clone</span>(),
+				<span class="ident">bundle_receiver</span>,
+				<span class="ident">execution_receipt_receiver</span>,
+			});
+		<span class="ident">spawn_essential</span>.<span class="ident">spawn_essential_blocking</span>(<span class="string">&quot;cirrus-gossip&quot;</span>, <span class="prelude-val">None</span>, <span class="ident">Box::pin</span>(<span class="ident">executor_gossip</span>));
+
+		<span class="ident">executor</span>
+	};
 
 	<span class="ident">task_manager</span>.<span class="ident">add_child</span>(<span class="ident">primary_chain_full_node</span>.<span class="ident">task_manager</span>);
 
@@ -1029,7 +1051,7 @@
 
 		<span class="kw">let</span> <span class="ident">multiaddr</span> <span class="op">=</span> <span class="ident">parachain_config</span>.<span class="ident">network</span>.<span class="ident">listen_addresses</span>[<span class="number">0</span>].<span class="ident">clone</span>();
 		<span class="kw">let</span> (<span class="ident">task_manager</span>, <span class="ident">client</span>, <span class="ident">backend</span>, <span class="ident">code_executor</span>, <span class="ident">network</span>, <span class="ident">rpc_handlers</span>, <span class="ident">executor</span>) <span class="op">=</span>
-			<span class="ident">start_node_impl</span>(<span class="ident">parachain_config</span>, <span class="ident">relay_chain_config</span>, <span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="prelude-val">Ok</span>(<span class="ident">Default::default</span>()))
+			<span class="ident">start_node_impl</span>(<span class="ident">parachain_config</span>, <span class="ident">relay_chain_config</span>)
 				.<span class="kw">await</span>
 				.<span class="ident">expect</span>(<span class="string">&quot;could not create Cumulus test service&quot;</span>);
 

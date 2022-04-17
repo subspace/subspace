@@ -2,7 +2,6 @@ var N = null;var sourcesIndex = {};
 sourcesIndex["cirrus_block_builder"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundler.rs","lib.rs","merkle_tree.rs","overseer.rs","processor.rs"]};
 sourcesIndex["cirrus_client_executor_gossip"] = {"name":"","files":["lib.rs","worker.rs"]};
-sourcesIndex["cirrus_client_service"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_node"] = {"name":"","files":["chain_spec.rs","cli.rs","lib.rs","rpc.rs","service.rs"]};
 sourcesIndex["cirrus_pallet_executive"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_primitives"] = {"name":"","files":["lib.rs"]};
