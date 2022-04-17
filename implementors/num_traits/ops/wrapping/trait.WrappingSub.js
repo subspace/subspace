@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["subspace_solving"] = [{"text":"impl <a class=\"trait\" href=\"https://docs.rs/num-traits/0.2/num_traits/ops/wrapping/trait.WrappingSub.html\" title=\"trait num_traits::ops::wrapping::WrappingSub\">WrappingSub</a> for <a class=\"struct\" href=\"subspace_solving/struct.PieceDistance.html\" title=\"struct subspace_solving::PieceDistance\">PieceDistance</a>","synthetic":false,"types":["subspace_solving::construct_uint::PieceDistance"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
