@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["FeedObjectMapping","Object mapping that points to an object in a block"]],"trait":[["FeedProcessor","FeedProcessor dictates a flow import and constituents of a Feed"]],"type":[["FeedMetadata","Metadata of a feed object as raw bytes."]]});
+initSidebarItems({"enum":[["FeedObjectMapping","Holds the offset to some portion of data within/or the object"]],"trait":[["FeedProcessor","FeedProcessor dictates a flow import and constituents of a Feed"]],"type":[["FeedMetadata","Metadata of a feed object as raw bytes."]]});
