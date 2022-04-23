@@ -901,6 +901,30 @@
 <span id="896">896</span>
 <span id="897">897</span>
 <span id="898">898</span>
+<span id="899">899</span>
+<span id="900">900</span>
+<span id="901">901</span>
+<span id="902">902</span>
+<span id="903">903</span>
+<span id="904">904</span>
+<span id="905">905</span>
+<span id="906">906</span>
+<span id="907">907</span>
+<span id="908">908</span>
+<span id="909">909</span>
+<span id="910">910</span>
+<span id="911">911</span>
+<span id="912">912</span>
+<span id="913">913</span>
+<span id="914">914</span>
+<span id="915">915</span>
+<span id="916">916</span>
+<span id="917">917</span>
+<span id="918">918</span>
+<span id="919">919</span>
+<span id="920">920</span>
+<span id="921">921</span>
+<span id="922">922</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Cumulus.</span>
 
@@ -984,12 +1008,15 @@
 	<span class="ident">H256</span>,
 };
 <span class="kw">use</span> <span class="ident">sp_executor</span>::{
-	<span class="ident">Bundle</span>, <span class="ident">BundleEquivocationProof</span>, <span class="ident">ExecutionPhase</span>, <span class="ident">ExecutionReceipt</span>, <span class="ident">ExecutorApi</span>, <span class="ident">FraudProof</span>,
-	<span class="ident">InvalidTransactionProof</span>, <span class="ident">OpaqueBundle</span>, <span class="ident">OpaqueExecutionReceipt</span>,
+	<span class="ident">Bundle</span>, <span class="ident">BundleEquivocationProof</span>, <span class="ident">ExecutionPhase</span>, <span class="ident">ExecutionReceipt</span>, <span class="ident">ExecutorApi</span>, <span class="ident">ExecutorId</span>,
+	<span class="ident">FraudProof</span>, <span class="ident">InvalidTransactionProof</span>, <span class="ident">OpaqueBundle</span>, <span class="ident">OpaqueExecutionReceipt</span>,
+	<span class="ident">SignedExecutionReceipt</span>,
 };
+<span class="kw">use</span> <span class="ident">sp_keystore::SyncCryptoStorePtr</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime</span>::{
 	<span class="ident">generic::BlockId</span>,
 	<span class="ident">traits</span>::{<span class="ident">Block</span> <span class="kw">as</span> <span class="ident">BlockT</span>, <span class="ident">HashFor</span>, <span class="ident">Header</span> <span class="kw">as</span> <span class="ident">HeaderT</span>, <span class="ident">NumberFor</span>, <span class="ident">One</span>, <span class="ident">Saturating</span>, <span class="ident">Zero</span>},
+	<span class="ident">RuntimeAppPublic</span>,
 };
 <span class="kw">use</span> <span class="ident">sp_trie::StorageProof</span>;
 <span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">borrow::Cow</span>, <span class="ident">sync::Arc</span>};
@@ -1000,42 +1027,28 @@
 <span class="doccomment">/// The logging target.</span>
 <span class="kw">const</span> <span class="ident">LOG_TARGET</span>: <span class="kw-2">&amp;</span><span class="ident">str</span> <span class="op">=</span> <span class="string">&quot;cirrus::executor&quot;</span>;
 
-<span class="doccomment">/// Type alias for APIs required from primary chain client</span>
-<span class="kw">trait</span> <span class="ident">PrimaryChainClient</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>:
-	<span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>
-<span class="kw">where</span>
-	<span class="ident">Block</span>: <span class="ident">BlockT</span>,
-{
-}
-
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">T</span><span class="op">&gt;</span> <span class="ident">PrimaryChainClient</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">T</span>
-<span class="kw">where</span>
-	<span class="ident">Block</span>: <span class="ident">BlockT</span>,
-	<span class="ident">T</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-{
-}
-
 <span class="doccomment">/// The implementation of the Cirrus `Executor`.</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
 <span class="kw">where</span>
 	<span class="ident">Block</span>: <span class="ident">BlockT</span>,
 	<span class="ident">PBlock</span>: <span class="ident">BlockT</span>,
 {
 	<span class="comment">// TODO: no longer used in executor, revisit this with ParachainBlockImport together.</span>
-	<span class="ident">primary_chain_client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">PrimaryChainClient</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+	<span class="ident">primary_chain_client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">PClient</span><span class="op">&gt;</span>,
 	<span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
 	<span class="ident">spawner</span>: <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">SpawnNamed</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span><span class="op">&gt;</span>,
 	<span class="ident">overseer_handle</span>: <span class="ident">OverseerHandle</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
 	<span class="ident">transaction_pool</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TransactionPool</span><span class="op">&gt;</span>,
 	<span class="ident">bundle_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">Bundle</span><span class="op">&lt;</span><span class="ident">Block::Extrinsic</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
-	<span class="ident">execution_receipt_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+	<span class="ident">execution_receipt_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 	<span class="ident">backend</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Backend</span><span class="op">&gt;</span>,
 	<span class="ident">code_executor</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">E</span><span class="op">&gt;</span>,
 	<span class="ident">is_authority</span>: <span class="ident">bool</span>,
+	<span class="ident">keystore</span>: <span class="ident">SyncCryptoStorePtr</span>,
 }
 
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span> <span class="ident">Clone</span>
-	<span class="kw">for</span> <span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span> <span class="ident">Clone</span>
+	<span class="kw">for</span> <span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
 <span class="kw">where</span>
 	<span class="ident">Block</span>: <span class="ident">BlockT</span>,
 	<span class="ident">PBlock</span>: <span class="ident">BlockT</span>,
@@ -1052,6 +1065,7 @@
 			<span class="ident">backend</span>: <span class="self">self</span>.<span class="ident">backend</span>.<span class="ident">clone</span>(),
 			<span class="ident">code_executor</span>: <span class="self">self</span>.<span class="ident">code_executor</span>.<span class="ident">clone</span>(),
 			<span class="ident">is_authority</span>: <span class="self">self</span>.<span class="ident">is_authority</span>,
+			<span class="ident">keystore</span>: <span class="self">self</span>.<span class="ident">keystore</span>.<span class="ident">clone</span>(),
 		}
 	}
 }
@@ -1061,8 +1075,8 @@
 		<span class="ident">HashFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 	<span class="op">&gt;</span><span class="op">&gt;</span><span class="ident">::Transaction</span>;
 
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
-	<span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
+	<span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
 <span class="kw">where</span>
 	<span class="ident">Block</span>: <span class="ident">BlockT</span>,
 	<span class="ident">PBlock</span>: <span class="ident">BlockT</span>,
@@ -1079,6 +1093,13 @@
 		<span class="ident">Transaction</span> <span class="op">=</span> <span class="ident">sp_api::TransactionFor</span><span class="op">&lt;</span><span class="ident">Client</span>, <span class="ident">Block</span><span class="op">&gt;</span>,
 		<span class="ident">Error</span> <span class="op">=</span> <span class="ident">sp_consensus::Error</span>,
 	<span class="op">&gt;</span>,
+	<span class="ident">PClient</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">Send</span>
+		<span class="op">+</span> <span class="ident">Sync</span>
+		<span class="op">+</span> <span class="lifetime">&#39;static</span>,
+	<span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
 	<span class="ident">Backend</span>: <span class="ident">sc_client_api::Backend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
 	<span class="ident">TransactionFor</span><span class="op">&lt;</span><span class="ident">Backend</span>, <span class="ident">Block</span><span class="op">&gt;</span>: <span class="ident">sp_trie::HashDBT</span><span class="op">&lt;</span><span class="ident">HashFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>, <span class="ident">sp_trie::DBValue</span><span class="op">&gt;</span>,
 	<span class="ident">TransactionPool</span>: <span class="ident">sc_transaction_pool_api::TransactionPool</span><span class="op">&lt;</span><span class="ident">Block</span> <span class="op">=</span> <span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
@@ -1086,7 +1107,7 @@
 {
 	<span class="doccomment">/// Create a new instance.</span>
 	<span class="attribute">#[<span class="ident">allow</span>(<span class="ident">clippy::too_many_arguments</span>)]</span>
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">new</span><span class="op">&lt;</span><span class="ident">PClient</span>, <span class="ident">SE</span>, <span class="ident">SC</span>, <span class="ident">IBNS</span>, <span class="ident">NSNS</span><span class="op">&gt;</span>(
+	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">new</span><span class="op">&lt;</span><span class="ident">SE</span>, <span class="ident">SC</span>, <span class="ident">IBNS</span>, <span class="ident">NSNS</span><span class="op">&gt;</span>(
 		<span class="ident">primary_chain_client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">PClient</span><span class="op">&gt;</span>,
 		<span class="ident">spawn_essential</span>: <span class="kw-2">&amp;</span><span class="ident">SE</span>,
 		<span class="ident">select_chain</span>: <span class="kw-2">&amp;</span><span class="ident">SC</span>,
@@ -1096,19 +1117,13 @@
 		<span class="ident">spawner</span>: <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">SpawnNamed</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span><span class="op">&gt;</span>,
 		<span class="ident">transaction_pool</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TransactionPool</span><span class="op">&gt;</span>,
 		<span class="ident">bundle_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">Bundle</span><span class="op">&lt;</span><span class="ident">Block::Extrinsic</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
-		<span class="ident">execution_receipt_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+		<span class="ident">execution_receipt_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 		<span class="ident">backend</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Backend</span><span class="op">&gt;</span>,
 		<span class="ident">code_executor</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">E</span><span class="op">&gt;</span>,
 		<span class="ident">is_authority</span>: <span class="ident">bool</span>,
+		<span class="ident">keystore</span>: <span class="ident">SyncCryptoStorePtr</span>,
 	) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="self">Self</span>, <span class="ident">sp_consensus::Error</span><span class="op">&gt;</span>
 	<span class="kw">where</span>
-		<span class="ident">PClient</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
-			<span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
-			<span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
-			<span class="op">+</span> <span class="ident">Send</span>
-			<span class="op">+</span> <span class="lifetime">&#39;static</span>
-			<span class="op">+</span> <span class="ident">Sync</span>,
-		<span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
 		<span class="ident">SE</span>: <span class="ident">SpawnEssentialNamed</span>,
 		<span class="ident">SC</span>: <span class="ident">SelectChain</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
 		<span class="ident">IBNS</span>: <span class="ident">Stream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
@@ -1169,6 +1184,7 @@
 			<span class="ident">backend</span>,
 			<span class="ident">code_executor</span>,
 			<span class="ident">is_authority</span>,
+			<span class="ident">keystore</span>,
 		};
 
 		<span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">tracing::Span::current</span>();
@@ -1477,9 +1493,15 @@
 	<span class="attribute">#[<span class="ident">error</span>(<span class="ident">transparent</span>)]</span>
 	<span class="ident">Client</span>(<span class="ident">Box</span><span class="op">&lt;</span><span class="ident">sp_blockchain::Error</span><span class="op">&gt;</span>),
 	<span class="attribute">#[<span class="ident">error</span>(<span class="ident">transparent</span>)]</span>
+	<span class="ident">RuntimeApi</span>(<span class="attribute">#[<span class="ident">from</span>]</span> <span class="ident">sp_api::ApiError</span>),
+	<span class="attribute">#[<span class="ident">error</span>(<span class="ident">transparent</span>)]</span>
 	<span class="ident">RecvError</span>(<span class="attribute">#[<span class="ident">from</span>]</span> <span class="ident">crossbeam::channel::RecvError</span>),
 	<span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Failed to send local receipt result because the channel is disconnected&quot;</span>)]</span>
 	<span class="ident">SendError</span>,
+	<span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;The signature of execution receipt is invalid&quot;</span>)]</span>
+	<span class="ident">BadExecutionReceiptSignature</span>,
+	<span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Invalid execution receipt author, got: {got}, expected: {expected}&quot;</span>)]</span>
+	<span class="ident">InvalidExecutionReceiptAuthor</span> { <span class="ident">got</span>: <span class="ident">ExecutorId</span>, <span class="ident">expected</span>: <span class="ident">ExecutorId</span> },
 }
 
 <span class="kw">impl</span> <span class="ident">From</span><span class="op">&lt;</span><span class="ident">sp_blockchain::Error</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">GossipMessageError</span> {
@@ -1488,8 +1510,8 @@
 	}
 }
 
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span> <span class="ident">GossipMessageHandler</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
-	<span class="kw">for</span> <span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span> <span class="ident">GossipMessageHandler</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
+	<span class="kw">for</span> <span class="ident">Executor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span>
 <span class="kw">where</span>
 	<span class="ident">Block</span>: <span class="ident">BlockT</span>,
 	<span class="ident">PBlock</span>: <span class="ident">BlockT</span>,
@@ -1511,6 +1533,13 @@
 		<span class="ident">Transaction</span> <span class="op">=</span> <span class="ident">sp_api::TransactionFor</span><span class="op">&lt;</span><span class="ident">Client</span>, <span class="ident">Block</span><span class="op">&gt;</span>,
 		<span class="ident">Error</span> <span class="op">=</span> <span class="ident">sp_consensus::Error</span>,
 	<span class="op">&gt;</span>,
+	<span class="ident">PClient</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>
+		<span class="op">+</span> <span class="ident">Send</span>
+		<span class="op">+</span> <span class="ident">Sync</span>
+		<span class="op">+</span> <span class="lifetime">&#39;static</span>,
+	<span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
 	<span class="ident">Backend</span>: <span class="ident">sc_client_api::Backend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
 	<span class="ident">TransactionFor</span><span class="op">&lt;</span><span class="ident">Backend</span>, <span class="ident">Block</span><span class="op">&gt;</span>: <span class="ident">sp_trie::HashDBT</span><span class="op">&lt;</span><span class="ident">HashFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>, <span class="ident">sp_trie::DBValue</span><span class="op">&gt;</span>,
 	<span class="ident">TransactionPool</span>: <span class="ident">sc_transaction_pool_api::TransactionPool</span><span class="op">&lt;</span><span class="ident">Block</span> <span class="op">=</span> <span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
@@ -1566,14 +1595,33 @@
 	<span class="doccomment">/// Checks the execution receipt from the executor peers.</span>
 	<span class="kw">fn</span> <span class="ident">on_execution_receipt</span>(
 		<span class="kw-2">&amp;</span><span class="self">self</span>,
-		<span class="ident">execution_receipt</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span>,
+		<span class="ident">signed_execution_receipt</span>: <span class="kw-2">&amp;</span><span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span>,
 	) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Action</span>, <span class="ident"><span class="self">Self</span>::Error</span><span class="op">&gt;</span> {
-		<span class="comment">// TODO: validate the Proof-of-Election</span>
+		<span class="kw">let</span> <span class="ident">SignedExecutionReceipt</span> { <span class="ident">execution_receipt</span>, <span class="ident">signature</span>, <span class="ident">signer</span> } <span class="op">=</span>
+			<span class="ident">signed_execution_receipt</span>;
 
 		<span class="kw">let</span> <span class="ident">block_hash</span> <span class="op">=</span> <span class="ident">execution_receipt</span>.<span class="ident">secondary_hash</span>;
 		<span class="kw">let</span> <span class="ident">primary_hash</span> <span class="op">=</span>
 			<span class="ident">PBlock::Hash::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">execution_receipt</span>.<span class="ident">primary_hash</span>.<span class="ident">encode</span>().<span class="ident">as_slice</span>())
 				.<span class="ident">expect</span>(<span class="string">&quot;Hash type must be correct&quot;</span>);
+
+		<span class="kw">let</span> <span class="ident">msg</span> <span class="op">=</span> <span class="ident">execution_receipt</span>.<span class="ident">hash</span>().<span class="ident">encode</span>();
+		<span class="kw">if</span> <span class="op">!</span><span class="ident">signer</span>.<span class="ident">verify</span>(<span class="kw-2">&amp;</span><span class="ident">msg</span>, <span class="ident">signature</span>) {
+			<span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident"><span class="self">Self</span>::Error::BadExecutionReceiptSignature</span>)
+		}
+
+		<span class="kw">let</span> <span class="ident">expected_executor_id</span> <span class="op">=</span> <span class="self">self</span>
+			.<span class="ident">primary_chain_client</span>
+			.<span class="ident">runtime_api</span>()
+			.<span class="ident">executor_id</span>(<span class="kw-2">&amp;</span><span class="ident">BlockId::Hash</span>(<span class="ident">primary_hash</span>))<span class="question-mark">?</span>;
+		<span class="kw">if</span> <span class="kw-2">*</span><span class="ident">signer</span> <span class="op">!</span><span class="op">=</span> <span class="ident">expected_executor_id</span> {
+			<span class="comment">// TODO: handle the misbehavior.</span>
+
+			<span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident"><span class="self">Self</span>::Error::InvalidExecutionReceiptAuthor</span> {
+				<span class="ident">got</span>: <span class="ident">signer</span>.<span class="ident">clone</span>(),
+				<span class="ident">expected</span>: <span class="ident">expected_executor_id</span>,
+			})
+		}
 
 		<span class="kw">let</span> <span class="ident">block_number</span> <span class="op">=</span> <span class="ident">TryInto</span>::<span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span><span class="ident">::try_into</span>(
 			<span class="self">self</span>.<span class="ident">primary_chain_client</span>
