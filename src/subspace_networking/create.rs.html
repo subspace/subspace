@@ -227,6 +227,25 @@
 <span id="222">222</span>
 <span id="223">223</span>
 <span id="224">224</span>
+<span id="225">225</span>
+<span id="226">226</span>
+<span id="227">227</span>
+<span id="228">228</span>
+<span id="229">229</span>
+<span id="230">230</span>
+<span id="231">231</span>
+<span id="232">232</span>
+<span id="233">233</span>
+<span id="234">234</span>
+<span id="235">235</span>
+<span id="236">236</span>
+<span id="237">237</span>
+<span id="238">238</span>
+<span id="239">239</span>
+<span id="240">240</span>
+<span id="241">241</span>
+<span id="242">242</span>
+<span id="243">243</span>
 </pre><pre class="rust"><code><span class="kw">pub</span> <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::custom_record_store::ValueGetter</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">BehaviorConfig</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::node::Node</span>;
@@ -246,6 +265,7 @@
 <span class="kw">use</span> <span class="ident">libp2p::websocket::WsConfig</span>;
 <span class="kw">use</span> <span class="ident">libp2p::yamux</span>::{<span class="ident">WindowUpdateMode</span>, <span class="ident">YamuxConfig</span>};
 <span class="kw">use</span> <span class="ident">libp2p</span>::{<span class="ident">core</span>, <span class="ident">identity</span>, <span class="ident">noise</span>, <span class="ident">Multiaddr</span>, <span class="ident">PeerId</span>, <span class="ident">Transport</span>, <span class="ident">TransportError</span>};
+<span class="kw">use</span> <span class="ident">log::info</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">std::time::Duration</span>;
 <span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">fmt</span>, <span class="ident">io</span>};
@@ -265,6 +285,8 @@
     <span class="kw">pub</span> <span class="ident">bootstrap_nodes</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Multiaddr</span><span class="op">&gt;</span>,
     <span class="doccomment">/// List of [`Multiaddr`] on which to listen for incoming connections.</span>
     <span class="kw">pub</span> <span class="ident">listen_on</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Multiaddr</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Fallback to random port if specified (or default) port is already occupied.</span>
+    <span class="kw">pub</span> <span class="ident">listen_on_fallback_to_random_port</span>: <span class="ident">bool</span>,
     <span class="doccomment">/// Adds a timeout to the setup and protocol upgrade process for all inbound and outbound</span>
     <span class="doccomment">/// connections established through the transport.</span>
     <span class="kw">pub</span> <span class="ident">timeout</span>: <span class="ident">Duration</span>,
@@ -327,6 +349,7 @@
             <span class="ident">keypair</span>,
             <span class="ident">bootstrap_nodes</span>: <span class="macro">vec!</span>[],
             <span class="ident">listen_on</span>: <span class="macro">vec!</span>[],
+            <span class="ident">listen_on_fallback_to_random_port</span>: <span class="bool-val">true</span>,
             <span class="ident">timeout</span>: <span class="ident">Duration::from_secs</span>(<span class="number">10</span>),
             <span class="ident">identify</span>,
             <span class="ident">kademlia</span>,
@@ -358,6 +381,7 @@
     <span class="ident">Config</span> {
         <span class="ident">keypair</span>,
         <span class="ident">listen_on</span>,
+        <span class="ident">listen_on_fallback_to_random_port</span>,
         <span class="ident">timeout</span>,
         <span class="ident">identify</span>,
         <span class="ident">kademlia</span>,
@@ -427,8 +451,22 @@
             }))
             .<span class="ident">build</span>();
 
-        <span class="kw">for</span> <span class="ident">addr</span> <span class="kw">in</span> <span class="ident">listen_on</span> {
-            <span class="ident">swarm</span>.<span class="ident">listen_on</span>(<span class="ident">addr</span>)<span class="question-mark">?</span>;
+        <span class="kw">for</span> <span class="kw-2">mut</span> <span class="ident">addr</span> <span class="kw">in</span> <span class="ident">listen_on</span> {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">swarm</span>.<span class="ident">listen_on</span>(<span class="ident">addr</span>.<span class="ident">clone</span>()) {
+                <span class="kw">if</span> <span class="op">!</span><span class="ident">listen_on_fallback_to_random_port</span> {
+                    <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>.<span class="ident">into</span>());
+                }
+
+                <span class="kw">let</span> <span class="ident">addr_string</span> <span class="op">=</span> <span class="ident">addr</span>.<span class="ident">to_string</span>();
+                <span class="comment">// Listen on random port if specified is already occupied</span>
+                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">Protocol::Tcp</span>(<span class="ident">_port</span>)) <span class="op">=</span> <span class="ident">addr</span>.<span class="ident">pop</span>() {
+                    <span class="macro">info!</span>(
+                        <span class="string">&quot;Failed to listen on {addr_string} ({error}), falling back to random port&quot;</span>
+                    );
+                    <span class="ident">addr</span>.<span class="ident">push</span>(<span class="ident">Protocol::Tcp</span>(<span class="number">0</span>));
+                    <span class="ident">swarm</span>.<span class="ident">listen_on</span>(<span class="ident">addr</span>)<span class="question-mark">?</span>;
+                }
+            }
         }
 
         <span class="prelude-val">Ok</span>::<span class="op">&lt;</span><span class="kw">_</span>, <span class="ident">CreationError</span><span class="op">&gt;</span>(<span class="ident">swarm</span>)
