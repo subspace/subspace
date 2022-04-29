@@ -395,6 +395,7 @@
 <span id="390">390</span>
 <span id="391">391</span>
 <span id="392">392</span>
+<span id="393">393</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">rand</span>::{<span class="ident">seq::SliceRandom</span>, <span class="ident">SeedableRng</span>};
 <span class="kw">use</span> <span class="ident">rand_chacha::ChaCha8Rng</span>;
 <span class="kw">use</span> <span class="ident">sc_client_api</span>::{<span class="ident">AuxStore</span>, <span class="ident">BlockBackend</span>};
@@ -503,7 +504,7 @@
 		<span class="ident">bundles</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">OpaqueBundle</span><span class="op">&gt;</span>,
 		<span class="ident">shuffling_seed</span>: <span class="ident">Randomness</span>,
 		<span class="ident">maybe_new_runtime</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span><span class="op">&gt;</span>,
-	) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span>, <span class="ident">sp_blockchain::Error</span><span class="op">&gt;</span> {
+	) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span>, <span class="ident">sp_blockchain::Error</span><span class="op">&gt;</span> {
 		<span class="kw">let</span> <span class="ident">parent_hash</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>;
 		<span class="kw">let</span> <span class="ident">parent_number</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_number</span>;
 
@@ -629,12 +630,12 @@
 				<span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="self">self</span>.<span class="ident">keystore</span>,
 				<span class="kw-2">&amp;</span>[(<span class="ident">ByteArray::to_raw_vec</span>(<span class="kw-2">&amp;</span><span class="ident">executor_id</span>), <span class="ident">ExecutorId::ID</span>)],
 			) {
-			<span class="kw">let</span> <span class="ident">to_sign</span> <span class="op">=</span> <span class="ident">execution_receipt</span>.<span class="ident">hash</span>().<span class="ident">encode</span>();
+			<span class="kw">let</span> <span class="ident">to_sign</span> <span class="op">=</span> <span class="ident">execution_receipt</span>.<span class="ident">hash</span>();
 			<span class="kw">match</span> <span class="ident">SyncCryptoStore::sign_with</span>(
 				<span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="self">self</span>.<span class="ident">keystore</span>,
 				<span class="ident">ExecutorId::ID</span>,
 				<span class="kw-2">&amp;</span><span class="ident">executor_id</span>.<span class="ident">clone</span>().<span class="ident">into</span>(),
-				<span class="kw-2">&amp;</span><span class="ident">to_sign</span>,
+				<span class="ident">to_sign</span>.<span class="ident">as_ref</span>(),
 			) {
 				<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">signature</span>)) =&gt; {
 					<span class="macro">tracing::debug!</span>(
@@ -644,7 +645,7 @@
 					);
 
 					<span class="kw">let</span> <span class="ident">signed_execution_receipt</span> <span class="op">=</span> <span class="ident">SignedExecutionReceipt</span> {
-						<span class="ident">execution_receipt</span>: <span class="ident">execution_receipt</span>.<span class="ident">clone</span>(),
+						<span class="ident">execution_receipt</span>,
 						<span class="ident">signature</span>: <span class="ident">ExecutorSignature::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">signature</span>.<span class="ident">as_slice</span>()).<span class="ident">map_err</span>(
 							<span class="op">|</span><span class="ident">err</span><span class="op">|</span> {
 								<span class="ident">sp_blockchain::Error::Application</span>(<span class="ident">Box::from</span>(<span class="macro">format!</span>(
@@ -655,14 +656,15 @@
 						<span class="ident">signer</span>: <span class="ident">executor_id</span>,
 					};
 
-					<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">e</span>) <span class="op">=</span>
-						<span class="self">self</span>.<span class="ident">execution_receipt_sender</span>.<span class="ident">unbounded_send</span>(<span class="ident">signed_execution_receipt</span>)
+					<span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">e</span>) <span class="op">=</span> <span class="self">self</span>
+						.<span class="ident">execution_receipt_sender</span>
+						.<span class="ident">unbounded_send</span>(<span class="ident">signed_execution_receipt</span>.<span class="ident">clone</span>())
 					{
 						<span class="macro">tracing::error!</span>(<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>, <span class="ident">error</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">e</span>, <span class="string">&quot;Failed to send signed execution receipt&quot;</span>);
 					}
 
 					<span class="comment">// Return `Some(_)` to broadcast ER to all farmers via unsigned extrinsic.</span>
-					<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">execution_receipt</span>))
+					<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">signed_execution_receipt</span>))
 				},
 				<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Err</span>(<span class="ident">sp_blockchain::Error::Application</span>(<span class="ident">Box::from</span>(
 					<span class="string">&quot;This should not happen as the existence of key was just checked&quot;</span>,
