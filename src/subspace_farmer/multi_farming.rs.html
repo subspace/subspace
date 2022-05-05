@@ -149,16 +149,72 @@
 <span id="144">144</span>
 <span id="145">145</span>
 <span id="146">146</span>
+<span id="147">147</span>
+<span id="148">148</span>
+<span id="149">149</span>
+<span id="150">150</span>
+<span id="151">151</span>
+<span id="152">152</span>
+<span id="153">153</span>
+<span id="154">154</span>
+<span id="155">155</span>
+<span id="156">156</span>
+<span id="157">157</span>
+<span id="158">158</span>
+<span id="159">159</span>
+<span id="160">160</span>
+<span id="161">161</span>
+<span id="162">162</span>
+<span id="163">163</span>
+<span id="164">164</span>
+<span id="165">165</span>
+<span id="166">166</span>
+<span id="167">167</span>
+<span id="168">168</span>
+<span id="169">169</span>
+<span id="170">170</span>
+<span id="171">171</span>
+<span id="172">172</span>
+<span id="173">173</span>
+<span id="174">174</span>
+<span id="175">175</span>
+<span id="176">176</span>
+<span id="177">177</span>
+<span id="178">178</span>
+<span id="179">179</span>
+<span id="180">180</span>
+<span id="181">181</span>
+<span id="182">182</span>
+<span id="183">183</span>
+<span id="184">184</span>
+<span id="185">185</span>
+<span id="186">186</span>
+<span id="187">187</span>
+<span id="188">188</span>
+<span id="189">189</span>
+<span id="190">190</span>
+<span id="191">191</span>
+<span id="192">192</span>
+<span id="193">193</span>
+<span id="194">194</span>
+<span id="195">195</span>
+<span id="196">196</span>
+<span id="197">197</span>
+<span id="198">198</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="kw">crate</span>::{
     <span class="ident">plotting</span>, <span class="ident">Archiving</span>, <span class="ident">Commitments</span>, <span class="ident">Farming</span>, <span class="ident">Identity</span>, <span class="ident">NodeRpcClient</span>, <span class="ident">ObjectMappings</span>, <span class="ident">Plot</span>,
-    <span class="ident">RpcClient</span>,
+    <span class="ident">PlotError</span>, <span class="ident">RpcClient</span>,
 };
 <span class="kw">use</span> <span class="ident">anyhow::anyhow</span>;
 <span class="kw">use</span> <span class="ident">futures::stream</span>::{<span class="ident">FuturesUnordered</span>, <span class="ident">StreamExt</span>};
 <span class="kw">use</span> <span class="ident">log::info</span>;
 <span class="kw">use</span> <span class="ident">rayon::prelude</span>::<span class="kw-2">*</span>;
-<span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">path::Path</span>, <span class="ident">sync::Arc</span>, <span class="ident">time::Duration</span>};
-<span class="kw">use</span> <span class="ident">subspace_core_primitives::PublicKey</span>;
+<span class="kw">use</span> <span class="ident">std</span>::{
+    <span class="ident">path</span>::{<span class="ident">Path</span>, <span class="ident">PathBuf</span>},
+    <span class="ident">sync::Arc</span>,
+    <span class="ident">time::Duration</span>,
+};
+<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">PublicKey</span>, <span class="ident">PIECE_SIZE</span>};
 <span class="kw">use</span> <span class="ident">subspace_solving::SubspaceCodec</span>;
 
 <span class="doccomment">/// Abstraction around having multiple `Plot`s, `Farming`s and `Plotting`s.</span>
@@ -171,15 +227,62 @@
     <span class="ident">archiving</span>: <span class="ident">Archiving</span>,
 }
 
+<span class="kw">fn</span> <span class="ident">get_plot_sizes</span>(<span class="ident">total_plot_size</span>: <span class="ident">u64</span>, <span class="ident">max_plot_size</span>: <span class="ident">u64</span>) -&gt; <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span> {
+    <span class="comment">// TODO: we need to remember plot size in order to prune unused plots in future if plot size is</span>
+    <span class="comment">// less than it was specified before.</span>
+    <span class="comment">// TODO: Piece count should account for database overhead of various additional databases</span>
+    <span class="comment">// For now assume 80% will go for plot itself</span>
+    <span class="kw">let</span> <span class="ident">total_plot_size</span> <span class="op">=</span> <span class="ident">total_plot_size</span> <span class="op">*</span> <span class="number">4</span> <span class="op">/</span> <span class="number">5</span> <span class="op">/</span> <span class="ident">PIECE_SIZE</span> <span class="kw">as</span> <span class="ident">u64</span>;
+
+    <span class="kw">let</span> <span class="ident">plot_sizes</span> <span class="op">=</span>
+        <span class="ident">std::iter::repeat</span>(<span class="ident">max_plot_size</span>).<span class="ident">take</span>((<span class="ident">total_plot_size</span> <span class="op">/</span> <span class="ident">max_plot_size</span>) <span class="kw">as</span> <span class="ident">usize</span>);
+    <span class="kw">if</span> <span class="ident">total_plot_size</span> <span class="op">%</span> <span class="ident">max_plot_size</span> <span class="op">&gt;</span> <span class="number">0</span> {
+        <span class="ident">plot_sizes</span>
+            .<span class="ident">chain</span>(<span class="ident">std::iter::once</span>(<span class="ident">total_plot_size</span> <span class="op">%</span> <span class="ident">max_plot_size</span>))
+            .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span>()
+    } <span class="kw">else</span> {
+        <span class="ident">plot_sizes</span>.<span class="ident">collect</span>()
+    }
+}
+
 <span class="kw">impl</span> <span class="ident">MultiFarming</span> {
     <span class="doccomment">/// Starts multiple farmers with any plot sizes which user gives</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">new</span>(
+        <span class="ident">base_directory</span>: <span class="ident">PathBuf</span>,
+        <span class="ident">client</span>: <span class="ident">NodeRpcClient</span>,
+        <span class="ident">object_mappings</span>: <span class="ident">ObjectMappings</span>,
+        <span class="ident">reward_address</span>: <span class="ident">PublicKey</span>,
+        <span class="ident">best_block_number_check_interval</span>: <span class="ident">Duration</span>,
+        <span class="ident">total_plot_size</span>: <span class="ident">u64</span>,
+        <span class="ident">max_plot_size</span>: <span class="ident">u64</span>,
+    ) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span><span class="self">Self</span><span class="op">&gt;</span> {
+        <span class="kw">let</span> <span class="ident">plot_sizes</span> <span class="op">=</span> <span class="ident">get_plot_sizes</span>(<span class="ident">total_plot_size</span>, <span class="ident">max_plot_size</span>);
+        <span class="ident"><span class="self">Self</span>::new_inner</span>(
+            <span class="ident">base_directory</span>.<span class="ident">clone</span>(),
+            <span class="ident">client</span>,
+            <span class="ident">object_mappings</span>,
+            <span class="ident">reward_address</span>,
+            <span class="ident">best_block_number_check_interval</span>,
+            <span class="ident">plot_sizes</span>,
+            <span class="kw">move</span> <span class="op">|</span><span class="ident">plot_index</span>, <span class="ident">address</span>, <span class="ident">max_piece_count</span><span class="op">|</span> {
+                <span class="ident">Plot::open_or_create</span>(
+                    <span class="ident">base_directory</span>.<span class="ident">join</span>(<span class="macro">format!</span>(<span class="string">&quot;plot{plot_index}&quot;</span>)),
+                    <span class="ident">address</span>,
+                    <span class="ident">max_piece_count</span>,
+                )
+            },
+        )
+        .<span class="kw">await</span>
+    }
+
+    <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">new_inner</span>(
         <span class="ident">base_directory</span>: <span class="kw">impl</span> <span class="ident">AsRef</span><span class="op">&lt;</span><span class="ident">Path</span><span class="op">&gt;</span>,
         <span class="ident">client</span>: <span class="ident">NodeRpcClient</span>,
         <span class="ident">object_mappings</span>: <span class="ident">ObjectMappings</span>,
-        <span class="ident">plot_sizes</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span>,
         <span class="ident">reward_address</span>: <span class="ident">PublicKey</span>,
         <span class="ident">best_block_number_check_interval</span>: <span class="ident">Duration</span>,
+        <span class="ident">plot_sizes</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span>,
+        <span class="ident">new_plot</span>: <span class="kw">impl</span> <span class="ident">Fn</span>(<span class="ident">usize</span>, <span class="ident">PublicKey</span>, <span class="ident">u64</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Plot</span>, <span class="ident">PlotError</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Clone</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     ) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span><span class="self">Self</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">plots</span> <span class="op">=</span> <span class="ident">Vec::with_capacity</span>(<span class="ident">plot_sizes</span>.<span class="ident">len</span>());
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">subspace_codecs</span> <span class="op">=</span> <span class="ident">Vec::with_capacity</span>(<span class="ident">plot_sizes</span>.<span class="ident">len</span>());
@@ -192,6 +295,7 @@
             .<span class="ident">map</span>(<span class="op">|</span>(<span class="ident">plot_index</span>, <span class="ident">max_plot_pieces</span>)<span class="op">|</span> {
                 <span class="kw">let</span> <span class="ident">base_directory</span> <span class="op">=</span> <span class="ident">base_directory</span>.<span class="ident">as_ref</span>().<span class="ident">to_owned</span>();
                 <span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">clone</span>();
+                <span class="kw">let</span> <span class="ident">new_plot</span> <span class="op">=</span> <span class="ident">new_plot</span>.<span class="ident">clone</span>();
 
                 <span class="ident">tokio::task::spawn_blocking</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
                     <span class="kw">let</span> <span class="ident">base_directory</span> <span class="op">=</span> <span class="ident">base_directory</span>.<span class="ident">join</span>(<span class="macro">format!</span>(<span class="string">&quot;plot{plot_index}&quot;</span>));
@@ -203,7 +307,7 @@
                     <span class="comment">// TODO: This doesn&#39;t account for the fact that node can</span>
                     <span class="comment">// have a completely different history to what farmer expects</span>
                     <span class="macro">info!</span>(<span class="string">&quot;Opening plot&quot;</span>);
-                    <span class="kw">let</span> <span class="ident">plot</span> <span class="op">=</span> <span class="ident">Plot::open_or_create</span>(<span class="kw-2">&amp;</span><span class="ident">base_directory</span>, <span class="ident">public_key</span>, <span class="ident">max_plot_pieces</span>)<span class="question-mark">?</span>;
+                    <span class="kw">let</span> <span class="ident">plot</span> <span class="op">=</span> <span class="ident">new_plot</span>(<span class="ident">plot_index</span>, <span class="ident">public_key</span>, <span class="ident">max_plot_pieces</span>)<span class="question-mark">?</span>;
 
                     <span class="macro">info!</span>(<span class="string">&quot;Opening commitments&quot;</span>);
                     <span class="kw">let</span> <span class="ident">plot_commitments</span> <span class="op">=</span> <span class="ident">Commitments::new</span>(<span class="ident">base_directory</span>.<span class="ident">join</span>(<span class="string">&quot;commitments&quot;</span>))<span class="question-mark">?</span>;
