@@ -1,4 +1,3 @@
 (function() {var implementors = {};
-implementors["cirrus_node"] = [{"text":"impl SubstrateCli for <a class=\"struct\" href=\"cirrus_node/cli/struct.Cli.html\" title=\"struct cirrus_node::cli::Cli\">Cli</a>","synthetic":false,"types":["cirrus_node::cli::Cli"]}];
 implementors["subspace_node"] = [{"text":"impl SubstrateCli for <a class=\"struct\" href=\"subspace_node/struct.SecondaryChainCli.html\" title=\"struct subspace_node::SecondaryChainCli\">SecondaryChainCli</a>","synthetic":false,"types":["subspace_node::secondary_chain_cli::SecondaryChainCli"]},{"text":"impl SubstrateCli for <a class=\"struct\" href=\"subspace_node/struct.Cli.html\" title=\"struct subspace_node::Cli\">Cli</a>","synthetic":false,"types":["subspace_node::Cli"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

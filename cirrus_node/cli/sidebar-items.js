@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["Subcommand","Sub-commands supported by the collator."]],"struct":[["Cli",""]]});

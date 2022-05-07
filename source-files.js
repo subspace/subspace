@@ -2,7 +2,7 @@ var N = null;var sourcesIndex = {};
 sourcesIndex["cirrus_block_builder"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundler.rs","lib.rs","merkle_tree.rs","overseer.rs","processor.rs"]};
 sourcesIndex["cirrus_client_executor_gossip"] = {"name":"","files":["lib.rs","worker.rs"]};
-sourcesIndex["cirrus_node"] = {"name":"","files":["chain_spec.rs","cli.rs","lib.rs","rpc.rs","service.rs"]};
+sourcesIndex["cirrus_node"] = {"name":"","files":["lib.rs","rpc.rs","service.rs"]};
 sourcesIndex["cirrus_pallet_executive"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_primitives"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
@@ -29,7 +29,7 @@ sourcesIndex["subspace_core_primitives"] = {"name":"","files":["crypto.rs","lib.
 sourcesIndex["subspace_farmer"] = {"name":"","dirs":[{"name":"commitments","files":["commitment_databases.rs"]}],"files":["archiving.rs","commitments.rs","farming.rs","identity.rs","lib.rs","multi_farming.rs","node_rpc_client.rs","object_mappings.rs","plot.rs","plotting.rs","rpc_client.rs","ws_rpc_server.rs"]};
 sourcesIndex["subspace_fraud_proof"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_networking"] = {"name":"","dirs":[{"name":"behavior","files":["custom_record_store.rs"]}],"files":["behavior.rs","create.rs","lib.rs","multimess.rs","node.rs","node_runner.rs","shared.rs","utils.rs"]};
-sourcesIndex["subspace_node"] = {"name":"","files":["chain_spec.rs","import_blocks_from_dsn.rs","lib.rs","secondary_chain_cli.rs"]};
+sourcesIndex["subspace_node"] = {"name":"","files":["chain_spec.rs","import_blocks_from_dsn.rs","lib.rs","secondary_chain_cli.rs","secondary_chain_spec.rs"]};
 sourcesIndex["subspace_rpc_primitives"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_runtime"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_runtime_primitives"] = {"name":"","files":["lib.rs"]};
