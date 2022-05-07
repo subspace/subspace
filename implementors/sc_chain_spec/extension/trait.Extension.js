@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["subspace_node"] = [{"text":"impl Extension for <a class=\"struct\" href=\"subspace_node/struct.ChainSpecExtensions.html\" title=\"struct subspace_node::ChainSpecExtensions\">ChainSpecExtensions</a>","synthetic":false,"types":["subspace_node::chain_spec::ChainSpecExtensions"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
