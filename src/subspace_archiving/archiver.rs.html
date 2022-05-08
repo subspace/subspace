@@ -722,6 +722,13 @@
 <span id="717">717</span>
 <span id="718">718</span>
 <span id="719">719</span>
+<span id="720">720</span>
+<span id="721">721</span>
+<span id="722">722</span>
+<span id="723">723</span>
+<span id="724">724</span>
+<span id="725">725</span>
+<span id="726">726</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -833,8 +840,8 @@
 
 <span class="doccomment">/// Archived segment as a combination of root block hash, segment index and corresponding pieces</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Clone</span>, <span class="ident">Eq</span>, <span class="ident">PartialEq</span>)]</span>
-<span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>, <span class="ident">derive</span>(<span class="ident">serde::Serialize</span>, <span class="ident">serde::Deserialize</span>))]</span>
-<span class="attribute">#[<span class="ident">serde</span>(<span class="ident">rename_all</span> <span class="op">=</span> <span class="string">&quot;camelCase&quot;</span>)]</span>
+<span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;serde&quot;</span>, <span class="ident">derive</span>(<span class="ident">serde::Serialize</span>, <span class="ident">serde::Deserialize</span>))]</span>
+<span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;serde&quot;</span>, <span class="ident">serde</span>(<span class="ident">rename_all</span> <span class="op">=</span> <span class="string">&quot;camelCase&quot;</span>))]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">ArchivedSegment</span> {
     <span class="doccomment">/// Root block of the segment</span>
     <span class="kw">pub</span> <span class="ident">root_block</span>: <span class="ident">RootBlock</span>,
@@ -915,6 +922,10 @@
     <span class="doccomment">/// Configuration parameter defining the size of one record (data in one piece excluding witness</span>
     <span class="doccomment">/// size)</span>
     <span class="ident">record_size</span>: <span class="ident">usize</span>,
+    <span class="doccomment">/// Number of data shards</span>
+    <span class="ident">data_shards</span>: <span class="ident">usize</span>,
+    <span class="doccomment">/// Number of parity shards</span>
+    <span class="ident">parity_shards</span>: <span class="ident">usize</span>,
     <span class="doccomment">/// Configuration parameter defining the size of one recorded history segment</span>
     <span class="ident">segment_size</span>: <span class="ident">usize</span>,
     <span class="doccomment">/// Erasure coding data structure</span>
@@ -968,13 +979,16 @@
             <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">ArchiverInstantiationError::WrongRecordAndSegmentCombination</span>);
         }
 
-        <span class="kw">let</span> <span class="ident">shards</span> <span class="op">=</span> <span class="ident">segment_size</span> <span class="op">/</span> <span class="ident">record_size</span>;
-        <span class="kw">let</span> <span class="ident">reed_solomon</span> <span class="op">=</span> <span class="ident">ReedSolomon::new</span>(<span class="ident">shards</span>, <span class="ident">shards</span>)
+        <span class="kw">let</span> <span class="ident">data_shards</span> <span class="op">=</span> <span class="ident">segment_size</span> <span class="op">/</span> <span class="ident">record_size</span>;
+        <span class="kw">let</span> <span class="ident">parity_shards</span> <span class="op">=</span> <span class="ident">data_shards</span>;
+        <span class="kw">let</span> <span class="ident">reed_solomon</span> <span class="op">=</span> <span class="ident">ReedSolomon::new</span>(<span class="ident">data_shards</span>, <span class="ident">parity_shards</span>)
             .<span class="ident">expect</span>(<span class="string">&quot;ReedSolomon should always be correctly instantiated&quot;</span>);
 
         <span class="prelude-val">Ok</span>(<span class="self">Self</span> {
             <span class="ident">buffer</span>: <span class="ident">VecDeque::default</span>(),
             <span class="ident">record_size</span>,
+            <span class="ident">data_shards</span>,
+            <span class="ident">parity_shards</span>,
             <span class="ident">segment_size</span>,
             <span class="ident">reed_solomon</span>,
             <span class="ident">segment_index</span>: <span class="number">0</span>,
@@ -1350,13 +1364,13 @@
             }
             <span class="ident">corrected_object_mapping</span>
         };
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">record_shards</span> <span class="op">=</span> {
-            <span class="comment">// Allocate record shards that can hold both data and parity record shards (hence `*2`)</span>
-            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">record_shards</span> <span class="op">=</span>
-                <span class="ident">RecordShards::new</span>(<span class="self">self</span>.<span class="ident">segment_size</span> <span class="op">/</span> <span class="self">self</span>.<span class="ident">record_size</span> <span class="op">*</span> <span class="number">2</span>, <span class="self">self</span>.<span class="ident">record_size</span>);
-            <span class="ident">segment</span>.<span class="ident">encode_to</span>(<span class="kw-2">&amp;mut</span> <span class="ident">record_shards</span>);
-            <span class="ident">record_shards</span>
-        };
+
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">record_shards</span> <span class="op">=</span> <span class="ident">RecordShards::new</span>(
+            <span class="self">self</span>.<span class="ident">data_shards</span>,
+            <span class="self">self</span>.<span class="ident">parity_shards</span>,
+            <span class="self">self</span>.<span class="ident">record_size</span>,
+            <span class="kw-2">&amp;</span><span class="ident">segment</span>,
+        );
 
         <span class="ident">drop</span>(<span class="ident">segment</span>);
 
