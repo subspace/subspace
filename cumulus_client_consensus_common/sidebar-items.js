@@ -1,1 +1,0 @@
-initSidebarItems({"struct":[["ParachainBlockImport","Parachain specific block import."]]});

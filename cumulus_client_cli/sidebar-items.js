@@ -1,1 +1,0 @@
-initSidebarItems({"struct":[["PurgeChainCmd","The `purge-chain` command used to remove the whole chain: the parachain and the relaychain."],["RunCmd","The `run` command used to run a node."]]});
