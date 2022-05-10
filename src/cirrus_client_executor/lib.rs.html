@@ -950,6 +950,26 @@
 <span id="945">945</span>
 <span id="946">946</span>
 <span id="947">947</span>
+<span id="948">948</span>
+<span id="949">949</span>
+<span id="950">950</span>
+<span id="951">951</span>
+<span id="952">952</span>
+<span id="953">953</span>
+<span id="954">954</span>
+<span id="955">955</span>
+<span id="956">956</span>
+<span id="957">957</span>
+<span id="958">958</span>
+<span id="959">959</span>
+<span id="960">960</span>
+<span id="961">961</span>
+<span id="962">962</span>
+<span id="963">963</span>
+<span id="964">964</span>
+<span id="965">965</span>
+<span id="966">966</span>
+<span id="967">967</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Cumulus.</span>
 
@@ -1009,15 +1029,19 @@
 <span class="doccomment">//! [Computation section]: https://subspace.network/news/subspace-network-whitepaper</span>
 
 <span class="kw">mod</span> <span class="ident">aux_schema</span>;
-<span class="kw">mod</span> <span class="ident">bundler</span>;
+<span class="kw">mod</span> <span class="ident">bundle_processor</span>;
+<span class="kw">mod</span> <span class="ident">bundle_producer</span>;
 <span class="kw">mod</span> <span class="ident">merkle_tree</span>;
 <span class="kw">mod</span> <span class="ident">overseer</span>;
-<span class="kw">mod</span> <span class="ident">processor</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">tests</span>;
 
 <span class="kw">pub</span> <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::overseer::ExecutorSlotInfo</span>;
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::overseer</span>::{<span class="ident">BlockInfo</span>, <span class="ident">CollationGenerationConfig</span>, <span class="ident">Overseer</span>, <span class="ident">OverseerHandle</span>};
+<span class="kw">use</span> <span class="kw">crate</span>::{
+	<span class="ident">bundle_processor::BundleProcessor</span>,
+	<span class="ident">bundle_producer::BundleProducer</span>,
+	<span class="ident">overseer</span>::{<span class="ident">BlockInfo</span>, <span class="ident">CollationGenerationConfig</span>, <span class="ident">Overseer</span>, <span class="ident">OverseerHandle</span>},
+};
 <span class="kw">use</span> <span class="ident">cirrus_block_builder</span>::{<span class="ident">BlockBuilder</span>, <span class="ident">RecordProof</span>};
 <span class="kw">use</span> <span class="ident">cirrus_client_executor_gossip</span>::{<span class="ident">Action</span>, <span class="ident">GossipMessageHandler</span>};
 <span class="kw">use</span> <span class="ident">cirrus_primitives</span>::{<span class="ident">AccountId</span>, <span class="ident">SecondaryApi</span>};
@@ -1036,7 +1060,6 @@
 <span class="kw">use</span> <span class="ident">sp_executor</span>::{
 	<span class="ident">Bundle</span>, <span class="ident">BundleEquivocationProof</span>, <span class="ident">ExecutionPhase</span>, <span class="ident">ExecutionReceipt</span>, <span class="ident">ExecutorApi</span>, <span class="ident">ExecutorId</span>,
 	<span class="ident">FraudProof</span>, <span class="ident">InvalidTransactionProof</span>, <span class="ident">OpaqueBundle</span>, <span class="ident">SignedBundle</span>, <span class="ident">SignedExecutionReceipt</span>,
-	<span class="ident">SignedOpaqueBundle</span>,
 };
 <span class="kw">use</span> <span class="ident">sp_keystore::SyncCryptoStorePtr</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime</span>::{
@@ -1047,7 +1070,6 @@
 <span class="kw">use</span> <span class="ident">sp_trie::StorageProof</span>;
 <span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">borrow::Cow</span>, <span class="ident">sync::Arc</span>};
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::Randomness</span>;
-<span class="kw">use</span> <span class="ident">subspace_runtime_primitives::Hash</span> <span class="kw">as</span> <span class="ident">PHash</span>;
 <span class="kw">use</span> <span class="ident">tracing::Instrument</span>;
 
 <span class="doccomment">/// The logging target.</span>
@@ -1064,14 +1086,12 @@
 	<span class="ident">primary_network</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">NetworkService</span><span class="op">&lt;</span><span class="ident">PBlock</span>, <span class="ident">PBlock::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 	<span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
 	<span class="ident">spawner</span>: <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">SpawnNamed</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span><span class="op">&gt;</span>,
-	<span class="ident">overseer_handle</span>: <span class="ident">OverseerHandle</span><span class="op">&lt;</span><span class="ident">PBlock</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span>,
+	<span class="ident">overseer_handle</span>: <span class="ident">OverseerHandle</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
 	<span class="ident">transaction_pool</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TransactionPool</span><span class="op">&gt;</span>,
-	<span class="ident">bundle_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">SignedBundle</span><span class="op">&lt;</span><span class="ident">Block::Extrinsic</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
-	<span class="ident">execution_receipt_sender</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span><span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 	<span class="ident">backend</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Backend</span><span class="op">&gt;</span>,
 	<span class="ident">code_executor</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">E</span><span class="op">&gt;</span>,
 	<span class="ident">is_authority</span>: <span class="ident">bool</span>,
-	<span class="ident">keystore</span>: <span class="ident">SyncCryptoStorePtr</span>,
+	<span class="ident">bundle_processor</span>: <span class="ident">BundleProcessor</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">Backend</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">Client</span>, <span class="ident">PClient</span>, <span class="ident">TransactionPool</span>, <span class="ident">Backend</span>, <span class="ident">E</span><span class="op">&gt;</span> <span class="ident">Clone</span>
@@ -1088,12 +1108,10 @@
 			<span class="ident">spawner</span>: <span class="self">self</span>.<span class="ident">spawner</span>.<span class="ident">clone</span>(),
 			<span class="ident">overseer_handle</span>: <span class="self">self</span>.<span class="ident">overseer_handle</span>.<span class="ident">clone</span>(),
 			<span class="ident">transaction_pool</span>: <span class="self">self</span>.<span class="ident">transaction_pool</span>.<span class="ident">clone</span>(),
-			<span class="ident">bundle_sender</span>: <span class="self">self</span>.<span class="ident">bundle_sender</span>.<span class="ident">clone</span>(),
-			<span class="ident">execution_receipt_sender</span>: <span class="self">self</span>.<span class="ident">execution_receipt_sender</span>.<span class="ident">clone</span>(),
 			<span class="ident">backend</span>: <span class="self">self</span>.<span class="ident">backend</span>.<span class="ident">clone</span>(),
 			<span class="ident">code_executor</span>: <span class="self">self</span>.<span class="ident">code_executor</span>.<span class="ident">clone</span>(),
 			<span class="ident">is_authority</span>: <span class="self">self</span>.<span class="ident">is_authority</span>,
-			<span class="ident">keystore</span>: <span class="self">self</span>.<span class="ident">keystore</span>.<span class="ident">clone</span>(),
+			<span class="ident">bundle_processor</span>: <span class="self">self</span>.<span class="ident">bundle_processor</span>.<span class="ident">clone</span>(),
 		}
 	}
 }
@@ -1160,7 +1178,81 @@
 	{
 		<span class="kw">let</span> <span class="ident">active_leaves</span> <span class="op">=</span> <span class="ident">active_leaves</span>(<span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">primary_chain_client</span>, <span class="ident">select_chain</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
+		<span class="kw">let</span> <span class="ident">bundle_producer</span> <span class="op">=</span> <span class="ident">BundleProducer::new</span>(
+			<span class="ident">primary_chain_client</span>.<span class="ident">clone</span>(),
+			<span class="ident">client</span>.<span class="ident">clone</span>(),
+			<span class="ident">transaction_pool</span>.<span class="ident">clone</span>(),
+			<span class="ident">bundle_sender</span>,
+			<span class="ident">is_authority</span>,
+			<span class="ident">keystore</span>.<span class="ident">clone</span>(),
+		);
+
+		<span class="kw">let</span> <span class="ident">bundle_processor</span> <span class="op">=</span> <span class="ident">BundleProcessor::new</span>(
+			<span class="ident">primary_chain_client</span>.<span class="ident">clone</span>(),
+			<span class="ident">primary_network</span>.<span class="ident">clone</span>(),
+			<span class="ident">client</span>.<span class="ident">clone</span>(),
+			<span class="ident">execution_receipt_sender</span>,
+			<span class="ident">backend</span>.<span class="ident">clone</span>(),
+			<span class="ident">is_authority</span>,
+			<span class="ident">keystore</span>,
+		);
+
 		<span class="kw">let</span> <span class="ident">overseer_handle</span> <span class="op">=</span> {
+			<span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">tracing::Span::current</span>();
+			<span class="kw">let</span> <span class="ident">overseer_config</span> <span class="op">=</span> <span class="ident">CollationGenerationConfig</span> {
+				<span class="ident">bundler</span>: {
+					<span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">span</span>.<span class="ident">clone</span>();
+
+					<span class="ident">Box::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">primary_hash</span>, <span class="ident">slot_info</span><span class="op">|</span> {
+						<span class="kw">let</span> <span class="ident">bundle_producer</span> <span class="op">=</span> <span class="ident">bundle_producer</span>.<span class="ident">clone</span>();
+						<span class="kw">let</span> <span class="ident">produce_bundle_fut</span> <span class="op">=</span> <span class="ident">bundle_producer</span>
+							.<span class="ident">produce_bundle</span>(<span class="ident">primary_hash</span>, <span class="ident">slot_info</span>)
+							.<span class="ident">instrument</span>(<span class="ident">span</span>.<span class="ident">clone</span>());
+
+						<span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
+							<span class="ident">produce_bundle_fut</span>.<span class="kw">await</span>.<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> {
+								<span class="macro">tracing::error!</span>(
+									<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+									<span class="ident">relay_parent</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">primary_hash</span>,
+									<span class="ident">error</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">error</span>,
+									<span class="string">&quot;Error at producing bundle.&quot;</span>,
+								);
+								<span class="prelude-val">None</span>
+							})
+						})
+					})
+				},
+				<span class="ident">processor</span>: {
+					<span class="kw">let</span> <span class="ident">bundle_processor</span> <span class="op">=</span> <span class="ident">bundle_processor</span>.<span class="ident">clone</span>();
+
+					<span class="ident">Box::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">primary_hash</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span><span class="op">|</span> {
+						<span class="kw">let</span> <span class="ident">bundle_processor</span> <span class="op">=</span> <span class="ident">bundle_processor</span>.<span class="ident">clone</span>();
+						<span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">span</span>.<span class="ident">clone</span>();
+
+						<span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
+							<span class="kw">let</span> <span class="ident">process_bundles_fut</span> <span class="op">=</span> <span class="ident">bundle_processor</span>
+								.<span class="ident">process_bundles</span>(
+									<span class="ident">primary_hash</span>,
+									<span class="ident">bundles</span>,
+									<span class="ident">shuffling_seed</span>,
+									<span class="ident">maybe_new_runtime</span>,
+								)
+								.<span class="ident">instrument</span>(<span class="ident">span</span>.<span class="ident">clone</span>());
+
+							<span class="ident">process_bundles_fut</span>.<span class="kw">await</span>.<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> {
+								<span class="macro">tracing::error!</span>(
+									<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
+									<span class="ident">relay_parent</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">primary_hash</span>,
+									<span class="ident">error</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">error</span>,
+									<span class="string">&quot;Error at processing bundles.&quot;</span>,
+								);
+								<span class="prelude-val">None</span>
+							})
+						})
+					})
+				},
+			};
+
 			<span class="kw">let</span> (<span class="ident">overseer</span>, <span class="ident">overseer_handle</span>) <span class="op">=</span> <span class="ident">Overseer::new</span>(
 				<span class="ident">primary_chain_client</span>.<span class="ident">clone</span>(),
 				<span class="ident">active_leaves</span>
@@ -1168,6 +1260,7 @@
 					.<span class="ident">map</span>(<span class="op">|</span><span class="ident">BlockInfo</span> { <span class="ident">hash</span>, <span class="ident">parent_hash</span>: <span class="kw">_</span>, <span class="ident">number</span> }<span class="op">|</span> (<span class="ident">hash</span>, <span class="ident">number</span>))
 					.<span class="ident">collect</span>(),
 				<span class="ident">Default::default</span>(),
+				<span class="ident">overseer_config</span>,
 			);
 
 			{
@@ -1202,56 +1295,18 @@
 			<span class="ident">overseer_handle</span>
 		};
 
-		<span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">executor</span> <span class="op">=</span> <span class="self">Self</span> {
+		<span class="prelude-val">Ok</span>(<span class="self">Self</span> {
 			<span class="ident">primary_chain_client</span>,
 			<span class="ident">primary_network</span>,
 			<span class="ident">client</span>,
 			<span class="ident">spawner</span>,
 			<span class="ident">overseer_handle</span>,
 			<span class="ident">transaction_pool</span>,
-			<span class="ident">bundle_sender</span>,
-			<span class="ident">execution_receipt_sender</span>,
 			<span class="ident">backend</span>,
 			<span class="ident">code_executor</span>,
 			<span class="ident">is_authority</span>,
-			<span class="ident">keystore</span>,
-		};
-
-		<span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">tracing::Span::current</span>();
-		<span class="kw">let</span> <span class="ident">config</span> <span class="op">=</span> <span class="ident">CollationGenerationConfig</span> {
-			<span class="ident">bundler</span>: {
-				<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">clone</span>();
-				<span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">span</span>.<span class="ident">clone</span>();
-
-				<span class="ident">Box::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">primary_hash</span>, <span class="ident">slot_info</span><span class="op">|</span> {
-					<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">clone</span>();
-					<span class="ident">Box::pin</span>(
-						<span class="ident">executor</span>.<span class="ident">produce_bundle</span>(<span class="ident">primary_hash</span>, <span class="ident">slot_info</span>).<span class="ident">instrument</span>(<span class="ident">span</span>.<span class="ident">clone</span>()),
-					)
-				})
-			},
-			<span class="ident">processor</span>: {
-				<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">clone</span>();
-
-				<span class="ident">Box::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">primary_hash</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span><span class="op">|</span> {
-					<span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">clone</span>();
-					<span class="ident">Box::pin</span>(
-						<span class="ident">executor</span>
-							.<span class="ident">process_bundles</span>(
-								<span class="ident">primary_hash</span>,
-								<span class="ident">bundles</span>,
-								<span class="ident">shuffling_seed</span>,
-								<span class="ident">maybe_new_runtime</span>,
-							)
-							.<span class="ident">instrument</span>(<span class="ident">span</span>.<span class="ident">clone</span>()),
-					)
-				})
-			},
-		};
-
-		<span class="ident">executor</span>.<span class="ident">overseer_handle</span>.<span class="ident">initialize</span>(<span class="ident">config</span>).<span class="kw">await</span>;
-
-		<span class="prelude-val">Ok</span>(<span class="ident">executor</span>)
+			<span class="ident">bundle_processor</span>,
+		})
 	}
 
 	<span class="doccomment">/// Checks the status of the given block hash in the Parachain.</span>
@@ -1477,26 +1532,10 @@
 		}
 	}
 
-	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">produce_bundle</span>(
-		<span class="self">self</span>,
-		<span class="ident">primary_hash</span>: <span class="ident">PHash</span>,
-		<span class="ident">slot_info</span>: <span class="ident">ExecutorSlotInfo</span>,
-	) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">SignedOpaqueBundle</span><span class="op">&gt;</span> {
-		<span class="kw">match</span> <span class="self">self</span>.<span class="ident">produce_bundle_impl</span>(<span class="ident">primary_hash</span>, <span class="ident">slot_info</span>).<span class="kw">await</span> {
-			<span class="prelude-val">Ok</span>(<span class="ident">res</span>) =&gt; <span class="ident">res</span>,
-			<span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
-				<span class="macro">tracing::error!</span>(
-					<span class="ident">target</span>: <span class="ident">LOG_TARGET</span>,
-					<span class="ident">relay_parent</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">primary_hash</span>,
-					<span class="ident">error</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">err</span>,
-					<span class="string">&quot;Error at producing bundle.&quot;</span>,
-				);
-				<span class="prelude-val">None</span>
-			},
-		}
-	}
-
 	<span class="doccomment">/// Processes the bundles extracted from the primary block.</span>
+	<span class="comment">// TODO: Remove this whole method, `self.bundle_processor` as a property and fix</span>
+	<span class="comment">// `set_new_code_should_work` test to do an actual runtime upgrade</span>
+	<span class="attribute">#[<span class="ident">doc</span>(<span class="ident">hidden</span>)]</span>
 	<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">process_bundles</span>(
 		<span class="self">self</span>,
 		<span class="ident">primary_info</span>: (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>),
@@ -1505,7 +1544,8 @@
 		<span class="ident">maybe_new_runtime</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span><span class="op">&gt;</span>,
 	) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span> {
 		<span class="kw">match</span> <span class="self">self</span>
-			.<span class="ident">process_bundles_impl</span>(<span class="ident">primary_info</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span>)
+			.<span class="ident">bundle_processor</span>
+			.<span class="ident">process_bundles</span>(<span class="ident">primary_info</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span>)
 			.<span class="kw">await</span>
 		{
 			<span class="prelude-val">Ok</span>(<span class="ident">res</span>) =&gt; <span class="ident">res</span>,
