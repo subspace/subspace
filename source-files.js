@@ -22,6 +22,7 @@ sourcesIndex["sc_consensus_subspace_rpc"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs"]};
 sourcesIndex["sp_executor"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["sp_objects"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_archiving"] = {"name":"","dirs":[{"name":"archiver","files":["record_shards.rs"]}],"files":["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]};
 sourcesIndex["subspace_core_primitives"] = {"name":"","files":["crypto.rs","lib.rs","objects.rs"]};
 sourcesIndex["subspace_farmer"] = {"name":"","dirs":[{"name":"commitments","files":["commitment_databases.rs"]}],"files":["archiving.rs","commitments.rs","farming.rs","identity.rs","lib.rs","multi_farming.rs","node_rpc_client.rs","object_mappings.rs","plot.rs","plotting.rs","rpc_client.rs","ws_rpc_server.rs"]};
