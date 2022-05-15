@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["MultiFarming","Abstraction around having multiple `Plot`s, `Farming`s and `Plotting`s."]]});
+initSidebarItems({"struct":[["MultiFarming","Abstraction around having multiple `Plot`s, `Farming`s and `Plotting`s."],["Options","Options for `MultiFarming` creation"]]});
