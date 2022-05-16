@@ -262,6 +262,21 @@
 <span id="257">257</span>
 <span id="258">258</span>
 <span id="259">259</span>
+<span id="260">260</span>
+<span id="261">261</span>
+<span id="262">262</span>
+<span id="263">263</span>
+<span id="264">264</span>
+<span id="265">265</span>
+<span id="266">266</span>
+<span id="267">267</span>
+<span id="268">268</span>
+<span id="269">269</span>
+<span id="270">270</span>
+<span id="271">271</span>
+<span id="272">272</span>
+<span id="273">273</span>
+<span id="274">274</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -280,15 +295,16 @@
 <span class="comment">// along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.</span>
 
 <span class="doccomment">//! Verification for Subspace headers.</span>
-<span class="kw">use</span> <span class="kw">super</span>::{<span class="ident">subspace_err</span>, <span class="ident">BlockT</span>, <span class="ident">Error</span>};
+<span class="kw">use</span> <span class="ident"><span class="kw">super</span>::Error</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::find_pre_digest</span>;
 <span class="kw">use</span> <span class="ident">log</span>::{<span class="ident">debug</span>, <span class="ident">trace</span>};
 <span class="kw">use</span> <span class="ident">sc_consensus_slots::CheckedHeader</span>;
 <span class="kw">use</span> <span class="ident">schnorrkel::context::SigningContext</span>;
+<span class="kw">use</span> <span class="ident">sp_api::HeaderT</span>;
 <span class="kw">use</span> <span class="ident">sp_consensus_slots::Slot</span>;
 <span class="kw">use</span> <span class="ident">sp_consensus_subspace::digests</span>::{<span class="ident">CompatibleDigestItem</span>, <span class="ident">PreDigest</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus_subspace::FarmerPublicKey</span>;
 <span class="kw">use</span> <span class="ident">sp_core::crypto::ByteArray</span>;
-<span class="kw">use</span> <span class="ident">sp_runtime::traits::Header</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime</span>::{<span class="ident">DigestItem</span>, <span class="ident">RuntimeAppPublic</span>};
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">PieceIndex</span>, <span class="ident">Randomness</span>, <span class="ident">Salt</span>, <span class="ident">Sha256Hash</span>, <span class="ident">Solution</span>};
@@ -297,11 +313,12 @@
 };
 
 <span class="doccomment">/// Subspace verification parameters</span>
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct</span> <span class="ident">VerificationParams</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">B</span>: <span class="lifetime">&#39;a</span> <span class="op">+</span> <span class="ident">BlockT</span><span class="op">&gt;</span> {
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct</span> <span class="ident">VerificationParams</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">Header</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Header</span>: <span class="ident">HeaderT</span> <span class="op">+</span> <span class="lifetime">&#39;a</span>,
+{
     <span class="doccomment">/// The header being verified.</span>
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">header</span>: <span class="ident">B::Header</span>,
-    <span class="doccomment">/// The pre-digest of the header being verified to avoid duplicated work.</span>
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">pre_digest</span>: <span class="ident">PreDigest</span><span class="op">&lt;</span><span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">header</span>: <span class="ident">Header</span>,
     <span class="doccomment">/// The slot number of the current time.</span>
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">slot_now</span>: <span class="ident">Slot</span>,
     <span class="doccomment">/// Parameters for solution verification</span>
@@ -316,25 +333,30 @@
 <span class="doccomment">/// required for security and must not be changed.</span>
 <span class="doccomment">///</span>
 <span class="doccomment">/// This digest item will always return `Some` when used with `as_subspace_pre_digest`.</span>
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn</span> <span class="ident">check_header</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span> <span class="op">+</span> <span class="ident">Sized</span><span class="op">&gt;</span>(
-    <span class="ident">params</span>: <span class="ident">VerificationParams</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">CheckedHeader</span><span class="op">&lt;</span><span class="ident">B::Header</span>, <span class="ident">VerifiedHeaderInfo</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn</span> <span class="ident">check_header</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span>(
+    <span class="ident">params</span>: <span class="ident">VerificationParams</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span>,
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">CheckedHeader</span><span class="op">&lt;</span><span class="ident">Header</span>, <span class="ident">VerifiedHeaderInfo</span><span class="op">&gt;</span>, <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Header</span>: <span class="ident">HeaderT</span>,
+{
     <span class="kw">let</span> <span class="ident">VerificationParams</span> {
         <span class="kw-2">mut</span> <span class="ident">header</span>,
-        <span class="ident">pre_digest</span>,
         <span class="ident">slot_now</span>,
         <span class="ident">verify_solution_params</span>,
     } <span class="op">=</span> <span class="ident">params</span>;
+
+    <span class="kw">let</span> <span class="ident">pre_digest</span> <span class="op">=</span> <span class="ident">find_pre_digest</span>::<span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span>(<span class="kw-2">&amp;</span><span class="ident">header</span>)<span class="question-mark">?</span>;
+    <span class="kw">let</span> <span class="ident">slot</span> <span class="op">=</span> <span class="ident">pre_digest</span>.<span class="ident">slot</span>;
 
     <span class="macro">trace!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checking header&quot;</span>);
     <span class="kw">let</span> <span class="ident">seal</span> <span class="op">=</span> <span class="ident">header</span>
         .<span class="ident">digest_mut</span>()
         .<span class="ident">pop</span>()
-        .<span class="ident">ok_or_else</span>(<span class="op">|</span><span class="op">|</span> <span class="ident">subspace_err</span>(<span class="ident">Error::HeaderUnsealed</span>(<span class="ident">header</span>.<span class="ident">hash</span>())))<span class="question-mark">?</span>;
+        .<span class="ident">ok_or_else</span>(<span class="op">|</span><span class="op">|</span> <span class="ident">Error::HeaderUnsealed</span>(<span class="ident">header</span>.<span class="ident">hash</span>()))<span class="question-mark">?</span>;
 
     <span class="kw">let</span> <span class="ident">sig</span> <span class="op">=</span> <span class="ident">seal</span>
         .<span class="ident">as_subspace_seal</span>()
-        .<span class="ident">ok_or_else</span>(<span class="op">|</span><span class="op">|</span> <span class="ident">subspace_err</span>(<span class="ident">Error::HeaderBadSeal</span>(<span class="ident">header</span>.<span class="ident">hash</span>())))<span class="question-mark">?</span>;
+        .<span class="ident">ok_or_else</span>(<span class="op">|</span><span class="op">|</span> <span class="ident">Error::HeaderBadSeal</span>(<span class="ident">header</span>.<span class="ident">hash</span>()))<span class="question-mark">?</span>;
 
     <span class="comment">// The pre-hash of the header doesn&#39;t include the seal and that&#39;s what we sign</span>
     <span class="kw">let</span> <span class="ident">pre_hash</span> <span class="op">=</span> <span class="ident">header</span>.<span class="ident">hash</span>();
@@ -353,11 +375,11 @@
 
     <span class="comment">// Verify that block is signed properly</span>
     <span class="kw">if</span> <span class="op">!</span><span class="ident">pre_digest</span>.<span class="ident">solution</span>.<span class="ident">public_key</span>.<span class="ident">verify</span>(<span class="kw-2">&amp;</span><span class="ident">pre_hash</span>, <span class="kw-2">&amp;</span><span class="ident">sig</span>) {
-        <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">subspace_err</span>(<span class="ident">Error::BadSignature</span>(<span class="ident">pre_hash</span>)));
+        <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">Error::BadSignature</span>(<span class="ident">pre_hash</span>));
     }
 
     <span class="comment">// Verify that solution is valid</span>
-    <span class="ident">verify_solution</span>(<span class="kw-2">&amp;</span><span class="ident">pre_digest</span>.<span class="ident">solution</span>, <span class="ident">verify_solution_params</span>)<span class="question-mark">?</span>;
+    <span class="ident">verify_solution</span>(<span class="kw-2">&amp;</span><span class="ident">pre_digest</span>.<span class="ident">solution</span>, <span class="ident">slot</span>, <span class="ident">verify_solution_params</span>)<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(<span class="ident">CheckedHeader::Checked</span>(
         <span class="ident">header</span>,
@@ -381,11 +403,14 @@
 }
 
 <span class="doccomment">/// Check if the tag of a solution&#39;s piece is valid.</span>
-<span class="kw">fn</span> <span class="ident">check_piece_tag</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
+<span class="kw">fn</span> <span class="ident">check_piece_tag</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span>(
     <span class="ident">slot</span>: <span class="ident">Slot</span>,
     <span class="ident">salt</span>: <span class="ident">Salt</span>,
     <span class="ident">solution</span>: <span class="kw-2">&amp;</span><span class="ident">Solution</span><span class="op">&lt;</span><span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Header</span>: <span class="ident">HeaderT</span>,
+{
     <span class="kw">if</span> <span class="op">!</span><span class="ident">subspace_solving::is_tag_valid</span>(<span class="kw-2">&amp;</span><span class="ident">solution</span>.<span class="ident">encoding</span>, <span class="ident">salt</span>, <span class="ident">solution</span>.<span class="ident">tag</span>) {
         <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">Error::InvalidTag</span>(<span class="ident">slot</span>));
     }
@@ -396,13 +421,16 @@
 <span class="doccomment">/// Check piece validity.</span>
 <span class="doccomment">///</span>
 <span class="doccomment">/// If `records_root` is `None`, piece validity check will be skipped.</span>
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">check_piece</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">check_piece</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span>(
     <span class="ident">slot</span>: <span class="ident">Slot</span>,
     <span class="ident">records_root</span>: <span class="ident">Sha256Hash</span>,
     <span class="ident">position</span>: <span class="ident">u64</span>,
     <span class="ident">record_size</span>: <span class="ident">u32</span>,
     <span class="ident">solution</span>: <span class="kw-2">&amp;</span><span class="ident">Solution</span><span class="op">&lt;</span><span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Header</span>: <span class="ident">HeaderT</span>,
+{
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">piece</span> <span class="op">=</span> <span class="ident">solution</span>.<span class="ident">encoding</span>;
 
     <span class="comment">// Ensure piece is decodable.</span>
@@ -464,20 +492,22 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct</span> <span class="ident">VerifySolutionParams</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span><span class="op">&gt;</span> {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">global_randomness</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">Randomness</span>,
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">solution_range</span>: <span class="ident">u64</span>,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">slot</span>: <span class="ident">Slot</span>,
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">salt</span>: <span class="ident">Salt</span>,
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">piece_check_params</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">PieceCheckParams</span><span class="op">&gt;</span>,
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">signing_context</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">SigningContext</span>,
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">verify_solution</span><span class="op">&lt;</span><span class="ident">B</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">verify_solution</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span>(
     <span class="ident">solution</span>: <span class="kw-2">&amp;</span><span class="ident">Solution</span><span class="op">&lt;</span><span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
+    <span class="ident">slot</span>: <span class="ident">Slot</span>,
     <span class="ident">params</span>: <span class="ident">VerifySolutionParams</span>,
-) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">B</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">Error</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Header</span>: <span class="ident">HeaderT</span>,
+{
     <span class="kw">let</span> <span class="ident">VerifySolutionParams</span> {
         <span class="ident">global_randomness</span>,
         <span class="ident">solution_range</span>,
-        <span class="ident">slot</span>,
         <span class="ident">salt</span>,
         <span class="ident">piece_check_params</span>,
         <span class="ident">signing_context</span>,

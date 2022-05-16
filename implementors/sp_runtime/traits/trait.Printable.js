@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["sp_consensus_subspace"] = [{"text":"impl Printable for <a class=\"enum\" href=\"sp_consensus_subspace/offence/enum.OffenceError.html\" title=\"enum sp_consensus_subspace::offence::OffenceError\">OffenceError</a>","synthetic":false,"types":["sp_consensus_subspace::offence::OffenceError"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
