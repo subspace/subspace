@@ -509,69 +509,6 @@
 <span id="504">504</span>
 <span id="505">505</span>
 <span id="506">506</span>
-<span id="507">507</span>
-<span id="508">508</span>
-<span id="509">509</span>
-<span id="510">510</span>
-<span id="511">511</span>
-<span id="512">512</span>
-<span id="513">513</span>
-<span id="514">514</span>
-<span id="515">515</span>
-<span id="516">516</span>
-<span id="517">517</span>
-<span id="518">518</span>
-<span id="519">519</span>
-<span id="520">520</span>
-<span id="521">521</span>
-<span id="522">522</span>
-<span id="523">523</span>
-<span id="524">524</span>
-<span id="525">525</span>
-<span id="526">526</span>
-<span id="527">527</span>
-<span id="528">528</span>
-<span id="529">529</span>
-<span id="530">530</span>
-<span id="531">531</span>
-<span id="532">532</span>
-<span id="533">533</span>
-<span id="534">534</span>
-<span id="535">535</span>
-<span id="536">536</span>
-<span id="537">537</span>
-<span id="538">538</span>
-<span id="539">539</span>
-<span id="540">540</span>
-<span id="541">541</span>
-<span id="542">542</span>
-<span id="543">543</span>
-<span id="544">544</span>
-<span id="545">545</span>
-<span id="546">546</span>
-<span id="547">547</span>
-<span id="548">548</span>
-<span id="549">549</span>
-<span id="550">550</span>
-<span id="551">551</span>
-<span id="552">552</span>
-<span id="553">553</span>
-<span id="554">554</span>
-<span id="555">555</span>
-<span id="556">556</span>
-<span id="557">557</span>
-<span id="558">558</span>
-<span id="559">559</span>
-<span id="560">560</span>
-<span id="561">561</span>
-<span id="562">562</span>
-<span id="563">563</span>
-<span id="564">564</span>
-<span id="565">565</span>
-<span id="566">566</span>
-<span id="567">567</span>
-<span id="568">568</span>
-<span id="569">569</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -593,11 +530,12 @@
 
 <span class="attribute">#![<span class="ident">feature</span>(<span class="ident">try_blocks</span>)]</span>
 
-<span class="kw">use</span> <span class="ident">futures::task::SpawnExt</span>;
-<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">task::Spawn</span>, <span class="ident">FutureExt</span>, <span class="ident">SinkExt</span>, <span class="ident">StreamExt</span>};
-<span class="kw">use</span> <span class="ident">jsonrpc_core</span>::{<span class="ident">Error</span> <span class="kw">as</span> <span class="ident">RpcError</span>, <span class="ident">ErrorCode</span>, <span class="prelude-ty">Result</span> <span class="kw">as</span> <span class="ident">RpcResult</span>};
-<span class="kw">use</span> <span class="ident">jsonrpc_derive::rpc</span>;
-<span class="kw">use</span> <span class="ident">jsonrpc_pubsub</span>::{<span class="ident">manager::SubscriptionManager</span>, <span class="ident">typed::Subscriber</span>, <span class="ident">SubscriptionId</span>};
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">FutureExt</span>, <span class="ident">SinkExt</span>, <span class="ident">StreamExt</span>};
+<span class="kw">use</span> <span class="ident">jsonrpsee</span>::{
+    <span class="ident">core</span>::{<span class="ident">async_trait</span>, <span class="ident">Error</span> <span class="kw">as</span> <span class="ident">JsonRpseeError</span>, <span class="ident">RpcResult</span>},
+    <span class="ident">proc_macros::rpc</span>,
+    <span class="ident">PendingSubscription</span>,
+};
 <span class="kw">use</span> <span class="ident">log</span>::{<span class="ident">error</span>, <span class="ident">warn</span>};
 <span class="kw">use</span> <span class="ident">parity_scale_codec</span>::{<span class="ident">Decode</span>, <span class="ident">Encode</span>};
 <span class="kw">use</span> <span class="ident">parking_lot::Mutex</span>;
@@ -606,6 +544,7 @@
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace</span>::{
     <span class="ident">ArchivedSegmentNotification</span>, <span class="ident">BlockSigningNotification</span>, <span class="ident">NewSlotNotification</span>,
 };
+<span class="kw">use</span> <span class="ident">sc_rpc::SubscriptionTaskExecutor</span>;
 <span class="kw">use</span> <span class="ident">sc_utils::mpsc::TracingUnboundedSender</span>;
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiError</span>, <span class="ident">ProvideRuntimeApi</span>};
 <span class="kw">use</span> <span class="ident">sp_blockchain::HeaderBackend</span>;
@@ -626,98 +565,49 @@
 
 <span class="kw">const</span> <span class="ident">SOLUTION_TIMEOUT</span>: <span class="ident">Duration</span> <span class="op">=</span> <span class="ident">Duration::from_secs</span>(<span class="number">5</span>);
 
-<span class="kw">type</span> <span class="ident">FutureResult</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">jsonrpc_core::BoxFuture</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">T</span>, <span class="ident">RpcError</span><span class="op">&gt;</span><span class="op">&gt;</span>;
-
 <span class="doccomment">/// Provides rpc methods for interacting with Subspace.</span>
-<span class="attribute">#[<span class="ident">rpc</span>]</span>
+<span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">client</span>, <span class="ident">server</span>)]</span>
 <span class="kw">pub</span> <span class="kw">trait</span> <span class="ident">SubspaceRpcApi</span> {
-    <span class="doccomment">/// RPC metadata</span>
-    <span class="kw">type</span> <span class="ident">Metadata</span>;
-
     <span class="doccomment">/// Ger metadata necessary for farmer operation</span>
-    <span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_getFarmerMetadata&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">get_farmer_metadata</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span><span class="op">&gt;</span>;
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_getFarmerMetadata&quot;</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">get_farmer_metadata</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span><span class="op">&gt;</span>;
 
     <span class="doccomment">/// Get best block number</span>
-    <span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_getBestBlockNumber&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">get_best_block_number</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span>;
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_getBestBlockNumber&quot;</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">get_best_block_number</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span>;
 
-    <span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_submitSolutionResponse&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">submit_solution_response</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">solution_response</span>: <span class="ident">SolutionResponse</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_submitSolutionResponse&quot;</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">submit_solution_response</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">solution_response</span>: <span class="ident">SolutionResponse</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
 
     <span class="doccomment">/// Slot info subscription</span>
-    <span class="attribute">#[<span class="ident">pubsub</span>(
-        <span class="ident">subscription</span> <span class="op">=</span> <span class="string">&quot;subspace_slot_info&quot;</span>,
-        <span class="ident">subscribe</span>,
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeSlotInfo&quot;</span>
+    <span class="attribute">#[<span class="ident">subscription</span>(
+        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeSlotInfo&quot;</span> =&gt; <span class="string">&quot;subspace_slot_info&quot;</span>,
+        <span class="ident">unsubscribe</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeSlotInfo&quot;</span>,
+        <span class="ident">item</span> <span class="op">=</span> <span class="ident">SlotInfo</span>,
     )]</span>
-    <span class="kw">fn</span> <span class="ident">subscribe_slot_info</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">metadata</span>: <span class="ident"><span class="self">Self</span>::Metadata</span>, <span class="ident">subscriber</span>: <span class="ident">Subscriber</span><span class="op">&lt;</span><span class="ident">SlotInfo</span><span class="op">&gt;</span>);
-
-    <span class="doccomment">/// Unsubscribe from slot info subscription.</span>
-    <span class="attribute">#[<span class="ident">pubsub</span>(
-        <span class="ident">subscription</span> <span class="op">=</span> <span class="string">&quot;subspace_slot_info&quot;</span>,
-        <span class="ident">unsubscribe</span>,
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeSlotInfo&quot;</span>
-    )]</span>
-    <span class="kw">fn</span> <span class="ident">unsubscribe_slot_info</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">metadata</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Metadata</span><span class="op">&gt;</span>,
-        <span class="ident">id</span>: <span class="ident">SubscriptionId</span>,
-    ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">bool</span><span class="op">&gt;</span>;
+    <span class="kw">fn</span> <span class="ident">subscribe_slot_info</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
 
     <span class="doccomment">/// Sign block subscription</span>
-    <span class="attribute">#[<span class="ident">pubsub</span>(
-        <span class="ident">subscription</span> <span class="op">=</span> <span class="string">&quot;subspace_block_signing&quot;</span>,
-        <span class="ident">subscribe</span>,
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeBlockSigning&quot;</span>
+    <span class="attribute">#[<span class="ident">subscription</span>(
+        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeBlockSigning&quot;</span> =&gt; <span class="string">&quot;subspace_block_signing&quot;</span>,
+        <span class="ident">unsubscribe</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeBlockSigning&quot;</span>,
+        <span class="ident">item</span> <span class="op">=</span> <span class="ident">BlockSigningInfo</span>,
     )]</span>
-    <span class="kw">fn</span> <span class="ident">subscribe_block_signing</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">metadata</span>: <span class="ident"><span class="self">Self</span>::Metadata</span>,
-        <span class="ident">subscriber</span>: <span class="ident">Subscriber</span><span class="op">&lt;</span><span class="ident">BlockSigningInfo</span><span class="op">&gt;</span>,
-    );
+    <span class="kw">fn</span> <span class="ident">subscribe_block_signing</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
 
-    <span class="doccomment">/// Unsubscribe from sign block subscription.</span>
-    <span class="attribute">#[<span class="ident">pubsub</span>(
-        <span class="ident">subscription</span> <span class="op">=</span> <span class="string">&quot;subspace_block_signing&quot;</span>,
-        <span class="ident">unsubscribe</span>,
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeBlockSigning&quot;</span>
-    )]</span>
-    <span class="kw">fn</span> <span class="ident">unsubscribe_block_signing</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">metadata</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Metadata</span><span class="op">&gt;</span>,
-        <span class="ident">id</span>: <span class="ident">SubscriptionId</span>,
-    ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">bool</span><span class="op">&gt;</span>;
-
-    <span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_submitBlockSignature&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">submit_block_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">block_signature</span>: <span class="ident">BlockSignature</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_submitBlockSignature&quot;</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">submit_block_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">block_signature</span>: <span class="ident">BlockSignature</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
 
     <span class="doccomment">/// Archived segment subscription</span>
-    <span class="attribute">#[<span class="ident">pubsub</span>(
-        <span class="ident">subscription</span> <span class="op">=</span> <span class="string">&quot;subspace_archived_segment&quot;</span>,
-        <span class="ident">subscribe</span>,
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeArchivedSegment&quot;</span>
+    <span class="attribute">#[<span class="ident">subscription</span>(
+        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeArchivedSegment&quot;</span> =&gt; <span class="string">&quot;subspace_archived_segment&quot;</span>,
+        <span class="ident">unsubscribe</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeArchivedSegment&quot;</span>,
+        <span class="ident">item</span> <span class="op">=</span> <span class="ident">ArchivedSegment</span>,
     )]</span>
-    <span class="kw">fn</span> <span class="ident">subscribe_archived_segment</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">metadata</span>: <span class="ident"><span class="self">Self</span>::Metadata</span>,
-        <span class="ident">subscriber</span>: <span class="ident">Subscriber</span><span class="op">&lt;</span><span class="ident">ArchivedSegment</span><span class="op">&gt;</span>,
-    );
+    <span class="kw">fn</span> <span class="ident">subscribe_archived_segment</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
 
-    <span class="doccomment">/// Unsubscribe from archived segment subscription.</span>
-    <span class="attribute">#[<span class="ident">pubsub</span>(
-        <span class="ident">subscription</span> <span class="op">=</span> <span class="string">&quot;subspace_archived_segment&quot;</span>,
-        <span class="ident">unsubscribe</span>,
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeArchivedSegment&quot;</span>
-    )]</span>
-    <span class="kw">fn</span> <span class="ident">unsubscribe_archived_segment</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">metadata</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Metadata</span><span class="op">&gt;</span>,
-        <span class="ident">id</span>: <span class="ident">SubscriptionId</span>,
-    ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">bool</span><span class="op">&gt;</span>;
-
-    <span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_acknowledgeArchivedSegment&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">acknowledge_archived_segment</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">segment_index</span>: <span class="ident">u64</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_acknowledgeArchivedSegment&quot;</span>)]</span>
+    <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">acknowledge_archived_segment</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">segment_index</span>: <span class="ident">u64</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
 }
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Default</span>)]</span>
@@ -738,10 +628,10 @@
     <span class="ident">senders</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">TracingUnboundedSender</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
-<span class="doccomment">/// Implements the [`SubspaceRpcApi`] trait for interacting with Subspace.</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SubspaceRpcHandler</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> {
+<span class="doccomment">/// Implements the [`SubspaceRpcApiServer`] trait for interacting with Subspace.</span>
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> {
     <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
-    <span class="ident">subscription_manager</span>: <span class="ident">SubscriptionManager</span>,
+    <span class="ident">executor</span>: <span class="ident">SubscriptionTaskExecutor</span>,
     <span class="ident">new_slot_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">NewSlotNotification</span><span class="op">&gt;</span>,
     <span class="ident">block_signing_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">BlockSigningNotification</span><span class="op">&gt;</span>,
     <span class="ident">archived_segment_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">ArchivedSegmentNotification</span><span class="op">&gt;</span>,
@@ -751,14 +641,14 @@
     <span class="ident">_phantom</span>: <span class="ident">PhantomData</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 }
 
-<span class="doccomment">/// [`SubspaceRpcHandler`] is used for notifying subscribers about arrival of new slots and for</span>
+<span class="doccomment">/// [`SubspaceRpc`] is used for notifying subscribers about arrival of new slots and for</span>
 <span class="doccomment">/// submission of solutions (or lack thereof).</span>
 <span class="doccomment">///</span>
 <span class="doccomment">/// Internally every time slot notifier emits information about new slot, notification is sent to</span>
 <span class="doccomment">/// every subscriber, after which RPC server waits for the same number of</span>
 <span class="doccomment">/// `subspace_submitSolutionResponse` requests with `SolutionResponse` in them or until</span>
 <span class="doccomment">/// timeout is exceeded. The first valid solution for a particular slot wins, others are ignored.</span>
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">SubspaceRpcHandler</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">Block</span>: <span class="ident">BlockT</span>,
     <span class="ident">Client</span>: <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
@@ -770,21 +660,18 @@
     <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 {
     <span class="doccomment">/// Creates a new instance of the `SubspaceRpc` handler.</span>
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span><span class="op">&lt;</span><span class="ident">E</span><span class="op">&gt;</span>(
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(
         <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
-        <span class="ident">executor</span>: <span class="ident">E</span>,
+        <span class="ident">executor</span>: <span class="ident">SubscriptionTaskExecutor</span>,
         <span class="ident">new_slot_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">NewSlotNotification</span><span class="op">&gt;</span>,
         <span class="ident">block_signing_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">BlockSigningNotification</span><span class="op">&gt;</span>,
         <span class="ident">archived_segment_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span>
             <span class="ident">ArchivedSegmentNotification</span>,
         <span class="op">&gt;</span>,
-    ) -&gt; <span class="self">Self</span>
-    <span class="kw">where</span>
-        <span class="ident">E</span>: <span class="ident">Spawn</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    {
+    ) -&gt; <span class="self">Self</span> {
         <span class="self">Self</span> {
             <span class="ident">client</span>,
-            <span class="ident">subscription_manager</span>: <span class="ident">SubscriptionManager::new</span>(<span class="ident">Arc::new</span>(<span class="ident">executor</span>)),
+            <span class="ident">executor</span>,
             <span class="ident">new_slot_notification_stream</span>,
             <span class="ident">block_signing_notification_stream</span>,
             <span class="ident">archived_segment_notification_stream</span>,
@@ -796,7 +683,8 @@
     }
 }
 
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">SubspaceRpcApi</span> <span class="kw">for</span> <span class="ident">SubspaceRpcHandler</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>
+<span class="attribute">#[<span class="ident">async_trait</span>]</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">SubspaceRpcApiServer</span> <span class="kw">for</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">Block</span>: <span class="ident">BlockT</span>,
     <span class="ident">Client</span>: <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
@@ -807,68 +695,62 @@
         <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 {
-    <span class="kw">type</span> <span class="ident">Metadata</span> <span class="op">=</span> <span class="ident">sc_rpc_api::Metadata</span>;
+    <span class="kw">fn</span> <span class="ident">get_farmer_metadata</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span><span class="op">&gt;</span> {
+        <span class="kw">let</span> <span class="ident">best_block_id</span> <span class="op">=</span> <span class="ident">BlockId::Hash</span>(<span class="self">self</span>.<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>);
+        <span class="kw">let</span> <span class="ident">runtime_api</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">client</span>.<span class="ident">runtime_api</span>();
 
-    <span class="kw">fn</span> <span class="ident">get_farmer_metadata</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span><span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">client</span>);
-        <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
-            <span class="kw">let</span> <span class="ident">best_block_id</span> <span class="op">=</span> <span class="ident">BlockId::Hash</span>(<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>);
-            <span class="kw">let</span> <span class="ident">runtime_api</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">runtime_api</span>();
+        <span class="kw">let</span> <span class="ident">farmer_metadata</span>: <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span>, <span class="ident">ApiError</span><span class="op">&gt;</span> <span class="op">=</span> <span class="kw">try</span> {
+            <span class="ident">FarmerMetadata</span> {
+                <span class="ident">record_size</span>: <span class="ident">runtime_api</span>.<span class="ident">record_size</span>(<span class="kw-2">&amp;</span><span class="ident">best_block_id</span>)<span class="question-mark">?</span>,
+                <span class="ident">recorded_history_segment_size</span>: <span class="ident">runtime_api</span>
+                    .<span class="ident">recorded_history_segment_size</span>(<span class="kw-2">&amp;</span><span class="ident">best_block_id</span>)<span class="question-mark">?</span>,
+                <span class="ident">max_plot_size</span>: <span class="ident">runtime_api</span>
+                    .<span class="ident">max_plot_size</span>(<span class="kw-2">&amp;</span><span class="ident">best_block_id</span>)
+                    <span class="comment">// TODO: Remove once we switch genesis runtime from `snapshot-2022-mar-09`</span>
+                    <span class="comment">//  to newer</span>
+                    .<span class="ident">unwrap_or</span>(
+                        <span class="number">100</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">/</span> <span class="ident">subspace_core_primitives::PIECE_SIZE</span> <span class="kw">as</span> <span class="ident">u64</span>,
+                    ),
+            }
+        };
 
-            <span class="kw">let</span> <span class="ident">farmer_metadata</span>: <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span>, <span class="ident">ApiError</span><span class="op">&gt;</span> <span class="op">=</span> <span class="kw">try</span> {
-                <span class="ident">FarmerMetadata</span> {
-                    <span class="ident">record_size</span>: <span class="ident">runtime_api</span>.<span class="ident">record_size</span>(<span class="kw-2">&amp;</span><span class="ident">best_block_id</span>)<span class="question-mark">?</span>,
-                    <span class="ident">recorded_history_segment_size</span>: <span class="ident">runtime_api</span>
-                        .<span class="ident">recorded_history_segment_size</span>(<span class="kw-2">&amp;</span><span class="ident">best_block_id</span>)<span class="question-mark">?</span>,
-                    <span class="ident">max_plot_size</span>: <span class="ident">runtime_api</span>
-                        .<span class="ident">max_plot_size</span>(<span class="kw-2">&amp;</span><span class="ident">best_block_id</span>)
-                        <span class="comment">// TODO: Remove once we switch genesis runtime from `snapshot-2022-mar-09`</span>
-                        <span class="comment">//  to newer</span>
-                        .<span class="ident">unwrap_or</span>(
-                            <span class="number">100</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">/</span> <span class="ident">subspace_core_primitives::PIECE_SIZE</span> <span class="kw">as</span> <span class="ident">u64</span>,
-                        ),
-                }
-            };
-
-            <span class="ident">farmer_metadata</span>.<span class="ident">map_err</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> {
-                <span class="macro">error!</span>(<span class="string">&quot;Failed to get data from runtime API: {}&quot;</span>, <span class="ident">error</span>);
-                <span class="ident">RpcError::new</span>(<span class="ident">ErrorCode::InternalError</span>)
-            })
+        <span class="ident">farmer_metadata</span>.<span class="ident">map_err</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> {
+            <span class="macro">error!</span>(<span class="string">&quot;Failed to get data from runtime API: {}&quot;</span>, <span class="ident">error</span>);
+            <span class="ident">JsonRpseeError::Custom</span>(<span class="string">&quot;Internal error&quot;</span>.<span class="ident">to_string</span>())
         })
     }
 
-    <span class="kw">fn</span> <span class="ident">get_best_block_number</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">get_best_block_number</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">best_number</span> <span class="op">=</span> <span class="ident">TryInto</span>::<span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span><span class="ident">::try_into</span>(<span class="self">self</span>.<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_number</span>)
             .<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> {
                 <span class="macro">panic!</span>(<span class="string">&quot;Block number can&#39;t be converted into BlockNumber&quot;</span>);
             });
 
-        <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> { <span class="prelude-val">Ok</span>(<span class="ident">best_number</span>) })
+        <span class="prelude-val">Ok</span>(<span class="ident">best_number</span>)
     }
 
-    <span class="kw">fn</span> <span class="ident">submit_solution_response</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">solution_response</span>: <span class="ident">SolutionResponse</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">submit_solution_response</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">solution_response</span>: <span class="ident">SolutionResponse</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">solution_response_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">solution_response_senders</span>.<span class="ident">clone</span>();
 
         <span class="comment">// TODO: This doesn&#39;t track what client sent a solution, allowing some clients to send</span>
         <span class="comment">//  multiple (https://github.com/paritytech/jsonrpsee/issues/452)</span>
-        <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
-            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">solution_response_senders</span> <span class="op">=</span> <span class="ident">solution_response_senders</span>.<span class="ident">lock</span>();
 
-            <span class="kw">if</span> <span class="kw-2">*</span><span class="ident">solution_response_senders</span>.<span class="ident">current_slot</span> <span class="op">==</span> <span class="ident">solution_response</span>.<span class="ident">slot_number</span> {
-                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">solution_response_senders</span>.<span class="ident">senders</span>.<span class="ident">pop</span>() {
-                    <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(<span class="ident">solution_response</span>);
-                }
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">solution_response_senders</span> <span class="op">=</span> <span class="ident">solution_response_senders</span>.<span class="ident">lock</span>();
+
+        <span class="kw">if</span> <span class="kw-2">*</span><span class="ident">solution_response_senders</span>.<span class="ident">current_slot</span> <span class="op">==</span> <span class="ident">solution_response</span>.<span class="ident">slot_number</span> {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">solution_response_senders</span>.<span class="ident">senders</span>.<span class="ident">pop</span>() {
+                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(<span class="ident">solution_response</span>);
             }
+        }
 
-            <span class="prelude-val">Ok</span>(())
-        })
+        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn</span> <span class="ident">subscribe_slot_info</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">_metadata</span>: <span class="ident"><span class="self">Self</span>::Metadata</span>, <span class="ident">subscriber</span>: <span class="ident">Subscriber</span><span class="op">&lt;</span><span class="ident">SlotInfo</span><span class="op">&gt;</span>) {
-        <span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">add</span>(<span class="ident">subscriber</span>, <span class="op">|</span><span class="ident">sink</span><span class="op">|</span> {
-            <span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">executor</span>().<span class="ident">clone</span>();
-            <span class="kw">let</span> <span class="ident">solution_response_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">solution_response_senders</span>.<span class="ident">clone</span>();
+    <span class="kw">fn</span> <span class="ident">subscribe_slot_info</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">pending</span>: <span class="ident">PendingSubscription</span>) {
+        <span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">executor</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> <span class="ident">solution_response_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">solution_response_senders</span>.<span class="ident">clone</span>();
 
+        <span class="kw">let</span> <span class="ident">stream</span> <span class="op">=</span>
             <span class="self">self</span>.<span class="ident">new_slot_notification_stream</span>
                 .<span class="ident">subscribe</span>()
                 .<span class="ident">map</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">new_slot_notification</span><span class="op">|</span> {
@@ -937,208 +819,200 @@
 
                     <span class="comment">// Run above future with timeout</span>
                     <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">spawn</span>(
+                        <span class="string">&quot;subspace-slot-info-forward&quot;</span>,
+                        <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
                         <span class="ident">future::select</span>(
                             <span class="ident">futures_timer::Delay::new</span>(<span class="ident">SOLUTION_TIMEOUT</span>),
                             <span class="ident">Box::pin</span>(<span class="ident">forward_solution_fut</span>),
                         )
-                        .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ()),
+                        .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ())
+                        .<span class="ident">boxed</span>(),
                     );
 
                     <span class="comment">// This will be sent to the farmer</span>
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="ident">SlotInfo</span> {
+                    <span class="ident">SlotInfo</span> {
                         <span class="ident">slot_number</span>: <span class="ident">new_slot_info</span>.<span class="ident">slot</span>.<span class="ident">into</span>(),
                         <span class="ident">global_challenge</span>: <span class="ident">new_slot_info</span>.<span class="ident">global_challenge</span>,
                         <span class="ident">salt</span>: <span class="ident">new_slot_info</span>.<span class="ident">salt</span>,
                         <span class="ident">next_salt</span>: <span class="ident">new_slot_info</span>.<span class="ident">next_salt</span>,
                         <span class="ident">solution_range</span>: <span class="ident">new_slot_info</span>.<span class="ident">solution_range</span>,
-                    }))
-                })
-                .<span class="ident">forward</span>(<span class="ident">sink</span>.<span class="ident">sink_map_err</span>(<span class="op">|</span><span class="ident">e</span><span class="op">|</span> <span class="macro">warn!</span>(<span class="string">&quot;Error sending notifications: {:?}&quot;</span>, <span class="ident">e</span>)))
-                .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ())
-        });
+                    }
+                });
+
+        <span class="kw">let</span> <span class="ident">fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sink</span>) <span class="op">=</span> <span class="ident">pending</span>.<span class="ident">accept</span>() {
+                <span class="ident">sink</span>.<span class="ident">pipe_from_stream</span>(<span class="ident">stream</span>).<span class="kw">await</span>;
+            }
+        };
+
+        <span class="self">self</span>.<span class="ident">executor</span>
+            .<span class="ident">spawn</span>(<span class="string">&quot;subspace-slot-info-subscription&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>), <span class="ident">fut</span>.<span class="ident">boxed</span>());
     }
 
-    <span class="kw">fn</span> <span class="ident">unsubscribe_slot_info</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">_metadata</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Metadata</span><span class="op">&gt;</span>,
-        <span class="ident">id</span>: <span class="ident">SubscriptionId</span>,
-    ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">bool</span><span class="op">&gt;</span> {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">cancel</span>(<span class="ident">id</span>))
-    }
+    <span class="kw">fn</span> <span class="ident">subscribe_block_signing</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">pending</span>: <span class="ident">PendingSubscription</span>) {
+        <span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">executor</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signature_senders</span>.<span class="ident">clone</span>();
 
-    <span class="kw">fn</span> <span class="ident">subscribe_block_signing</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">_metadata</span>: <span class="ident"><span class="self">Self</span>::Metadata</span>,
-        <span class="ident">subscriber</span>: <span class="ident">Subscriber</span><span class="op">&lt;</span><span class="ident">BlockSigningInfo</span><span class="op">&gt;</span>,
-    ) {
-        <span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">add</span>(<span class="ident">subscriber</span>, <span class="op">|</span><span class="ident">sink</span><span class="op">|</span> {
-            <span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">executor</span>().<span class="ident">clone</span>();
-            <span class="kw">let</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signature_senders</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> <span class="ident">stream</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signing_notification_stream</span>.<span class="ident">subscribe</span>().<span class="ident">map</span>(
+            <span class="kw">move</span> <span class="op">|</span><span class="ident">block_signing_notification</span><span class="op">|</span> {
+                <span class="kw">let</span> <span class="ident">BlockSigningNotification</span> {
+                    <span class="ident">header_hash</span>,
+                    <span class="kw-2">mut</span> <span class="ident">signature_sender</span>,
+                } <span class="op">=</span> <span class="ident">block_signing_notification</span>;
 
-            <span class="self">self</span>.<span class="ident">block_signing_notification_stream</span>
-                .<span class="ident">subscribe</span>()
-                .<span class="ident">map</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">block_signing_notification</span><span class="op">|</span> {
-                    <span class="kw">let</span> <span class="ident">BlockSigningNotification</span> {
-                        <span class="ident">header_hash</span>,
-                        <span class="kw-2">mut</span> <span class="ident">signature_sender</span>,
-                    } <span class="op">=</span> <span class="ident">block_signing_notification</span>;
+                <span class="kw">let</span> (<span class="ident">response_sender</span>, <span class="ident">response_receiver</span>) <span class="op">=</span> <span class="ident">async_oneshot::oneshot</span>();
 
-                    <span class="kw">let</span> (<span class="ident">response_sender</span>, <span class="ident">response_receiver</span>) <span class="op">=</span> <span class="ident">async_oneshot::oneshot</span>();
+                <span class="comment">// Store signature sender so that we can retrieve it when solution comes from</span>
+                <span class="comment">// the farmer</span>
+                {
+                    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">lock</span>();
 
-                    <span class="comment">// Store signature sender so that we can retrieve it when solution comes from</span>
-                    <span class="comment">// the farmer</span>
-                    {
-                        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">lock</span>();
-
-                        <span class="kw">if</span> <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">!</span><span class="op">=</span> <span class="ident">header_hash</span> {
-                            <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">=</span> <span class="ident">header_hash</span>;
-                            <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">clear</span>();
-                        }
-
-                        <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">push</span>(<span class="ident">response_sender</span>);
+                    <span class="kw">if</span> <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">!</span><span class="op">=</span> <span class="ident">header_hash</span> {
+                        <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">=</span> <span class="ident">header_hash</span>;
+                        <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">clear</span>();
                     }
 
-                    <span class="comment">// Wait for solutions and transform proposed proof of space solutions into</span>
-                    <span class="comment">// data structure `sc-consensus-subspace` expects</span>
-                    <span class="kw">let</span> <span class="ident">forward_signature_fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
-                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Ok</span>(<span class="ident">block_signature</span>) <span class="op">=</span> <span class="ident">response_receiver</span>.<span class="kw">await</span> {
-                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">signature</span>) <span class="op">=</span> <span class="ident">block_signature</span>.<span class="ident">signature</span> {
-                                <span class="kw">match</span> <span class="ident">FarmerSignature::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">signature</span>.<span class="ident">encode</span>().<span class="ident">as_ref</span>()) {
-                                    <span class="prelude-val">Ok</span>(<span class="ident">signature</span>) =&gt; {
-                                        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">signature_sender</span>.<span class="ident">send</span>(<span class="ident">signature</span>).<span class="kw">await</span>;
-                                    }
-                                    <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
-                                        <span class="macro">warn!</span>(
-                                            <span class="string">&quot;Failed to convert signature of length {}: {}&quot;</span>,
-                                            <span class="ident">signature</span>.<span class="ident">len</span>(),
-                                            <span class="ident">error</span>
-                                        );
-                                    }
+                    <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">push</span>(<span class="ident">response_sender</span>);
+                }
+
+                <span class="comment">// Wait for solutions and transform proposed proof of space solutions into</span>
+                <span class="comment">// data structure `sc-consensus-subspace` expects</span>
+                <span class="kw">let</span> <span class="ident">forward_signature_fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Ok</span>(<span class="ident">block_signature</span>) <span class="op">=</span> <span class="ident">response_receiver</span>.<span class="kw">await</span> {
+                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">signature</span>) <span class="op">=</span> <span class="ident">block_signature</span>.<span class="ident">signature</span> {
+                            <span class="kw">match</span> <span class="ident">FarmerSignature::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">signature</span>.<span class="ident">encode</span>().<span class="ident">as_ref</span>()) {
+                                <span class="prelude-val">Ok</span>(<span class="ident">signature</span>) =&gt; {
+                                    <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">signature_sender</span>.<span class="ident">send</span>(<span class="ident">signature</span>).<span class="kw">await</span>;
+                                }
+                                <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
+                                    <span class="macro">warn!</span>(
+                                        <span class="string">&quot;Failed to convert signature of length {}: {}&quot;</span>,
+                                        <span class="ident">signature</span>.<span class="ident">len</span>(),
+                                        <span class="ident">error</span>
+                                    );
                                 }
                             }
                         }
-                    };
+                    }
+                };
 
-                    <span class="comment">// Run above future with timeout</span>
-                    <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">spawn</span>(
-                        <span class="ident">future::select</span>(
-                            <span class="ident">futures_timer::Delay::new</span>(<span class="ident">SOLUTION_TIMEOUT</span>),
-                            <span class="ident">Box::pin</span>(<span class="ident">forward_signature_fut</span>),
-                        )
-                        .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ()),
-                    );
+                <span class="comment">// Run above future with timeout</span>
+                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">executor</span>.<span class="ident">spawn</span>(
+                    <span class="string">&quot;subspace-block-signing-forward&quot;</span>,
+                    <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
+                    <span class="ident">future::select</span>(
+                        <span class="ident">futures_timer::Delay::new</span>(<span class="ident">SOLUTION_TIMEOUT</span>),
+                        <span class="ident">Box::pin</span>(<span class="ident">forward_signature_fut</span>),
+                    )
+                    .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ())
+                    .<span class="ident">boxed</span>(),
+                );
 
-                    <span class="comment">// This will be sent to the farmer</span>
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="ident">BlockSigningInfo</span> {
-                        <span class="ident">header_hash</span>: <span class="ident">header_hash</span>.<span class="ident">into</span>(),
-                    }))
-                })
-                .<span class="ident">forward</span>(<span class="ident">sink</span>.<span class="ident">sink_map_err</span>(<span class="op">|</span><span class="ident">e</span><span class="op">|</span> <span class="macro">warn!</span>(<span class="string">&quot;Error sending notifications: {:?}&quot;</span>, <span class="ident">e</span>)))
-                .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ())
-        });
+                <span class="comment">// This will be sent to the farmer</span>
+                <span class="ident">BlockSigningInfo</span> {
+                    <span class="ident">header_hash</span>: <span class="ident">header_hash</span>.<span class="ident">into</span>(),
+                }
+            },
+        );
+
+        <span class="kw">let</span> <span class="ident">fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sink</span>) <span class="op">=</span> <span class="ident">pending</span>.<span class="ident">accept</span>() {
+                <span class="ident">sink</span>.<span class="ident">pipe_from_stream</span>(<span class="ident">stream</span>).<span class="kw">await</span>;
+            }
+        };
+
+        <span class="self">self</span>.<span class="ident">executor</span>.<span class="ident">spawn</span>(
+            <span class="string">&quot;subspace-block-signing-subscription&quot;</span>,
+            <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
+            <span class="ident">fut</span>.<span class="ident">boxed</span>(),
+        );
     }
 
-    <span class="kw">fn</span> <span class="ident">unsubscribe_block_signing</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">_metadata</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Metadata</span><span class="op">&gt;</span>,
-        <span class="ident">id</span>: <span class="ident">SubscriptionId</span>,
-    ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">bool</span><span class="op">&gt;</span> {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">cancel</span>(<span class="ident">id</span>))
-    }
-
-    <span class="kw">fn</span> <span class="ident">submit_block_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">block_signature</span>: <span class="ident">BlockSignature</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">submit_block_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">block_signature</span>: <span class="ident">BlockSignature</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signature_senders</span>.<span class="ident">clone</span>();
 
         <span class="comment">// TODO: This doesn&#39;t track what client sent a solution, allowing some clients to send</span>
         <span class="comment">//  multiple (https://github.com/paritytech/jsonrpsee/issues/452)</span>
-        <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
-            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">lock</span>();
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">lock</span>();
 
-            <span class="kw">if</span> <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">==</span> <span class="ident">block_signature</span>.<span class="ident">header_hash</span>.<span class="ident">into</span>() {
-                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">pop</span>() {
-                    <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(<span class="ident">block_signature</span>);
-                }
+        <span class="kw">if</span> <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">==</span> <span class="ident">block_signature</span>.<span class="ident">header_hash</span>.<span class="ident">into</span>() {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">pop</span>() {
+                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(<span class="ident">block_signature</span>);
             }
+        }
 
-            <span class="prelude-val">Ok</span>(())
-        })
+        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn</span> <span class="ident">subscribe_archived_segment</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">_metadata</span>: <span class="ident"><span class="self">Self</span>::Metadata</span>,
-        <span class="ident">subscriber</span>: <span class="ident">Subscriber</span><span class="op">&lt;</span><span class="ident">ArchivedSegment</span><span class="op">&gt;</span>,
-    ) {
-        <span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">add</span>(<span class="ident">subscriber</span>, <span class="op">|</span><span class="ident">sink</span><span class="op">|</span> {
-            <span class="kw">let</span> <span class="ident">archived_segment_acknowledgement_senders</span> <span class="op">=</span>
-                <span class="self">self</span>.<span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">clone</span>();
-
-            <span class="self">self</span>.<span class="ident">archived_segment_notification_stream</span>
-                .<span class="ident">subscribe</span>()
-                .<span class="ident">map</span>(<span class="kw">move</span> <span class="op">|</span><span class="ident">archived_segment_notification</span><span class="op">|</span> {
-                    <span class="kw">let</span> <span class="ident">ArchivedSegmentNotification</span> {
-                        <span class="ident">archived_segment</span>,
-                        <span class="ident">acknowledgement_sender</span>,
-                    } <span class="op">=</span> <span class="ident">archived_segment_notification</span>;
-
-                    <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">archived_segment</span>.<span class="ident">root_block</span>.<span class="ident">segment_index</span>();
-
-                    <span class="comment">// Store acknowledgment sender so that we can retrieve it when acknowledgement</span>
-                    <span class="comment">// comes from the farmer</span>
-                    {
-                        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segment_acknowledgement_senders</span> <span class="op">=</span>
-                            <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">lock</span>();
-
-                        <span class="kw">if</span> <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">segment_index</span> <span class="op">!</span><span class="op">=</span> <span class="ident">segment_index</span> {
-                            <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">segment_index</span>;
-                            <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">senders</span>.<span class="ident">clear</span>();
-                        }
-
-                        <span class="ident">archived_segment_acknowledgement_senders</span>
-                            .<span class="ident">senders</span>
-                            .<span class="ident">push</span>(<span class="ident">acknowledgement_sender</span>);
-                    }
-
-                    <span class="comment">// This will be sent to the farmer</span>
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="ident">archived_segment</span>.<span class="ident">as_ref</span>().<span class="ident">clone</span>()))
-                })
-                .<span class="ident">forward</span>(<span class="ident">sink</span>.<span class="ident">sink_map_err</span>(<span class="op">|</span><span class="ident">e</span><span class="op">|</span> <span class="macro">warn!</span>(<span class="string">&quot;Error sending notifications: {:?}&quot;</span>, <span class="ident">e</span>)))
-                .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ())
-        });
-    }
-
-    <span class="kw">fn</span> <span class="ident">unsubscribe_archived_segment</span>(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="ident">_metadata</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Metadata</span><span class="op">&gt;</span>,
-        <span class="ident">id</span>: <span class="ident">SubscriptionId</span>,
-    ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">bool</span><span class="op">&gt;</span> {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="ident">subscription_manager</span>.<span class="ident">cancel</span>(<span class="ident">id</span>))
-    }
-
-    <span class="kw">fn</span> <span class="ident">acknowledge_archived_segment</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">segment_index</span>: <span class="ident">u64</span>) -&gt; <span class="ident">FutureResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">subscribe_archived_segment</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">pending</span>: <span class="ident">PendingSubscription</span>) {
         <span class="kw">let</span> <span class="ident">archived_segment_acknowledgement_senders</span> <span class="op">=</span>
             <span class="self">self</span>.<span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">clone</span>();
 
-        <span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
-            <span class="kw">let</span> <span class="ident">maybe_sender</span> <span class="op">=</span> {
-                <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segment_acknowledgement_senders_guard</span> <span class="op">=</span>
-                    <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">lock</span>();
+        <span class="kw">let</span> <span class="ident">stream</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">archived_segment_notification_stream</span>.<span class="ident">subscribe</span>().<span class="ident">map</span>(
+            <span class="kw">move</span> <span class="op">|</span><span class="ident">archived_segment_notification</span><span class="op">|</span> {
+                <span class="kw">let</span> <span class="ident">ArchivedSegmentNotification</span> {
+                    <span class="ident">archived_segment</span>,
+                    <span class="ident">acknowledgement_sender</span>,
+                } <span class="op">=</span> <span class="ident">archived_segment_notification</span>;
 
-                (<span class="ident">archived_segment_acknowledgement_senders_guard</span>.<span class="ident">segment_index</span> <span class="op">==</span> <span class="ident">segment_index</span>)
-                    .<span class="ident">then</span>(<span class="op">|</span><span class="op">|</span> <span class="ident">archived_segment_acknowledgement_senders_guard</span>.<span class="ident">senders</span>.<span class="ident">pop</span>())
-                    .<span class="ident">flatten</span>()
-            };
+                <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">archived_segment</span>.<span class="ident">root_block</span>.<span class="ident">segment_index</span>();
 
-            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">maybe_sender</span> {
-                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(()).<span class="kw">await</span> {
-                    <span class="kw">if</span> <span class="op">!</span><span class="ident">error</span>.<span class="ident">is_disconnected</span>() {
-                        <span class="macro">warn!</span>(<span class="string">&quot;Failed to acknowledge archived segment: {error}&quot;</span>);
+                <span class="comment">// Store acknowledgment sender so that we can retrieve it when acknowledgement</span>
+                <span class="comment">// comes from the farmer</span>
+                {
+                    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segment_acknowledgement_senders</span> <span class="op">=</span>
+                        <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">lock</span>();
+
+                    <span class="kw">if</span> <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">segment_index</span> <span class="op">!</span><span class="op">=</span> <span class="ident">segment_index</span> {
+                        <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">segment_index</span>;
+                        <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">senders</span>.<span class="ident">clear</span>();
                     }
+
+                    <span class="ident">archived_segment_acknowledgement_senders</span>
+                        .<span class="ident">senders</span>
+                        .<span class="ident">push</span>(<span class="ident">acknowledgement_sender</span>);
+                }
+
+                <span class="comment">// This will be sent to the farmer</span>
+                <span class="ident">archived_segment</span>.<span class="ident">as_ref</span>().<span class="ident">clone</span>()
+            },
+        );
+
+        <span class="kw">let</span> <span class="ident">fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sink</span>) <span class="op">=</span> <span class="ident">pending</span>.<span class="ident">accept</span>() {
+                <span class="ident">sink</span>.<span class="ident">pipe_from_stream</span>(<span class="ident">stream</span>).<span class="kw">await</span>;
+            }
+        };
+
+        <span class="self">self</span>.<span class="ident">executor</span>.<span class="ident">spawn</span>(
+            <span class="string">&quot;subspace-archived-segment-subscription&quot;</span>,
+            <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
+            <span class="ident">fut</span>.<span class="ident">boxed</span>(),
+        );
+    }
+
+    <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">acknowledge_archived_segment</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">segment_index</span>: <span class="ident">u64</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+        <span class="kw">let</span> <span class="ident">archived_segment_acknowledgement_senders</span> <span class="op">=</span>
+            <span class="self">self</span>.<span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">clone</span>();
+
+        <span class="kw">let</span> <span class="ident">maybe_sender</span> <span class="op">=</span> {
+            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segment_acknowledgement_senders_guard</span> <span class="op">=</span>
+                <span class="ident">archived_segment_acknowledgement_senders</span>.<span class="ident">lock</span>();
+
+            (<span class="ident">archived_segment_acknowledgement_senders_guard</span>.<span class="ident">segment_index</span> <span class="op">==</span> <span class="ident">segment_index</span>)
+                .<span class="ident">then</span>(<span class="op">|</span><span class="op">|</span> <span class="ident">archived_segment_acknowledgement_senders_guard</span>.<span class="ident">senders</span>.<span class="ident">pop</span>())
+                .<span class="ident">flatten</span>()
+        };
+
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">maybe_sender</span> {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(()).<span class="kw">await</span> {
+                <span class="kw">if</span> <span class="op">!</span><span class="ident">error</span>.<span class="ident">is_disconnected</span>() {
+                    <span class="macro">warn!</span>(<span class="string">&quot;Failed to acknowledge archived segment: {error}&quot;</span>);
                 }
             }
+        }
 
-            <span class="prelude-val">Ok</span>(())
-        })
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div>
