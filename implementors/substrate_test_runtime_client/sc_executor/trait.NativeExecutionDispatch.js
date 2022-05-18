@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["substrate_test_runtime_client"] = [{"text":"impl <a class=\"trait\" href=\"substrate_test_runtime_client/sc_executor/trait.NativeExecutionDispatch.html\" title=\"trait substrate_test_runtime_client::sc_executor::NativeExecutionDispatch\">NativeExecutionDispatch</a> for <a class=\"struct\" href=\"substrate_test_runtime_client/struct.LocalExecutorDispatch.html\" title=\"struct substrate_test_runtime_client::LocalExecutorDispatch\">LocalExecutorDispatch</a>","synthetic":false,"types":["substrate_test_runtime_client::LocalExecutorDispatch"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

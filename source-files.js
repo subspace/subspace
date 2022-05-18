@@ -1,4 +1,4 @@
-var N = null;var sourcesIndex = {};
+var sourcesIndex = {};
 sourcesIndex["cirrus_block_builder"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","lib.rs","merkle_tree.rs","worker.rs"]};
 sourcesIndex["cirrus_client_executor_gossip"] = {"name":"","files":["lib.rs","worker.rs"]};
@@ -17,10 +17,10 @@ sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.rs"]};
 sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
 sourcesIndex["pallet_transaction_fees"] = {"name":"","files":["default_weights.rs","lib.rs"]};
-sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs","verification.rs"]};
+sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]};
 sourcesIndex["sc_consensus_subspace_rpc"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs"]};
+sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs","verification.rs"]};
 sourcesIndex["sp_executor"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sp_objects"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_archiving"] = {"name":"","dirs":[{"name":"archiver","files":["record_shards.rs"]}],"files":["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]};

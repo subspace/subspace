@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["cirrus_test_runtime"] = [{"text":"impl <a class=\"trait\" href=\"cirrus_test_runtime/trait.BuildStorage.html\" title=\"trait cirrus_test_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"cirrus_test_runtime/struct.GenesisConfig.html\" title=\"struct cirrus_test_runtime::GenesisConfig\">GenesisConfig</a>","synthetic":false,"types":["cirrus_test_runtime::runtime::GenesisConfig"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
