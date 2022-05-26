@@ -335,6 +335,19 @@
 <span id="328">328</span>
 <span id="329">329</span>
 <span id="330">330</span>
+<span id="331">331</span>
+<span id="332">332</span>
+<span id="333">333</span>
+<span id="334">334</span>
+<span id="335">335</span>
+<span id="336">336</span>
+<span id="337">337</span>
+<span id="338">338</span>
+<span id="339">339</span>
+<span id="340">340</span>
+<span id="341">341</span>
+<span id="342">342</span>
+<span id="343">343</span>
 </pre><pre class="rust"><code><span class="doccomment">//! A farming process, that is interruptable (via dropping it)</span>
 <span class="doccomment">//! and possible to wait on (custom `wait` method)</span>
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
@@ -348,7 +361,7 @@
 <span class="kw">use</span> <span class="ident">std::sync::mpsc</span>;
 <span class="kw">use</span> <span class="ident">std::time::Instant</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">LocalChallenge</span>, <span class="ident">PublicKey</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>};
-<span class="kw">use</span> <span class="ident">subspace_rpc_primitives</span>::{<span class="ident">BlockSignature</span>, <span class="ident">BlockSigningInfo</span>, <span class="ident">SlotInfo</span>, <span class="ident">SolutionResponse</span>};
+<span class="kw">use</span> <span class="ident">subspace_rpc_primitives</span>::{<span class="ident">RewardSignature</span>, <span class="ident">RewardSigningInfo</span>, <span class="ident">SlotInfo</span>, <span class="ident">SolutionResponse</span>};
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
 <span class="kw">use</span> <span class="ident">tokio::task::JoinHandle</span>;
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">info</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
@@ -444,6 +457,14 @@
     <span class="ident">next</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Salt</span><span class="op">&gt;</span>,
 }
 
+<span class="kw">struct</span> <span class="ident">AbortOnDrop</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>(<span class="ident">JoinHandle</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>);
+
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Drop</span> <span class="kw">for</span> <span class="ident">AbortOnDrop</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
+        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">abort</span>();
+    }
+}
+
 <span class="doccomment">/// Subscribes to slots, and tries to find a solution for them</span>
 <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">subscribe_to_slot_info</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span><span class="op">&gt;</span>(
     <span class="ident">client</span>: <span class="kw-2">&amp;</span><span class="ident">T</span>,
@@ -457,6 +478,48 @@
         .<span class="ident">subscribe_slot_info</span>()
         .<span class="kw">await</span>
         .<span class="ident">map_err</span>(<span class="ident">FarmingError::RpcError</span>)<span class="question-mark">?</span>;
+
+    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">reward_signing_info_notifications</span> <span class="op">=</span> <span class="ident">client</span>
+        .<span class="ident">subscribe_reward_signing</span>()
+        .<span class="kw">await</span>
+        .<span class="ident">map_err</span>(<span class="ident">FarmingError::RpcError</span>)<span class="question-mark">?</span>;
+
+    <span class="kw">let</span> <span class="ident">_reward_signing_task</span> <span class="op">=</span> <span class="ident">AbortOnDrop</span>(<span class="ident">tokio::spawn</span>({
+        <span class="kw">let</span> <span class="ident">identity</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">clone</span>();
+
+        <span class="kw">async</span> <span class="kw">move</span> {
+            <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">RewardSigningInfo</span> { <span class="ident">hash</span>, <span class="ident">public_key</span> }) <span class="op">=</span>
+                <span class="ident">reward_signing_info_notifications</span>.<span class="ident">next</span>().<span class="kw">await</span>
+            {
+                <span class="comment">// Multiple plots might have solved, only sign with correct one</span>
+                <span class="kw">if</span> <span class="ident">identity</span>.<span class="ident">public_key</span>().<span class="ident">to_bytes</span>() <span class="op">!</span><span class="op">=</span> <span class="ident">public_key</span> {
+                    <span class="kw">continue</span>;
+                }
+
+                <span class="kw">let</span> <span class="ident">signature</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">sign_reward_hash</span>(<span class="kw-2">&amp;</span><span class="ident">hash</span>);
+
+                <span class="kw">match</span> <span class="ident">client</span>
+                    .<span class="ident">submit_reward_signature</span>(<span class="ident">RewardSignature</span> {
+                        <span class="ident">hash</span>,
+                        <span class="ident">signature</span>: <span class="prelude-val">Some</span>(<span class="ident">signature</span>.<span class="ident">to_bytes</span>().<span class="ident">into</span>()),
+                    })
+                    .<span class="kw">await</span>
+                {
+                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
+                        <span class="macro">info!</span>(<span class="string">&quot;Successfully signed reward hash 0x{}&quot;</span>, <span class="ident">hex::encode</span>(<span class="ident">hash</span>));
+                    }
+                    <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
+                        <span class="macro">warn!</span>(
+                            <span class="op">%</span><span class="ident">error</span>,
+                            <span class="string">&quot;Failed to send signature for reward hash 0x{}&quot;</span>,
+                            <span class="ident">hex::encode</span>(<span class="ident">hash</span>),
+                        );
+                    }
+                }
+            }
+        }
+    }));
 
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">salts</span> <span class="op">=</span> <span class="ident">Salts::default</span>();
 
@@ -472,11 +535,25 @@
 
             <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
                 <span class="kw">let</span> <span class="ident">local_challenge</span> <span class="op">=</span> <span class="ident">derive_local_challenge</span>(<span class="ident">slot_info</span>.<span class="ident">global_challenge</span>, <span class="kw-2">&amp;</span><span class="ident">identity</span>);
-                <span class="kw">match</span> <span class="ident">commitments</span>.<span class="ident">find_by_range</span>(
-                    <span class="ident">local_challenge</span>.<span class="ident">derive_target</span>(),
-                    <span class="ident">slot_info</span>.<span class="ident">solution_range</span>,
-                    <span class="ident">slot_info</span>.<span class="ident">salt</span>,
-                ) {
+                <span class="comment">// Try to first find a block authoring solution, then if not found try to find a vote</span>
+                <span class="kw">let</span> <span class="ident">maybe_tag</span> <span class="op">=</span> <span class="ident">commitments</span>
+                    .<span class="ident">find_by_range</span>(
+                        <span class="ident">local_challenge</span>.<span class="ident">derive_target</span>(),
+                        <span class="ident">slot_info</span>.<span class="ident">solution_range</span>,
+                        <span class="ident">slot_info</span>.<span class="ident">salt</span>,
+                    )
+                    .<span class="ident">or_else</span>(<span class="op">|</span><span class="op">|</span> {
+                        <span class="kw">if</span> <span class="ident">slot_info</span>.<span class="ident">solution_range</span> <span class="op">==</span> <span class="ident">slot_info</span>.<span class="ident">voting_solution_range</span> {
+                            <span class="kw">return</span> <span class="prelude-val">None</span>;
+                        }
+
+                        <span class="ident">commitments</span>.<span class="ident">find_by_range</span>(
+                            <span class="ident">local_challenge</span>.<span class="ident">derive_target</span>(),
+                            <span class="ident">slot_info</span>.<span class="ident">voting_solution_range</span>,
+                            <span class="ident">slot_info</span>.<span class="ident">salt</span>,
+                        )
+                    });
+                <span class="kw">match</span> <span class="ident">maybe_tag</span> {
                     <span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>)) =&gt; {
                         <span class="kw">let</span> (<span class="ident">encoding</span>, <span class="ident">piece_index</span>) <span class="op">=</span> <span class="ident">plot</span>
                             .<span class="ident">read_piece_with_index</span>(<span class="ident">piece_offset</span>)
@@ -504,57 +581,6 @@
         });
 
         <span class="kw">let</span> <span class="ident">maybe_solution</span> <span class="op">=</span> <span class="ident">maybe_solution_handle</span>.<span class="kw">await</span>.<span class="ident">unwrap</span>()<span class="question-mark">?</span>;
-
-        <span class="comment">// When solution is found, wait for block signing request.</span>
-        <span class="kw">if</span> <span class="ident">maybe_solution</span>.<span class="ident">is_some</span>() {
-            <span class="macro">debug!</span>(<span class="string">&quot;Subscribing to sign block notifications&quot;</span>);
-            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signing_info_notifications</span> <span class="op">=</span> <span class="ident">client</span>
-                .<span class="ident">subscribe_block_signing</span>()
-                .<span class="kw">await</span>
-                .<span class="ident">map_err</span>(<span class="ident">FarmingError::RpcError</span>)<span class="question-mark">?</span>;
-
-            <span class="ident">tokio::spawn</span>({
-                <span class="kw">let</span> <span class="ident">identity</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">clone</span>();
-                <span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">clone</span>();
-
-                <span class="kw">async</span> <span class="kw">move</span> {
-                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">BlockSigningInfo</span> {
-                        <span class="ident">header_hash</span>,
-                        <span class="ident">public_key</span>,
-                    }) <span class="op">=</span> <span class="ident">block_signing_info_notifications</span>.<span class="ident">next</span>().<span class="kw">await</span>
-                    {
-                        <span class="comment">// Multiple plots might have solved, only sign with correct one</span>
-                        <span class="kw">if</span> <span class="ident">identity</span>.<span class="ident">public_key</span>().<span class="ident">to_bytes</span>() <span class="op">!</span><span class="op">=</span> <span class="ident">public_key</span> {
-                            <span class="kw">return</span>;
-                        }
-
-                        <span class="kw">let</span> <span class="ident">signature</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">sign_block_header_hash</span>(<span class="kw-2">&amp;</span><span class="ident">header_hash</span>);
-
-                        <span class="kw">match</span> <span class="ident">client</span>
-                            .<span class="ident">submit_block_signature</span>(<span class="ident">BlockSignature</span> {
-                                <span class="ident">header_hash</span>,
-                                <span class="ident">signature</span>: <span class="prelude-val">Some</span>(<span class="ident">signature</span>.<span class="ident">to_bytes</span>().<span class="ident">into</span>()),
-                            })
-                            .<span class="kw">await</span>
-                        {
-                            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                                <span class="macro">info!</span>(
-                                    <span class="string">&quot;Successfully signed block 0x{} and sent signature to node&quot;</span>,
-                                    <span class="ident">hex::encode</span>(<span class="ident">header_hash</span>)
-                                );
-                            }
-                            <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
-                                <span class="macro">warn!</span>(
-                                    <span class="op">%</span><span class="ident">error</span>,
-                                    <span class="string">&quot;Failed to send signature for block 0x{}&quot;</span>,
-                                    <span class="ident">hex::encode</span>(<span class="ident">header_hash</span>),
-                                );
-                            }
-                        }
-                    }
-                }
-            });
-        }
 
         <span class="ident">client</span>
             .<span class="ident">submit_solution_response</span>(<span class="ident">SolutionResponse</span> {

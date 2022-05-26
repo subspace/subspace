@@ -497,6 +497,8 @@
 <span id="490">490</span>
 <span id="491">491</span>
 <span id="492">492</span>
+<span id="493">493</span>
+<span id="494">494</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -530,7 +532,7 @@
 <span class="kw">use</span> <span class="ident">sc_client_api::BlockBackend</span>;
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace::notification::SubspaceNotificationStream</span>;
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace</span>::{
-    <span class="ident">ArchivedSegmentNotification</span>, <span class="ident">BlockSigningNotification</span>, <span class="ident">NewSlotNotification</span>,
+    <span class="ident">ArchivedSegmentNotification</span>, <span class="ident">NewSlotNotification</span>, <span class="ident">RewardSigningNotification</span>,
 };
 <span class="kw">use</span> <span class="ident">sc_rpc::SubscriptionTaskExecutor</span>;
 <span class="kw">use</span> <span class="ident">sc_utils::mpsc::TracingUnboundedSender</span>;
@@ -548,10 +550,11 @@
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::ArchivedSegment</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::Solution</span>;
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives</span>::{
-    <span class="ident">BlockSignature</span>, <span class="ident">BlockSigningInfo</span>, <span class="ident">FarmerMetadata</span>, <span class="ident">SlotInfo</span>, <span class="ident">SolutionResponse</span>,
+    <span class="ident">FarmerMetadata</span>, <span class="ident">RewardSignature</span>, <span class="ident">RewardSigningInfo</span>, <span class="ident">SlotInfo</span>, <span class="ident">SolutionResponse</span>,
 };
 
-<span class="kw">const</span> <span class="ident">SOLUTION_TIMEOUT</span>: <span class="ident">Duration</span> <span class="op">=</span> <span class="ident">Duration::from_secs</span>(<span class="number">5</span>);
+<span class="kw">const</span> <span class="ident">SOLUTION_TIMEOUT</span>: <span class="ident">Duration</span> <span class="op">=</span> <span class="ident">Duration::from_secs</span>(<span class="number">2</span>);
+<span class="kw">const</span> <span class="ident">REWARD_SIGNING_TIMEOUT</span>: <span class="ident">Duration</span> <span class="op">=</span> <span class="ident">Duration::from_millis</span>(<span class="number">500</span>);
 
 <span class="doccomment">/// Provides rpc methods for interacting with Subspace.</span>
 <span class="attribute">#[<span class="ident">rpc</span>(<span class="ident">client</span>, <span class="ident">server</span>)]</span>
@@ -573,14 +576,14 @@
 
     <span class="doccomment">/// Sign block subscription</span>
     <span class="attribute">#[<span class="ident">subscription</span>(
-        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeBlockSigning&quot;</span> =&gt; <span class="string">&quot;subspace_block_signing&quot;</span>,
-        <span class="ident">unsubscribe</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeBlockSigning&quot;</span>,
-        <span class="ident">item</span> <span class="op">=</span> <span class="ident">BlockSigningInfo</span>,
+        <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_subscribeRewardSigning&quot;</span> =&gt; <span class="string">&quot;subspace_reward_signing&quot;</span>,
+        <span class="ident">unsubscribe</span> <span class="op">=</span> <span class="string">&quot;subspace_unsubscribeRewardSigning&quot;</span>,
+        <span class="ident">item</span> <span class="op">=</span> <span class="ident">RewardSigningInfo</span>,
     )]</span>
-    <span class="kw">fn</span> <span class="ident">subscribe_block_signing</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
+    <span class="kw">fn</span> <span class="ident">subscribe_reward_signing</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
 
-    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_submitBlockSignature&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">submit_block_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">block_signature</span>: <span class="ident">BlockSignature</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_submitRewardSignature&quot;</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">submit_reward_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">reward_signature</span>: <span class="ident">RewardSignature</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
 
     <span class="doccomment">/// Archived segment subscription</span>
     <span class="attribute">#[<span class="ident">subscription</span>(
@@ -602,8 +605,8 @@
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Default</span>)]</span>
 <span class="kw">struct</span> <span class="ident">BlockSignatureSenders</span> {
-    <span class="ident">current_header_hash</span>: <span class="ident">H256</span>,
-    <span class="ident">senders</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">async_oneshot::Sender</span><span class="op">&lt;</span><span class="ident">BlockSignature</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">current_hash</span>: <span class="ident">H256</span>,
+    <span class="ident">senders</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">async_oneshot::Sender</span><span class="op">&lt;</span><span class="ident">RewardSignature</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Default</span>)]</span>
@@ -617,10 +620,10 @@
     <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
     <span class="ident">executor</span>: <span class="ident">SubscriptionTaskExecutor</span>,
     <span class="ident">new_slot_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">NewSlotNotification</span><span class="op">&gt;</span>,
-    <span class="ident">block_signing_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">BlockSigningNotification</span><span class="op">&gt;</span>,
+    <span class="ident">reward_signing_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">RewardSigningNotification</span><span class="op">&gt;</span>,
     <span class="ident">archived_segment_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">ArchivedSegmentNotification</span><span class="op">&gt;</span>,
     <span class="ident">solution_response_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">SolutionResponseSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
-    <span class="ident">block_signature_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">BlockSignatureSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">reward_signature_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">BlockSignatureSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">archived_segment_acknowledgement_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">ArchivedSegmentAcknowledgementSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">_phantom</span>: <span class="ident">PhantomData</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 }
@@ -641,14 +644,14 @@
         <span class="op">+</span> <span class="ident">Send</span>
         <span class="op">+</span> <span class="ident">Sync</span>
         <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
+    <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
 {
     <span class="doccomment">/// Creates a new instance of the `SubspaceRpc` handler.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(
         <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
         <span class="ident">executor</span>: <span class="ident">SubscriptionTaskExecutor</span>,
         <span class="ident">new_slot_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">NewSlotNotification</span><span class="op">&gt;</span>,
-        <span class="ident">block_signing_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">BlockSigningNotification</span><span class="op">&gt;</span>,
+        <span class="ident">reward_signing_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">RewardSigningNotification</span><span class="op">&gt;</span>,
         <span class="ident">archived_segment_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span>
             <span class="ident">ArchivedSegmentNotification</span>,
         <span class="op">&gt;</span>,
@@ -657,10 +660,10 @@
             <span class="ident">client</span>,
             <span class="ident">executor</span>,
             <span class="ident">new_slot_notification_stream</span>,
-            <span class="ident">block_signing_notification_stream</span>,
+            <span class="ident">reward_signing_notification_stream</span>,
             <span class="ident">archived_segment_notification_stream</span>,
             <span class="ident">solution_response_senders</span>: <span class="ident">Arc::default</span>(),
-            <span class="ident">block_signature_senders</span>: <span class="ident">Arc::default</span>(),
+            <span class="ident">reward_signature_senders</span>: <span class="ident">Arc::default</span>(),
             <span class="ident">archived_segment_acknowledgement_senders</span>: <span class="ident">Arc::default</span>(),
             <span class="ident">_phantom</span>: <span class="ident">PhantomData::default</span>(),
         }
@@ -677,7 +680,7 @@
         <span class="op">+</span> <span class="ident">Send</span>
         <span class="op">+</span> <span class="ident">Sync</span>
         <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
+    <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
 {
     <span class="kw">fn</span> <span class="ident">get_farmer_metadata</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">FarmerMetadata</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">best_block_id</span> <span class="op">=</span> <span class="ident">BlockId::Hash</span>(<span class="self">self</span>.<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>);
@@ -805,6 +808,7 @@
                         <span class="ident">salt</span>: <span class="ident">new_slot_info</span>.<span class="ident">salt</span>,
                         <span class="ident">next_salt</span>: <span class="ident">new_slot_info</span>.<span class="ident">next_salt</span>,
                         <span class="ident">solution_range</span>: <span class="ident">new_slot_info</span>.<span class="ident">solution_range</span>,
+                        <span class="ident">voting_solution_range</span>: <span class="ident">new_slot_info</span>.<span class="ident">voting_solution_range</span>,
                     }
                 });
 
@@ -818,38 +822,38 @@
             .<span class="ident">spawn</span>(<span class="string">&quot;subspace-slot-info-subscription&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>), <span class="ident">fut</span>.<span class="ident">boxed</span>());
     }
 
-    <span class="kw">fn</span> <span class="ident">subscribe_block_signing</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">pending</span>: <span class="ident">PendingSubscription</span>) {
+    <span class="kw">fn</span> <span class="ident">subscribe_reward_signing</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">pending</span>: <span class="ident">PendingSubscription</span>) {
         <span class="kw">let</span> <span class="ident">executor</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">executor</span>.<span class="ident">clone</span>();
-        <span class="kw">let</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signature_senders</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> <span class="ident">reward_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">reward_signature_senders</span>.<span class="ident">clone</span>();
 
-        <span class="kw">let</span> <span class="ident">stream</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signing_notification_stream</span>.<span class="ident">subscribe</span>().<span class="ident">map</span>(
-            <span class="kw">move</span> <span class="op">|</span><span class="ident">block_signing_notification</span><span class="op">|</span> {
-                <span class="kw">let</span> <span class="ident">BlockSigningNotification</span> {
-                    <span class="ident">header_hash</span>,
+        <span class="kw">let</span> <span class="ident">stream</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">reward_signing_notification_stream</span>.<span class="ident">subscribe</span>().<span class="ident">map</span>(
+            <span class="kw">move</span> <span class="op">|</span><span class="ident">reward_signing_notification</span><span class="op">|</span> {
+                <span class="kw">let</span> <span class="ident">RewardSigningNotification</span> {
+                    <span class="ident">hash</span>,
                     <span class="ident">public_key</span>,
                     <span class="kw-2">mut</span> <span class="ident">signature_sender</span>,
-                } <span class="op">=</span> <span class="ident">block_signing_notification</span>;
+                } <span class="op">=</span> <span class="ident">reward_signing_notification</span>;
 
                 <span class="kw">let</span> (<span class="ident">response_sender</span>, <span class="ident">response_receiver</span>) <span class="op">=</span> <span class="ident">async_oneshot::oneshot</span>();
 
                 <span class="comment">// Store signature sender so that we can retrieve it when solution comes from</span>
                 <span class="comment">// the farmer</span>
                 {
-                    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">lock</span>();
+                    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">reward_signature_senders</span> <span class="op">=</span> <span class="ident">reward_signature_senders</span>.<span class="ident">lock</span>();
 
-                    <span class="kw">if</span> <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">!</span><span class="op">=</span> <span class="ident">header_hash</span> {
-                        <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">=</span> <span class="ident">header_hash</span>;
-                        <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">clear</span>();
+                    <span class="kw">if</span> <span class="ident">reward_signature_senders</span>.<span class="ident">current_hash</span> <span class="op">!</span><span class="op">=</span> <span class="ident">hash</span> {
+                        <span class="ident">reward_signature_senders</span>.<span class="ident">current_hash</span> <span class="op">=</span> <span class="ident">hash</span>;
+                        <span class="ident">reward_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">clear</span>();
                     }
 
-                    <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">push</span>(<span class="ident">response_sender</span>);
+                    <span class="ident">reward_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">push</span>(<span class="ident">response_sender</span>);
                 }
 
                 <span class="comment">// Wait for solutions and transform proposed proof of space solutions into</span>
                 <span class="comment">// data structure `sc-consensus-subspace` expects</span>
                 <span class="kw">let</span> <span class="ident">forward_signature_fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
-                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Ok</span>(<span class="ident">block_signature</span>) <span class="op">=</span> <span class="ident">response_receiver</span>.<span class="kw">await</span> {
-                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">signature</span>) <span class="op">=</span> <span class="ident">block_signature</span>.<span class="ident">signature</span> {
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Ok</span>(<span class="ident">reward_signature</span>) <span class="op">=</span> <span class="ident">response_receiver</span>.<span class="kw">await</span> {
+                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">signature</span>) <span class="op">=</span> <span class="ident">reward_signature</span>.<span class="ident">signature</span> {
                             <span class="kw">match</span> <span class="ident">FarmerSignature::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">signature</span>.<span class="ident">encode</span>().<span class="ident">as_ref</span>()) {
                                 <span class="prelude-val">Ok</span>(<span class="ident">signature</span>) =&gt; {
                                     <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">signature_sender</span>.<span class="ident">send</span>(<span class="ident">signature</span>).<span class="kw">await</span>;
@@ -871,7 +875,7 @@
                     <span class="string">&quot;subspace-block-signing-forward&quot;</span>,
                     <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
                     <span class="ident">future::select</span>(
-                        <span class="ident">futures_timer::Delay::new</span>(<span class="ident">SOLUTION_TIMEOUT</span>),
+                        <span class="ident">futures_timer::Delay::new</span>(<span class="ident">REWARD_SIGNING_TIMEOUT</span>),
                         <span class="ident">Box::pin</span>(<span class="ident">forward_signature_fut</span>),
                     )
                     .<span class="ident">map</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> ())
@@ -879,8 +883,8 @@
                 );
 
                 <span class="comment">// This will be sent to the farmer</span>
-                <span class="ident">BlockSigningInfo</span> {
-                    <span class="ident">header_hash</span>: <span class="ident">header_hash</span>.<span class="ident">into</span>(),
+                <span class="ident">RewardSigningInfo</span> {
+                    <span class="ident">hash</span>: <span class="ident">hash</span>.<span class="ident">into</span>(),
                     <span class="ident">public_key</span>: <span class="ident">public_key</span>
                         .<span class="ident">as_slice</span>()
                         .<span class="ident">try_into</span>()
@@ -902,16 +906,16 @@
         );
     }
 
-    <span class="kw">fn</span> <span class="ident">submit_block_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">block_signature</span>: <span class="ident">BlockSignature</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">block_signature_senders</span>.<span class="ident">clone</span>();
+    <span class="kw">fn</span> <span class="ident">submit_reward_signature</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">reward_signature</span>: <span class="ident">RewardSignature</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+        <span class="kw">let</span> <span class="ident">reward_signature_senders</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">reward_signature_senders</span>.<span class="ident">clone</span>();
 
         <span class="comment">// TODO: This doesn&#39;t track what client sent a solution, allowing some clients to send</span>
         <span class="comment">//  multiple (https://github.com/paritytech/jsonrpsee/issues/452)</span>
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">block_signature_senders</span> <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">lock</span>();
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">reward_signature_senders</span> <span class="op">=</span> <span class="ident">reward_signature_senders</span>.<span class="ident">lock</span>();
 
-        <span class="kw">if</span> <span class="ident">block_signature_senders</span>.<span class="ident">current_header_hash</span> <span class="op">==</span> <span class="ident">block_signature</span>.<span class="ident">header_hash</span>.<span class="ident">into</span>() {
-            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">block_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">pop</span>() {
-                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(<span class="ident">block_signature</span>);
+        <span class="kw">if</span> <span class="ident">reward_signature_senders</span>.<span class="ident">current_hash</span> <span class="op">==</span> <span class="ident">reward_signature</span>.<span class="ident">hash</span>.<span class="ident">into</span>() {
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">sender</span>) <span class="op">=</span> <span class="ident">reward_signature_senders</span>.<span class="ident">senders</span>.<span class="ident">pop</span>() {
+                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">sender</span>.<span class="ident">send</span>(<span class="ident">reward_signature</span>);
             }
         }
 

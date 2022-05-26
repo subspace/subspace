@@ -1,1 +1,1 @@
-initSidebarItems({"fn":[["load_block_weight","Load the cumulative chain-weight associated with a block."]]});
+initSidebarItems({});

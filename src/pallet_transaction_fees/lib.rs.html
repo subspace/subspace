@@ -302,6 +302,15 @@
 <span id="295">295</span>
 <span id="296">296</span>
 <span id="297">297</span>
+<span id="298">298</span>
+<span id="299">299</span>
+<span id="300">300</span>
+<span id="301">301</span>
+<span id="302">302</span>
+<span id="303">303</span>
+<span id="304">304</span>
+<span id="305">305</span>
+<span id="306">306</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -327,6 +336,7 @@
 
 <span class="kw">use</span> <span class="ident">codec</span>::{<span class="ident">Codec</span>, <span class="ident">Decode</span>, <span class="ident">Encode</span>};
 <span class="kw">use</span> <span class="ident">frame_support::sp_runtime::traits::Zero</span>;
+<span class="kw">use</span> <span class="ident">frame_support::sp_runtime::SaturatedConversion</span>;
 <span class="kw">use</span> <span class="ident">frame_support::traits</span>::{<span class="ident">Currency</span>, <span class="ident">Get</span>};
 <span class="kw">use</span> <span class="ident">frame_support::weights::Weight</span>;
 <span class="kw">pub</span> <span class="kw">use</span> <span class="ident">pallet</span>::<span class="kw-2">*</span>;
@@ -382,12 +392,12 @@
 
         <span class="doccomment">/// How much space there is on the network.</span>
         <span class="attribute">#[<span class="ident">pallet::constant</span>]</span>
-        <span class="kw">type</span> <span class="ident">TotalSpacePledged</span>: <span class="ident">Get</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span>;
+        <span class="kw">type</span> <span class="ident">TotalSpacePledged</span>: <span class="ident">Get</span><span class="op">&lt;</span><span class="ident">u128</span><span class="op">&gt;</span>;
 
         <span class="doccomment">/// How big is the history of the blockchain in archived state (thus includes erasure</span>
         <span class="doccomment">/// coding, but not replication).</span>
         <span class="attribute">#[<span class="ident">pallet::constant</span>]</span>
-        <span class="kw">type</span> <span class="ident">BlockchainHistorySize</span>: <span class="ident">Get</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span>;
+        <span class="kw">type</span> <span class="ident">BlockchainHistorySize</span>: <span class="ident">Get</span><span class="op">&lt;</span><span class="ident">u128</span><span class="op">&gt;</span>;
 
         <span class="kw">type</span> <span class="ident">Currency</span>: <span class="ident">Currency</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::AccountId</span><span class="op">&gt;</span>;
 
@@ -478,15 +488,10 @@
     <span class="ident">BalanceOf</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>: <span class="ident">From</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span>,
 {
     <span class="kw">fn</span> <span class="ident">do_initialize</span>(<span class="ident">_n</span>: <span class="ident">T::BlockNumber</span>) {
-        <span class="kw">let</span> <span class="ident">block_author</span> <span class="op">=</span> <span class="ident">T::FindBlockRewardAddress::find_block_reward_address</span>(
-            <span class="ident">frame_system::Pallet</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::digest</span>()
-                .<span class="ident">logs</span>
-                .<span class="ident">iter</span>()
-                .<span class="ident">filter_map</span>(<span class="op">|</span><span class="ident">d</span><span class="op">|</span> <span class="ident">d</span>.<span class="ident">as_pre_runtime</span>()),
-        )
-        .<span class="ident">expect</span>(<span class="string">&quot;Block author must always be present; qed&quot;</span>);
-
-        <span class="ident">BlockAuthor</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::put</span>(<span class="ident">block_author</span>);
+        <span class="comment">// Block author may equivocate, in which case they&#39;ll not be present here</span>
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">block_author</span>) <span class="op">=</span> <span class="ident">T::FindBlockRewardAddress::find_block_reward_address</span>() {
+            <span class="ident">BlockAuthor</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::put</span>(<span class="ident">block_author</span>);
+        }
 
         <span class="ident">CollectedBlockFees</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::put</span>(<span class="ident">CollectedFees</span> {
             <span class="ident">storage</span>: <span class="ident">BalanceOf</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::zero</span>(),
@@ -499,67 +504,77 @@
     <span class="kw">fn</span> <span class="ident">do_finalize</span>(<span class="ident">_n</span>: <span class="ident">T::BlockNumber</span>) {
         <span class="ident">TransactionByteFee</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::take</span>();
 
-        <span class="kw">let</span> <span class="ident">block_author</span> <span class="op">=</span>
-            <span class="ident">BlockAuthor</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::take</span>().<span class="ident">expect</span>(<span class="string">&quot;`BlockAuthor` was set in `on_initialize`; qed&quot;</span>);
-
-        <span class="kw">let</span> <span class="ident">original_storage_fees_escrow</span> <span class="op">=</span> <span class="ident">CollectedStorageFeesEscrow</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::get</span>();
         <span class="kw">let</span> <span class="ident">collected_fees</span> <span class="op">=</span> <span class="ident">CollectedBlockFees</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::take</span>()
             .<span class="ident">expect</span>(<span class="string">&quot;`CollectedBlockFees` was set in `on_initialize`; qed&quot;</span>);
 
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">storage_fees_escrow</span> <span class="op">=</span> <span class="ident">original_storage_fees_escrow</span>;
+        <span class="comment">// Block author may equivocate, in which case they&#39;ll not be present here</span>
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">block_author</span>) <span class="op">=</span> <span class="ident">BlockAuthor</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::take</span>() {
+            <span class="kw">let</span> <span class="ident">original_storage_fees_escrow</span> <span class="op">=</span> <span class="ident">CollectedStorageFeesEscrow</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::get</span>();
+            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">storage_fees_escrow</span> <span class="op">=</span> <span class="ident">original_storage_fees_escrow</span>;
 
-        <span class="comment">// Take a portion of storage fees escrow as a farmer reward.</span>
-        <span class="kw">let</span> <span class="ident">storage_fees_escrow_reward</span> <span class="op">=</span> <span class="ident">storage_fees_escrow</span>
-            <span class="op">/</span> <span class="ident">T::StorageFeesEscrowBlockReward::get</span>().<span class="number">1</span>.<span class="ident">into</span>()
-            <span class="op">*</span> <span class="ident">T::StorageFeesEscrowBlockReward::get</span>().<span class="number">0</span>.<span class="ident">into</span>();
-        <span class="ident">storage_fees_escrow</span> <span class="op">-</span><span class="op">=</span> <span class="ident">storage_fees_escrow_reward</span>;
+            <span class="comment">// Take a portion of storage fees escrow as a farmer reward.</span>
+            <span class="kw">let</span> <span class="ident">storage_fees_escrow_reward</span> <span class="op">=</span> <span class="ident">storage_fees_escrow</span>
+                <span class="op">/</span> <span class="ident">T::StorageFeesEscrowBlockReward::get</span>().<span class="number">1</span>.<span class="ident">into</span>()
+                <span class="op">*</span> <span class="ident">T::StorageFeesEscrowBlockReward::get</span>().<span class="number">0</span>.<span class="ident">into</span>();
+            <span class="ident">storage_fees_escrow</span> <span class="op">-</span><span class="op">=</span> <span class="ident">storage_fees_escrow_reward</span>;
 
-        <span class="comment">// Take a portion of storage fees collected in this block as a farmer reward.</span>
-        <span class="kw">let</span> <span class="ident">collected_storage_fees_reward</span> <span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">storage</span>
-            <span class="op">/</span> <span class="ident">T::StorageFeesEscrowBlockTax::get</span>().<span class="number">1</span>.<span class="ident">into</span>()
-            <span class="op">*</span> (<span class="ident">T::StorageFeesEscrowBlockTax::get</span>().<span class="number">1</span> <span class="op">-</span> <span class="ident">T::StorageFeesEscrowBlockTax::get</span>().<span class="number">0</span>)
-                .<span class="ident">into</span>();
-        <span class="ident">storage_fees_escrow</span> <span class="op">+</span><span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">storage</span> <span class="op">-</span> <span class="ident">collected_storage_fees_reward</span>;
+            <span class="comment">// Take a portion of storage fees collected in this block as a farmer reward.</span>
+            <span class="kw">let</span> <span class="ident">collected_storage_fees_reward</span> <span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">storage</span>
+                <span class="op">/</span> <span class="ident">T::StorageFeesEscrowBlockTax::get</span>().<span class="number">1</span>.<span class="ident">into</span>()
+                <span class="op">*</span> (<span class="ident">T::StorageFeesEscrowBlockTax::get</span>().<span class="number">1</span> <span class="op">-</span> <span class="ident">T::StorageFeesEscrowBlockTax::get</span>().<span class="number">0</span>)
+                    .<span class="ident">into</span>();
+            <span class="ident">storage_fees_escrow</span> <span class="op">+</span><span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">storage</span> <span class="op">-</span> <span class="ident">collected_storage_fees_reward</span>;
 
-        <span class="comment">// Update storage fees escrow.</span>
-        <span class="kw">if</span> <span class="ident">storage_fees_escrow</span> <span class="op">!</span><span class="op">=</span> <span class="ident">original_storage_fees_escrow</span> {
+            <span class="comment">// Update storage fees escrow.</span>
+            <span class="kw">if</span> <span class="ident">storage_fees_escrow</span> <span class="op">!</span><span class="op">=</span> <span class="ident">original_storage_fees_escrow</span> {
+                <span class="ident">CollectedStorageFeesEscrow</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::put</span>(<span class="ident">storage_fees_escrow</span>);
+                <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::StorageFeesEscrowChange</span> {
+                    <span class="ident">before</span>: <span class="ident">original_storage_fees_escrow</span>,
+                    <span class="ident">after</span>: <span class="ident">storage_fees_escrow</span>,
+                });
+            }
+
+            <span class="comment">// Issue storage fees reward.</span>
+            <span class="kw">let</span> <span class="ident">storage_fees_reward</span> <span class="op">=</span> <span class="ident">storage_fees_escrow_reward</span> <span class="op">+</span> <span class="ident">collected_storage_fees_reward</span>;
+            <span class="kw">if</span> <span class="op">!</span><span class="ident">storage_fees_reward</span>.<span class="ident">is_zero</span>() {
+                <span class="ident">T::Currency::deposit_creating</span>(<span class="kw-2">&amp;</span><span class="ident">block_author</span>, <span class="ident">storage_fees_reward</span>);
+                <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::StorageFeesReward</span> {
+                    <span class="ident">who</span>: <span class="ident">block_author</span>.<span class="ident">clone</span>(),
+                    <span class="ident">amount</span>: <span class="ident">storage_fees_reward</span>,
+                });
+            }
+
+            <span class="comment">// Issue compute fees reward.</span>
+            <span class="kw">if</span> <span class="op">!</span><span class="ident">collected_fees</span>.<span class="ident">compute</span>.<span class="ident">is_zero</span>() {
+                <span class="ident">T::Currency::deposit_creating</span>(<span class="kw-2">&amp;</span><span class="ident">block_author</span>, <span class="ident">collected_fees</span>.<span class="ident">compute</span>);
+                <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::ComputeFeesReward</span> {
+                    <span class="ident">who</span>: <span class="ident">block_author</span>.<span class="ident">clone</span>(),
+                    <span class="ident">amount</span>: <span class="ident">collected_fees</span>.<span class="ident">compute</span>,
+                });
+            }
+
+            <span class="comment">// Issue tips reward.</span>
+            <span class="kw">if</span> <span class="op">!</span><span class="ident">collected_fees</span>.<span class="ident">tips</span>.<span class="ident">is_zero</span>() {
+                <span class="ident">T::Currency::deposit_creating</span>(<span class="kw-2">&amp;</span><span class="ident">block_author</span>, <span class="ident">collected_fees</span>.<span class="ident">tips</span>);
+                <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::TipsReward</span> {
+                    <span class="ident">who</span>: <span class="ident">block_author</span>,
+                    <span class="ident">amount</span>: <span class="ident">collected_fees</span>.<span class="ident">tips</span>,
+                });
+            }
+        } <span class="kw">else</span> {
+            <span class="comment">// If farmer equivocated, all fees go into storage escrow.</span>
+            <span class="kw">let</span> <span class="ident">original_storage_fees_escrow</span> <span class="op">=</span> <span class="ident">CollectedStorageFeesEscrow</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::get</span>();
+            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">storage_fees_escrow</span> <span class="op">=</span> <span class="ident">original_storage_fees_escrow</span>;
+
+            <span class="ident">storage_fees_escrow</span> <span class="op">+</span><span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">storage</span>;
+            <span class="ident">storage_fees_escrow</span> <span class="op">+</span><span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">compute</span>;
+            <span class="ident">storage_fees_escrow</span> <span class="op">+</span><span class="op">=</span> <span class="ident">collected_fees</span>.<span class="ident">tips</span>;
+
             <span class="ident">CollectedStorageFeesEscrow</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::put</span>(<span class="ident">storage_fees_escrow</span>);
+
             <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::StorageFeesEscrowChange</span> {
                 <span class="ident">before</span>: <span class="ident">original_storage_fees_escrow</span>,
                 <span class="ident">after</span>: <span class="ident">storage_fees_escrow</span>,
-            });
-        }
-
-        <span class="comment">// Issue storage fees reward.</span>
-        <span class="kw">let</span> <span class="ident">storage_fees_reward</span> <span class="op">=</span> <span class="ident">storage_fees_escrow_reward</span> <span class="op">+</span> <span class="ident">collected_storage_fees_reward</span>;
-        <span class="kw">if</span> <span class="op">!</span><span class="ident">storage_fees_reward</span>.<span class="ident">is_zero</span>() {
-            <span class="ident">T::Currency::deposit_into_existing</span>(<span class="kw-2">&amp;</span><span class="ident">block_author</span>, <span class="ident">storage_fees_reward</span>).<span class="ident">expect</span>(
-                <span class="string">&quot;Farmer account must have already received the block reward before fees are \
-                collected; qed&quot;</span>,
-            );
-            <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::StorageFeesReward</span> {
-                <span class="ident">who</span>: <span class="ident">block_author</span>.<span class="ident">clone</span>(),
-                <span class="ident">amount</span>: <span class="ident">storage_fees_reward</span>,
-            });
-        }
-
-        <span class="comment">// Issue compute fees reward.</span>
-        <span class="kw">if</span> <span class="op">!</span><span class="ident">collected_fees</span>.<span class="ident">compute</span>.<span class="ident">is_zero</span>() {
-            <span class="ident">T::Currency::deposit_into_existing</span>(<span class="kw-2">&amp;</span><span class="ident">block_author</span>, <span class="ident">collected_fees</span>.<span class="ident">compute</span>)
-                .<span class="ident">expect</span>(<span class="string">&quot;Executor account must already exist before they execute the block; qed&quot;</span>);
-            <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::ComputeFeesReward</span> {
-                <span class="ident">who</span>: <span class="ident">block_author</span>.<span class="ident">clone</span>(),
-                <span class="ident">amount</span>: <span class="ident">collected_fees</span>.<span class="ident">compute</span>,
-            });
-        }
-
-        <span class="comment">// Issue tips reward.</span>
-        <span class="kw">if</span> <span class="op">!</span><span class="ident">collected_fees</span>.<span class="ident">tips</span>.<span class="ident">is_zero</span>() {
-            <span class="ident">T::Currency::deposit_into_existing</span>(<span class="kw-2">&amp;</span><span class="ident">block_author</span>, <span class="ident">collected_fees</span>.<span class="ident">tips</span>)
-                .<span class="ident">expect</span>(<span class="string">&quot;Executor account must already exist before they execute the block; qed&quot;</span>);
-            <span class="ident"><span class="self">Self</span>::deposit_event</span>(<span class="ident">Event</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::TipsReward</span> {
-                <span class="ident">who</span>: <span class="ident">block_author</span>,
-                <span class="ident">amount</span>: <span class="ident">collected_fees</span>.<span class="ident">tips</span>,
             });
         }
     }
@@ -572,9 +587,12 @@
         <span class="kw">let</span> <span class="ident">credit_supply</span> <span class="op">=</span> <span class="ident">T::CreditSupply::get</span>();
 
         <span class="kw">let</span> <span class="ident">transaction_byte_fee</span> <span class="op">=</span> <span class="kw">match</span> <span class="ident">T::TotalSpacePledged::get</span>().<span class="ident">checked_sub</span>(
-            <span class="ident">T::BlockchainHistorySize::get</span>() <span class="op">*</span> <span class="ident">u64::from</span>(<span class="ident">T::MinReplicationFactor::get</span>()),
+            <span class="ident">T::BlockchainHistorySize::get</span>()
+                .<span class="ident">saturating_mul</span>(<span class="ident">u128::from</span>(<span class="ident">T::MinReplicationFactor::get</span>())),
         ) {
-            <span class="prelude-val">Some</span>(<span class="ident">free_space</span>) <span class="kw">if</span> <span class="ident">free_space</span> <span class="op">&gt;</span> <span class="number">0</span> =&gt; <span class="ident">credit_supply</span> <span class="op">/</span> <span class="ident">BalanceOf</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::from</span>(<span class="ident">free_space</span>),
+            <span class="prelude-val">Some</span>(<span class="ident">free_space</span>) <span class="kw">if</span> <span class="ident">free_space</span> <span class="op">&gt;</span> <span class="number">0</span> =&gt; {
+                <span class="ident">credit_supply</span> <span class="op">/</span> <span class="ident">BalanceOf</span>::<span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="ident">::saturated_from</span>(<span class="ident">free_space</span>)
+            }
             <span class="kw">_</span> =&gt; <span class="ident">credit_supply</span>,
         };
 
