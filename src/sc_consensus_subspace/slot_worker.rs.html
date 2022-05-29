@@ -509,6 +509,12 @@
 <span id="502">502</span>
 <span id="503">503</span>
 <span id="504">504</span>
+<span id="505">505</span>
+<span id="506">506</span>
+<span id="507">507</span>
+<span id="508">508</span>
+<span id="509">509</span>
+<span id="510">510</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -541,6 +547,7 @@
 <span class="kw">use</span> <span class="ident">sc_telemetry::TelemetryHandle</span>;
 <span class="kw">use</span> <span class="ident">sc_utils::mpsc::tracing_unbounded</span>;
 <span class="kw">use</span> <span class="ident">schnorrkel::context::SigningContext</span>;
+<span class="kw">use</span> <span class="ident">schnorrkel::PublicKey</span>;
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiError</span>, <span class="ident">NumberFor</span>, <span class="ident">ProvideRuntimeApi</span>, <span class="ident">TransactionFor</span>};
 <span class="kw">use</span> <span class="ident">sp_blockchain</span>::{<span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ClientError</span>, <span class="ident">HeaderBackend</span>, <span class="ident">HeaderMetadata</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus</span>::{<span class="ident">BlockOrigin</span>, <span class="ident">Environment</span>, <span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ConsensusError</span>, <span class="ident">Proposer</span>, <span class="ident">SyncOracle</span>};
@@ -556,6 +563,7 @@
 <span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">Randomness</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>};
+<span class="kw">use</span> <span class="ident">subspace_solving</span>::{<span class="ident">derive_global_challenge</span>, <span class="ident">derive_target</span>};
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct</span> <span class="ident">SubspaceSlotWorker</span><span class="op">&lt;</span><span class="ident">Block</span>: <span class="ident">BlockT</span>, <span class="ident">Client</span>, <span class="ident">E</span>, <span class="ident">I</span>, <span class="ident">SO</span>, <span class="ident">L</span>, <span class="ident">BS</span><span class="op">&gt;</span> {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
@@ -566,7 +574,6 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">force_authoring</span>: <span class="ident">bool</span>,
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">backoff_authoring_blocks</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">BS</span><span class="op">&gt;</span>,
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">subspace_link</span>: <span class="ident">SubspaceLink</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">solution_signing_context</span>: <span class="ident">SigningContext</span>,
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">reward_signing_context</span>: <span class="ident">SigningContext</span>,
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">block_proposal_slot_portion</span>: <span class="ident">SlotProportion</span>,
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">max_block_proposal_slot_portion</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">SlotProportion</span><span class="op">&gt;</span>,
@@ -640,13 +647,11 @@
             <span class="ident">extract_solution_ranges_for_block</span>(<span class="self">self</span>.<span class="ident">client</span>.<span class="ident">as_ref</span>(), <span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()<span class="question-mark">?</span>;
         <span class="kw">let</span> (<span class="ident">salt</span>, <span class="ident">next_salt</span>) <span class="op">=</span>
             <span class="ident">extract_salt_for_block</span>(<span class="self">self</span>.<span class="ident">client</span>.<span class="ident">as_ref</span>(), <span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()<span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">global_challenge</span> <span class="op">=</span> <span class="ident">derive_global_challenge</span>(<span class="kw-2">&amp;</span><span class="ident">global_randomness</span>, <span class="ident">slot</span>.<span class="ident">into</span>());
 
         <span class="kw">let</span> <span class="ident">new_slot_info</span> <span class="op">=</span> <span class="ident">NewSlotInfo</span> {
             <span class="ident">slot</span>,
-            <span class="ident">global_challenge</span>: <span class="ident">subspace_solving::derive_global_challenge</span>(
-                <span class="kw-2">&amp;</span><span class="ident">global_randomness</span>,
-                <span class="ident">slot</span>.<span class="ident">into</span>(),
-            ),
+            <span class="ident">global_challenge</span>,
             <span class="ident">salt</span>,
             <span class="ident">next_salt</span>,
             <span class="ident">solution_range</span>,
@@ -738,17 +743,24 @@
                             <span class="ident">max_plot_size</span>,
                             <span class="ident">total_pieces</span>,
                         }),
-                        <span class="ident">solution_signing_context</span>: <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">solution_signing_context</span>,
                     },
                 );
 
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">solution_verification_result</span> {
                 <span class="macro">warn!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Invalid solution received for slot {slot}: {error:?}&quot;</span>);
             } <span class="kw">else</span> {
+                <span class="comment">// Verification of the local challenge was done before this</span>
+                <span class="kw">let</span> <span class="ident">target</span> <span class="op">=</span> <span class="ident">derive_target</span>(
+                    <span class="kw-2">&amp;</span><span class="ident">PublicKey::from_bytes</span>(<span class="ident">solution</span>.<span class="ident">public_key</span>.<span class="ident">as_ref</span>())
+                        .<span class="ident">expect</span>(<span class="string">&quot;Always correct length; qed&quot;</span>),
+                    <span class="ident">global_challenge</span>,
+                    <span class="kw-2">&amp;</span><span class="ident">solution</span>.<span class="ident">local_challenge</span>,
+                )
+                .<span class="ident">expect</span>(<span class="string">&quot;Verification of the local challenge was done before this; qed&quot;</span>);
                 <span class="comment">// If solution is of high enough quality and block pre-digest wasn&#39;t produced yet,</span>
                 <span class="comment">// block reward is claimed</span>
                 <span class="kw">if</span> <span class="ident">maybe_pre_digest</span>.<span class="ident">is_none</span>()
-                    <span class="op">&amp;&amp;</span> <span class="ident">verification::is_within_solution_range</span>(<span class="kw-2">&amp;</span><span class="ident">solution</span>, <span class="ident">solution_range</span>)
+                    <span class="op">&amp;&amp;</span> <span class="ident">verification::is_within_solution_range</span>(<span class="ident">target</span>, <span class="ident">solution</span>.<span class="ident">tag</span>, <span class="ident">solution_range</span>)
                 {
                     <span class="macro">info!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;🚜 Claimed block at slot {slot}&quot;</span>);
 

@@ -321,6 +321,24 @@
 <span id="314">314</span>
 <span id="315">315</span>
 <span id="316">316</span>
+<span id="317">317</span>
+<span id="318">318</span>
+<span id="319">319</span>
+<span id="320">320</span>
+<span id="321">321</span>
+<span id="322">322</span>
+<span id="323">323</span>
+<span id="324">324</span>
+<span id="325">325</span>
+<span id="326">326</span>
+<span id="327">327</span>
+<span id="328">328</span>
+<span id="329">329</span>
+<span id="330">330</span>
+<span id="331">331</span>
+<span id="332">332</span>
+<span id="333">333</span>
+<span id="334">334</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
@@ -354,6 +372,8 @@
 <span class="kw">use</span> <span class="ident">codec</span>::{<span class="ident">Decode</span>, <span class="ident">Encode</span>, <span class="ident">MaxEncodedLen</span>};
 <span class="kw">use</span> <span class="ident">core::time::Duration</span>;
 <span class="kw">use</span> <span class="ident">scale_info::TypeInfo</span>;
+<span class="kw">use</span> <span class="ident">schnorrkel::vrf::VRFOutput</span>;
+<span class="kw">use</span> <span class="ident">schnorrkel</span>::{<span class="ident">PublicKey</span>, <span class="ident">SignatureResult</span>};
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">BlockT</span>, <span class="ident">HeaderT</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus_slots::Slot</span>;
 <span class="kw">use</span> <span class="ident">sp_core::crypto::KeyTypeId</span>;
@@ -361,7 +381,10 @@
 <span class="kw">use</span> <span class="ident">sp_io::hashing</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime</span>::{<span class="ident">ConsensusEngineId</span>, <span class="ident">RuntimeAppPublic</span>};
 <span class="kw">use</span> <span class="ident">sp_std::vec::Vec</span>;
-<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">Randomness</span>, <span class="ident">RootBlock</span>, <span class="ident">Salt</span>, <span class="ident">Sha256Hash</span>, <span class="ident">Solution</span>};
+<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
+    <span class="ident">Randomness</span>, <span class="ident">RootBlock</span>, <span class="ident">Salt</span>, <span class="ident">Sha256Hash</span>, <span class="ident">Solution</span>, <span class="ident">Tag</span>, <span class="ident">TagSignature</span>,
+};
+<span class="kw">use</span> <span class="ident">subspace_solving::create_tag_signature_transcript</span>;
 
 <span class="doccomment">/// Key type for Subspace pallet.</span>
 <span class="kw">const</span> <span class="ident">KEY_TYPE</span>: <span class="ident">KeyTypeId</span> <span class="op">=</span> <span class="ident">KeyTypeId</span>(<span class="kw-2">*</span><span class="string">b&quot;sub_&quot;</span>);
@@ -384,14 +407,10 @@
 <span class="doccomment">/// The `ConsensusEngineId` of Subspace.</span>
 <span class="kw">const</span> <span class="ident">SUBSPACE_ENGINE_ID</span>: <span class="ident">ConsensusEngineId</span> <span class="op">=</span> <span class="kw-2">*</span><span class="string">b&quot;SUB_&quot;</span>;
 
+<span class="kw">const</span> <span class="ident">RANDOMNESS_CONTEXT</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>] <span class="op">=</span> <span class="string">b&quot;subspace_randomness&quot;</span>;
+
 <span class="doccomment">/// An equivocation proof for multiple block authorships on the same slot (i.e. double vote).</span>
 <span class="kw">pub</span> <span class="kw">type</span> <span class="ident">EquivocationProof</span><span class="op">&lt;</span><span class="ident">Header</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">sp_consensus_slots::EquivocationProof</span><span class="op">&lt;</span><span class="ident">Header</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>;
-
-<span class="doccomment">/// The cumulative weight of a Subspace block, i.e. sum of block weights starting</span>
-<span class="doccomment">/// at this block until the genesis block.</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// The closer solution&#39;s tag is to the target, the heavier it is.</span>
-<span class="kw">pub</span> <span class="kw">type</span> <span class="ident">SubspaceBlockWeight</span> <span class="op">=</span> <span class="ident">u128</span>;
 
 <span class="doccomment">/// An consensus log item for Subspace.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Decode</span>, <span class="ident">Encode</span>, <span class="ident">Clone</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>)]</span>
@@ -562,6 +581,23 @@
             <span class="ident">voting_next</span>: <span class="prelude-val">None</span>,
         }
     }
+}
+
+<span class="doccomment">/// Derive on-chain randomness from tag signature.</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// NOTE: If you are not the signer then you must verify the local challenge before calling this</span>
+<span class="doccomment">/// function.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">derive_randomness</span>(
+    <span class="ident">public_key</span>: <span class="kw-2">&amp;</span><span class="ident">FarmerPublicKey</span>,
+    <span class="ident">tag</span>: <span class="ident">Tag</span>,
+    <span class="ident">tag_signature</span>: <span class="kw-2">&amp;</span><span class="ident">TagSignature</span>,
+) -&gt; <span class="ident">SignatureResult</span><span class="op">&lt;</span><span class="ident">Randomness</span><span class="op">&gt;</span> {
+    <span class="kw">let</span> <span class="ident">in_out</span> <span class="op">=</span> <span class="ident">VRFOutput</span>(<span class="ident">tag_signature</span>.<span class="ident">output</span>).<span class="ident">attach_input_hash</span>(
+        <span class="kw-2">&amp;</span><span class="ident">PublicKey::from_bytes</span>(<span class="ident">public_key</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>,
+        <span class="ident">create_tag_signature_transcript</span>(<span class="ident">tag</span>),
+    )<span class="question-mark">?</span>;
+
+    <span class="prelude-val">Ok</span>(<span class="ident">in_out</span>.<span class="ident">make_bytes</span>(<span class="ident">RANDOMNESS_CONTEXT</span>))
 }
 
 <span class="doccomment">/// Subspace salts used for challenges.</span>

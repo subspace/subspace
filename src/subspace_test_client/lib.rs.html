@@ -213,6 +213,7 @@
 <span id="206">206</span>
 <span id="207">207</span>
 <span id="208">208</span>
+<span id="209">209</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later</span>
 
@@ -249,7 +250,9 @@
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">FlatPieces</span>, <span class="ident">Piece</span>, <span class="ident">Solution</span>, <span class="ident">Tag</span>};
 <span class="kw">use</span> <span class="ident">subspace_runtime_primitives::opaque::Block</span>;
 <span class="kw">use</span> <span class="ident">subspace_service</span>::{<span class="ident">FullClient</span>, <span class="ident">NewFull</span>};
-<span class="kw">use</span> <span class="ident">subspace_solving</span>::{<span class="ident">SubspaceCodec</span>, <span class="ident">REWARD_SIGNING_CONTEXT</span>, <span class="ident">SOLUTION_SIGNING_CONTEXT</span>};
+<span class="kw">use</span> <span class="ident">subspace_solving</span>::{
+    <span class="ident">create_tag</span>, <span class="ident">create_tag_signature</span>, <span class="ident">derive_local_challenge</span>, <span class="ident">SubspaceCodec</span>, <span class="ident">REWARD_SIGNING_CONTEXT</span>,
+};
 <span class="kw">use</span> <span class="ident">zeroize::Zeroizing</span>;
 
 <span class="doccomment">/// Subspace native executor instance.</span>
@@ -322,10 +325,10 @@
             }) <span class="op">=</span> <span class="ident">reward_signing_notification_stream</span>.<span class="ident">next</span>().<span class="kw">await</span>
             {
                 <span class="kw">let</span> <span class="ident">header_hash</span>: [<span class="ident">u8</span>; <span class="number">32</span>] <span class="op">=</span> <span class="ident">header_hash</span>.<span class="ident">into</span>();
-                <span class="kw">let</span> <span class="ident">reward_signature</span>: <span class="ident">schnorrkel::Signature</span> <span class="op">=</span>
-                    <span class="ident">signing_pair</span>.<span class="ident">sign</span>(<span class="ident">substrate_ctx</span>.<span class="ident">bytes</span>(<span class="kw-2">&amp;</span><span class="ident">header_hash</span>));
-                <span class="kw">let</span> <span class="ident">signature</span>: <span class="ident">subspace_core_primitives::Signature</span> <span class="op">=</span>
-                    <span class="ident">reward_signature</span>.<span class="ident">to_bytes</span>().<span class="ident">into</span>();
+                <span class="kw">let</span> <span class="ident">signature</span>: <span class="ident">subspace_core_primitives::RewardSignature</span> <span class="op">=</span> <span class="ident">signing_pair</span>
+                    .<span class="ident">sign</span>(<span class="ident">substrate_ctx</span>.<span class="ident">bytes</span>(<span class="kw-2">&amp;</span><span class="ident">header_hash</span>))
+                    .<span class="ident">to_bytes</span>()
+                    .<span class="ident">into</span>();
                 <span class="ident">signature_sender</span>
                     .<span class="ident">send</span>(
                         <span class="ident">FarmerSignature::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">signature</span>.<span class="ident">encode</span>().<span class="ident">as_ref</span>())
@@ -355,7 +358,6 @@
     });
 
     <span class="kw">let</span> <span class="ident">subspace_codec</span> <span class="op">=</span> <span class="ident">SubspaceCodec::new</span>(<span class="ident">keypair</span>.<span class="ident">public</span>.<span class="ident">as_ref</span>());
-    <span class="kw">let</span> <span class="ident">ctx</span> <span class="op">=</span> <span class="ident">schnorrkel::context::signing_context</span>(<span class="ident">SOLUTION_SIGNING_CONTEXT</span>);
     <span class="kw">let</span> (<span class="ident">piece_index</span>, <span class="kw-2">mut</span> <span class="ident">encoding</span>) <span class="op">=</span> <span class="ident">archived_pieces_receiver</span>
         .<span class="kw">await</span>
         .<span class="ident">unwrap</span>()
@@ -375,7 +377,7 @@
     }) <span class="op">=</span> <span class="ident">new_slot_notification_stream</span>.<span class="ident">next</span>().<span class="kw">await</span>
     {
         <span class="kw">if</span> <span class="ident">Into</span>::<span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span><span class="ident">::into</span>(<span class="ident">new_slot_info</span>.<span class="ident">slot</span>) <span class="op">%</span> <span class="number">2</span> <span class="op">==</span> <span class="number">0</span> {
-            <span class="kw">let</span> <span class="ident">tag</span>: <span class="ident">Tag</span> <span class="op">=</span> <span class="ident">subspace_solving::create_tag</span>(<span class="kw-2">&amp;</span><span class="ident">encoding</span>, <span class="ident">new_slot_info</span>.<span class="ident">salt</span>);
+            <span class="kw">let</span> <span class="ident">tag</span>: <span class="ident">Tag</span> <span class="op">=</span> <span class="ident">create_tag</span>(<span class="kw-2">&amp;</span><span class="ident">encoding</span>, <span class="ident">new_slot_info</span>.<span class="ident">salt</span>);
 
             <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">solution_sender</span>
                 .<span class="ident">send</span>(<span class="ident">Solution</span> {
@@ -383,11 +385,11 @@
                     <span class="ident">reward_address</span>: <span class="ident">FarmerPublicKey::unchecked_from</span>(<span class="ident">keypair</span>.<span class="ident">public</span>.<span class="ident">to_bytes</span>()),
                     <span class="ident">piece_index</span>,
                     <span class="ident">encoding</span>: <span class="ident">encoding</span>.<span class="ident">clone</span>(),
-                    <span class="ident">signature</span>: <span class="ident">keypair</span>.<span class="ident">sign</span>(<span class="ident">ctx</span>.<span class="ident">bytes</span>(<span class="kw-2">&amp;</span><span class="ident">tag</span>)).<span class="ident">to_bytes</span>().<span class="ident">into</span>(),
-                    <span class="ident">local_challenge</span>: <span class="ident">keypair</span>
-                        .<span class="ident">sign</span>(<span class="ident">ctx</span>.<span class="ident">bytes</span>(<span class="kw-2">&amp;</span><span class="ident">new_slot_info</span>.<span class="ident">global_challenge</span>))
-                        .<span class="ident">to_bytes</span>()
-                        .<span class="ident">into</span>(),
+                    <span class="ident">tag_signature</span>: <span class="ident">create_tag_signature</span>(<span class="kw-2">&amp;</span><span class="ident">keypair</span>, <span class="ident">tag</span>),
+                    <span class="ident">local_challenge</span>: <span class="ident">derive_local_challenge</span>(
+                        <span class="kw-2">&amp;</span><span class="ident">keypair</span>,
+                        <span class="ident">new_slot_info</span>.<span class="ident">global_challenge</span>,
+                    ),
                     <span class="ident">tag</span>,
                 })
                 .<span class="kw">await</span>;
