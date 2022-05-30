@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["subspace_runtime"] = [{"text":"impl <a class=\"trait\" href=\"pallet_grandpa_finality_verifier/chain/trait.Chain.html\" title=\"trait pallet_grandpa_finality_verifier::chain::Chain\">Chain</a> for <a class=\"struct\" href=\"subspace_runtime/struct.PolkadotLike.html\" title=\"struct subspace_runtime::PolkadotLike\">PolkadotLike</a>","synthetic":false,"types":["subspace_runtime::PolkadotLike"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
