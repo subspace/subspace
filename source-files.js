@@ -21,6 +21,7 @@ sourcesIndex["pallet_transaction_fees"] = {"name":"","files":["default_weights.r
 sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]};
 sourcesIndex["sc_consensus_subspace_rpc"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["sc_subspace_chain_specs"] = {"name":"","files":["lib.rs","utils.rs"]};
 sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs","verification.rs"]};
 sourcesIndex["sp_executor"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sp_objects"] = {"name":"","files":["lib.rs"]};
