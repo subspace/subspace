@@ -9,6 +9,7 @@ sourcesIndex["cirrus_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
 sourcesIndex["cirrus_test_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
 sourcesIndex["cirrus_test_service"] = {"name":"","files":["chain_spec.rs","lib.rs"]};
 sourcesIndex["cumulus_client_consensus_relay_chain"] = {"name":"","files":["import_queue.rs","lib.rs"]};
+sourcesIndex["orml_vesting"] = {"name":"","files":["lib.rs","weights.rs"]};
 sourcesIndex["pallet_executor"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_feeds"] = {"name":"","files":["feed_processor.rs","lib.rs"]};
 sourcesIndex["pallet_grandpa_finality_verifier"] = {"name":"","files":["chain.rs","grandpa.rs","lib.rs"]};
