@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["sp_executor"] = [{"text":"impl Extension for <a class=\"struct\" href=\"sp_executor/fraud_proof_ext/struct.FraudProofExt.html\" title=\"struct sp_executor::fraud_proof_ext::FraudProofExt\">FraudProofExt</a>","synthetic":false,"types":["sp_executor::fraud_proof_ext::FraudProofExt"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
