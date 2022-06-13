@@ -16,6 +16,7 @@ sourcesIndex["pallet_grandpa_finality_verifier"] = {"name":"","files":["chain.rs
 sourcesIndex["pallet_object_store"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.rs"]};
+sourcesIndex["pallet_runtime_configs"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
 sourcesIndex["pallet_transaction_fees"] = {"name":"","files":["default_weights.rs","lib.rs"]};
 sourcesIndex["sc_consensus_fraud_proof"] = {"name":"","files":["lib.rs"]};
