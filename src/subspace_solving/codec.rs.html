@@ -234,6 +234,18 @@
 <span id="227">227</span>
 <span id="228">228</span>
 <span id="229">229</span>
+<span id="230">230</span>
+<span id="231">231</span>
+<span id="232">232</span>
+<span id="233">233</span>
+<span id="234">234</span>
+<span id="235">235</span>
+<span id="236">236</span>
+<span id="237">237</span>
+<span id="238">238</span>
+<span id="239">239</span>
+<span id="240">240</span>
+<span id="241">241</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -255,16 +267,18 @@
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>)]</span>
 <span class="kw">use</span> <span class="ident">rayon::prelude</span>::<span class="kw-2">*</span>;
 <span class="kw">use</span> <span class="ident">sloth256_189::cpu</span>;
-<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-<span class="kw">use</span> <span class="ident">sloth256_189::cuda</span>;
+<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+<span class="kw">use</span> <span class="ident">sloth256_189::opencl</span>::{<span class="self">self</span>, <span class="ident">OpenClBatch</span>, <span class="ident">OpenClEncoder</span>};
+<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+<span class="kw">use</span> <span class="ident">std::sync</span>::{<span class="ident">Arc</span>, <span class="ident">Mutex</span>};
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">crypto</span>, <span class="ident">Sha256Hash</span>, <span class="ident">PIECE_SIZE</span>};
 
-<span class="doccomment">/// Number of pieces for GPU should be multiples of 1024</span>
-<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
+<span class="doccomment">/// Number of pieces for GPU to encode in a batch</span>
+<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
 <span class="kw">const</span> <span class="ident">GPU_PIECE_BLOCK</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">1024</span>;
 <span class="kw">const</span> <span class="ident">ENCODE_ROUNDS</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">1</span>;
 
-<span class="doccomment">/// CPU encoding errors</span>
+<span class="doccomment">/// Encoding errors</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
 <span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;thiserror&quot;</span>, <span class="ident">derive</span>(<span class="ident">thiserror::Error</span>))]</span>
 <span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">BatchEncodeError</span> {
@@ -277,10 +291,10 @@
     <span class="doccomment">/// CPU encoding error</span>
     <span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;thiserror&quot;</span>, <span class="ident">error</span>(<span class="string">&quot;CPU encoding error: {0}&quot;</span>))]</span>
     <span class="ident">CpuEncodeError</span>(<span class="ident">cpu::EncodeError</span>),
-    <span class="doccomment">/// CUDA encoding error</span>
-    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-    <span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;thiserror&quot;</span>, <span class="ident">error</span>(<span class="string">&quot;CUDA encoding error: {0}&quot;</span>))]</span>
-    <span class="ident">CudaEncodeError</span>(<span class="ident">cuda::EncodeError</span>),
+    <span class="doccomment">/// OpenCL encoder error</span>
+    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+    <span class="attribute">#[<span class="ident">cfg_attr</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;thiserror&quot;</span>, <span class="ident">error</span>(<span class="string">&quot;OpenCL error: {0}&quot;</span>))]</span>
+    <span class="ident">OpenCLEncodeError</span>(<span class="ident">opencl::OpenCLEncodeError</span>),
 }
 
 <span class="kw">impl</span> <span class="ident">From</span><span class="op">&lt;</span><span class="ident">cpu::EncodeError</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">BatchEncodeError</span> {
@@ -289,10 +303,10 @@
     }
 }
 
-<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-<span class="kw">impl</span> <span class="ident">From</span><span class="op">&lt;</span><span class="ident">cuda::EncodeError</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">BatchEncodeError</span> {
-    <span class="kw">fn</span> <span class="ident">from</span>(<span class="ident">error</span>: <span class="ident">cuda::EncodeError</span>) -&gt; <span class="self">Self</span> {
-        <span class="ident"><span class="self">Self</span>::CudaEncodeError</span>(<span class="ident">error</span>)
+<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+<span class="kw">impl</span> <span class="ident">From</span><span class="op">&lt;</span><span class="ident">opencl::OpenCLEncodeError</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">BatchEncodeError</span> {
+    <span class="kw">fn</span> <span class="ident">from</span>(<span class="ident">error</span>: <span class="ident">opencl::OpenCLEncodeError</span>) -&gt; <span class="self">Self</span> {
+        <span class="ident"><span class="self">Self</span>::OpenCLEncodeError</span>(<span class="ident">error</span>)
     }
 }
 
@@ -309,26 +323,30 @@
 
 <span class="doccomment">/// Subspace codec is used to encode pieces of archived history before writing them to disk and also</span>
 <span class="doccomment">/// to decode them after reading from disk.</span>
-<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Copy</span>, <span class="ident">Clone</span>)]</span>
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Clone</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SubspaceCodec</span> {
     <span class="ident">farmer_public_key_hash</span>: <span class="ident">Sha256Hash</span>,
-    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-    <span class="ident">cuda_available</span>: <span class="ident">bool</span>,
+    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+    <span class="comment">// Type is so complicated in order to make everything thread safe and clonable</span>
+    <span class="ident">opencl_encoder</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">OpenClEncoder</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">cpu_cores</span>: <span class="ident">usize</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">SubspaceCodec</span> {
     <span class="doccomment">/// New instance with 256-bit prime and 4096-byte genesis piece size</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">farmer_public_key</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>]) -&gt; <span class="self">Self</span> {
-        <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-        <span class="kw">let</span> <span class="ident">cuda_available</span> <span class="op">=</span> <span class="ident">cuda::is_cuda_available</span>();
-
-        <span class="kw">let</span> <span class="ident">farmer_public_key_hash</span> <span class="op">=</span> <span class="ident">crypto::sha256_hash</span>(<span class="ident">farmer_public_key</span>);
-
+        <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+        <span class="kw">let</span> <span class="ident">opencl_encoder</span> <span class="op">=</span> <span class="ident">opencl::OpenClEncoder::new</span>(<span class="prelude-val">Some</span>(<span class="ident">OpenClBatch</span> {
+            <span class="ident">size</span>: <span class="ident">GPU_PIECE_BLOCK</span> <span class="op">*</span> <span class="ident">PIECE_SIZE</span>,
+            <span class="ident">layers</span>: <span class="ident">ENCODE_ROUNDS</span>,
+        }))
+        .<span class="ident">map</span>(<span class="ident">Mutex::new</span>)
+        .<span class="ident">map</span>(<span class="ident">Arc::new</span>)
+        .<span class="ident">ok</span>();
         <span class="self">Self</span> {
-            <span class="ident">farmer_public_key_hash</span>,
-            <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-            <span class="ident">cuda_available</span>,
+            <span class="ident">farmer_public_key_hash</span>: <span class="ident">crypto::sha256_hash</span>(<span class="ident">farmer_public_key</span>),
+            <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+            <span class="ident">opencl_encoder</span>,
             <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>)]</span>
             <span class="ident">cpu_cores</span>: <span class="ident">num_cpus::get</span>(),
             <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">not</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>))]</span>
@@ -346,8 +364,8 @@
 
     <span class="doccomment">/// Number of elements processed efficiently during one iteration of batched encoding.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">batch_size</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">usize</span> {
-        <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-        <span class="kw">if</span> <span class="self">self</span>.<span class="ident">cuda_available</span> {
+        <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+        <span class="kw">if</span> <span class="self">self</span>.<span class="ident">opencl_encoder</span>.<span class="ident">is_some</span>() {
             <span class="kw">return</span> <span class="ident">GPU_PIECE_BLOCK</span>;
         }
 
@@ -374,21 +392,22 @@
             <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">BatchEncodeError::NotMultipleOfPieceSize</span>);
         }
 
-        <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-        <span class="kw">if</span> <span class="self">self</span>.<span class="ident">cuda_available</span> {
+        <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+        {
             <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">pieces_to_process</span> <span class="op">=</span> <span class="ident">pieces</span>.<span class="ident">len</span>() <span class="op">/</span> <span class="ident">PIECE_SIZE</span>;
 
             <span class="kw">if</span> <span class="ident">pieces_to_process</span> <span class="op">&gt;</span><span class="op">=</span> <span class="ident">GPU_PIECE_BLOCK</span> {
                 <span class="ident">pieces_to_process</span> <span class="op">=</span> <span class="ident">pieces_to_process</span> <span class="op">/</span> <span class="ident">GPU_PIECE_BLOCK</span> <span class="op">*</span> <span class="ident">GPU_PIECE_BLOCK</span>;
 
-                <span class="kw">let</span> <span class="ident">cuda_result</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">batch_encode_cuda</span>(
+                <span class="kw">let</span> <span class="ident">opencl_result</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">batch_encode_opencl</span>(
                     <span class="kw-2">&amp;mut</span> <span class="ident">pieces</span>[..<span class="ident">pieces_to_process</span> <span class="op">*</span> <span class="ident">PIECE_SIZE</span>],
                     <span class="kw-2">&amp;</span><span class="ident">piece_indexes</span>[..<span class="ident">pieces_to_process</span>],
                 );
 
-                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">e</span>) <span class="op">=</span> <span class="ident">cuda_result</span> {
-                    <span class="macro">tracing::error!</span>(<span class="string">&quot;An error happened on the GPU: &#39;{}&#39;&quot;</span>, <span class="ident">e</span>);
-                    <span class="self">self</span>.<span class="ident">cuda_available</span> <span class="op">=</span> <span class="bool-val">false</span>;
+                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">opencl_result</span> {
+                    <span class="macro">tracing::error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;An error happened on the GPU&quot;</span>);
+                    <span class="comment">// Just in case use for all the next times</span>
+                    <span class="self">self</span>.<span class="ident">opencl_encoder</span> <span class="op">=</span> <span class="prelude-val">None</span>;
                     <span class="comment">// TODO: maybe also return from the GPU last successful encoding,</span>
                     <span class="comment">// so that CPU can continue from there</span>
                     <span class="comment">// because this implementation does not cover the case when GPU creates a problem</span>
@@ -443,12 +462,12 @@
             .<span class="ident">try_for_each</span>(<span class="op">|</span>(<span class="ident">piece</span>, <span class="kw-2">&amp;</span><span class="ident">piece_index</span>)<span class="op">|</span> <span class="self">self</span>.<span class="ident">encode</span>(<span class="ident">piece</span>, <span class="ident">piece_index</span>))
     }
 
-    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;cuda&quot;</span>)]</span>
-    <span class="kw">fn</span> <span class="ident">batch_encode_cuda</span>(
+    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;opencl&quot;</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">batch_encode_opencl</span>(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="ident">pieces</span>: <span class="kw-2">&amp;mut</span> [<span class="ident">u8</span>],
         <span class="ident">piece_indexes</span>: <span class="kw-2">&amp;</span>[<span class="ident">u64</span>],
-    ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">cuda::EncodeError</span><span class="op">&gt;</span> {
+    ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">opencl::OpenCLEncodeError</span><span class="op">&gt;</span> {
         <span class="kw">use</span> <span class="ident">subspace_core_primitives::SHA256_HASH_SIZE</span>;
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">expanded_ivs</span> <span class="op">=</span> <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="ident">pieces</span>.<span class="ident">len</span>() <span class="op">/</span> <span class="ident">PIECE_SIZE</span> <span class="op">*</span> <span class="ident">SHA256_HASH_SIZE</span>];
         <span class="ident">expanded_ivs</span>
@@ -460,7 +479,12 @@
                 <span class="ident">mix_public_key_hash_with_piece_index</span>(<span class="ident">expanded_iv</span>, <span class="ident">piece_index</span>);
             });
 
-        <span class="ident">cuda::encode</span>(<span class="ident">pieces</span>, <span class="kw-2">&amp;</span><span class="ident">expanded_ivs</span>, <span class="ident">ENCODE_ROUNDS</span>)
+        <span class="self">self</span>.<span class="ident">opencl_encoder</span>
+            .<span class="ident">as_ref</span>()
+            .<span class="ident">unwrap</span>()
+            .<span class="ident">lock</span>()
+            .<span class="ident">expect</span>(<span class="string">&quot;Lock is never poisoned&quot;</span>)
+            .<span class="ident">encode</span>(<span class="ident">pieces</span>, <span class="kw-2">&amp;</span><span class="ident">expanded_ivs</span>, <span class="ident">ENCODE_ROUNDS</span>)
     }
 }
 </code></pre></div>
