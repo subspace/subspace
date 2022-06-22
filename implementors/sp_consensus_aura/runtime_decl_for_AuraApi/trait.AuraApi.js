@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["substrate_test_runtime"] = [{"text":"impl AuraApi&lt;Block&lt;Header&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u64.html\">u64</a>, BlakeTwo256&gt;, <a class=\"enum\" href=\"substrate_test_runtime/enum.Extrinsic.html\" title=\"enum substrate_test_runtime::Extrinsic\">Extrinsic</a>&gt;, Public&gt; for <a class=\"struct\" href=\"substrate_test_runtime/struct.Runtime.html\" title=\"struct substrate_test_runtime::Runtime\">Runtime</a>","synthetic":false,"types":["substrate_test_runtime::Runtime"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
