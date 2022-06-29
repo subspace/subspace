@@ -345,19 +345,21 @@
 <span id="338">338</span>
 <span id="339">339</span>
 <span id="340">340</span>
+<span id="341">341</span>
+<span id="342">342</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::pieces_by_range_handler</span>::{<span class="ident">PiecesByRangeRequest</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::shared</span>::{<span class="ident">Command</span>, <span class="ident">CreatedSubscription</span>, <span class="ident">Shared</span>};
 <span class="kw">use</span> <span class="ident">bytes::Bytes</span>;
 <span class="kw">use</span> <span class="ident">event_listener_primitives::HandlerId</span>;
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
-<span class="kw">use</span> <span class="ident">futures::SinkExt</span>;
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">SinkExt</span>, <span class="ident">Stream</span>};
 <span class="kw">use</span> <span class="ident">libp2p::core::multihash</span>::{<span class="ident">Code</span>, <span class="ident">Multihash</span>};
 <span class="kw">use</span> <span class="ident">libp2p::gossipsub::error::SubscriptionError</span>;
 <span class="kw">use</span> <span class="ident">libp2p::gossipsub::Sha256Topic</span>;
 <span class="kw">use</span> <span class="ident">libp2p::multihash::MultihashDigest</span>;
 <span class="kw">use</span> <span class="ident">libp2p</span>::{<span class="ident">Multiaddr</span>, <span class="ident">PeerId</span>};
 <span class="kw">use</span> <span class="ident">parity_scale_codec::Decode</span>;
-<span class="kw">use</span> <span class="ident">std::ops</span>::{<span class="ident">Deref</span>, <span class="ident">DerefMut</span>, <span class="ident">Div</span>};
+<span class="kw">use</span> <span class="ident">std::ops::Div</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">PieceIndexHash</span>, <span class="ident">U256</span>};
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
@@ -367,29 +369,31 @@
 
 <span class="doccomment">/// Topic subscription, will unsubscribe when last instance is dropped for a particular topic.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
+<span class="attribute">#[<span class="ident">pin_project::pin_project</span>(<span class="ident">PinnedDrop</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">TopicSubscription</span> {
     <span class="ident">topic</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Sha256Topic</span><span class="op">&gt;</span>,
     <span class="ident">subscription_id</span>: <span class="ident">usize</span>,
     <span class="ident">command_sender</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">mpsc::Sender</span><span class="op">&lt;</span><span class="ident">Command</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="attribute">#[<span class="ident">pin</span>]</span>
     <span class="ident">receiver</span>: <span class="ident">mpsc::UnboundedReceiver</span><span class="op">&lt;</span><span class="ident">Bytes</span><span class="op">&gt;</span>,
 }
 
-<span class="kw">impl</span> <span class="ident">Deref</span> <span class="kw">for</span> <span class="ident">TopicSubscription</span> {
-    <span class="kw">type</span> <span class="ident">Target</span> <span class="op">=</span> <span class="ident">mpsc::UnboundedReceiver</span><span class="op">&lt;</span><span class="ident">Bytes</span><span class="op">&gt;</span>;
-
-    <span class="kw">fn</span> <span class="ident">deref</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="ident"><span class="self">Self</span>::Target</span> {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">receiver</span>
+<span class="kw">impl</span> <span class="ident">Stream</span> <span class="kw">for</span> <span class="ident">TopicSubscription</span> {
+    <span class="kw">type</span> <span class="ident">Item</span> <span class="op">=</span> <span class="ident">Bytes</span>;
+    <span class="kw">fn</span> <span class="ident">poll_next</span>(
+        <span class="self">self</span>: <span class="ident">std::pin::Pin</span><span class="op">&lt;</span><span class="kw-2">&amp;mut</span> <span class="self">Self</span><span class="op">&gt;</span>,
+        <span class="ident">cx</span>: <span class="kw-2">&amp;mut</span> <span class="ident">std::task::Context</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span><span class="op">&gt;</span>,
+    ) -&gt; <span class="ident">std::task::Poll</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Item</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+        <span class="self">self</span>.<span class="ident">project</span>().<span class="ident">receiver</span>.<span class="ident">poll_next</span>(<span class="ident">cx</span>)
+    }
+    <span class="kw">fn</span> <span class="ident">size_hint</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (<span class="ident">usize</span>, <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span>) {
+        <span class="self">self</span>.<span class="ident">receiver</span>.<span class="ident">size_hint</span>()
     }
 }
 
-<span class="kw">impl</span> <span class="ident">DerefMut</span> <span class="kw">for</span> <span class="ident">TopicSubscription</span> {
-    <span class="kw">fn</span> <span class="ident">deref_mut</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut</span> <span class="ident"><span class="self">Self</span>::Target</span> {
-        <span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">receiver</span>
-    }
-}
-
-<span class="kw">impl</span> <span class="ident">Drop</span> <span class="kw">for</span> <span class="ident">TopicSubscription</span> {
-    <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
+<span class="attribute">#[<span class="ident">pin_project::pinned_drop</span>]</span>
+<span class="kw">impl</span> <span class="ident">PinnedDrop</span> <span class="kw">for</span> <span class="ident">TopicSubscription</span> {
+    <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">mut</span> <span class="self">self</span>: <span class="ident">std::pin::Pin</span><span class="op">&lt;</span><span class="kw-2">&amp;mut</span> <span class="self">Self</span><span class="op">&gt;</span>) {
         <span class="kw">let</span> <span class="ident">topic</span> <span class="op">=</span> <span class="self">self</span>
             .<span class="ident">topic</span>
             .<span class="ident">take</span>()

@@ -199,13 +199,37 @@
 <span id="192">192</span>
 <span id="193">193</span>
 <span id="194">194</span>
+<span id="195">195</span>
+<span id="196">196</span>
+<span id="197">197</span>
+<span id="198">198</span>
+<span id="199">199</span>
+<span id="200">200</span>
+<span id="201">201</span>
+<span id="202">202</span>
+<span id="203">203</span>
+<span id="204">204</span>
+<span id="205">205</span>
+<span id="206">206</span>
+<span id="207">207</span>
+<span id="208">208</span>
+<span id="209">209</span>
+<span id="210">210</span>
+<span id="211">211</span>
+<span id="212">212</span>
+<span id="213">213</span>
+<span id="214">214</span>
+<span id="215">215</span>
+<span id="216">216</span>
+<span id="217">217</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings::ObjectMappings</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
 <span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
+<span class="kw">use</span> <span class="ident">parity_scale_codec::Decode</span>;
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::ArchivedSegment</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::objects</span>::{<span class="ident">GlobalObject</span>, <span class="ident">PieceObject</span>, <span class="ident">PieceObjectMapping</span>};
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::Sha256Hash</span>;
-<span class="kw">use</span> <span class="ident">subspace_networking::PiecesToPlot</span>;
+<span class="kw">use</span> <span class="ident">subspace_networking</span>::{<span class="ident">Node</span>, <span class="ident">PiecesToPlot</span>};
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives::FarmerMetadata</span>;
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
 <span class="kw">use</span> <span class="ident">tokio::sync::oneshot</span>;
@@ -226,6 +250,8 @@
     <span class="ident">JoinTask</span>(<span class="ident">tokio::task::JoinError</span>),
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Archiver instantiation error: {0}&quot;</span>)]</span>
     <span class="ident">Archiver</span>(<span class="ident">subspace_archiving::archiver::ArchiverInstantiationError</span>),
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Failed to subscribe to new segments: {0}&quot;</span>)]</span>
+    <span class="ident">Subscribe</span>(<span class="attribute">#[<span class="ident">from</span>]</span> <span class="ident">subspace_networking::SubscribeError</span>),
 }
 
 <span class="doccomment">/// Abstraction around archiving blocks and updating global object map</span>
@@ -242,6 +268,7 @@
         <span class="ident">farmer_metadata</span>: <span class="ident">FarmerMetadata</span>,
         <span class="ident">object_mappings</span>: <span class="ident">ObjectMappings</span>,
         <span class="ident">client</span>: <span class="ident">Client</span>,
+        <span class="ident">node</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Node</span><span class="op">&gt;</span>,
         <span class="kw-2">mut</span> <span class="ident">on_pieces_to_plot</span>: <span class="ident">OPTP</span>,
     ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Archiving</span>, <span class="ident">ArchivingError</span><span class="op">&gt;</span>
     <span class="kw">where</span>
@@ -261,7 +288,7 @@
         <span class="kw">let</span> <span class="ident">merkle_num_leaves</span> <span class="op">=</span> <span class="ident">u64::from</span>(<span class="ident">recorded_history_segment_size</span> <span class="op">/</span> <span class="ident">record_size</span> <span class="op">*</span> <span class="number">2</span>);
 
         <span class="kw">let</span> (<span class="ident">archived_segments_sync_sender</span>, <span class="ident">archived_segments_sync_receiver</span>) <span class="op">=</span>
-            <span class="ident">std::sync::mpsc::channel</span>::<span class="op">&lt;</span>(<span class="ident">ArchivedSegment</span>, <span class="ident">oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span>();
+            <span class="ident">std::sync::mpsc::sync_channel</span>::<span class="op">&lt;</span>(<span class="ident">ArchivedSegment</span>, <span class="ident">oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span>(<span class="number">5</span>);
 
         <span class="comment">// Erasure coding in archiver and piece encoding are CPU-intensive operations.</span>
         <span class="ident">tokio::task::spawn_blocking</span>({
@@ -275,7 +302,6 @@
                         <span class="ident">pieces</span>,
                         <span class="ident">object_mapping</span>,
                     } <span class="op">=</span> <span class="ident">archived_segment</span>;
-
                     <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">root_block</span>.<span class="ident">segment_index</span>();
                     <span class="kw">if</span> <span class="ident">last_archived_segment_index</span> <span class="op">==</span> <span class="prelude-val">Some</span>(<span class="ident">segment_index</span>) {
                         <span class="kw">continue</span>;
@@ -310,10 +336,28 @@
         });
 
         <span class="macro">info!</span>(<span class="string">&quot;Subscribing to archived segments&quot;</span>);
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segments</span> <span class="op">=</span> <span class="ident">client</span>
-            .<span class="ident">subscribe_archived_segments</span>()
-            .<span class="kw">await</span>
-            .<span class="ident">map_err</span>(<span class="ident">ArchivingError::RpcError</span>)<span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">acknowledge_client</span> <span class="op">=</span> <span class="ident">node</span>.<span class="ident">is_none</span>();
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segments</span> <span class="op">=</span> <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">node</span>) <span class="op">=</span> <span class="ident">node</span> {
+            <span class="macro">tracing::trace!</span>(<span class="string">&quot;Subscribing to pubsub archiving...&quot;</span>);
+            <span class="kw">let</span> <span class="ident">subscription</span> <span class="op">=</span> <span class="ident">node</span>
+                .<span class="ident">subscribe</span>(<span class="ident">subspace_networking::PUB_SUB_ARCHIVING_TOPIC</span>.<span class="ident">clone</span>())
+                .<span class="kw">await</span><span class="question-mark">?</span>
+                .<span class="ident">filter_map</span>(<span class="op">|</span><span class="ident">bytes</span><span class="op">|</span> <span class="kw">async</span> <span class="kw">move</span> {
+                    <span class="kw">match</span> <span class="ident">Decode::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">bytes</span>.<span class="ident">as_ref</span>()) {
+                        <span class="prelude-val">Ok</span>(<span class="ident">archived_segment</span>) =&gt; <span class="prelude-val">Some</span>(<span class="ident">archived_segment</span>),
+                        <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
+                            <span class="macro">tracing::error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to decode archived segment&quot;</span>);
+                            <span class="prelude-val">None</span>
+                        }
+                    }
+                });
+            <span class="ident">Box::pin</span>(<span class="ident">subscription</span>)
+        } <span class="kw">else</span> {
+            <span class="ident">client</span>
+                .<span class="ident">subscribe_archived_segments</span>()
+                .<span class="kw">await</span>
+                .<span class="ident">map_err</span>(<span class="ident">ArchivingError::RpcError</span>)<span class="question-mark">?</span>
+        };
 
         <span class="kw">let</span> <span class="ident">archiving_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> <span class="kw">move</span> {
             <span class="comment">// Listen for new blocks produced on the network</span>
@@ -332,11 +376,13 @@
                                 <span class="comment">// but this will miss some segments in case farmer crashed in the</span>
                                 <span class="comment">// meantime. Ideally we&#39;d acknowledge after, but it makes node wait</span>
                                 <span class="comment">// for it and the whole process very sequential.</span>
-                                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">client</span>.<span class="ident">acknowledge_archived_segment</span>(<span class="ident">segment_index</span>).<span class="kw">await</span> {
-                                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment acknowledgement&quot;</span>);
+                                <span class="kw">if</span> <span class="ident">acknowledge_client</span> {
+                                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">client</span>.<span class="ident">acknowledge_archived_segment</span>(<span class="ident">segment_index</span>).<span class="kw">await</span> {
+                                        <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment acknowledgement&quot;</span>);
+                                    }
                                 }
-                                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">archived_segments_sync_sender</span>.<span class="ident">send</span>((<span class="ident">archived_segment</span>, <span class="ident">acknowledge_sender</span>)) {
-                                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment for plotting&quot;</span>);
+                                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">archived_segments_sync_sender</span>.<span class="ident">try_send</span>((<span class="ident">archived_segment</span>, <span class="ident">acknowledge_sender</span>)) {
+                                    <span class="macro">tracing::warn!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment for plotting&quot;</span>);
                                 }
                                 <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">acknowledge_receiver</span>.<span class="kw">await</span>;
                             },
