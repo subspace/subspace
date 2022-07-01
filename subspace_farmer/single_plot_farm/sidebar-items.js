@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["SinglePlotFarm","Single plot farm abstraction is a container for everything necessary to plot/farm with a single disk plot."]]});
+initSidebarItems({"struct":[["SinglePlotFarm",""]]});
