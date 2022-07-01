@@ -275,7 +275,15 @@
 <span id="268">268</span>
 <span id="269">269</span>
 <span id="270">270</span>
+<span id="271">271</span>
+<span id="272">272</span>
+<span id="273">273</span>
+<span id="274">274</span>
+<span id="275">275</span>
+<span id="276">276</span>
+<span id="277">277</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::archiving::Archiving</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::dsn::PieceIndexHashNumber</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings::ObjectMappings</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot</span>::{<span class="ident">Plot</span>, <span class="ident">PlotError</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plotting</span>;
@@ -289,6 +297,7 @@
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">PublicKey</span>, <span class="ident">PIECE_SIZE</span>};
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::Multiaddr</span>;
+<span class="kw">use</span> <span class="ident">subspace_networking::NodeRunner</span>;
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">error</span>, <span class="ident">info</span>, <span class="ident">trace</span>};
 
 <span class="comment">// TODO: tie `plots`, `commitments`, `farmings`, ``networking_node_runners` together as they always</span>
@@ -300,7 +309,7 @@
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">MultiFarming</span> {
     <span class="kw">pub</span> <span class="ident">single_plot_farms</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">SinglePlotFarm</span><span class="op">&gt;</span>,
     <span class="ident">archiving</span>: <span class="ident">Archiving</span>,
-    <span class="ident">networking_node_runners</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">subspace_networking::NodeRunner</span><span class="op">&gt;</span>,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">networking_node_runners</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">subspace_networking::NodeRunner</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">fn</span> <span class="ident">get_plot_sizes</span>(<span class="ident">total_plot_size</span>: <span class="ident">u64</span>, <span class="ident">max_plot_size</span>: <span class="ident">u64</span>) -&gt; <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u64</span><span class="op">&gt;</span> {
@@ -449,10 +458,15 @@
 
         <span class="comment">// Start syncing</span>
         <span class="kw">if</span> <span class="ident">dsn_sync</span> {
+            <span class="comment">// TODO: operate with number of pieces to fetch, instead of range calculations</span>
+            <span class="kw">let</span> <span class="ident">sync_range_size</span> <span class="op">=</span> <span class="ident">PieceIndexHashNumber::MAX</span> <span class="op">/</span> <span class="ident">total_pieces</span> <span class="op">*</span> <span class="number">1024</span>; <span class="comment">// 4M per stream</span>
+
             <span class="ident">tokio::spawn</span>({
                 <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">futures</span> <span class="op">=</span> <span class="ident">single_plot_farms</span>
                     .<span class="ident">iter</span>()
-                    .<span class="ident">map</span>(<span class="op">|</span><span class="ident">single_plot_farm</span><span class="op">|</span> <span class="ident">single_plot_farm</span>.<span class="ident">dsn_sync</span>(<span class="ident">max_plot_size</span>, <span class="ident">total_pieces</span>))
+                    .<span class="ident">map</span>(<span class="op">|</span><span class="ident">single_plot_farm</span><span class="op">|</span> {
+                        <span class="ident">single_plot_farm</span>.<span class="ident">dsn_sync</span>(<span class="ident">max_plot_size</span>, <span class="ident">total_pieces</span>, <span class="ident">sync_range_size</span>)
+                    })
                     .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">FuturesUnordered</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span>();
 
                 <span class="kw">async</span> <span class="kw">move</span> {
@@ -529,7 +543,7 @@
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">node_runners</span> <span class="op">=</span> <span class="self">self</span>
             .<span class="ident">networking_node_runners</span>
             .<span class="ident">into_iter</span>()
-            .<span class="ident">map</span>(<span class="op">|</span><span class="ident">node_runner</span><span class="op">|</span> <span class="kw">async</span> <span class="kw">move</span> { <span class="ident">node_runner</span>.<span class="ident">run</span>().<span class="kw">await</span> })
+            .<span class="ident">map</span>(<span class="ident">NodeRunner::run</span>)
             .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">FuturesUnordered</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span>();
 
         <span class="macro">tokio::select!</span> {
