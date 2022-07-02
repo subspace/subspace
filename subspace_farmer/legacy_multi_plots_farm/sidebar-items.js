@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["LegacyMultiPlotsFarm","Abstraction around having multiple `Plot`s, `Farming`s and `Plotting`s."],["Options","Options for `MultiFarming` creation"]]});
