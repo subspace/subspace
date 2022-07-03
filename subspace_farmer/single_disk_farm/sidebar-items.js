@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["SingleDiskFarmPieceGetter","Abstraction that can get pieces out of internal plots"]]});
