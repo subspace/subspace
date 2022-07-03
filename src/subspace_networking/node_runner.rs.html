@@ -460,6 +460,9 @@
 <span id="453">453</span>
 <span id="454">454</span>
 <span id="455">455</span>
+<span id="456">456</span>
+<span id="457">457</span>
+<span id="458">458</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">Event</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::pieces_by_range_handler</span>::{<span class="self">self</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::request_responses</span>::{<span class="ident">Event</span> <span class="kw">as</span> <span class="ident">RequestResponseEvent</span>, <span class="ident">IfDisconnected</span>};
@@ -467,6 +470,7 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils</span>;
 <span class="kw">use</span> <span class="ident">bytes::Bytes</span>;
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
+<span class="kw">use</span> <span class="ident">futures::future::Fuse</span>;
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
 <span class="kw">use</span> <span class="ident">libp2p::gossipsub</span>::{<span class="ident">GossipsubEvent</span>, <span class="ident">TopicHash</span>};
 <span class="kw">use</span> <span class="ident">libp2p::identify::IdentifyEvent</span>;
@@ -480,9 +484,11 @@
 <span class="kw">use</span> <span class="ident">parity_scale_codec::Encode</span>;
 <span class="kw">use</span> <span class="ident">std::collections::hash_map::Entry</span>;
 <span class="kw">use</span> <span class="ident">std::collections::HashMap</span>;
+<span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
 <span class="kw">use</span> <span class="ident">std::sync::atomic::Ordering</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">std::time::Duration</span>;
+<span class="kw">use</span> <span class="ident">tokio::time::Sleep</span>;
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
 
 <span class="kw">enum</span> <span class="ident">QueryResultSender</span> {
@@ -511,6 +517,7 @@
     <span class="doccomment">/// Topic subscription senders for logical subscriptions (multiple logical subscriptions can be</span>
     <span class="doccomment">/// present for the same physical subscription).</span>
     <span class="ident">topic_subscription_senders</span>: <span class="ident">HashMap</span><span class="op">&lt;</span><span class="ident">TopicHash</span>, <span class="ident">IntMap</span><span class="op">&lt;</span><span class="ident">usize</span>, <span class="ident">mpsc::UnboundedSender</span><span class="op">&lt;</span><span class="ident">Bytes</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">random_query_timeout</span>: <span class="ident">Pin</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="ident">Fuse</span><span class="op">&lt;</span><span class="ident">Sleep</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">NodeRunner</span> {
@@ -530,19 +537,18 @@
             <span class="ident">query_id_receivers</span>: <span class="ident">HashMap::default</span>(),
             <span class="ident">next_subscription_id</span>: <span class="number">0</span>,
             <span class="ident">topic_subscription_senders</span>: <span class="ident">HashMap::default</span>(),
+            <span class="comment">// We&#39;ll make the first query right away and continue at the interval.</span>
+            <span class="ident">random_query_timeout</span>: <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="ident">Duration::from_secs</span>(<span class="number">0</span>)).<span class="ident">fuse</span>()),
         }
     }
 
-    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">mut</span> <span class="self">self</span>) {
-        <span class="comment">// We&#39;ll make the first query right away and continue at the interval.</span>
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">random_query_timeout</span> <span class="op">=</span> <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="ident">Duration::from_secs</span>(<span class="number">0</span>)).<span class="ident">fuse</span>());
-
+    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
         <span class="kw">loop</span> {
             <span class="macro">futures::select!</span> {
-                <span class="kw">_</span> <span class="op">=</span> <span class="ident">random_query_timeout</span> =&gt; {
+                <span class="kw">_</span> <span class="op">=</span> <span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">random_query_timeout</span> =&gt; {
                     <span class="self">self</span>.<span class="ident">handle_random_query_interval</span>();
                     <span class="comment">// Increase interval 2x, but to at most 60 seconds.</span>
-                    <span class="ident">random_query_timeout</span> <span class="op">=</span> <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="self">self</span>.<span class="ident">next_random_query_interval</span>).<span class="ident">fuse</span>());
+                    <span class="self">self</span>.<span class="ident">random_query_timeout</span> <span class="op">=</span> <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="self">self</span>.<span class="ident">next_random_query_interval</span>).<span class="ident">fuse</span>());
                     <span class="self">self</span>.<span class="ident">next_random_query_interval</span> <span class="op">=</span> (<span class="self">self</span>.<span class="ident">next_random_query_interval</span> <span class="op">*</span> <span class="number">2</span>).<span class="ident">min</span>(<span class="ident">Duration::from_secs</span>(<span class="number">60</span>));
                 },
                 <span class="ident">swarm_event</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">swarm</span>.<span class="ident">next</span>() =&gt; {

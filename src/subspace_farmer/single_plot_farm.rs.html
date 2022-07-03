@@ -367,6 +367,25 @@
 <span id="360">360</span>
 <span id="361">361</span>
 <span id="362">362</span>
+<span id="363">363</span>
+<span id="364">364</span>
+<span id="365">365</span>
+<span id="366">366</span>
+<span id="367">367</span>
+<span id="368">368</span>
+<span id="369">369</span>
+<span id="370">370</span>
+<span id="371">371</span>
+<span id="372">372</span>
+<span id="373">373</span>
+<span id="374">374</span>
+<span id="375">375</span>
+<span id="376">376</span>
+<span id="377">377</span>
+<span id="378">378</span>
+<span id="379">379</span>
+<span id="380">380</span>
+<span id="381">381</span>
 </pre><pre class="rust"><code><span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">tests</span>;
 
@@ -377,6 +396,7 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot</span>::{<span class="ident">Plot</span>, <span class="ident">PlotError</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
 <span class="kw">use</span> <span class="kw">crate</span>::{<span class="ident">dsn</span>, <span class="ident">CommitmentError</span>};
+<span class="kw">use</span> <span class="ident">futures::future::try_join</span>;
 <span class="kw">use</span> <span class="ident">parking_lot::Mutex</span>;
 <span class="kw">use</span> <span class="ident">std::future::Future</span>;
 <span class="kw">use</span> <span class="ident">std::path::PathBuf</span>;
@@ -471,13 +491,15 @@
 <span class="doccomment">/// Single plot farm abstraction is a container for everything necessary to plot/farm with a single</span>
 <span class="doccomment">/// disk plot.</span>
 <span class="comment">// TODO: Make fields private</span>
+<span class="attribute">#[<span class="ident">must_use</span> <span class="op">=</span> <span class="string">&quot;Farm does not function properly unless run() method is called&quot;</span>]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SinglePlotFarm</span> {
     <span class="ident">public_key</span>: <span class="ident">PublicKey</span>,
     <span class="ident">codec</span>: <span class="ident">SubspaceCodec</span>,
     <span class="kw">pub</span> <span class="ident">plot</span>: <span class="ident">Plot</span>,
     <span class="kw">pub</span> <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">farming</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Farming</span><span class="op">&gt;</span>,
+    <span class="ident">farming</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Farming</span><span class="op">&gt;</span>,
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="ident">node</span>: <span class="ident">Node</span>,
+    <span class="ident">node_runner</span>: <span class="ident">NodeRunner</span>,
     <span class="ident">background_task_handles</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">JoinHandle</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
@@ -506,7 +528,7 @@
             <span class="ident">reward_address</span>,
             <span class="ident">enable_dsn_sync</span>,
         }: <span class="ident">SinglePlotFarmOptions</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">NewPlot</span><span class="op">&gt;</span>,
-    ) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>(<span class="self">Self</span>, <span class="ident">NodeRunner</span>)<span class="op">&gt;</span>
+    ) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span><span class="self">Self</span><span class="op">&gt;</span>
     <span class="kw">where</span>
         <span class="ident">C</span>: <span class="ident">RpcClient</span>,
         <span class="ident">NewPlot</span>: <span class="ident">Fn</span>(<span class="ident">usize</span>, <span class="ident">PublicKey</span>, <span class="ident">u64</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Plot</span>, <span class="ident">PlotError</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Clone</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
@@ -664,6 +686,7 @@
             <span class="ident">commitments</span>,
             <span class="ident">farming</span>,
             <span class="ident">node</span>,
+            <span class="ident">node_runner</span>,
             <span class="ident">background_task_handles</span>: <span class="macro">vec!</span>[],
         };
 
@@ -687,7 +710,7 @@
             <span class="ident">farm</span>.<span class="ident">background_task_handles</span>.<span class="ident">push</span>(<span class="ident">dsn_sync_handle</span>);
         }
 
-        <span class="prelude-val">Ok</span>((<span class="ident">farm</span>, <span class="ident">node_runner</span>))
+        <span class="prelude-val">Ok</span>(<span class="ident">farm</span>)
     }
 
     <span class="doccomment">/// Public key associated with this farm</span>
@@ -702,6 +725,21 @@
             <span class="self">self</span>.<span class="ident">plot</span>.<span class="ident">clone</span>(),
             <span class="self">self</span>.<span class="ident">commitments</span>.<span class="ident">clone</span>(),
         )
+    }
+
+    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">farming</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">farming</span>.<span class="ident">as_mut</span>() {
+            <span class="ident">try_join</span>(<span class="ident">farming</span>.<span class="ident">wait</span>(), <span class="kw">async</span> {
+                (<span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">node_runner</span>).<span class="ident">run</span>().<span class="kw">await</span>;
+
+                <span class="prelude-val">Ok</span>(())
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        } <span class="kw">else</span> {
+            <span class="self">self</span>.<span class="ident">node_runner</span>.<span class="ident">run</span>().<span class="kw">await</span>;
+        }
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">dsn_sync</span>(

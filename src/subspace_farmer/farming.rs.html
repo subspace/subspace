@@ -337,7 +337,6 @@
 <span id="330">330</span>
 <span id="331">331</span>
 <span id="332">332</span>
-<span id="333">333</span>
 </pre><pre class="rust"><code><span class="doccomment">//! A farming process, that is interruptable (via dropping it)</span>
 <span class="doccomment">//! and possible to wait on (custom `wait` method)</span>
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
@@ -347,8 +346,8 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::identity::Identity</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot::Plot</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
-<span class="kw">use</span> <span class="ident">futures::future::Either</span>;
-<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">StreamExt</span>};
+<span class="kw">use</span> <span class="ident">futures::future</span>::{<span class="ident">Either</span>, <span class="ident">Fuse</span>, <span class="ident">FusedFuture</span>};
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
 <span class="kw">use</span> <span class="ident">std::sync::mpsc</span>;
 <span class="kw">use</span> <span class="ident">std::time::Instant</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">PublicKey</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>};
@@ -377,7 +376,7 @@
 <span class="doccomment">/// in its `Commitments` database.</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Farming</span> {
     <span class="ident">stop_sender</span>: <span class="ident">async_oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>,
-    <span class="ident">handle</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">JoinHandle</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">handle</span>: <span class="ident">Fuse</span><span class="op">&lt;</span><span class="ident">JoinHandle</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
 <span class="doccomment">/// Assumes `plot`, `commitment`, `client` and `identity` are already initialized</span>
@@ -423,17 +422,16 @@
 
         <span class="ident">Farming</span> {
             <span class="ident">stop_sender</span>,
-            <span class="ident">handle</span>: <span class="prelude-val">Some</span>(<span class="ident">farming_handle</span>),
+            <span class="ident">handle</span>: <span class="ident">farming_handle</span>.<span class="ident">fuse</span>(),
         }
     }
 
     <span class="doccomment">/// Waits for the background farming to finish</span>
-    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">wait</span>(<span class="kw-2">mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span> {
-        <span class="self">self</span>.<span class="ident">handle</span>
-            .<span class="ident">take</span>()
-            .<span class="ident">unwrap</span>()
-            .<span class="kw">await</span>
-            .<span class="ident">map_err</span>(<span class="ident">FarmingError::JoinTask</span>)<span class="question-mark">?</span>
+    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">wait</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span> {
+        <span class="kw">if</span> <span class="self">self</span>.<span class="ident">handle</span>.<span class="ident">is_terminated</span>() {
+            <span class="kw">return</span> <span class="prelude-val">Ok</span>(());
+        }
+        (<span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">handle</span>).<span class="kw">await</span>.<span class="ident">map_err</span>(<span class="ident">FarmingError::JoinTask</span>)<span class="question-mark">?</span>
     }
 }
 
