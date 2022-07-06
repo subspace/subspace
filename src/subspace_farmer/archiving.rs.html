@@ -177,31 +177,9 @@
 <span id="170">170</span>
 <span id="171">171</span>
 <span id="172">172</span>
-<span id="173">173</span>
-<span id="174">174</span>
-<span id="175">175</span>
-<span id="176">176</span>
-<span id="177">177</span>
-<span id="178">178</span>
-<span id="179">179</span>
-<span id="180">180</span>
-<span id="181">181</span>
-<span id="182">182</span>
-<span id="183">183</span>
-<span id="184">184</span>
-<span id="185">185</span>
-<span id="186">186</span>
-<span id="187">187</span>
-<span id="188">188</span>
-<span id="189">189</span>
-<span id="190">190</span>
-<span id="191">191</span>
-<span id="192">192</span>
-<span id="193">193</span>
-<span id="194">194</span>
-<span id="195">195</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings::ObjectMappings</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::AbortingJoinHandle</span>;
 <span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::ArchivedSegment</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::objects</span>::{<span class="ident">GlobalObject</span>, <span class="ident">PieceObject</span>, <span class="ident">PieceObjectMapping</span>};
@@ -210,7 +188,6 @@
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives::FarmerMetadata</span>;
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
 <span class="kw">use</span> <span class="ident">tokio::sync::oneshot</span>;
-<span class="kw">use</span> <span class="ident">tokio::task::JoinHandle</span>;
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">info</span>};
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Error</span>)]</span>
@@ -233,14 +210,7 @@
 
 <span class="doccomment">/// Abstraction around archiving blocks and updating global object map</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Archiving</span> {
-    <span class="ident">stop_sender</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
-    <span class="ident">archiving_handle</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">JoinHandle</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
-}
-
-<span class="kw">impl</span> <span class="ident">Drop</span> <span class="kw">for</span> <span class="ident">Archiving</span> {
-    <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
-        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">stop_sender</span>.<span class="ident">take</span>().<span class="ident">unwrap</span>().<span class="ident">send</span>(());
-    }
+    <span class="ident">archiving_handle</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">AbortingJoinHandle</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">Archiving</span> {
@@ -257,9 +227,6 @@
         <span class="ident">Client</span>: <span class="ident">RpcClient</span> <span class="op">+</span> <span class="ident">Clone</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
         <span class="ident">OPTP</span>: <span class="ident">FnMut</span>(<span class="ident">PiecesToPlot</span>) -&gt; <span class="ident">bool</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     {
-        <span class="comment">// Oneshot channels, that will be used for interrupt/stop the process</span>
-        <span class="kw">let</span> (<span class="ident">stop_sender</span>, <span class="kw-2">mut</span> <span class="ident">stop_receiver</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
-
         <span class="kw">let</span> <span class="ident">FarmerMetadata</span> {
             <span class="ident">record_size</span>,
             <span class="ident">recorded_history_segment_size</span>,
@@ -325,42 +292,29 @@
 
         <span class="kw">let</span> <span class="ident">archiving_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> <span class="kw">move</span> {
             <span class="comment">// Listen for new blocks produced on the network</span>
-            <span class="kw">loop</span> {
-                <span class="macro">tokio::select!</span> {
-                    <span class="kw">_</span> <span class="op">=</span> <span class="kw-2">&amp;mut</span> <span class="ident">stop_receiver</span> =&gt; {
-                        <span class="macro">info!</span>(<span class="string">&quot;Plotting stopped!&quot;</span>);
-                        <span class="kw">break</span>;
-                    }
-                    <span class="ident">result</span> <span class="op">=</span> <span class="ident">archived_segments</span>.<span class="ident">next</span>() =&gt; {
-                        <span class="kw">match</span> <span class="ident">result</span> {
-                            <span class="prelude-val">Some</span>(<span class="ident">archived_segment</span>) =&gt; {
-                                <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">archived_segment</span>.<span class="ident">root_block</span>.<span class="ident">segment_index</span>();
-                                <span class="kw">let</span> (<span class="ident">acknowledge_sender</span>, <span class="ident">acknowledge_receiver</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
-                                <span class="comment">// Acknowledge immediately to allow node to continue sync quickly,</span>
-                                <span class="comment">// but this will miss some segments in case farmer crashed in the</span>
-                                <span class="comment">// meantime. Ideally we&#39;d acknowledge after, but it makes node wait</span>
-                                <span class="comment">// for it and the whole process very sequential.</span>
-                                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">client</span>.<span class="ident">acknowledge_archived_segment</span>(<span class="ident">segment_index</span>).<span class="kw">await</span> {
-                                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment acknowledgement&quot;</span>);
-                                }
-                                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">archived_segments_sync_sender</span>.<span class="ident">send</span>((<span class="ident">archived_segment</span>, <span class="ident">acknowledge_sender</span>)) {
-                                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment for plotting&quot;</span>);
-                                }
-                                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">acknowledge_receiver</span>.<span class="kw">await</span>;
-                            },
-                            <span class="prelude-val">None</span> =&gt; {
-                                <span class="macro">debug!</span>(<span class="string">&quot;Subscription has forcefully closed from node side!&quot;</span>);
-                                <span class="kw">break</span>;
-                            }
-                        }
-                    }
+            <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">archived_segment</span>) <span class="op">=</span> <span class="ident">archived_segments</span>.<span class="ident">next</span>().<span class="kw">await</span> {
+                <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">archived_segment</span>.<span class="ident">root_block</span>.<span class="ident">segment_index</span>();
+                <span class="kw">let</span> (<span class="ident">acknowledge_sender</span>, <span class="ident">acknowledge_receiver</span>) <span class="op">=</span> <span class="ident">oneshot::channel</span>();
+                <span class="comment">// Acknowledge immediately to allow node to continue sync quickly,</span>
+                <span class="comment">// but this will miss some segments in case farmer crashed in the</span>
+                <span class="comment">// meantime. Ideally we&#39;d acknowledge after, but it makes node wait</span>
+                <span class="comment">// for it and the whole process very sequential.</span>
+                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">client</span>.<span class="ident">acknowledge_archived_segment</span>(<span class="ident">segment_index</span>).<span class="kw">await</span> {
+                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment acknowledgement&quot;</span>);
                 }
+                <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span>
+                    <span class="ident">archived_segments_sync_sender</span>.<span class="ident">send</span>((<span class="ident">archived_segment</span>, <span class="ident">acknowledge_sender</span>))
+                {
+                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to send archived segment for plotting&quot;</span>);
+                }
+                <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">acknowledge_receiver</span>.<span class="kw">await</span>;
             }
+
+            <span class="macro">debug!</span>(<span class="string">&quot;Subscription has forcefully closed from node side!&quot;</span>);
         });
 
         <span class="prelude-val">Ok</span>(<span class="self">Self</span> {
-            <span class="ident">stop_sender</span>: <span class="prelude-val">Some</span>(<span class="ident">stop_sender</span>),
-            <span class="ident">archiving_handle</span>: <span class="prelude-val">Some</span>(<span class="ident">archiving_handle</span>),
+            <span class="ident">archiving_handle</span>: <span class="prelude-val">Some</span>(<span class="ident">AbortingJoinHandle::new</span>(<span class="ident">archiving_handle</span>)),
         })
     }
 

@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["SingleDiskFarmPieceGetter","Abstraction that can get pieces out of internal plots"]]});
+initSidebarItems({"struct":[["SingleDiskFarmPieceGetter","Abstraction that can get pieces out of internal plots"],["SingleDiskSemaphore","Semaphore that limits disk access concurrency in strategic places to the number specified during initialization"]]});
