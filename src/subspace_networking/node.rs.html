@@ -351,8 +351,37 @@
 <span id="344">344</span>
 <span id="345">345</span>
 <span id="346">346</span>
+<span id="347">347</span>
+<span id="348">348</span>
+<span id="349">349</span>
+<span id="350">350</span>
+<span id="351">351</span>
+<span id="352">352</span>
+<span id="353">353</span>
+<span id="354">354</span>
+<span id="355">355</span>
+<span id="356">356</span>
+<span id="357">357</span>
+<span id="358">358</span>
+<span id="359">359</span>
+<span id="360">360</span>
+<span id="361">361</span>
+<span id="362">362</span>
+<span id="363">363</span>
+<span id="364">364</span>
+<span id="365">365</span>
+<span id="366">366</span>
+<span id="367">367</span>
+<span id="368">368</span>
+<span id="369">369</span>
+<span id="370">370</span>
+<span id="371">371</span>
+<span id="372">372</span>
+<span id="373">373</span>
+<span id="374">374</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::pieces_by_range_handler</span>::{<span class="ident">PiecesByRangeRequest</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::shared</span>::{<span class="ident">Command</span>, <span class="ident">CreatedSubscription</span>, <span class="ident">Shared</span>};
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::RelayConfiguration</span>;
 <span class="kw">use</span> <span class="ident">bytes::Bytes</span>;
 <span class="kw">use</span> <span class="ident">event_listener_primitives::HandlerId</span>;
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
@@ -360,6 +389,7 @@
 <span class="kw">use</span> <span class="ident">libp2p::core::multihash</span>::{<span class="ident">Code</span>, <span class="ident">Multihash</span>};
 <span class="kw">use</span> <span class="ident">libp2p::gossipsub::error::SubscriptionError</span>;
 <span class="kw">use</span> <span class="ident">libp2p::gossipsub::Sha256Topic</span>;
+<span class="kw">use</span> <span class="ident">libp2p::multiaddr::Protocol</span>;
 <span class="kw">use</span> <span class="ident">libp2p::multihash::MultihashDigest</span>;
 <span class="kw">use</span> <span class="ident">libp2p</span>::{<span class="ident">Multiaddr</span>, <span class="ident">PeerId</span>};
 <span class="kw">use</span> <span class="ident">parity_scale_codec::Decode</span>;
@@ -469,20 +499,46 @@
     <span class="ident">IncorrectResponseFormat</span>,
 }
 
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Error</span>)]</span>
+<span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">RelayConfigurationError</span> {
+    <span class="doccomment">/// Client configuration error: expected server parent configuration.</span>
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;cannot configure relay client, parent configuration should be server&quot;</span>)]</span>
+    <span class="ident">ExpectedServerConfiguration</span>,
+}
+
 <span class="doccomment">/// Implementation of a network node on Subspace Network.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Clone</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Node</span> {
     <span class="ident">shared</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Shared</span><span class="op">&gt;</span>,
+    <span class="ident">relay_config</span>: <span class="ident">RelayConfiguration</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">Node</span> {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">shared</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Shared</span><span class="op">&gt;</span>) -&gt; <span class="self">Self</span> {
-        <span class="self">Self</span> { <span class="ident">shared</span> }
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">shared</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Shared</span><span class="op">&gt;</span>, <span class="ident">relay_config</span>: <span class="ident">RelayConfiguration</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span> {
+            <span class="ident">shared</span>,
+            <span class="ident">relay_config</span>,
+        }
     }
 
     <span class="doccomment">/// Node&#39;s own local ID.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">id</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">PeerId</span> {
         <span class="self">self</span>.<span class="ident">shared</span>.<span class="ident">id</span>
+    }
+
+    <span class="doccomment">/// Configures relay-client configuration (ClientAcceptor) from this Node. It expects Node</span>
+    <span class="doccomment">/// running in the relay server mode and create relay client&#39;s listening address with the proper</span>
+    <span class="doccomment">/// circuit address in the format: /ip4/127.0.0.1/tcp/50000/p2p/&lt;server_peer_id&gt;/p2p-circuit</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">configure_relay_client</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">RelayConfiguration</span>, <span class="ident">RelayConfigurationError</span><span class="op">&gt;</span> {
+        <span class="kw">if</span> <span class="kw">let</span> <span class="ident">RelayConfiguration::Server</span>(<span class="ident">server_addr</span>, <span class="kw">_</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">relay_config</span>.<span class="ident">clone</span>() {
+            <span class="prelude-val">Ok</span>(<span class="ident">RelayConfiguration::ClientAcceptor</span>(
+                <span class="ident">server_addr</span>
+                    .<span class="ident">with</span>(<span class="ident">Protocol::P2p</span>(<span class="self">self</span>.<span class="ident">id</span>().<span class="ident">into</span>()))
+                    .<span class="ident">with</span>(<span class="ident">Protocol::P2pCircuit</span>),
+            ))
+        } <span class="kw">else</span> {
+            <span class="prelude-val">Err</span>(<span class="ident">RelayConfigurationError::ExpectedServerConfiguration</span>)
+        }
     }
 
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">get_value</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">key</span>: <span class="ident">Multihash</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span><span class="op">&gt;</span>, <span class="ident">GetValueError</span><span class="op">&gt;</span> {
