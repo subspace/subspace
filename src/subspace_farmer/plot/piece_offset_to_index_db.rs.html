@@ -59,31 +59,39 @@
 <span id="52">52</span>
 <span id="53">53</span>
 <span id="54">54</span>
-</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot::PieceOffset</span>;
+<span id="55">55</span>
+<span id="56">56</span>
+</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::file_ext::FileExt</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot::PieceOffset</span>;
 <span class="kw">use</span> <span class="ident">std::fs</span>::{<span class="ident">File</span>, <span class="ident">OpenOptions</span>};
 <span class="kw">use</span> <span class="ident">std::io</span>;
-<span class="kw">use</span> <span class="ident">std::io</span>::{<span class="ident">Read</span>, <span class="ident">Seek</span>, <span class="ident">SeekFrom</span>, <span class="ident">Write</span>};
 <span class="kw">use</span> <span class="ident">std::path::Path</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::PieceIndex</span>;
+<span class="kw">use</span> <span class="ident">tracing::warn</span>;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct</span> <span class="ident">PieceOffsetToIndexDb</span>(<span class="ident">File</span>);
 
+<span class="kw">const</span> <span class="ident">PIECE_INDEX_SIZE</span>: <span class="ident">u64</span> <span class="op">=</span> <span class="ident">std::mem::size_of</span>::<span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span>() <span class="kw">as</span> <span class="ident">u64</span>;
+
 <span class="kw">impl</span> <span class="ident">PieceOffsetToIndexDb</span> {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn</span> <span class="ident">open</span>(<span class="ident">path</span>: <span class="kw-2">&amp;</span><span class="ident">Path</span>) -&gt; <span class="ident">io::Result</span><span class="op">&lt;</span><span class="self">Self</span><span class="op">&gt;</span> {
-        <span class="ident">OpenOptions::new</span>()
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn</span> <span class="ident">open</span>(<span class="ident">path</span>: <span class="kw-2">&amp;</span><span class="ident">Path</span>, <span class="ident">max_piece_count</span>: <span class="ident">u64</span>) -&gt; <span class="ident">io::Result</span><span class="op">&lt;</span><span class="self">Self</span><span class="op">&gt;</span> {
+        <span class="kw">let</span> <span class="ident">file</span> <span class="op">=</span> <span class="ident">OpenOptions::new</span>()
             .<span class="ident">read</span>(<span class="bool-val">true</span>)
             .<span class="ident">write</span>(<span class="bool-val">true</span>)
             .<span class="ident">create</span>(<span class="bool-val">true</span>)
-            .<span class="ident">open</span>(<span class="ident">path</span>)
-            .<span class="ident">map</span>(<span class="self">Self</span>)
+            .<span class="ident">open</span>(<span class="ident">path</span>)<span class="question-mark">?</span>;
+
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">file</span>.<span class="ident">preallocate</span>(<span class="ident">max_piece_count</span> <span class="op">*</span> <span class="ident">PIECE_INDEX_SIZE</span>) {
+            <span class="macro">warn!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="op">%</span><span class="ident">max_piece_count</span>, <span class="string">&quot;Failed to pre-allocate plot file&quot;</span>);
+        }
+        <span class="ident">file</span>.<span class="ident">advise_random_access</span>()<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(<span class="ident">file</span>))
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn</span> <span class="ident">get_piece_index</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">offset</span>: <span class="ident">PieceOffset</span>) -&gt; <span class="ident">io::Result</span><span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">buf</span> <span class="op">=</span> [<span class="number">0</span>; <span class="number">8</span>];
-        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">seek</span>(<span class="ident">SeekFrom::Start</span>(
-            <span class="ident">offset</span> <span class="op">*</span> <span class="ident">std::mem::size_of</span>::<span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span>() <span class="kw">as</span> <span class="ident">u64</span>,
-        ))<span class="question-mark">?</span>;
-        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">read_exact</span>(<span class="kw-2">&amp;mut</span> <span class="ident">buf</span>)<span class="question-mark">?</span>;
+        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">read_exact_at</span>(<span class="kw-2">&amp;mut</span> <span class="ident">buf</span>, <span class="ident">offset</span> <span class="op">*</span> <span class="ident">PIECE_INDEX_SIZE</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="ident">PieceIndex::from_le_bytes</span>(<span class="ident">buf</span>))
     }
 
@@ -92,10 +100,8 @@
         <span class="ident">offset</span>: <span class="ident">PieceOffset</span>,
         <span class="ident">piece_index</span>: <span class="ident">PieceIndex</span>,
     ) -&gt; <span class="ident">io::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
-        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">seek</span>(<span class="ident">SeekFrom::Start</span>(
-            <span class="ident">offset</span> <span class="op">*</span> <span class="ident">std::mem::size_of</span>::<span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span>() <span class="kw">as</span> <span class="ident">u64</span>,
-        ))<span class="question-mark">?</span>;
-        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">write_all</span>(<span class="kw-2">&amp;</span><span class="ident">piece_index</span>.<span class="ident">to_le_bytes</span>())
+        <span class="self">self</span>.<span class="number">0</span>
+            .<span class="ident">write_all_at</span>(<span class="kw-2">&amp;</span><span class="ident">piece_index</span>.<span class="ident">to_le_bytes</span>(), <span class="ident">offset</span> <span class="op">*</span> <span class="ident">PIECE_INDEX_SIZE</span>)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn</span> <span class="ident">put_piece_indexes</span>(
@@ -103,14 +109,12 @@
         <span class="ident">start_offset</span>: <span class="ident">PieceOffset</span>,
         <span class="ident">piece_indexes</span>: <span class="kw-2">&amp;</span>[<span class="ident">PieceIndex</span>],
     ) -&gt; <span class="ident">io::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
-        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">seek</span>(<span class="ident">SeekFrom::Start</span>(
-            <span class="ident">start_offset</span> <span class="op">*</span> <span class="ident">std::mem::size_of</span>::<span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span>() <span class="kw">as</span> <span class="ident">u64</span>,
-        ))<span class="question-mark">?</span>;
         <span class="kw">let</span> <span class="ident">piece_indexes</span> <span class="op">=</span> <span class="ident">piece_indexes</span>
             .<span class="ident">iter</span>()
             .<span class="ident">flat_map</span>(<span class="op">|</span><span class="ident">piece_index</span><span class="op">|</span> <span class="ident">piece_index</span>.<span class="ident">to_le_bytes</span>())
             .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span>();
-        <span class="self">self</span>.<span class="number">0</span>.<span class="ident">write_all</span>(<span class="kw-2">&amp;</span><span class="ident">piece_indexes</span>)
+        <span class="self">self</span>.<span class="number">0</span>
+            .<span class="ident">write_all_at</span>(<span class="kw-2">&amp;</span><span class="ident">piece_indexes</span>, <span class="ident">start_offset</span> <span class="op">*</span> <span class="ident">PIECE_INDEX_SIZE</span>)
     }
 }
 </code></pre></div>
