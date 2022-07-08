@@ -272,6 +272,17 @@
 <span id="265">265</span>
 <span id="266">266</span>
 <span id="267">267</span>
+<span id="268">268</span>
+<span id="269">269</span>
+<span id="270">270</span>
+<span id="271">271</span>
+<span id="272">272</span>
+<span id="273">273</span>
+<span id="274">274</span>
+<span id="275">275</span>
+<span id="276">276</span>
+<span id="277">277</span>
+<span id="278">278</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::TransactionFor</span>;
 <span class="kw">use</span> <span class="ident">cirrus_block_builder</span>::{<span class="ident">BlockBuilder</span>, <span class="ident">RecordProof</span>};
 <span class="kw">use</span> <span class="ident">cirrus_primitives</span>::{<span class="ident">AccountId</span>, <span class="ident">SecondaryApi</span>};
@@ -297,6 +308,8 @@
 <span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">FraudProofError</span> {
 	<span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;State root not using H256&quot;</span>)]</span>
 	<span class="ident">InvalidStateRootType</span>,
+	<span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Invalid trace index, got: {index}, max: {max}&quot;</span>)]</span>
+	<span class="ident">InvalidTraceIndex</span> { <span class="ident">index</span>: <span class="ident">usize</span>, <span class="ident">max</span>: <span class="ident">usize</span> },
 	<span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Invalid extrinsic index for creating the execution proof, got: {index}, max: {max}&quot;</span>)]</span>
 	<span class="ident">InvalidExtrinsicIndex</span> { <span class="ident">index</span>: <span class="ident">usize</span>, <span class="ident">max</span>: <span class="ident">usize</span> },
 	<span class="attribute">#[<span class="ident">error</span>(<span class="ident">transparent</span>)]</span>
@@ -351,8 +364,9 @@
 
 	<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">generate_proof</span><span class="op">&lt;</span><span class="ident">PBlock</span>: <span class="ident">BlockT</span><span class="op">&gt;</span>(
 		<span class="kw-2">&amp;</span><span class="self">self</span>,
-		<span class="ident">local_trace_index</span>: <span class="ident">usize</span>,
+		<span class="ident">local_trace_index</span>: <span class="ident">u32</span>,
 		<span class="ident">local_receipt</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">PBlock::Hash</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span>,
+		<span class="ident">bad_signed_receipt_hash</span>: <span class="ident">H256</span>,
 	) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">FraudProof</span>, <span class="ident">FraudProofError</span><span class="op">&gt;</span> {
 		<span class="kw">let</span> <span class="ident">block_hash</span> <span class="op">=</span> <span class="ident">local_receipt</span>.<span class="ident">secondary_hash</span>;
 		<span class="kw">let</span> <span class="ident">block_number</span>: <span class="ident">BlockNumber</span> <span class="op">=</span> <span class="ident">local_receipt</span>
@@ -378,13 +392,18 @@
 		<span class="kw">let</span> <span class="ident">parent_number</span> <span class="op">=</span> <span class="ident">TryInto</span>::<span class="op">&lt;</span><span class="ident">BlockNumber</span><span class="op">&gt;</span><span class="ident">::try_into</span>(<span class="kw-2">*</span><span class="ident">parent_header</span>.<span class="ident">number</span>())
 			.<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="macro">panic!</span>(<span class="string">&quot;Parent number must fit into u32; qed&quot;</span>));
 
-		<span class="kw">let</span> <span class="ident">local_root</span> <span class="op">=</span> <span class="ident">local_receipt</span>.<span class="ident">trace</span>[<span class="ident">local_trace_index</span>];
+		<span class="kw">let</span> <span class="ident">local_root</span> <span class="op">=</span> <span class="ident">local_receipt</span>.<span class="ident">trace</span>.<span class="ident">get</span>(<span class="ident">local_trace_index</span> <span class="kw">as</span> <span class="ident">usize</span>).<span class="ident">ok_or</span>(
+			<span class="ident">FraudProofError::InvalidTraceIndex</span> {
+				<span class="ident">index</span>: <span class="ident">local_trace_index</span> <span class="kw">as</span> <span class="ident">usize</span>,
+				<span class="ident">max</span>: <span class="ident">local_receipt</span>.<span class="ident">trace</span>.<span class="ident">len</span>() <span class="op">-</span> <span class="number">1</span>,
+			},
+		)<span class="question-mark">?</span>;
 
 		<span class="comment">// TODO: abstract the execution proof impl to be reusable in the test.</span>
 		<span class="kw">let</span> <span class="ident">fraud_proof</span> <span class="op">=</span> <span class="kw">if</span> <span class="ident">local_trace_index</span> <span class="op">==</span> <span class="number">0</span> {
 			<span class="comment">// `initialize_block` execution proof.</span>
 			<span class="kw">let</span> <span class="ident">pre_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="ident">parent_header</span>.<span class="ident">state_root</span>())<span class="question-mark">?</span>;
-			<span class="kw">let</span> <span class="ident">post_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_root</span>)<span class="question-mark">?</span>;
+			<span class="kw">let</span> <span class="ident">post_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="ident">local_root</span>)<span class="question-mark">?</span>;
 
 			<span class="kw">let</span> <span class="ident">new_header</span> <span class="op">=</span> <span class="ident">Block::Header::new</span>(
 				<span class="ident">block_number</span>.<span class="ident">into</span>(),
@@ -403,6 +422,7 @@
 			)<span class="question-mark">?</span>;
 
 			<span class="ident">FraudProof</span> {
+				<span class="ident">bad_signed_receipt_hash</span>,
 				<span class="ident">parent_number</span>,
 				<span class="ident">parent_hash</span>: <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">parent_header</span>.<span class="ident">hash</span>())<span class="question-mark">?</span>,
 				<span class="ident">pre_state_root</span>,
@@ -410,10 +430,10 @@
 				<span class="ident">proof</span>,
 				<span class="ident">execution_phase</span>,
 			}
-		} <span class="kw">else</span> <span class="kw">if</span> <span class="ident">local_trace_index</span> <span class="op">==</span> <span class="ident">local_receipt</span>.<span class="ident">trace</span>.<span class="ident">len</span>() <span class="op">-</span> <span class="number">1</span> {
+		} <span class="kw">else</span> <span class="kw">if</span> <span class="ident">local_trace_index</span> <span class="kw">as</span> <span class="ident">usize</span> <span class="op">==</span> <span class="ident">local_receipt</span>.<span class="ident">trace</span>.<span class="ident">len</span>() <span class="op">-</span> <span class="number">1</span> {
 			<span class="comment">// `finalize_block` execution proof.</span>
-			<span class="kw">let</span> <span class="ident">pre_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_receipt</span>.<span class="ident">trace</span>[<span class="ident">local_trace_index</span> <span class="op">-</span> <span class="number">1</span>])<span class="question-mark">?</span>;
-			<span class="kw">let</span> <span class="ident">post_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_root</span>)<span class="question-mark">?</span>;
+			<span class="kw">let</span> <span class="ident">pre_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_receipt</span>.<span class="ident">trace</span>[<span class="ident">local_trace_index</span> <span class="kw">as</span> <span class="ident">usize</span> <span class="op">-</span> <span class="number">1</span>])<span class="question-mark">?</span>;
+			<span class="kw">let</span> <span class="ident">post_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="ident">local_root</span>)<span class="question-mark">?</span>;
 			<span class="kw">let</span> <span class="ident">execution_phase</span> <span class="op">=</span> <span class="ident">ExecutionPhase::FinalizeBlock</span>;
 
 			<span class="kw">let</span> <span class="ident">block_builder</span> <span class="op">=</span> <span class="ident">BlockBuilder::new</span>(
@@ -437,6 +457,7 @@
 			)<span class="question-mark">?</span>;
 
 			<span class="ident">FraudProof</span> {
+				<span class="ident">bad_signed_receipt_hash</span>,
 				<span class="ident">parent_number</span>,
 				<span class="ident">parent_hash</span>: <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">parent_header</span>.<span class="ident">hash</span>())<span class="question-mark">?</span>,
 				<span class="ident">pre_state_root</span>,
@@ -446,11 +467,11 @@
 			}
 		} <span class="kw">else</span> {
 			<span class="comment">// Regular extrinsic execution proof.</span>
-			<span class="kw">let</span> <span class="ident">pre_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_receipt</span>.<span class="ident">trace</span>[<span class="ident">local_trace_index</span> <span class="op">-</span> <span class="number">1</span>])<span class="question-mark">?</span>;
-			<span class="kw">let</span> <span class="ident">post_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_root</span>)<span class="question-mark">?</span>;
+			<span class="kw">let</span> <span class="ident">pre_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">local_receipt</span>.<span class="ident">trace</span>[<span class="ident">local_trace_index</span> <span class="kw">as</span> <span class="ident">usize</span> <span class="op">-</span> <span class="number">1</span>])<span class="question-mark">?</span>;
+			<span class="kw">let</span> <span class="ident">post_state_root</span> <span class="op">=</span> <span class="ident">as_h256</span>(<span class="ident">local_root</span>)<span class="question-mark">?</span>;
 
 			<span class="kw">let</span> (<span class="ident">proof</span>, <span class="ident">execution_phase</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">create_extrinsic_execution_proof</span>(
-				<span class="ident">local_trace_index</span> <span class="op">-</span> <span class="number">1</span>,
+				<span class="ident">local_trace_index</span> <span class="kw">as</span> <span class="ident">usize</span> <span class="op">-</span> <span class="number">1</span>,
 				<span class="kw-2">&amp;</span><span class="ident">parent_header</span>,
 				<span class="ident">block_hash</span>,
 				<span class="kw-2">&amp;</span><span class="ident">prover</span>,
@@ -458,6 +479,7 @@
 
 			<span class="comment">// TODO: proof should be a CompactProof.</span>
 			<span class="ident">FraudProof</span> {
+				<span class="ident">bad_signed_receipt_hash</span>,
 				<span class="ident">parent_number</span>,
 				<span class="ident">parent_hash</span>: <span class="ident">as_h256</span>(<span class="kw-2">&amp;</span><span class="ident">parent_header</span>.<span class="ident">hash</span>())<span class="question-mark">?</span>,
 				<span class="ident">pre_state_root</span>,
@@ -528,11 +550,11 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn</span> <span class="ident">find_trace_mismatch</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">Hash</span>: <span class="ident">Copy</span> <span class="op">+</span> <span class="ident">Eq</span>, <span class="ident">PHash</span><span class="op">&gt;</span>(
 	<span class="ident">local</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">PHash</span>, <span class="ident">Hash</span><span class="op">&gt;</span>,
 	<span class="ident">other</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">PHash</span>, <span class="ident">Hash</span><span class="op">&gt;</span>,
-) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span> {
+) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">u32</span><span class="op">&gt;</span> {
 	<span class="ident">local</span>.<span class="ident">trace</span>.<span class="ident">iter</span>().<span class="ident">enumerate</span>().<span class="ident">zip</span>(<span class="ident">other</span>.<span class="ident">trace</span>.<span class="ident">iter</span>().<span class="ident">enumerate</span>()).<span class="ident">find_map</span>(
 		<span class="op">|</span>((<span class="ident">local_index</span>, <span class="ident">local_root</span>), (<span class="kw">_</span>, <span class="ident">other_root</span>))<span class="op">|</span> {
 			<span class="kw">if</span> <span class="ident">local_root</span> <span class="op">!</span><span class="op">=</span> <span class="ident">other_root</span> {
-				<span class="prelude-val">Some</span>(<span class="ident">local_index</span>)
+				<span class="prelude-val">Some</span>(<span class="ident">local_index</span>.<span class="ident">try_into</span>().<span class="ident">expect</span>(<span class="string">&quot;Trace mismatch index must fit into u32; qed&quot;</span>))
 			} <span class="kw">else</span> {
 				<span class="prelude-val">None</span>
 			}
