@@ -379,6 +379,10 @@
 <span id="372">372</span>
 <span id="373">373</span>
 <span id="374">374</span>
+<span id="375">375</span>
+<span id="376">376</span>
+<span id="377">377</span>
+<span id="378">378</span>
 </pre><pre class="rust"><code><span class="kw">mod</span> <span class="ident">databases</span>;
 <span class="kw">mod</span> <span class="ident">metadata</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
@@ -390,7 +394,7 @@
 <span class="kw">use</span> <span class="ident">event_listener_primitives</span>::{<span class="ident">Bag</span>, <span class="ident">HandlerId</span>};
 <span class="kw">use</span> <span class="ident">parking_lot::Mutex</span>;
 <span class="kw">use</span> <span class="ident">rayon::prelude</span>::<span class="kw-2">*</span>;
-<span class="kw">use</span> <span class="ident">rocksdb::DB</span>;
+<span class="kw">use</span> <span class="ident">rocksdb</span>::{<span class="ident">WriteBatch</span>, <span class="ident">DB</span>};
 <span class="kw">use</span> <span class="ident">std::io</span>;
 <span class="kw">use</span> <span class="ident">std::path::PathBuf</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
@@ -531,10 +535,11 @@
             <span class="kw">let</span> <span class="ident">db_guard</span> <span class="op">=</span> <span class="ident">db_entry</span>.<span class="ident">lock</span>();
 
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">db</span>) <span class="op">=</span> <span class="ident">db_guard</span>.<span class="ident">as_ref</span>() {
+                <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">batch</span> <span class="op">=</span> <span class="ident">WriteBatch::default</span>();
                 <span class="kw">for</span> (<span class="ident">tag</span>, <span class="ident">offset</span>) <span class="kw">in</span> <span class="ident">tags</span>.<span class="ident">iter</span>().<span class="ident">zip</span>(<span class="ident">batch_start</span>..) {
-                    <span class="ident">db</span>.<span class="ident">put</span>(<span class="ident">tag</span>, <span class="ident">offset</span>.<span class="ident">to_le_bytes</span>())
-                        .<span class="ident">map_err</span>(<span class="ident">CommitmentError::CommitmentDb</span>)<span class="question-mark">?</span>;
+                    <span class="ident">batch</span>.<span class="ident">put</span>(<span class="ident">tag</span>, <span class="ident">offset</span>.<span class="ident">to_le_bytes</span>());
                 }
+                <span class="ident">db</span>.<span class="ident">write</span>(<span class="ident">batch</span>).<span class="ident">map_err</span>(<span class="ident">CommitmentError::CommitmentDb</span>)<span class="question-mark">?</span>;
             } <span class="kw">else</span> {
                 <span class="comment">// Database was already removed, no need to continue</span>
                 <span class="kw">break</span>;
@@ -575,10 +580,12 @@
             <span class="kw">let</span> <span class="ident">db_guard</span> <span class="op">=</span> <span class="ident">db_entry</span>.<span class="ident">lock</span>();
 
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">db</span>) <span class="op">=</span> <span class="ident">db_guard</span>.<span class="ident">as_ref</span>() {
+                <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">batch</span> <span class="op">=</span> <span class="ident">WriteBatch::default</span>();
                 <span class="kw">for</span> <span class="ident">piece</span> <span class="kw">in</span> <span class="ident">pieces</span> {
                     <span class="kw">let</span> <span class="ident">tag</span> <span class="op">=</span> <span class="ident">create_tag</span>(<span class="ident">piece</span>, <span class="ident">salt</span>);
-                    <span class="ident">db</span>.<span class="ident">delete</span>(<span class="ident">tag</span>).<span class="ident">map_err</span>(<span class="ident">CommitmentError::CommitmentDb</span>)<span class="question-mark">?</span>;
+                    <span class="ident">batch</span>.<span class="ident">delete</span>(<span class="ident">tag</span>);
                 }
+                <span class="ident">db</span>.<span class="ident">write</span>(<span class="ident">batch</span>).<span class="ident">map_err</span>(<span class="ident">CommitmentError::CommitmentDb</span>)<span class="question-mark">?</span>;
             }
         }
 
@@ -607,10 +614,11 @@
                     .<span class="ident">map</span>(<span class="op">|</span>(<span class="ident">piece_offset</span>, <span class="ident">piece</span>)<span class="op">|</span> (<span class="ident">piece_offset</span>, <span class="ident">create_tag</span>(<span class="ident">piece</span>, <span class="ident">salt</span>)))
                     .<span class="ident">collect</span>();
 
+                <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">batch</span> <span class="op">=</span> <span class="ident">WriteBatch::default</span>();
                 <span class="kw">for</span> (<span class="ident">piece_offset</span>, <span class="ident">tag</span>) <span class="kw">in</span> <span class="ident">tags_with_offset</span> {
-                    <span class="ident">db</span>.<span class="ident">put</span>(<span class="ident">tag</span>, <span class="ident">piece_offset</span>.<span class="ident">to_le_bytes</span>())
-                        .<span class="ident">map_err</span>(<span class="ident">CommitmentError::CommitmentDb</span>)<span class="question-mark">?</span>;
+                    <span class="ident">batch</span>.<span class="ident">put</span>(<span class="ident">tag</span>, <span class="ident">piece_offset</span>.<span class="ident">to_le_bytes</span>());
                 }
+                <span class="ident">db</span>.<span class="ident">write</span>(<span class="ident">batch</span>).<span class="ident">map_err</span>(<span class="ident">CommitmentError::CommitmentDb</span>)<span class="question-mark">?</span>;
             };
         }
 
