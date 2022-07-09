@@ -1,1 +1,1 @@
-initSidebarItems({"mod":[["archiver",""],["merkle_tree","This module includes Merkle Tree implementation used in Subspace"],["reconstructor",""]]});
+window.SIDEBAR_ITEMS = {"mod":[["archiver",""],["merkle_tree","This module includes Merkle Tree implementation used in Subspace"],["reconstructor",""]]};

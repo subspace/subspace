@@ -1,1 +1,1 @@
-initSidebarItems({"constant":[["BENCH_FARMER_PROTOCOL_INFO","Default farmer metadata for benchmarking"]],"struct":[["BenchRpcClient","Client mock for benching purpose"],["Inner",""]]});
+window.SIDEBAR_ITEMS = {"constant":[["BENCH_FARMER_PROTOCOL_INFO","Default farmer metadata for benchmarking"]],"struct":[["BenchRpcClient","Client mock for benching purpose"],["Inner",""]]};

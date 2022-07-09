@@ -1,1 +1,1 @@
-initSidebarItems({"fn":[["create_full","Instantiate all full RPC extensions."]],"struct":[["FullDeps","Full client dependencies."]]});
+window.SIDEBAR_ITEMS = {"fn":[["create_full","Instantiate all full RPC extensions."]],"struct":[["FullDeps","Full client dependencies."]]};

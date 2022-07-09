@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["F32",""],["F64",""]]});
+window.SIDEBAR_ITEMS = {"struct":[["F32",""],["F64",""]]};

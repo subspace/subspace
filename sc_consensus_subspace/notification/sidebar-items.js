@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["SubspaceNotificationStream","The receiving half of the Subspace notification channel."]]});
+window.SIDEBAR_ITEMS = {"struct":[["SubspaceNotificationStream","The receiving half of the Subspace notification channel."]]};

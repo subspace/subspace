@@ -1,1 +1,1 @@
-initSidebarItems({"mod":[["service","Service and ServiceFactory implementation. Specialized wrapper over substrate service."]]});
+window.SIDEBAR_ITEMS = {"mod":[["service","Service and ServiceFactory implementation. Specialized wrapper over substrate service."]]};

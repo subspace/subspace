@@ -1,1 +1,1 @@
-initSidebarItems({"enum":[["Error","Error type."],["WasmError","Type for errors occurring during Wasm runtime construction."]],"struct":[["Backtrace","A WASM backtrace."],["MessageWithBacktrace","An error message with an attached backtrace."]],"type":[["Result","Result type alias."]]});
+window.SIDEBAR_ITEMS = {"enum":[["Error","Error type."],["WasmError","Type for errors occurring during Wasm runtime construction."]],"struct":[["Backtrace","A WASM backtrace."],["MessageWithBacktrace","An error message with an attached backtrace."]],"type":[["Result","Result type alias."]]};

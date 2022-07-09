@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["Block","Opaque block type. Abstraction over a substrate block."]],"type":[["Header","Opaque block header type."]]});
+window.SIDEBAR_ITEMS = {"struct":[["Block","Opaque block type. Abstraction over a substrate block."]],"type":[["Header","Opaque block header type."]]};

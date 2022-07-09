@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["LocalStorage","Offchain local storage"]]});
+window.SIDEBAR_ITEMS = {"struct":[["LocalStorage","Offchain local storage"]]};

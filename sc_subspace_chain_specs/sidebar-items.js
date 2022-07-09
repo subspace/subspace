@@ -1,1 +1,1 @@
-initSidebarItems({"struct":[["ChainSpecExtensions","The extensions for the [`ConsensusChainSpec`]."]],"type":[["ConsensusChainSpec","Specialized `ChainSpec` for the consensus runtime."],["ExecutionChainSpec","Specialized `ChainSpec` for the execution runtime."]]});
+window.SIDEBAR_ITEMS = {"struct":[["ChainSpecExtensions","The extensions for the [`ConsensusChainSpec`]."]],"type":[["ConsensusChainSpec","Specialized `ChainSpec` for the consensus runtime."],["ExecutionChainSpec","Specialized `ChainSpec` for the execution runtime."]]};
