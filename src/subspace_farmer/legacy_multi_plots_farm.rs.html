@@ -199,13 +199,6 @@
 <span id="193">193</span>
 <span id="194">194</span>
 <span id="195">195</span>
-<span id="196">196</span>
-<span id="197">197</span>
-<span id="198">198</span>
-<span id="199">199</span>
-<span id="200">200</span>
-<span id="201">201</span>
-<span id="202">202</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::archiving::Archiving</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings::ObjectMappings</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
@@ -214,13 +207,12 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils</span>::{<span class="ident">get_plot_sizes</span>, <span class="ident">get_usable_plot_space</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::ws_rpc_server::PieceGetter</span>;
 <span class="kw">use</span> <span class="ident">futures::stream</span>::{<span class="ident">FuturesUnordered</span>, <span class="ident">StreamExt</span>};
-<span class="kw">use</span> <span class="ident">parking_lot::Mutex</span>;
 <span class="kw">use</span> <span class="ident">rayon::prelude</span>::<span class="kw-2">*</span>;
 <span class="kw">use</span> <span class="ident">std::num::NonZeroU16</span>;
 <span class="kw">use</span> <span class="ident">std::path::PathBuf</span>;
-<span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::PublicKey</span>;
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::Multiaddr</span>;
+<span class="kw">use</span> <span class="ident">subspace_networking::Node</span>;
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives::FarmerProtocolInfo</span>;
 <span class="kw">use</span> <span class="ident">tokio::runtime::Handle</span>;
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">error</span>, <span class="ident">info_span</span>};
@@ -236,11 +228,11 @@
     <span class="kw">pub</span> <span class="ident">object_mappings</span>: <span class="ident">ObjectMappings</span>,
     <span class="kw">pub</span> <span class="ident">reward_address</span>: <span class="ident">PublicKey</span>,
     <span class="kw">pub</span> <span class="ident">bootstrap_nodes</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Multiaddr</span><span class="op">&gt;</span>,
-    <span class="kw">pub</span> <span class="ident">listen_on</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Multiaddr</span><span class="op">&gt;</span>,
     <span class="doccomment">/// Enable DSN subscription for archiving segments.</span>
     <span class="kw">pub</span> <span class="ident">enable_dsn_archiving</span>: <span class="ident">bool</span>,
     <span class="kw">pub</span> <span class="ident">enable_dsn_sync</span>: <span class="ident">bool</span>,
     <span class="kw">pub</span> <span class="ident">enable_farming</span>: <span class="ident">bool</span>,
+    <span class="kw">pub</span> <span class="ident">relay_server_node</span>: <span class="ident">Node</span>,
 }
 
 <span class="doccomment">/// Abstraction around having multiple `Plot`s, `Farming`s and `Plotting`s.</span>
@@ -271,15 +263,13 @@
             <span class="ident">object_mappings</span>,
             <span class="ident">reward_address</span>,
             <span class="ident">bootstrap_nodes</span>,
-            <span class="ident">listen_on</span>,
             <span class="ident">enable_dsn_archiving</span>,
             <span class="ident">enable_dsn_sync</span>,
             <span class="ident">enable_farming</span>,
+            <span class="ident">relay_server_node</span>,
         } <span class="op">=</span> <span class="ident">options</span>;
         <span class="kw">let</span> <span class="ident">usable_space</span> <span class="op">=</span> <span class="ident">get_usable_plot_space</span>(<span class="ident">allocated_space</span>);
         <span class="kw">let</span> <span class="ident">plot_sizes</span> <span class="op">=</span> <span class="ident">get_plot_sizes</span>(<span class="ident">usable_space</span>, <span class="ident">farmer_protocol_info</span>.<span class="ident">max_plot_size</span>);
-
-        <span class="kw">let</span> <span class="ident">first_listen_on</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Multiaddr</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">Arc::default</span>();
 
         <span class="comment">// Somewhat arbitrary number (we don&#39;t know if this is RAID or anything), but at least not</span>
         <span class="comment">// unbounded.</span>
@@ -297,9 +287,7 @@
                     <span class="kw">let</span> <span class="ident">plot_directory</span> <span class="op">=</span> <span class="ident">base_directory</span>.<span class="ident">join</span>(<span class="macro">format!</span>(<span class="string">&quot;plot{plot_index}&quot;</span>));
                     <span class="kw">let</span> <span class="ident">metadata_directory</span> <span class="op">=</span> <span class="ident">base_directory</span>.<span class="ident">join</span>(<span class="macro">format!</span>(<span class="string">&quot;plot{plot_index}&quot;</span>));
                     <span class="kw">let</span> <span class="ident">farming_client</span> <span class="op">=</span> <span class="ident">farming_client</span>.<span class="ident">clone</span>();
-                    <span class="kw">let</span> <span class="ident">listen_on</span> <span class="op">=</span> <span class="ident">listen_on</span>.<span class="ident">clone</span>();
                     <span class="kw">let</span> <span class="ident">bootstrap_nodes</span> <span class="op">=</span> <span class="ident">bootstrap_nodes</span>.<span class="ident">clone</span>();
-                    <span class="kw">let</span> <span class="ident">first_listen_on</span> <span class="op">=</span> <span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="ident">first_listen_on</span>);
                     <span class="kw">let</span> <span class="ident">single_disk_semaphore</span> <span class="op">=</span> <span class="ident">single_disk_semaphore</span>.<span class="ident">clone</span>();
 
                     <span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="macro">info_span!</span>(<span class="string">&quot;single_plot_farm&quot;</span>, <span class="op">%</span><span class="ident">plot_index</span>);
@@ -309,19 +297,17 @@
                         <span class="ident">id</span>: <span class="ident">plot_index</span>.<span class="ident">into</span>(),
                         <span class="ident">plot_directory</span>,
                         <span class="ident">metadata_directory</span>,
-                        <span class="ident">plot_index</span>,
                         <span class="ident">allocated_plotting_space</span>,
                         <span class="ident">farmer_protocol_info</span>,
                         <span class="ident">farming_client</span>,
                         <span class="ident">plot_factory</span>: <span class="kw-2">&amp;</span><span class="ident">plot_factory</span>,
-                        <span class="ident">listen_on</span>,
                         <span class="ident">bootstrap_nodes</span>,
-                        <span class="ident">first_listen_on</span>,
                         <span class="ident">single_disk_semaphore</span>,
                         <span class="ident">enable_farming</span>,
                         <span class="ident">reward_address</span>,
                         <span class="ident">enable_dsn_archiving</span>,
                         <span class="ident">enable_dsn_sync</span>,
+                        <span class="ident">relay_server_node</span>: <span class="ident">relay_server_node</span>.<span class="ident">clone</span>(),
                     })
                 })
                 .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">anyhow::Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>()
