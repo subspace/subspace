@@ -700,21 +700,29 @@
 <span id="694">694</span>
 <span id="695">695</span>
 <span id="696">696</span>
+<span id="697">697</span>
+<span id="698">698</span>
+<span id="699">699</span>
+<span id="700">700</span>
+<span id="701">701</span>
+<span id="702">702</span>
+<span id="703">703</span>
 </pre><pre class="rust"><code><span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">dsn_archiving</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">tests</span>;
 
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::commitments::Commitments</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::commitments</span>::{<span class="ident">CommitmentError</span>, <span class="ident">Commitments</span>};
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::dsn</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::dsn</span>::{<span class="ident">PieceIndexHashNumber</span>, <span class="ident">SyncOptions</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::farming::Farming</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::identity::Identity</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings::ObjectMappings</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot</span>::{<span class="ident">Plot</span>, <span class="ident">PlotError</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_disk_farm::SingleDiskSemaphore</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_plot_farm::dsn_archiving::start_archiving</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::AbortingJoinHandle</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::ws_rpc_server::PieceGetter</span>;
-<span class="kw">use</span> <span class="kw">crate</span>::{<span class="ident">dsn</span>, <span class="ident">CommitmentError</span>, <span class="ident">ObjectMappings</span>};
 <span class="kw">use</span> <span class="ident">anyhow::anyhow</span>;
 <span class="kw">use</span> <span class="ident">derive_more</span>::{<span class="ident">Display</span>, <span class="ident">From</span>};
 <span class="kw">use</span> <span class="ident">futures::future::try_join</span>;
@@ -739,6 +747,8 @@
 <span class="kw">use</span> <span class="ident">ulid::Ulid</span>;
 
 <span class="kw">const</span> <span class="ident">SYNC_PIECES_AT_ONCE</span>: <span class="ident">u64</span> <span class="op">=</span> <span class="number">5000</span>;
+<span class="doccomment">/// 100 MiB worth of object mappings per plot</span>
+<span class="kw">const</span> <span class="ident">MAX_OBJECT_MAPPINGS_SIZE</span>: <span class="ident">u64</span> <span class="op">=</span> <span class="number">100</span> <span class="op">*</span> <span class="number">1024</span> <span class="op">*</span> <span class="number">1024</span>;
 
 <span class="doccomment">/// An identifier for single plot farm, can be used for in logs, thread names, etc.</span>
 <span class="attribute">#[<span class="ident">derive</span>(
@@ -1101,8 +1111,11 @@
         })<span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">&quot;Opening object mappings&quot;</span>);
-        <span class="kw">let</span> <span class="ident">object_mappings</span> <span class="op">=</span>
-            <span class="ident">ObjectMappings::open_or_create</span>(<span class="ident">metadata_directory</span>.<span class="ident">join</span>(<span class="string">&quot;object-mappings&quot;</span>))<span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">object_mappings</span> <span class="op">=</span> <span class="ident">ObjectMappings::open_or_create</span>(
+            <span class="kw-2">&amp;</span><span class="ident">metadata_directory</span>.<span class="ident">join</span>(<span class="string">&quot;object-mappings&quot;</span>),
+            <span class="ident">public_key</span>,
+            <span class="ident">MAX_OBJECT_MAPPINGS_SIZE</span>,
+        )<span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">&quot;Opening commitments&quot;</span>);
         <span class="kw">let</span> <span class="ident">commitments</span> <span class="op">=</span> <span class="ident">Commitments::new</span>(<span class="ident">metadata_directory</span>.<span class="ident">join</span>(<span class="string">&quot;commitments&quot;</span>))<span class="question-mark">?</span>;
@@ -1235,6 +1248,7 @@
                 <span class="ident">farm</span>.<span class="ident">object_mappings</span>().<span class="ident">clone</span>(),
                 <span class="ident">node</span>,
                 <span class="ident">farm</span>.<span class="ident">plotter</span>(),
+                <span class="ident">farm</span>.<span class="ident">single_disk_semaphore</span>.<span class="ident">clone</span>(),
             );
             <span class="kw">let</span> <span class="ident">dsn_archiving_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> <span class="kw">move</span> {
                 <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">archiving_fut</span>.<span class="kw">await</span> {
