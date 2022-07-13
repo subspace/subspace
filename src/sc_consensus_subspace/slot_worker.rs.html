@@ -547,6 +547,7 @@
 <span id="541">541</span>
 <span id="542">542</span>
 <span id="543">543</span>
+<span id="544">544</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -564,10 +565,8 @@
 <span class="comment">// You should have received a copy of the GNU General Public License</span>
 <span class="comment">// along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.</span>
 
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::verification::PieceCheckParams</span>;
 <span class="kw">use</span> <span class="kw">crate</span>::{
-    <span class="ident">find_pre_digest</span>, <span class="ident">verification</span>, <span class="ident">NewSlotInfo</span>, <span class="ident">NewSlotNotification</span>, <span class="ident">RewardSigningNotification</span>,
-    <span class="ident">SubspaceLink</span>,
+    <span class="ident">find_pre_digest</span>, <span class="ident">NewSlotInfo</span>, <span class="ident">NewSlotNotification</span>, <span class="ident">RewardSigningNotification</span>, <span class="ident">SubspaceLink</span>,
 };
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">StreamExt</span>, <span class="ident">TryFutureExt</span>};
 <span class="kw">use</span> <span class="ident">log</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">info</span>, <span class="ident">warn</span>};
@@ -594,8 +593,12 @@
 <span class="kw">use</span> <span class="ident">std::future::Future</span>;
 <span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
-<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">Randomness</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>};
+<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">Randomness</span>, <span class="ident">RewardSignature</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>};
 <span class="kw">use</span> <span class="ident">subspace_solving</span>::{<span class="ident">derive_global_challenge</span>, <span class="ident">derive_target</span>};
+<span class="kw">use</span> <span class="ident">subspace_verification</span>::{
+    <span class="ident">check_reward_signature</span>, <span class="ident">is_within_solution_range</span>, <span class="ident">verify_solution</span>, <span class="ident">PieceCheckParams</span>,
+    <span class="ident">VerifySolutionParams</span>,
+};
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct</span> <span class="ident">SubspaceSlotWorker</span><span class="op">&lt;</span><span class="ident">Block</span>: <span class="ident">BlockT</span>, <span class="ident">Client</span>, <span class="ident">E</span>, <span class="ident">I</span>, <span class="ident">SO</span>, <span class="ident">L</span>, <span class="ident">BS</span><span class="op">&gt;</span> {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
@@ -793,23 +796,22 @@
                 }
             };
 
-            <span class="kw">let</span> <span class="ident">solution_verification_result</span> <span class="op">=</span>
-                <span class="ident">verification::verify_solution</span>::<span class="op">&lt;</span><span class="ident">Block::Header</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>(
-                    <span class="kw-2">&amp;</span><span class="ident">solution</span>,
-                    <span class="ident">slot</span>,
-                    <span class="ident">verification::VerifySolutionParams</span> {
-                        <span class="ident">global_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">global_randomness</span>,
-                        <span class="ident">solution_range</span>: <span class="ident">voting_solution_range</span>,
-                        <span class="ident">salt</span>,
-                        <span class="ident">piece_check_params</span>: <span class="prelude-val">Some</span>(<span class="ident">PieceCheckParams</span> {
-                            <span class="ident">records_root</span>,
-                            <span class="ident">position</span>,
-                            <span class="ident">record_size</span>,
-                            <span class="ident">max_plot_size</span>,
-                            <span class="ident">total_pieces</span>,
-                        }),
-                    },
-                );
+            <span class="kw">let</span> <span class="ident">solution_verification_result</span> <span class="op">=</span> <span class="ident">verify_solution</span>(
+                <span class="kw-2">&amp;</span><span class="ident">solution</span>,
+                <span class="ident">slot</span>.<span class="ident">into</span>(),
+                <span class="ident">VerifySolutionParams</span> {
+                    <span class="ident">global_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">global_randomness</span>,
+                    <span class="ident">solution_range</span>: <span class="ident">voting_solution_range</span>,
+                    <span class="ident">salt</span>,
+                    <span class="ident">piece_check_params</span>: <span class="prelude-val">Some</span>(<span class="ident">PieceCheckParams</span> {
+                        <span class="ident">records_root</span>,
+                        <span class="ident">position</span>,
+                        <span class="ident">record_size</span>,
+                        <span class="ident">max_plot_size</span>,
+                        <span class="ident">total_pieces</span>,
+                    }),
+                },
+            );
 
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">solution_verification_result</span> {
                 <span class="macro">warn!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Invalid solution received for slot {slot}: {error:?}&quot;</span>);
@@ -825,7 +827,7 @@
                 <span class="comment">// If solution is of high enough quality and block pre-digest wasn&#39;t produced yet,</span>
                 <span class="comment">// block reward is claimed</span>
                 <span class="kw">if</span> <span class="ident">maybe_pre_digest</span>.<span class="ident">is_none</span>()
-                    <span class="op">&amp;&amp;</span> <span class="ident">verification::is_within_solution_range</span>(<span class="ident">target</span>, <span class="ident">solution</span>.<span class="ident">tag</span>, <span class="ident">solution_range</span>)
+                    <span class="op">&amp;&amp;</span> <span class="ident">is_within_solution_range</span>(<span class="ident">target</span>, <span class="ident">solution</span>.<span class="ident">tag</span>, <span class="ident">solution_range</span>)
                 {
                     <span class="macro">info!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;🚜 Claimed block at slot {slot}&quot;</span>);
 
@@ -1003,10 +1005,10 @@
             });
 
         <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">signature</span>) <span class="op">=</span> <span class="ident">signature_receiver</span>.<span class="ident">next</span>().<span class="kw">await</span> {
-            <span class="kw">if</span> <span class="ident">verification::check_reward_signature</span>(
+            <span class="kw">if</span> <span class="ident">check_reward_signature</span>(
                 <span class="ident">hash</span>.<span class="ident">as_ref</span>(),
-                <span class="kw-2">&amp;</span><span class="ident">signature</span>,
-                <span class="ident">public_key</span>,
+                <span class="kw-2">&amp;</span><span class="ident">Into</span>::<span class="op">&lt;</span><span class="ident">RewardSignature</span><span class="op">&gt;</span><span class="ident">::into</span>(<span class="kw-2">&amp;</span><span class="ident">signature</span>),
+                <span class="kw-2">&amp;</span><span class="ident">Into</span>::<span class="op">&lt;</span><span class="ident">subspace_core_primitives::PublicKey</span><span class="op">&gt;</span><span class="ident">::into</span>(<span class="ident">public_key</span>),
                 <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">reward_signing_context</span>,
             )
             .<span class="ident">is_err</span>()
