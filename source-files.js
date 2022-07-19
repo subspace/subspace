@@ -26,6 +26,7 @@ sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sc_subspace_chain_specs"] = {"name":"","files":["lib.rs","utils.rs"]};
 sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs"]};
 sourcesIndex["sp_executor"] = {"name":"","files":["lib.rs"]};
+sourcesIndex["sp_lightclient"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["sp_objects"] = {"name":"","files":["lib.rs"]};
 sourcesIndex["subspace_archiving"] = {"name":"","dirs":[{"name":"archiver","files":["record_shards.rs"]}],"files":["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]};
 sourcesIndex["subspace_core_primitives"] = {"name":"","files":["crypto.rs","lib.rs","objects.rs"]};

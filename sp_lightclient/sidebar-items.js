@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":[["ImportError","Error during the header import."]],"struct":[["HeaderExt","HeaderExt describes an extended block chain header at a specific height along with some computed values."]],"trait":[["HeaderImporter","Verifies and import headers."],["Storage","Storage responsible for storing headers"]]};
