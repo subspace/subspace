@@ -155,6 +155,20 @@
 <span id="149">149</span>
 <span id="150">150</span>
 <span id="151">151</span>
+<span id="152">152</span>
+<span id="153">153</span>
+<span id="154">154</span>
+<span id="155">155</span>
+<span id="156">156</span>
+<span id="157">157</span>
+<span id="158">158</span>
+<span id="159">159</span>
+<span id="160">160</span>
+<span id="161">161</span>
+<span id="162">162</span>
+<span id="163">163</span>
+<span id="164">164</span>
+<span id="165">165</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2022 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
 
@@ -171,9 +185,7 @@
 <span class="comment">// You should have received a copy of the GNU General Public License</span>
 <span class="comment">// along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.</span>
 
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::request_responses</span>::{
-    <span class="ident">IncomingRequest</span>, <span class="ident">OutgoingResponse</span>, <span class="ident">ProtocolConfig</span>, <span class="ident">RequestResponseHandlerRunner</span>,
-};
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::request_responses</span>::{<span class="ident">IncomingRequest</span>, <span class="ident">OutgoingResponse</span>, <span class="ident">ProtocolConfig</span>, <span class="ident">RequestHandler</span>};
 <span class="kw">use</span> <span class="ident">async_trait::async_trait</span>;
 <span class="kw">use</span> <span class="ident">futures::channel::mpsc</span>;
 <span class="kw">use</span> <span class="ident">futures::prelude</span>::<span class="kw-2">*</span>;
@@ -185,43 +197,38 @@
 <span class="comment">// Could be changed after the production feedback.</span>
 <span class="kw">const</span> <span class="ident">REQUESTS_BUFFER_SIZE</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">50</span>;
 
-<span class="doccomment">/// Defines a config for the generic request handler for the request-response protocol.</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">RequestHandlerConfig</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span> {
-    <span class="doccomment">/// Tracing log target</span>
-    <span class="kw">pub</span> <span class="ident">log_target</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>,
-    <span class="doccomment">/// Request-response protocol name</span>
-    <span class="kw">pub</span> <span class="ident">protocol_name</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>,
-    <span class="doccomment">/// Actual request-response handler.</span>
-    <span class="kw">pub</span> <span class="ident">request_handler</span>: <span class="ident">ExternalRequestHandler</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span>,
+<span class="doccomment">/// Generic request with associated response</span>
+<span class="kw">pub</span> <span class="kw">trait</span> <span class="ident">GenericRequest</span>: <span class="ident">Encode</span> <span class="op">+</span> <span class="ident">Decode</span> <span class="op">+</span> <span class="lifetime">&#39;static</span> {
+    <span class="kw">const</span> <span class="ident">PROTOCOL_NAME</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>;
+    <span class="kw">const</span> <span class="ident">LOG_TARGET</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>;
+    <span class="doccomment">/// Response type that corresponds to this request</span>
+    <span class="kw">type</span> <span class="ident">Response</span>: <span class="ident">Encode</span> <span class="op">+</span> <span class="ident">Decode</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>;
 }
 
-<span class="doccomment">/// Type alias for the actual external request handler.</span>
-<span class="kw">pub</span> <span class="kw">type</span> <span class="ident">ExternalRequestHandler</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span> <span class="op">=</span>
-    <span class="ident">Arc</span><span class="op">&lt;</span><span class="kw">dyn</span> (<span class="ident">Fn</span>(<span class="kw-2">&amp;</span><span class="ident">Req</span>) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Resp</span><span class="op">&gt;</span>) <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span>;
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct</span> <span class="ident">RequestHandler</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span> {
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">GenericRequestHandler</span><span class="op">&lt;</span><span class="ident">Request</span>: <span class="ident">GenericRequest</span><span class="op">&gt;</span> {
     <span class="ident">request_receiver</span>: <span class="ident">mpsc::Receiver</span><span class="op">&lt;</span><span class="ident">IncomingRequest</span><span class="op">&gt;</span>,
-    <span class="ident">request_handler</span>: <span class="ident">ExternalRequestHandler</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span>,
-    <span class="ident">log_target</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>,
-    <span class="ident">protocol_name</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span>,
+    <span class="attribute">#[<span class="ident">allow</span>(<span class="ident">clippy::type_complexity</span>)]</span>
+    <span class="ident">request_handler</span>: <span class="ident">Arc</span><span class="op">&lt;</span>
+        <span class="kw">dyn</span> (<span class="ident">Fn</span>(<span class="kw-2">&amp;</span><span class="ident">Request</span>) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="op">&lt;</span><span class="ident">Request</span> <span class="kw">as</span> <span class="ident">GenericRequest</span><span class="op">&gt;</span><span class="ident">::Response</span><span class="op">&gt;</span>) <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="op">&gt;</span>,
+    <span class="ident">protocol_config</span>: <span class="ident">ProtocolConfig</span>,
 }
 
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Req</span>: <span class="ident">Decode</span>, <span class="ident">Resp</span>: <span class="ident">Encode</span> <span class="op">+</span> <span class="ident">Default</span><span class="op">&gt;</span> <span class="ident">RequestHandler</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span> {
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">handler_config</span>: <span class="ident">RequestHandlerConfig</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span>) -&gt; (<span class="self">Self</span>, <span class="ident">ProtocolConfig</span>) {
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Request</span>: <span class="ident">GenericRequest</span><span class="op">&gt;</span> <span class="ident">GenericRequestHandler</span><span class="op">&lt;</span><span class="ident">Request</span><span class="op">&gt;</span> {
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create</span><span class="op">&lt;</span><span class="ident">F</span><span class="op">&gt;</span>(<span class="ident">request_handler</span>: <span class="ident">F</span>) -&gt; <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">RequestHandler</span><span class="op">&gt;</span>
+    <span class="kw">where</span>
+        <span class="ident">F</span>: (<span class="ident">Fn</span>(<span class="kw-2">&amp;</span><span class="ident">Request</span>) -&gt; <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Request::Response</span><span class="op">&gt;</span>) <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    {
         <span class="kw">let</span> (<span class="ident">request_sender</span>, <span class="ident">request_receiver</span>) <span class="op">=</span> <span class="ident">mpsc::channel</span>(<span class="ident">REQUESTS_BUFFER_SIZE</span>);
 
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">protocol_config</span> <span class="op">=</span> <span class="ident">ProtocolConfig::new</span>(<span class="ident">handler_config</span>.<span class="ident">protocol_name</span>.<span class="ident">into</span>());
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">protocol_config</span> <span class="op">=</span> <span class="ident">ProtocolConfig::new</span>(<span class="ident">Request::PROTOCOL_NAME</span>);
         <span class="ident">protocol_config</span>.<span class="ident">inbound_queue</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">request_sender</span>);
 
-        (
-            <span class="self">Self</span> {
-                <span class="ident">request_receiver</span>,
-                <span class="ident">request_handler</span>: <span class="ident">handler_config</span>.<span class="ident">request_handler</span>,
-                <span class="ident">log_target</span>: <span class="ident">handler_config</span>.<span class="ident">log_target</span>,
-                <span class="ident">protocol_name</span>: <span class="ident">handler_config</span>.<span class="ident">protocol_name</span>,
-            },
+        <span class="ident">Box::new</span>(<span class="self">Self</span> {
+            <span class="ident">request_receiver</span>,
+            <span class="ident">request_handler</span>: <span class="ident">Arc::new</span>(<span class="ident">request_handler</span>),
             <span class="ident">protocol_config</span>,
-        )
+        })
     }
 
     <span class="comment">// Invokes external protocol handler.</span>
@@ -230,20 +237,17 @@
         <span class="ident">peer</span>: <span class="ident">PeerId</span>,
         <span class="ident">payload</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>,
     ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>, <span class="ident">RequestHandlerError</span><span class="op">&gt;</span> {
-        <span class="macro">trace!</span>(<span class="op">%</span><span class="ident">peer</span>, <span class="ident">protocol</span><span class="op">=</span><span class="self">self</span>.<span class="ident">protocol_name</span>, <span class="string">&quot;Handling request...&quot;</span>);
-        <span class="kw">let</span> <span class="ident">request</span> <span class="op">=</span> <span class="ident">Req::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">payload</span>.<span class="ident">as_slice</span>())
+        <span class="macro">trace!</span>(<span class="op">%</span><span class="ident">peer</span>, <span class="ident">protocol</span><span class="op">=</span><span class="ident">Request::LOG_TARGET</span>, <span class="string">&quot;Handling request...&quot;</span>);
+        <span class="kw">let</span> <span class="ident">request</span> <span class="op">=</span> <span class="ident">Request::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">payload</span>.<span class="ident">as_slice</span>())
             .<span class="ident">map_err</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="ident">RequestHandlerError::InvalidRequestFormat</span>)<span class="question-mark">?</span>;
         <span class="kw">let</span> <span class="ident">response</span> <span class="op">=</span> (<span class="self">self</span>.<span class="ident">request_handler</span>)(<span class="kw-2">&amp;</span><span class="ident">request</span>);
 
-        <span class="comment">// Return the result with treating None as an empty(default) response.</span>
-        <span class="prelude-val">Ok</span>(<span class="ident">response</span>.<span class="ident">unwrap_or_default</span>().<span class="ident">encode</span>())
+        <span class="prelude-val">Ok</span>(<span class="ident">response</span>.<span class="ident">ok_or</span>(<span class="ident">RequestHandlerError::NoResponse</span>)<span class="question-mark">?</span>.<span class="ident">encode</span>())
     }
 }
 
 <span class="attribute">#[<span class="ident">async_trait</span>]</span>
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Req</span>: <span class="ident">Decode</span>, <span class="ident">Resp</span>: <span class="ident">Encode</span> <span class="op">+</span> <span class="ident">Default</span><span class="op">&gt;</span> <span class="ident">RequestResponseHandlerRunner</span>
-    <span class="kw">for</span> <span class="ident">RequestHandler</span><span class="op">&lt;</span><span class="ident">Req</span>, <span class="ident">Resp</span><span class="op">&gt;</span>
-{
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Request</span>: <span class="ident">GenericRequest</span><span class="op">&gt;</span> <span class="ident">RequestHandler</span> <span class="kw">for</span> <span class="ident">GenericRequestHandler</span><span class="op">&lt;</span><span class="ident">Request</span><span class="op">&gt;</span> {
     <span class="doccomment">/// Run [`RequestHandler`].</span>
     <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
         <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">request</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">request_receiver</span>.<span class="ident">next</span>().<span class="kw">await</span> {
@@ -261,10 +265,10 @@
                     };
 
                     <span class="kw">match</span> <span class="ident">pending_response</span>.<span class="ident">send</span>(<span class="ident">response</span>) {
-                        <span class="prelude-val">Ok</span>(()) =&gt; <span class="macro">trace!</span>(<span class="ident">target</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">log_target</span>, <span class="op">%</span><span class="ident">peer</span>, <span class="string">&quot;Handled request&quot;</span>,),
+                        <span class="prelude-val">Ok</span>(()) =&gt; <span class="macro">trace!</span>(<span class="ident">target</span> <span class="op">=</span> <span class="ident">Request::LOG_TARGET</span>, <span class="op">%</span><span class="ident">peer</span>, <span class="string">&quot;Handled request&quot;</span>,),
                         <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="macro">debug!</span>(
-                            <span class="ident">target</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">log_target</span>,
-                            <span class="ident">protocol</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">protocol_name</span>,
+                            <span class="ident">target</span> <span class="op">=</span> <span class="ident">Request::LOG_TARGET</span>,
+                            <span class="ident">protocol</span> <span class="op">=</span> <span class="ident">Request::PROTOCOL_NAME</span>,
                             <span class="op">%</span><span class="ident">peer</span>,
                             <span class="string">&quot;Failed to handle request: {}&quot;</span>,
                             <span class="ident">RequestHandlerError::SendResponse</span>
@@ -273,8 +277,8 @@
                 }
                 <span class="prelude-val">Err</span>(<span class="ident">e</span>) =&gt; {
                     <span class="macro">debug!</span>(
-                        <span class="ident">target</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">log_target</span>,
-                        <span class="ident">protocol</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">protocol_name</span>,
+                        <span class="ident">target</span> <span class="op">=</span> <span class="ident">Request::LOG_TARGET</span>,
+                        <span class="ident">protocol</span> <span class="op">=</span> <span class="ident">Request::PROTOCOL_NAME</span>,
                         <span class="op">%</span><span class="ident">e</span>,
                         <span class="string">&quot;Failed to handle request.&quot;</span>,
                     );
@@ -286,8 +290,8 @@
 
                     <span class="kw">if</span> <span class="ident">pending_response</span>.<span class="ident">send</span>(<span class="ident">response</span>).<span class="ident">is_err</span>() {
                         <span class="macro">debug!</span>(
-                            <span class="ident">target</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">log_target</span>,
-                            <span class="ident">protocol</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">protocol_name</span>,
+                            <span class="ident">target</span> <span class="op">=</span> <span class="ident">Request::LOG_TARGET</span>,
+                            <span class="ident">protocol</span> <span class="op">=</span> <span class="ident">Request::PROTOCOL_NAME</span>,
                             <span class="op">%</span><span class="ident">peer</span>,
                             <span class="string">&quot;Failed to handle request: {}&quot;</span>, <span class="ident">RequestHandlerError::SendResponse</span>
                         );
@@ -295,6 +299,27 @@
                 }
             }
         }
+    }
+
+    <span class="kw">fn</span> <span class="ident">protocol_config</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">ProtocolConfig</span> {
+        <span class="self">self</span>.<span class="ident">protocol_config</span>.<span class="ident">clone</span>()
+    }
+
+    <span class="kw">fn</span> <span class="ident">protocol_name</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">&#39;static</span> <span class="ident">str</span> {
+        <span class="ident">Request::PROTOCOL_NAME</span>
+    }
+
+    <span class="kw">fn</span> <span class="ident">clone_box</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">RequestHandler</span><span class="op">&gt;</span> {
+        <span class="kw">let</span> (<span class="ident">request_sender</span>, <span class="ident">request_receiver</span>) <span class="op">=</span> <span class="ident">mpsc::channel</span>(<span class="ident">REQUESTS_BUFFER_SIZE</span>);
+
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">protocol_config</span> <span class="op">=</span> <span class="ident">ProtocolConfig::new</span>(<span class="ident">Request::PROTOCOL_NAME</span>);
+        <span class="ident">protocol_config</span>.<span class="ident">inbound_queue</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">request_sender</span>);
+
+        <span class="ident">Box::new</span>(<span class="self">Self</span> {
+            <span class="ident">request_receiver</span>,
+            <span class="ident">request_handler</span>: <span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">request_handler</span>),
+            <span class="ident">protocol_config</span>,
+        })
     }
 }
 
@@ -305,6 +330,9 @@
 
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Incorrect request format.&quot;</span>)]</span>
     <span class="ident">InvalidRequestFormat</span>,
+
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;No response.&quot;</span>)]</span>
+    <span class="ident">NoResponse</span>,
 }
 </code></pre></div>
 </section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="subspace_networking" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.64.0-nightly (62b272d25 2022-07-21)" ></div>
