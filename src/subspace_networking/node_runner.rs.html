@@ -500,7 +500,26 @@
 <span id="494">494</span>
 <span id="495">495</span>
 <span id="496">496</span>
-</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">Event</span>};
+<span id="497">497</span>
+<span id="498">498</span>
+<span id="499">499</span>
+<span id="500">500</span>
+<span id="501">501</span>
+<span id="502">502</span>
+<span id="503">503</span>
+<span id="504">504</span>
+<span id="505">505</span>
+<span id="506">506</span>
+<span id="507">507</span>
+<span id="508">508</span>
+<span id="509">509</span>
+<span id="510">510</span>
+<span id="511">511</span>
+<span id="512">512</span>
+<span id="513">513</span>
+<span id="514">514</span>
+</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">Event</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::request_responses</span>::{<span class="ident">Event</span> <span class="kw">as</span> <span class="ident">RequestResponseEvent</span>, <span class="ident">IfDisconnected</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::shared</span>::{<span class="ident">Command</span>, <span class="ident">CreatedSubscription</span>, <span class="ident">Shared</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils</span>;
@@ -508,6 +527,7 @@
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
 <span class="kw">use</span> <span class="ident">futures::future::Fuse</span>;
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
+<span class="kw">use</span> <span class="ident">libp2p::core::ConnectedPoint</span>;
 <span class="kw">use</span> <span class="ident">libp2p::gossipsub</span>::{<span class="ident">GossipsubEvent</span>, <span class="ident">TopicHash</span>};
 <span class="kw">use</span> <span class="ident">libp2p::identify::IdentifyEvent</span>;
 <span class="kw">use</span> <span class="ident">libp2p::kad</span>::{
@@ -555,6 +575,8 @@
     <span class="doccomment">/// present for the same physical subscription).</span>
     <span class="ident">topic_subscription_senders</span>: <span class="ident">HashMap</span><span class="op">&lt;</span><span class="ident">TopicHash</span>, <span class="ident">IntMap</span><span class="op">&lt;</span><span class="ident">usize</span>, <span class="ident">mpsc::UnboundedSender</span><span class="op">&lt;</span><span class="ident">Bytes</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">random_query_timeout</span>: <span class="ident">Pin</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="ident">Fuse</span><span class="op">&lt;</span><span class="ident">Sleep</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Manages the networking parameters like known peers and addresses</span>
+    <span class="ident">networking_parameters_registry</span>: <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">NetworkingParametersRegistry</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">NodeRunner</span> {
@@ -565,6 +587,7 @@
         <span class="ident">swarm</span>: <span class="ident">Swarm</span><span class="op">&lt;</span><span class="ident">Behavior</span><span class="op">&gt;</span>,
         <span class="ident">shared_weak</span>: <span class="ident">Weak</span><span class="op">&lt;</span><span class="ident">Shared</span><span class="op">&gt;</span>,
         <span class="ident">initial_random_query_interval</span>: <span class="ident">Duration</span>,
+        <span class="ident">networking_parameters_registry</span>: <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">NetworkingParametersRegistry</span><span class="op">&gt;</span>,
     ) -&gt; <span class="self">Self</span> {
         <span class="self">Self</span> {
             <span class="ident">allow_non_globals_in_dht</span>,
@@ -578,6 +601,7 @@
             <span class="ident">topic_subscription_senders</span>: <span class="ident">HashMap::default</span>(),
             <span class="comment">// We&#39;ll make the first query right away and continue at the interval.</span>
             <span class="ident">random_query_timeout</span>: <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="ident">Duration::from_secs</span>(<span class="number">0</span>)).<span class="ident">fuse</span>()),
+            <span class="ident">networking_parameters_registry</span>,
         }
     }
 
@@ -587,8 +611,10 @@
                 <span class="kw">_</span> <span class="op">=</span> <span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">random_query_timeout</span> =&gt; {
                     <span class="self">self</span>.<span class="ident">handle_random_query_interval</span>();
                     <span class="comment">// Increase interval 2x, but to at most 60 seconds.</span>
-                    <span class="self">self</span>.<span class="ident">random_query_timeout</span> <span class="op">=</span> <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="self">self</span>.<span class="ident">next_random_query_interval</span>).<span class="ident">fuse</span>());
-                    <span class="self">self</span>.<span class="ident">next_random_query_interval</span> <span class="op">=</span> (<span class="self">self</span>.<span class="ident">next_random_query_interval</span> <span class="op">*</span> <span class="number">2</span>).<span class="ident">min</span>(<span class="ident">Duration::from_secs</span>(<span class="number">60</span>));
+                    <span class="self">self</span>.<span class="ident">random_query_timeout</span> <span class="op">=</span>
+                        <span class="ident">Box::pin</span>(<span class="ident">tokio::time::sleep</span>(<span class="self">self</span>.<span class="ident">next_random_query_interval</span>).<span class="ident">fuse</span>());
+                    <span class="self">self</span>.<span class="ident">next_random_query_interval</span> <span class="op">=</span>
+                        (<span class="self">self</span>.<span class="ident">next_random_query_interval</span> <span class="op">*</span> <span class="number">2</span>).<span class="ident">min</span>(<span class="ident">Duration::from_secs</span>(<span class="number">60</span>));
                 },
                 <span class="ident">swarm_event</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">swarm</span>.<span class="ident">next</span>() =&gt; {
                     <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">swarm_event</span>) <span class="op">=</span> <span class="ident">swarm_event</span> {
@@ -604,6 +630,9 @@
                         <span class="kw">break</span>;
                     }
                 },
+                <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">networking_parameters_registry</span>.<span class="ident">run</span>().<span class="ident">fuse</span>() =&gt; {
+                    <span class="macro">trace!</span>(<span class="string">&quot;Network parameters registry runner exited.&quot;</span>)
+                }
             }
         }
     }
@@ -661,6 +690,7 @@
             <span class="ident">SwarmEvent::ConnectionEstablished</span> {
                 <span class="ident">peer_id</span>,
                 <span class="ident">num_established</span>,
+                <span class="ident">endpoint</span>,
                 ..
             } =&gt; {
                 <span class="kw">let</span> <span class="ident">shared</span> <span class="op">=</span> <span class="kw">match</span> <span class="self">self</span>.<span class="ident">shared_weak</span>.<span class="ident">upgrade</span>() {
@@ -671,6 +701,12 @@
                 };
                 <span class="macro">debug!</span>(<span class="string">&quot;Connection established with peer {peer_id} [{num_established} from peer]&quot;</span>);
                 <span class="ident">shared</span>.<span class="ident">connected_peers_count</span>.<span class="ident">fetch_add</span>(<span class="number">1</span>, <span class="ident">Ordering::SeqCst</span>);
+
+                <span class="kw">if</span> <span class="kw">let</span> <span class="ident">ConnectedPoint::Dialer</span> { <span class="ident">address</span>, .. } <span class="op">=</span> <span class="ident">endpoint</span> {
+                    <span class="self">self</span>.<span class="ident">networking_parameters_registry</span>
+                        .<span class="ident">add_known_peer</span>(<span class="ident">peer_id</span>, <span class="macro">vec!</span>[<span class="ident">address</span>])
+                        .<span class="kw">await</span>;
+                }
             }
             <span class="ident">SwarmEvent::ConnectionClosed</span> {
                 <span class="ident">peer_id</span>,

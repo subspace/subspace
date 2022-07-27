@@ -306,7 +306,30 @@
 <span id="300">300</span>
 <span id="301">301</span>
 <span id="302">302</span>
+<span id="303">303</span>
+<span id="304">304</span>
+<span id="305">305</span>
+<span id="306">306</span>
+<span id="307">307</span>
+<span id="308">308</span>
+<span id="309">309</span>
+<span id="310">310</span>
+<span id="311">311</span>
+<span id="312">312</span>
+<span id="313">313</span>
+<span id="314">314</span>
+<span id="315">315</span>
+<span id="316">316</span>
+<span id="317">317</span>
+<span id="318">318</span>
+<span id="319">319</span>
+<span id="320">320</span>
+<span id="321">321</span>
+<span id="322">322</span>
 </pre><pre class="rust"><code><span class="kw">pub</span> <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::custom_record_store::ValueGetter</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::persistent_parameters</span>::{
+    <span class="ident">NetworkingParametersRegistry</span>, <span class="ident">NetworkingParametersRegistryStub</span>,
+};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">BehaviorConfig</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::node</span>::{<span class="ident">CircuitRelayClientError</span>, <span class="ident">Node</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::node_runner::NodeRunner</span>;
@@ -335,10 +358,12 @@
 <span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">fmt</span>, <span class="ident">io</span>};
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::crypto</span>;
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
-<span class="kw">use</span> <span class="ident">tracing::info</span>;
+<span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">info</span>, <span class="ident">trace</span>};
 
 <span class="kw">const</span> <span class="ident">KADEMLIA_PROTOCOL</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>] <span class="op">=</span> <span class="string">b&quot;/subspace/kad/0.1.0&quot;</span>;
-<span class="kw">const</span> <span class="ident">GOSSIPSUB_PROTOCOL</span>: <span class="kw-2">&amp;</span><span class="ident">str</span> <span class="op">=</span> <span class="string">&quot;/subspace/gossipsub/0.1.0&quot;</span>;
+<span class="kw">const</span> <span class="ident">GOSSIPSUB_PROTOCOL_PREFIX</span>: <span class="kw-2">&amp;</span><span class="ident">str</span> <span class="op">=</span> <span class="string">&quot;subspace/gossipsub&quot;</span>;
+<span class="comment">// Max bootstrap addresses to preload.</span>
+<span class="kw">const</span> <span class="ident">INITIAL_BOOTSTRAP_ADDRESS_NUMBER</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">100</span>;
 
 <span class="doccomment">/// [`Node`] configuration.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Clone</span>)]</span>
@@ -377,6 +402,8 @@
     <span class="doccomment">/// This is needed to ensure relay server doesn&#39;t stop, cutting this node from ability to</span>
     <span class="doccomment">/// receive incoming connections.</span>
     <span class="kw">pub</span> <span class="ident">parent_node</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Node</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// A reference to the `NetworkingParametersRegistry` implementation.</span>
+    <span class="kw">pub</span> <span class="ident">networking_parameters_registry</span>: <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">NetworkingParametersRegistry</span><span class="op">&gt;</span>,
     <span class="doccomment">/// The configuration for the `RequestResponsesBehaviour` protocol.</span>
     <span class="kw">pub</span> <span class="ident">request_response_protocols</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">RequestHandler</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
@@ -406,7 +433,7 @@
         <span class="ident">yamux_config</span>.<span class="ident">set_window_update_mode</span>(<span class="ident">WindowUpdateMode::on_read</span>());
 
         <span class="kw">let</span> <span class="ident">gossipsub</span> <span class="op">=</span> <span class="ident">GossipsubConfigBuilder::default</span>()
-            .<span class="ident">protocol_id_prefix</span>(<span class="ident">GOSSIPSUB_PROTOCOL</span>)
+            .<span class="ident">protocol_id_prefix</span>(<span class="ident">GOSSIPSUB_PROTOCOL_PREFIX</span>)
             <span class="comment">// TODO: Do we want message signing?</span>
             .<span class="ident">validation_mode</span>(<span class="ident">ValidationMode::None</span>)
             <span class="comment">// To content-address message, we can take the hash of message and use it as an ID.</span>
@@ -436,6 +463,7 @@
             <span class="ident">initial_random_query_interval</span>: <span class="ident">Duration::from_secs</span>(<span class="number">1</span>),
             <span class="ident">relay_server_address</span>: <span class="prelude-val">None</span>,
             <span class="ident">parent_node</span>: <span class="prelude-val">None</span>,
+            <span class="ident">networking_parameters_registry</span>: <span class="ident">Box::new</span>(<span class="ident">NetworkingParametersRegistryStub</span>),
             <span class="ident">request_response_protocols</span>: <span class="ident">Vec::new</span>(),
         }
     }
@@ -475,41 +503,52 @@
         <span class="ident">initial_random_query_interval</span>,
         <span class="ident">relay_server_address</span>,
         <span class="ident">parent_node</span>,
+        <span class="ident">networking_parameters_registry</span>,
         <span class="ident">request_response_protocols</span>,
     } <span class="op">=</span> <span class="ident">config</span>;
     <span class="kw">let</span> <span class="ident">local_peer_id</span> <span class="op">=</span> <span class="ident">keypair</span>.<span class="ident">public</span>().<span class="ident">to_peer_id</span>();
-
     <span class="comment">// Create relay client transport and client.</span>
     <span class="kw">let</span> (<span class="ident">relay_transport</span>, <span class="ident">relay_client</span>) <span class="op">=</span> <span class="ident">RelayClient::new_transport_and_behaviour</span>(<span class="ident">local_peer_id</span>);
 
     <span class="kw">let</span> <span class="ident">transport</span> <span class="op">=</span> <span class="ident">build_transport</span>(<span class="kw-2">&amp;</span><span class="ident">keypair</span>, <span class="ident">timeout</span>, <span class="ident">yamux_config</span>, <span class="ident">relay_transport</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
+    <span class="comment">// We take cached known addresses and combine them with manually provided bootstrap addresses</span>
+    <span class="comment">// with a limit.</span>
+    <span class="kw">let</span> <span class="ident">combined_bootstrap_addresses</span> <span class="op">=</span> <span class="ident">bootstrap_nodes</span>
+        .<span class="ident">into_iter</span>()
+        <span class="comment">// Remove `/p2p/QmFoo` from the end of multiaddr and store separately in a tuple</span>
+        .<span class="ident">map</span>(<span class="op">|</span><span class="kw-2">mut</span> <span class="ident">multiaddr</span><span class="op">|</span> {
+            <span class="kw">let</span> <span class="ident">peer_id</span>: <span class="ident">PeerId</span> <span class="op">=</span> <span class="ident">multiaddr</span>
+                .<span class="ident">pop</span>()
+                .<span class="ident">and_then</span>(<span class="op">|</span><span class="ident">protocol</span><span class="op">|</span> {
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="ident">Protocol::P2p</span>(<span class="ident">peer_id</span>) <span class="op">=</span> <span class="ident">protocol</span> {
+                        <span class="prelude-val">Some</span>(<span class="ident">peer_id</span>.<span class="ident">try_into</span>().<span class="ident">ok</span>()<span class="question-mark">?</span>)
+                    } <span class="kw">else</span> {
+                        <span class="prelude-val">None</span>
+                    }
+                })
+                .<span class="ident">ok_or</span>(<span class="ident">CreationError::BadBootstrapAddress</span>)<span class="question-mark">?</span>;
+
+            <span class="prelude-val">Ok</span>((<span class="ident">peer_id</span>, <span class="ident">multiaddr</span>))
+        })
+        .<span class="ident">chain</span>(
+            <span class="ident">networking_parameters_registry</span>
+                .<span class="ident">known_addresses</span>(<span class="ident">INITIAL_BOOTSTRAP_ADDRESS_NUMBER</span>)
+                .<span class="kw">await</span>
+                .<span class="ident">into_iter</span>()
+                .<span class="ident">map</span>(<span class="prelude-val">Ok</span>),
+        )
+        .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="kw">_</span>, <span class="ident">CreationError</span><span class="op">&gt;</span><span class="op">&gt;</span>()<span class="question-mark">?</span>;
+
+    <span class="macro">trace!</span>(<span class="ident">peer_id</span><span class="op">=</span><span class="question-mark">?</span><span class="ident">local_peer_id</span>, <span class="string">&quot;Combined bootstrap addresses: {:?}&quot;</span>, <span class="ident">combined_bootstrap_addresses</span>);
+
     <span class="comment">// libp2p uses blocking API, hence we need to create a blocking task.</span>
     <span class="kw">let</span> <span class="ident">create_swarm_fut</span> <span class="op">=</span> <span class="ident">tokio::task::spawn_blocking</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
-        <span class="comment">// Remove `/p2p/QmFoo` from the end of multiaddr and store separately in a tuple</span>
-        <span class="kw">let</span> <span class="ident">bootstrap_nodes</span> <span class="op">=</span> <span class="ident">bootstrap_nodes</span>
-            .<span class="ident">into_iter</span>()
-            .<span class="ident">map</span>(<span class="op">|</span><span class="kw-2">mut</span> <span class="ident">multiaddr</span><span class="op">|</span> {
-                <span class="kw">let</span> <span class="ident">peer_id</span>: <span class="ident">PeerId</span> <span class="op">=</span> <span class="ident">multiaddr</span>
-                    .<span class="ident">pop</span>()
-                    .<span class="ident">and_then</span>(<span class="op">|</span><span class="ident">protocol</span><span class="op">|</span> {
-                        <span class="kw">if</span> <span class="kw">let</span> <span class="ident">Protocol::P2p</span>(<span class="ident">peer_id</span>) <span class="op">=</span> <span class="ident">protocol</span> {
-                            <span class="prelude-val">Some</span>(<span class="ident">peer_id</span>.<span class="ident">try_into</span>().<span class="ident">ok</span>()<span class="question-mark">?</span>)
-                        } <span class="kw">else</span> {
-                            <span class="prelude-val">None</span>
-                        }
-                    })
-                    .<span class="ident">ok_or</span>(<span class="ident">CreationError::BadBootstrapAddress</span>)<span class="question-mark">?</span>;
-
-                <span class="prelude-val">Ok</span>((<span class="ident">peer_id</span>, <span class="ident">multiaddr</span>))
-            })
-            .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="kw">_</span>, <span class="ident">CreationError</span><span class="op">&gt;</span><span class="op">&gt;</span>()<span class="question-mark">?</span>;
-
         <span class="kw">let</span> <span class="ident">is_relay_server</span> <span class="op">=</span> <span class="op">!</span><span class="ident">listen_on</span>.<span class="ident">is_empty</span>() <span class="op">&amp;&amp;</span> <span class="ident">relay_server_address</span>.<span class="ident">is_none</span>();
 
         <span class="kw">let</span> <span class="ident">behaviour</span> <span class="op">=</span> <span class="ident">Behavior::new</span>(<span class="ident">BehaviorConfig</span> {
             <span class="ident">peer_id</span>: <span class="ident">local_peer_id</span>,
-            <span class="ident">bootstrap_nodes</span>,
+            <span class="ident">bootstrap_nodes</span>: <span class="ident">combined_bootstrap_addresses</span>,
             <span class="ident">identify</span>,
             <span class="ident">kademlia</span>,
             <span class="ident">gossipsub</span>,
@@ -565,6 +604,7 @@
             <span class="ident">swarm</span>,
             <span class="ident">shared_weak</span>,
             <span class="ident">initial_random_query_interval</span>,
+            <span class="ident">networking_parameters_registry</span>,
         );
 
         <span class="prelude-val">Ok</span>((<span class="ident">node</span>, <span class="ident">node_runner</span>))
