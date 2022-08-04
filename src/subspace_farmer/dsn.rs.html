@@ -273,7 +273,14 @@
 <span id="267">267</span>
 <span id="268">268</span>
 <span id="269">269</span>
-</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">SinkExt</span>, <span class="ident">Stream</span>, <span class="ident">StreamExt</span>};
+<span id="270">270</span>
+<span id="271">271</span>
+<span id="272">272</span>
+<span id="273">273</span>
+<span id="274">274</span>
+<span id="275">275</span>
+</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">async_trait::async_trait</span>;
+<span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">SinkExt</span>, <span class="ident">Stream</span>, <span class="ident">StreamExt</span>};
 <span class="kw">use</span> <span class="ident">num_traits</span>::{<span class="ident">WrappingAdd</span>, <span class="ident">WrappingSub</span>};
 <span class="kw">use</span> <span class="ident">std::ops::Range</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
@@ -281,7 +288,7 @@
 };
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::core::multihash</span>::{<span class="ident">Code</span>, <span class="ident">MultihashDigest</span>};
 <span class="kw">use</span> <span class="ident">subspace_networking</span>::{<span class="ident">PiecesByRangeRequest</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>};
-<span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
+<span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
 
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">pieces_by_range_tests</span>;
@@ -437,16 +444,23 @@
     }
 }
 
+<span class="doccomment">/// Defines actions on receiving the pieces during the sync process.</span>
+<span class="attribute">#[<span class="ident">async_trait</span>]</span>
+<span class="kw">pub</span> <span class="kw">trait</span> <span class="ident">OnSync</span> {
+    <span class="doccomment">/// Defines a callback on receiving pieces.</span>
+    <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">on_pieces</span>(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="ident">pieces</span>: <span class="ident">FlatPieces</span>,
+        <span class="ident">piece_indices</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span>,
+    ) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span>;
+}
+
 <span class="doccomment">/// Syncs the closest pieces to the public key from the provided DSN.</span>
-<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">sync</span><span class="op">&lt;</span><span class="ident">DSN</span>, <span class="ident">OP</span><span class="op">&gt;</span>(
-    <span class="kw-2">mut</span> <span class="ident">dsn</span>: <span class="ident">DSN</span>,
-    <span class="ident">options</span>: <span class="ident">SyncOptions</span>,
-    <span class="kw-2">mut</span> <span class="ident">on_pieces</span>: <span class="ident">OP</span>,
-) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span>
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">sync</span><span class="op">&lt;</span><span class="ident">DSN</span>, <span class="ident">OP</span><span class="op">&gt;</span>(<span class="kw-2">mut</span> <span class="ident">dsn</span>: <span class="ident">DSN</span>, <span class="ident">options</span>: <span class="ident">SyncOptions</span>, <span class="ident">on_sync</span>: <span class="ident">OP</span>) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">DSN</span>: <span class="ident">DSNSync</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sized</span>,
     <span class="ident">DSN::Stream</span>: <span class="ident">Unpin</span> <span class="op">+</span> <span class="ident">Send</span>,
-    <span class="ident">OP</span>: <span class="ident">FnMut</span>(<span class="ident">FlatPieces</span>, <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">PieceIndex</span><span class="op">&gt;</span>) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="ident">OP</span>: <span class="ident">OnSync</span>,
 {
     <span class="kw">let</span> <span class="ident">SyncOptions</span> {
         <span class="ident">max_plot_size</span>,
@@ -507,11 +521,12 @@
     <span class="kw">for</span> (<span class="ident">start</span>, <span class="ident">end</span>) <span class="kw">in</span> <span class="ident">sync_ranges</span> {
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">stream</span> <span class="op">=</span> <span class="ident">dsn</span>.<span class="ident">get_pieces</span>(<span class="ident">start</span>.<span class="ident">into</span>()..<span class="ident">end</span>.<span class="ident">into</span>()).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">PiecesToPlot</span> {
-            <span class="ident">piece_indexes</span>,
-            <span class="ident">pieces</span>,
-        }) <span class="op">=</span> <span class="ident">stream</span>.<span class="ident">next</span>().<span class="kw">await</span>
-        {
+        <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">pieces_to_plot</span>) <span class="op">=</span> <span class="ident">stream</span>.<span class="ident">next</span>().<span class="kw">await</span> {
+            <span class="kw">let</span> <span class="ident">PiecesToPlot</span> {
+                <span class="ident">piece_indexes</span>,
+                <span class="ident">pieces</span>,
+            } <span class="op">=</span> <span class="ident">pieces_to_plot</span>;
+
             <span class="comment">// Filter out pieces which are not in our range</span>
             <span class="kw">let</span> (<span class="ident">piece_indexes</span>, <span class="ident">pieces</span>) <span class="op">=</span> <span class="ident">piece_indexes</span>
                 .<span class="ident">into_iter</span>()
@@ -531,12 +546,9 @@
                 })
                 .<span class="ident">unzip</span>();
 
-            <span class="comment">// Writing pieces is usually synchronous, therefore might take some time</span>
-            <span class="ident">on_pieces</span> <span class="op">=</span> <span class="ident">tokio::task::spawn_blocking</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
-                <span class="ident">on_pieces</span>(<span class="ident">pieces</span>, <span class="ident">piece_indexes</span>).<span class="ident">map</span>(<span class="op">|</span>()<span class="op">|</span> <span class="ident">on_pieces</span>)
-            })
-            .<span class="kw">await</span>
-            .<span class="ident">expect</span>(<span class="string">&quot;`on_pieces` must never panic&quot;</span>)<span class="question-mark">?</span>;
+            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">err</span>) <span class="op">=</span> <span class="ident">on_sync</span>.<span class="ident">on_pieces</span>(<span class="ident">pieces</span>, <span class="ident">piece_indexes</span>).<span class="kw">await</span> {
+                <span class="macro">error!</span>(<span class="op">%</span><span class="ident">err</span>, <span class="string">&quot;DSN sync process returned an error&quot;</span>);
+            }
         }
     }
 
