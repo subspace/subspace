@@ -404,10 +404,6 @@
 <span id="398">398</span>
 <span id="399">399</span>
 <span id="400">400</span>
-<span id="401">401</span>
-<span id="402">402</span>
-<span id="403">403</span>
-<span id="404">404</span>
 </pre><pre class="rust"><code><span class="kw">mod</span> <span class="ident">piece_index_hash_to_offset_db</span>;
 <span class="kw">mod</span> <span class="ident">piece_offset_to_index_db</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
@@ -417,6 +413,7 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::file_ext::FileExt</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::plot::worker</span>::{<span class="ident">PlotWorker</span>, <span class="ident">Request</span>, <span class="ident">RequestPriority</span>, <span class="ident">RequestWithPriority</span>, <span class="ident">WriteResult</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_plot_farm::SinglePlotFarmId</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::JoinOnDrop</span>;
 <span class="kw">use</span> <span class="ident">event_listener_primitives</span>::{<span class="ident">Bag</span>, <span class="ident">HandlerId</span>};
 <span class="kw">use</span> <span class="ident">std::fs</span>::{<span class="ident">File</span>, <span class="ident">OpenOptions</span>};
 <span class="kw">use</span> <span class="ident">std::ops::RangeInclusive</span>;
@@ -486,23 +483,16 @@
     <span class="ident">handlers</span>: <span class="ident">Handlers</span>,
     <span class="ident">requests_sender</span>: <span class="ident">mpsc::SyncSender</span><span class="op">&lt;</span><span class="ident">RequestWithPriority</span><span class="op">&gt;</span>,
     <span class="ident">piece_count</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">AtomicU64</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Only present to make sure background thread is joined on drop</span>
+    <span class="ident">_worker_thread</span>: <span class="ident">JoinOnDrop</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">Drop</span> <span class="kw">for</span> <span class="ident">Inner</span> {
     <span class="kw">fn</span> <span class="ident">drop</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
-        <span class="kw">let</span> (<span class="ident">result_sender</span>, <span class="ident">result_receiver</span>) <span class="op">=</span> <span class="ident">mpsc::channel</span>();
-
-        <span class="kw">if</span> <span class="self">self</span>
-            .<span class="ident">requests_sender</span>
-            .<span class="ident">send</span>(<span class="ident">RequestWithPriority</span> {
-                <span class="ident">request</span>: <span class="ident">Request::Exit</span> { <span class="ident">result_sender</span> },
-                <span class="ident">priority</span>: <span class="ident">RequestPriority::Low</span>,
-            })
-            .<span class="ident">is_ok</span>()
-        {
-            <span class="comment">// We don&#39;t care why this returns</span>
-            <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">result_receiver</span>.<span class="ident">recv</span>();
-        }
+        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">requests_sender</span>.<span class="ident">send</span>(<span class="ident">RequestWithPriority</span> {
+            <span class="ident">request</span>: <span class="ident">Request::Exit</span>,
+            <span class="ident">priority</span>: <span class="ident">RequestPriority::Low</span>,
+        });
     }
 }
 
@@ -581,19 +571,21 @@
         <span class="kw">let</span> <span class="ident">piece_count</span> <span class="op">=</span> <span class="ident">Arc::clone</span>(<span class="ident">plot_worker</span>.<span class="ident">piece_count</span>());
 
         <span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">Span::current</span>();
-        <span class="ident">thread::Builder::new</span>()
+        <span class="kw">let</span> <span class="ident">worker_thread</span> <span class="op">=</span> <span class="ident">thread::Builder::new</span>()
             .<span class="ident">name</span>(<span class="macro">format!</span>(<span class="string">&quot;plot-worker-{single_plot_farm_id}&quot;</span>))
             .<span class="ident">spawn</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
                 <span class="kw">let</span> <span class="ident">_guard</span> <span class="op">=</span> <span class="ident">span</span>.<span class="ident">enter</span>();
 
                 <span class="ident">plot_worker</span>.<span class="ident">run</span>(<span class="ident">requests_receiver</span>);
             })
+            .<span class="ident">map</span>(<span class="ident">JoinOnDrop::new</span>)
             .<span class="ident">map_err</span>(<span class="ident">PlotError::WorkerSpawn</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let</span> <span class="ident">inner</span> <span class="op">=</span> <span class="ident">Inner</span> {
             <span class="ident">handlers</span>: <span class="ident">Handlers::default</span>(),
             <span class="ident">requests_sender</span>,
             <span class="ident">piece_count</span>,
+            <span class="ident">_worker_thread</span>: <span class="ident">worker_thread</span>,
         };
 
         <span class="prelude-val">Ok</span>(<span class="ident">Plot</span> {

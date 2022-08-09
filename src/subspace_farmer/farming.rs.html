@@ -376,6 +376,41 @@
 <span id="370">370</span>
 <span id="371">371</span>
 <span id="372">372</span>
+<span id="373">373</span>
+<span id="374">374</span>
+<span id="375">375</span>
+<span id="376">376</span>
+<span id="377">377</span>
+<span id="378">378</span>
+<span id="379">379</span>
+<span id="380">380</span>
+<span id="381">381</span>
+<span id="382">382</span>
+<span id="383">383</span>
+<span id="384">384</span>
+<span id="385">385</span>
+<span id="386">386</span>
+<span id="387">387</span>
+<span id="388">388</span>
+<span id="389">389</span>
+<span id="390">390</span>
+<span id="391">391</span>
+<span id="392">392</span>
+<span id="393">393</span>
+<span id="394">394</span>
+<span id="395">395</span>
+<span id="396">396</span>
+<span id="397">397</span>
+<span id="398">398</span>
+<span id="399">399</span>
+<span id="400">400</span>
+<span id="401">401</span>
+<span id="402">402</span>
+<span id="403">403</span>
+<span id="404">404</span>
+<span id="405">405</span>
+<span id="406">406</span>
+<span id="407">407</span>
 </pre><pre class="rust"><code><span class="doccomment">//! A farming process, that is interruptable (via dropping it)</span>
 <span class="doccomment">//! and possible to wait on (custom `wait` method)</span>
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
@@ -387,10 +422,13 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_disk_farm::SingleDiskSemaphore</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_plot_farm::SinglePlotFarmId</span>;
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::AbortingJoinHandle</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils</span>::{<span class="ident">CallOnDrop</span>, <span class="ident">JoinOnDrop</span>};
 <span class="kw">use</span> <span class="ident">futures::future</span>::{<span class="ident">Fuse</span>, <span class="ident">FusedFuture</span>};
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">FutureExt</span>, <span class="ident">StreamExt</span>};
-<span class="kw">use</span> <span class="ident">std::sync::mpsc</span>;
+<span class="kw">use</span> <span class="ident">std::future::Future</span>;
+<span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
+<span class="kw">use</span> <span class="ident">std::sync::atomic</span>::{<span class="ident">AtomicBool</span>, <span class="ident">Ordering</span>};
+<span class="kw">use</span> <span class="ident">std::sync</span>::{<span class="ident">mpsc</span>, <span class="ident">Arc</span>};
 <span class="kw">use</span> <span class="ident">std::thread</span>;
 <span class="kw">use</span> <span class="ident">std::time::Instant</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">PublicKey</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>};
@@ -407,11 +445,11 @@
 <span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">FarmingError</span> {
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;jsonrpsee error: {0}&quot;</span>)]</span>
     <span class="ident">RpcError</span>(<span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">std::error::Error</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span><span class="op">&gt;</span>),
-    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Error joining task: {0}&quot;</span>)]</span>
-    <span class="ident">JoinTask</span>(<span class="ident">tokio::task::JoinError</span>),
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Plot read error: {0}&quot;</span>)]</span>
     <span class="ident">PlotRead</span>(<span class="ident">std::io::Error</span>),
 }
+
+<span class="kw">type</span> <span class="ident">FarmingFut</span> <span class="op">=</span> <span class="ident">Pin</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">Future</span><span class="op">&lt;</span><span class="ident">Output</span> <span class="op">=</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span><span class="op">&gt;</span><span class="op">&gt;</span>;
 
 <span class="doccomment">/// `Farming` structure is an abstraction of the farming process for a single replica plot farming.</span>
 <span class="doccomment">///</span>
@@ -419,14 +457,15 @@
 <span class="doccomment">///</span>
 <span class="doccomment">/// At high level it receives a new challenge from the consensus and tries to find solution for it</span>
 <span class="doccomment">/// in its `Commitments` database.</span>
+<span class="attribute">#[<span class="ident">must_use</span> <span class="op">=</span> <span class="string">&quot;doesn&#39;t do anything unless `.wait()` method is called&quot;</span>]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Farming</span> {
-    <span class="ident">handle</span>: <span class="ident">Fuse</span><span class="op">&lt;</span><span class="ident">AbortingJoinHandle</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">farming_fut</span>: <span class="ident">Fuse</span><span class="op">&lt;</span><span class="ident">FarmingFut</span><span class="op">&gt;</span>,
 }
 
 <span class="doccomment">/// Assumes `plot`, `commitment`, `client` and `identity` are already initialized</span>
 <span class="kw">impl</span> <span class="ident">Farming</span> {
-    <span class="doccomment">/// Returns an instance of farming, and also starts a concurrent background farming task</span>
-    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">start</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span>(
+    <span class="doccomment">/// Create new farming instance</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span>(
         <span class="ident">single_plot_farm_id</span>: <span class="ident">SinglePlotFarmId</span>,
         <span class="ident">plot</span>: <span class="ident">Plot</span>,
         <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
@@ -435,14 +474,10 @@
         <span class="ident">identity</span>: <span class="ident">Identity</span>,
         <span class="ident">reward_address</span>: <span class="ident">PublicKey</span>,
     ) -&gt; <span class="self">Self</span> {
-        <span class="kw">let</span> (<span class="ident">initialized_sender</span>, <span class="ident">initialized_receiver</span>) <span class="op">=</span> <span class="ident">async_oneshot::oneshot</span>();
-
-        <span class="comment">// Get a handle for the background task, so that we can wait on it later if we want to</span>
-        <span class="kw">let</span> <span class="ident">farming_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(
+        <span class="kw">let</span> <span class="ident">farming_fut</span>: <span class="ident">FarmingFut</span> <span class="op">=</span> <span class="ident">Box::pin</span>(
             <span class="kw">async</span> <span class="kw">move</span> {
                 <span class="ident">subscribe_to_slot_info</span>(
                     <span class="ident">single_plot_farm_id</span>,
-                    <span class="ident">initialized_sender</span>,
                     <span class="kw-2">&amp;</span><span class="ident">client</span>,
                     <span class="kw-2">&amp;</span><span class="ident">plot</span>,
                     <span class="kw-2">&amp;</span><span class="ident">commitments</span>,
@@ -455,20 +490,17 @@
             .<span class="ident">in_current_span</span>(),
         );
 
-        <span class="comment">// Wait for initialization to finish, result doesn&#39;t matter here</span>
-        <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">initialized_receiver</span>.<span class="kw">await</span>;
-
         <span class="ident">Farming</span> {
-            <span class="ident">handle</span>: <span class="ident">AbortingJoinHandle::new</span>(<span class="ident">farming_handle</span>).<span class="ident">fuse</span>(),
+            <span class="ident">farming_fut</span>: <span class="ident">farming_fut</span>.<span class="ident">fuse</span>(),
         }
     }
 
     <span class="doccomment">/// Waits for the background farming to finish</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">wait</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">FarmingError</span><span class="op">&gt;</span> {
-        <span class="kw">if</span> <span class="self">self</span>.<span class="ident">handle</span>.<span class="ident">is_terminated</span>() {
+        <span class="kw">if</span> <span class="self">self</span>.<span class="ident">farming_fut</span>.<span class="ident">is_terminated</span>() {
             <span class="kw">return</span> <span class="prelude-val">Ok</span>(());
         }
-        (<span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">handle</span>).<span class="kw">await</span>.<span class="ident">map_err</span>(<span class="ident">FarmingError::JoinTask</span>)<span class="question-mark">?</span>
+        (<span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">farming_fut</span>).<span class="kw">await</span>
     }
 }
 
@@ -483,7 +515,6 @@
 <span class="attribute">#[<span class="ident">allow</span>(<span class="ident">clippy::too_many_arguments</span>)]</span>
 <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">subscribe_to_slot_info</span><span class="op">&lt;</span><span class="ident">T</span>: <span class="ident">RpcClient</span><span class="op">&gt;</span>(
     <span class="ident">single_plot_farm_id</span>: <span class="ident">SinglePlotFarmId</span>,
-    <span class="kw-2">mut</span> <span class="ident">initialized_sender</span>: <span class="ident">async_oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>,
     <span class="ident">client</span>: <span class="kw-2">&amp;</span><span class="ident">T</span>,
     <span class="ident">plot</span>: <span class="kw-2">&amp;</span><span class="ident">Plot</span>,
     <span class="ident">commitments</span>: <span class="kw-2">&amp;</span><span class="ident">Commitments</span>,
@@ -502,11 +533,7 @@
         .<span class="kw">await</span>
         .<span class="ident">map_err</span>(<span class="ident">FarmingError::RpcError</span>)<span class="question-mark">?</span>;
 
-    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">_closed</span>) <span class="op">=</span> <span class="ident">initialized_sender</span>.<span class="ident">send</span>(()) {
-        <span class="kw">return</span> <span class="prelude-val">Ok</span>(());
-    }
-
-    <span class="kw">let</span> <span class="ident">_reward_signing_task</span> <span class="op">=</span> <span class="ident">AbortingJoinHandle::new</span>(<span class="ident">tokio::spawn</span>({
+    <span class="kw">let</span> <span class="ident">reward_signing_fut</span> <span class="op">=</span> {
         <span class="kw">let</span> <span class="ident">identity</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">clone</span>();
         <span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">clone</span>();
 
@@ -540,112 +567,139 @@
                     }
                 }
             }
+
+            <span class="prelude-val">Ok</span>(())
         }
-        .<span class="ident">in_current_span</span>()
-    }));
+    };
 
-    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">salts</span> <span class="op">=</span> <span class="ident">Salts::default</span>();
-
-    <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">slot_info</span>) <span class="op">=</span> <span class="ident">slot_info_notifications</span>.<span class="ident">next</span>().<span class="kw">await</span> {
-        <span class="macro">debug!</span>(<span class="question-mark">?</span><span class="ident">slot_info</span>, <span class="string">&quot;New slot&quot;</span>);
-
-        <span class="ident">update_commitments</span>(
-            <span class="ident">single_plot_farm_id</span>,
-            <span class="ident">plot</span>,
-            <span class="ident">commitments</span>,
-            <span class="kw-2">&amp;mut</span> <span class="ident">salts</span>,
-            <span class="kw-2">&amp;</span><span class="ident">slot_info</span>,
-            <span class="kw-2">&amp;</span><span class="ident">single_disk_semaphore</span>,
-        );
-
-        <span class="kw">let</span> <span class="ident">maybe_solution_handle</span> <span class="op">=</span> <span class="ident">tokio::task::spawn_blocking</span>({
-            <span class="kw">let</span> <span class="ident">identity</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">clone</span>();
-            <span class="kw">let</span> <span class="ident">commitments</span> <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">clone</span>();
-            <span class="kw">let</span> <span class="ident">plot</span> <span class="op">=</span> <span class="ident">plot</span>.<span class="ident">clone</span>();
+    <span class="kw">let</span> <span class="ident">notification_handling_fut</span> <span class="op">=</span> <span class="kw">async</span> <span class="kw">move</span> {
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">salts</span> <span class="op">=</span> <span class="ident">Salts::default</span>();
+        <span class="kw">let</span> <span class="ident">dropped</span> <span class="op">=</span> <span class="ident">Arc::new</span>(<span class="ident">AtomicBool::new</span>(<span class="bool-val">false</span>));
+        <span class="comment">// It is important that `join_handles` comes before `_drop_guard` or else recommitments will</span>
+        <span class="comment">// not stop until fully done on drop</span>
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">join_handles</span> <span class="op">=</span> <span class="ident">Vec::with_capacity</span>(<span class="number">2</span>);
+        <span class="kw">let</span> <span class="ident">_drop_guard</span> <span class="op">=</span> <span class="ident">CallOnDrop::new</span>({
+            <span class="kw">let</span> <span class="ident">dropped</span> <span class="op">=</span> <span class="ident">Arc::clone</span>(<span class="kw-2">&amp;</span><span class="ident">dropped</span>);
 
             <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
-                <span class="kw">let</span> (<span class="ident">local_challenge</span>, <span class="ident">target</span>) <span class="op">=</span>
-                    <span class="ident">identity</span>.<span class="ident">derive_local_challenge_and_target</span>(<span class="ident">slot_info</span>.<span class="ident">global_challenge</span>);
-
-                <span class="comment">// Try to first find a block authoring solution, then if not found try to find a</span>
-                <span class="comment">// vote</span>
-                <span class="kw">let</span> <span class="ident">voting_tags</span> <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">find_by_range</span>(
-                    <span class="ident">target</span>,
-                    <span class="ident">slot_info</span>.<span class="ident">voting_solution_range</span>,
-                    <span class="ident">slot_info</span>.<span class="ident">salt</span>,
-                    <span class="ident">TAGS_SEARCH_LIMIT</span>,
-                );
-
-                <span class="kw">let</span> <span class="ident">maybe_tag</span> <span class="op">=</span> <span class="kw">if</span> <span class="ident">voting_tags</span>.<span class="ident">len</span>() <span class="op">&lt;</span> <span class="ident">TAGS_SEARCH_LIMIT</span> {
-                    <span class="comment">// We found all tags within voting solution range</span>
-                    <span class="ident">voting_tags</span>.<span class="ident">into_iter</span>().<span class="ident">next</span>()
-                } <span class="kw">else</span> {
-                    <span class="kw">let</span> (<span class="ident">tag</span>, <span class="ident">piece_offset</span>) <span class="op">=</span> <span class="ident">voting_tags</span>
-                        .<span class="ident">into_iter</span>()
-                        .<span class="ident">next</span>()
-                        .<span class="ident">expect</span>(<span class="string">&quot;Due to if condition vector is not empty; qed&quot;</span>);
-
-                    <span class="kw">if</span> <span class="ident">is_within_solution_range</span>(<span class="ident">target</span>, <span class="ident">tag</span>, <span class="ident">slot_info</span>.<span class="ident">solution_range</span>) {
-                        <span class="comment">// Found a tag within solution range for blocks</span>
-                        <span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>))
-                    } <span class="kw">else</span> {
-                        <span class="comment">// There might be something that is within solution range for blocks</span>
-                        <span class="ident">commitments</span>
-                            .<span class="ident">find_by_range</span>(
-                                <span class="ident">target</span>,
-                                <span class="ident">slot_info</span>.<span class="ident">solution_range</span>,
-                                <span class="ident">slot_info</span>.<span class="ident">salt</span>,
-                                <span class="ident">TAGS_SEARCH_LIMIT</span>,
-                            )
-                            .<span class="ident">into_iter</span>()
-                            .<span class="ident">next</span>()
-                            .<span class="ident">or</span>(<span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>)))
-                    }
-                };
-
-                <span class="kw">match</span> <span class="ident">maybe_tag</span> {
-                    <span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>)) =&gt; {
-                        <span class="kw">let</span> (<span class="ident">encoding</span>, <span class="ident">piece_index</span>) <span class="op">=</span> <span class="ident">plot</span>
-                            .<span class="ident">read_piece_with_index</span>(<span class="ident">piece_offset</span>)
-                            .<span class="ident">map_err</span>(<span class="ident">FarmingError::PlotRead</span>)<span class="question-mark">?</span>;
-                        <span class="kw">let</span> <span class="ident">solution</span> <span class="op">=</span> <span class="ident">Solution</span> {
-                            <span class="ident">public_key</span>: <span class="ident">identity</span>.<span class="ident">public_key</span>().<span class="ident">to_bytes</span>().<span class="ident">into</span>(),
-                            <span class="ident">reward_address</span>,
-                            <span class="ident">piece_index</span>,
-                            <span class="ident">encoding</span>,
-                            <span class="ident">tag_signature</span>: <span class="ident">identity</span>.<span class="ident">create_tag_signature</span>(<span class="ident">tag</span>),
-                            <span class="ident">local_challenge</span>,
-                            <span class="ident">tag</span>,
-                        };
-                        <span class="macro">debug!</span>(<span class="string">&quot;Solution found&quot;</span>);
-                        <span class="macro">trace!</span>(<span class="question-mark">?</span><span class="ident">solution</span>, <span class="string">&quot;Solution found&quot;</span>);
-
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">solution</span>))
-                    }
-                    <span class="prelude-val">None</span> =&gt; {
-                        <span class="macro">debug!</span>(<span class="string">&quot;Solution not found&quot;</span>);
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
-                    }
-                }
+                <span class="ident">dropped</span>.<span class="ident">store</span>(<span class="bool-val">true</span>, <span class="ident">Ordering::SeqCst</span>);
             }
         });
 
-        <span class="kw">let</span> <span class="ident">maybe_solution</span> <span class="op">=</span> <span class="ident">maybe_solution_handle</span>.<span class="kw">await</span>.<span class="ident">unwrap</span>()<span class="question-mark">?</span>;
+        <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">slot_info</span>) <span class="op">=</span> <span class="ident">slot_info_notifications</span>.<span class="ident">next</span>().<span class="kw">await</span> {
+            <span class="macro">debug!</span>(<span class="question-mark">?</span><span class="ident">slot_info</span>, <span class="string">&quot;New slot&quot;</span>);
 
-        <span class="ident">client</span>
-            .<span class="ident">submit_solution_response</span>(<span class="ident">SolutionResponse</span> {
-                <span class="ident">slot_number</span>: <span class="ident">slot_info</span>.<span class="ident">slot_number</span>,
-                <span class="ident">maybe_solution</span>,
-            })
-            .<span class="kw">await</span>
-            .<span class="ident">map_err</span>(<span class="ident">FarmingError::RpcError</span>)<span class="question-mark">?</span>;
-    }
+            <span class="ident">update_commitments</span>(
+                <span class="ident">single_plot_farm_id</span>,
+                <span class="ident">plot</span>,
+                <span class="ident">commitments</span>,
+                <span class="kw-2">&amp;mut</span> <span class="ident">salts</span>,
+                <span class="kw-2">&amp;</span><span class="ident">slot_info</span>,
+                <span class="kw-2">&amp;</span><span class="ident">single_disk_semaphore</span>,
+                <span class="kw-2">&amp;mut</span> <span class="ident">join_handles</span>,
+                <span class="kw-2">&amp;</span><span class="ident">dropped</span>,
+            );
+
+            <span class="kw">let</span> <span class="ident">maybe_solution_handle</span> <span class="op">=</span> <span class="ident">tokio::task::spawn_blocking</span>({
+                <span class="kw">let</span> <span class="ident">identity</span> <span class="op">=</span> <span class="ident">identity</span>.<span class="ident">clone</span>();
+                <span class="kw">let</span> <span class="ident">commitments</span> <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">clone</span>();
+                <span class="kw">let</span> <span class="ident">plot</span> <span class="op">=</span> <span class="ident">plot</span>.<span class="ident">clone</span>();
+
+                <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
+                    <span class="kw">let</span> (<span class="ident">local_challenge</span>, <span class="ident">target</span>) <span class="op">=</span>
+                        <span class="ident">identity</span>.<span class="ident">derive_local_challenge_and_target</span>(<span class="ident">slot_info</span>.<span class="ident">global_challenge</span>);
+
+                    <span class="comment">// Try to first find a block authoring solution, then if not found try to find a</span>
+                    <span class="comment">// vote</span>
+                    <span class="kw">let</span> <span class="ident">voting_tags</span> <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">find_by_range</span>(
+                        <span class="ident">target</span>,
+                        <span class="ident">slot_info</span>.<span class="ident">voting_solution_range</span>,
+                        <span class="ident">slot_info</span>.<span class="ident">salt</span>,
+                        <span class="ident">TAGS_SEARCH_LIMIT</span>,
+                    );
+
+                    <span class="kw">let</span> <span class="ident">maybe_tag</span> <span class="op">=</span> <span class="kw">if</span> <span class="ident">voting_tags</span>.<span class="ident">len</span>() <span class="op">&lt;</span> <span class="ident">TAGS_SEARCH_LIMIT</span> {
+                        <span class="comment">// We found all tags within voting solution range</span>
+                        <span class="ident">voting_tags</span>.<span class="ident">into_iter</span>().<span class="ident">next</span>()
+                    } <span class="kw">else</span> {
+                        <span class="kw">let</span> (<span class="ident">tag</span>, <span class="ident">piece_offset</span>) <span class="op">=</span> <span class="ident">voting_tags</span>
+                            .<span class="ident">into_iter</span>()
+                            .<span class="ident">next</span>()
+                            .<span class="ident">expect</span>(<span class="string">&quot;Due to if condition vector is not empty; qed&quot;</span>);
+
+                        <span class="kw">if</span> <span class="ident">is_within_solution_range</span>(<span class="ident">target</span>, <span class="ident">tag</span>, <span class="ident">slot_info</span>.<span class="ident">solution_range</span>) {
+                            <span class="comment">// Found a tag within solution range for blocks</span>
+                            <span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>))
+                        } <span class="kw">else</span> {
+                            <span class="comment">// There might be something that is within solution range for blocks</span>
+                            <span class="ident">commitments</span>
+                                .<span class="ident">find_by_range</span>(
+                                    <span class="ident">target</span>,
+                                    <span class="ident">slot_info</span>.<span class="ident">solution_range</span>,
+                                    <span class="ident">slot_info</span>.<span class="ident">salt</span>,
+                                    <span class="ident">TAGS_SEARCH_LIMIT</span>,
+                                )
+                                .<span class="ident">into_iter</span>()
+                                .<span class="ident">next</span>()
+                                .<span class="ident">or</span>(<span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>)))
+                        }
+                    };
+
+                    <span class="kw">match</span> <span class="ident">maybe_tag</span> {
+                        <span class="prelude-val">Some</span>((<span class="ident">tag</span>, <span class="ident">piece_offset</span>)) =&gt; {
+                            <span class="kw">let</span> (<span class="ident">encoding</span>, <span class="ident">piece_index</span>) <span class="op">=</span> <span class="ident">plot</span>
+                                .<span class="ident">read_piece_with_index</span>(<span class="ident">piece_offset</span>)
+                                .<span class="ident">map_err</span>(<span class="ident">FarmingError::PlotRead</span>)<span class="question-mark">?</span>;
+                            <span class="kw">let</span> <span class="ident">solution</span> <span class="op">=</span> <span class="ident">Solution</span> {
+                                <span class="ident">public_key</span>: <span class="ident">identity</span>.<span class="ident">public_key</span>().<span class="ident">to_bytes</span>().<span class="ident">into</span>(),
+                                <span class="ident">reward_address</span>,
+                                <span class="ident">piece_index</span>,
+                                <span class="ident">encoding</span>,
+                                <span class="ident">tag_signature</span>: <span class="ident">identity</span>.<span class="ident">create_tag_signature</span>(<span class="ident">tag</span>),
+                                <span class="ident">local_challenge</span>,
+                                <span class="ident">tag</span>,
+                            };
+                            <span class="macro">debug!</span>(<span class="string">&quot;Solution found&quot;</span>);
+                            <span class="macro">trace!</span>(<span class="question-mark">?</span><span class="ident">solution</span>, <span class="string">&quot;Solution found&quot;</span>);
+
+                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">solution</span>))
+                        }
+                        <span class="prelude-val">None</span> =&gt; {
+                            <span class="macro">debug!</span>(<span class="string">&quot;Solution not found&quot;</span>);
+                            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+                        }
+                    }
+                }
+            });
+
+            <span class="kw">let</span> <span class="ident">maybe_solution</span> <span class="op">=</span> <span class="ident">maybe_solution_handle</span>.<span class="kw">await</span>.<span class="ident">unwrap</span>()<span class="question-mark">?</span>;
+
+            <span class="ident">client</span>
+                .<span class="ident">submit_solution_response</span>(<span class="ident">SolutionResponse</span> {
+                    <span class="ident">slot_number</span>: <span class="ident">slot_info</span>.<span class="ident">slot_number</span>,
+                    <span class="ident">maybe_solution</span>,
+                })
+                .<span class="kw">await</span>
+                .<span class="ident">map_err</span>(<span class="ident">FarmingError::RpcError</span>)<span class="question-mark">?</span>;
+        }
+
+        <span class="prelude-val">Ok</span>(())
+    };
+
+    <span class="ident">futures::future::select</span>(
+        <span class="ident">Box::pin</span>(<span class="ident">reward_signing_fut</span>),
+        <span class="ident">Box::pin</span>(<span class="ident">notification_handling_fut</span>),
+    )
+    .<span class="kw">await</span>
+    .<span class="ident">factor_first</span>()
+    .<span class="number">0</span><span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(())
 }
 
 <span class="doccomment">/// Compare salts in `slot_info` to those known from `salts` and start update plot commitments</span>
 <span class="doccomment">/// accordingly if necessary (in background)</span>
+<span class="attribute">#[<span class="ident">allow</span>(<span class="ident">clippy::too_many_arguments</span>)]</span>
 <span class="kw">fn</span> <span class="ident">update_commitments</span>(
     <span class="ident">single_plot_farm_id</span>: <span class="ident">SinglePlotFarmId</span>,
     <span class="ident">plot</span>: <span class="kw-2">&amp;</span><span class="ident">Plot</span>,
@@ -653,6 +707,8 @@
     <span class="ident">salts</span>: <span class="kw-2">&amp;mut</span> <span class="ident">Salts</span>,
     <span class="ident">slot_info</span>: <span class="kw-2">&amp;</span><span class="ident">SlotInfo</span>,
     <span class="ident">single_disk_semaphore</span>: <span class="kw-2">&amp;</span><span class="ident">SingleDiskSemaphore</span>,
+    <span class="ident">join_handles</span>: <span class="kw-2">&amp;mut</span> <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">JoinOnDrop</span><span class="op">&gt;</span>,
+    <span class="ident">must_stop</span>: <span class="kw-2">&amp;</span><span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">AtomicBool</span><span class="op">&gt;</span>,
 ) {
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">current_recommitment_done_receiver</span> <span class="op">=</span> <span class="prelude-val">None</span>;
     <span class="comment">// Check if current salt has changed</span>
@@ -671,6 +727,7 @@
             <span class="kw">let</span> <span class="ident">commitments</span> <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">clone</span>();
             <span class="kw">let</span> <span class="ident">single_disk_semaphore</span> <span class="op">=</span> <span class="ident">single_disk_semaphore</span>.<span class="ident">clone</span>();
             <span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="macro">info_span!</span>(<span class="string">&quot;recommit&quot;</span>, <span class="ident">new_salt</span> <span class="op">=</span> <span class="op">%</span><span class="ident">hex::encode</span>(<span class="ident">salt</span>));
+            <span class="kw">let</span> <span class="ident">must_stop</span> <span class="op">=</span> <span class="ident">Arc::clone</span>(<span class="ident">must_stop</span>);
 
             <span class="kw">let</span> <span class="ident">result</span> <span class="op">=</span> <span class="ident">thread::Builder::new</span>()
                 .<span class="ident">name</span>(<span class="macro">format!</span>(
@@ -684,7 +741,7 @@
                     <span class="kw">let</span> <span class="ident">started</span> <span class="op">=</span> <span class="ident">Instant::now</span>();
                     <span class="macro">info!</span>(<span class="string">&quot;Salt updated, recommitting in background&quot;</span>);
 
-                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">create</span>(<span class="ident">salt</span>, <span class="ident">plot</span>) {
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">create</span>(<span class="ident">salt</span>, <span class="ident">plot</span>, <span class="kw-2">&amp;</span><span class="ident">must_stop</span>) {
                         <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to create commitment&quot;</span>);
                     } <span class="kw">else</span> {
                         <span class="macro">info!</span>(
@@ -697,8 +754,14 @@
                     <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">current_recommitment_done_sender</span>.<span class="ident">send</span>(());
                 });
 
-            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">result</span> {
-                <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to spawn recommitment thread&quot;</span>)
+            <span class="kw">match</span> <span class="ident">result</span> {
+                <span class="prelude-val">Ok</span>(<span class="ident">join_handle</span>) =&gt; {
+                    <span class="ident">join_handles</span>.<span class="ident">drain_filter</span>(<span class="op">|</span><span class="ident">join_handle</span><span class="op">|</span> <span class="ident">join_handle</span>.<span class="ident">is_finished</span>());
+                    <span class="ident">join_handles</span>.<span class="ident">push</span>(<span class="ident">JoinOnDrop::new</span>(<span class="ident">join_handle</span>));
+                }
+                <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
+                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to spawn recommitment thread&quot;</span>)
+                }
             }
         }
     }
@@ -711,6 +774,7 @@
             <span class="kw">let</span> <span class="ident">commitments</span> <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">clone</span>();
             <span class="kw">let</span> <span class="ident">single_disk_semaphore</span> <span class="op">=</span> <span class="ident">single_disk_semaphore</span>.<span class="ident">clone</span>();
             <span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="macro">info_span!</span>(<span class="string">&quot;recommit&quot;</span>, <span class="ident">next_salt</span> <span class="op">=</span> <span class="op">%</span><span class="ident">hex::encode</span>(<span class="ident">new_next_salt</span>));
+            <span class="kw">let</span> <span class="ident">must_stop</span> <span class="op">=</span> <span class="ident">Arc::clone</span>(<span class="ident">must_stop</span>);
 
             <span class="kw">let</span> <span class="ident">result</span> <span class="op">=</span> <span class="ident">thread::Builder::new</span>()
                 .<span class="ident">name</span>(<span class="macro">format!</span>(
@@ -729,7 +793,7 @@
 
                     <span class="kw">let</span> <span class="ident">started</span> <span class="op">=</span> <span class="ident">Instant::now</span>();
                     <span class="macro">info!</span>(<span class="string">&quot;Salt will be updated, recommitting in background&quot;</span>);
-                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">create</span>(<span class="ident">new_next_salt</span>, <span class="ident">plot</span>) {
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">commitments</span>.<span class="ident">create</span>(<span class="ident">new_next_salt</span>, <span class="ident">plot</span>, <span class="kw-2">&amp;</span><span class="ident">must_stop</span>) {
                         <span class="macro">error!</span>(
                             <span class="op">%</span><span class="ident">error</span>,
                             <span class="string">&quot;Recommitting salt in background failed&quot;</span>,
@@ -742,8 +806,14 @@
                     );
                 });
 
-            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">result</span> {
-                <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to spawn recommitment thread&quot;</span>)
+            <span class="kw">match</span> <span class="ident">result</span> {
+                <span class="prelude-val">Ok</span>(<span class="ident">join_handle</span>) =&gt; {
+                    <span class="ident">join_handles</span>.<span class="ident">drain_filter</span>(<span class="op">|</span><span class="ident">join_handle</span><span class="op">|</span> <span class="ident">join_handle</span>.<span class="ident">is_finished</span>());
+                    <span class="ident">join_handles</span>.<span class="ident">push</span>(<span class="ident">JoinOnDrop::new</span>(<span class="ident">join_handle</span>));
+                }
+                <span class="prelude-val">Err</span>(<span class="ident">error</span>) =&gt; {
+                    <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to spawn recommitment thread&quot;</span>)
+                }
             }
         }
     }

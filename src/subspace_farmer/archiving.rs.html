@@ -183,10 +183,23 @@
 <span id="177">177</span>
 <span id="178">178</span>
 <span id="179">179</span>
+<span id="180">180</span>
+<span id="181">181</span>
+<span id="182">182</span>
+<span id="183">183</span>
+<span id="184">184</span>
+<span id="185">185</span>
+<span id="186">186</span>
+<span id="187">187</span>
+<span id="188">188</span>
+<span id="189">189</span>
+<span id="190">190</span>
+<span id="191">191</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::object_mappings</span>::{<span class="ident">LegacyObjectMappings</span>, <span class="ident">ObjectMappings</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::AbortingJoinHandle</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils</span>::{<span class="ident">AbortingJoinHandle</span>, <span class="ident">JoinOnDrop</span>};
 <span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
+<span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">io</span>, <span class="ident">thread</span>};
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::ArchivedSegment</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::objects</span>::{<span class="ident">GlobalObject</span>, <span class="ident">PieceObject</span>, <span class="ident">PieceObjectMapping</span>};
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::Sha256Hash</span>;
@@ -212,11 +225,17 @@
     <span class="ident">Archiver</span>(<span class="ident">subspace_archiving::archiver::ArchiverInstantiationError</span>),
     <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Failed to subscribe to new segments: {0}&quot;</span>)]</span>
     <span class="ident">Subscribe</span>(<span class="attribute">#[<span class="ident">from</span>]</span> <span class="ident">subspace_networking::SubscribeError</span>),
+    <span class="doccomment">/// Failed to spawn archiving thread</span>
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Failed to spawn archiving thread: {0}&quot;</span>)]</span>
+    <span class="ident">ArchivingThread</span>(<span class="ident">io::Error</span>),
 }
 
 <span class="doccomment">/// Abstraction around archiving blocks and updating global object map</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">Archiving</span> {
-    <span class="ident">archiving_handle</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">AbortingJoinHandle</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">archiving_task</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">AbortingJoinHandle</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Background archiving thread, must be kept around to stop gracefully on drop, including</span>
+    <span class="doccomment">/// waiting for async archiving task above</span>
+    <span class="ident">_archiving_thread</span>: <span class="ident">JoinOnDrop</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">Archiving</span> {
@@ -246,56 +265,60 @@
             <span class="ident">std::sync::mpsc::channel</span>::<span class="op">&lt;</span>(<span class="ident">ArchivedSegment</span>, <span class="ident">oneshot::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span>();
 
         <span class="comment">// Erasure coding in archiver and piece encoding are CPU-intensive operations.</span>
-        <span class="ident">tokio::task::spawn_blocking</span>({
-            <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
-                <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">last_archived_segment_index</span> <span class="op">=</span> <span class="prelude-val">None</span>;
-                <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Ok</span>((<span class="ident">archived_segment</span>, <span class="ident">acknowledgement_sender</span>)) <span class="op">=</span>
-                    <span class="ident">archived_segments_sync_receiver</span>.<span class="ident">recv</span>()
-                {
-                    <span class="kw">let</span> <span class="ident">ArchivedSegment</span> {
-                        <span class="ident">root_block</span>,
-                        <span class="ident">pieces</span>,
-                        <span class="ident">object_mapping</span>,
-                    } <span class="op">=</span> <span class="ident">archived_segment</span>;
-                    <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">root_block</span>.<span class="ident">segment_index</span>();
-                    <span class="kw">if</span> <span class="ident">last_archived_segment_index</span> <span class="op">==</span> <span class="prelude-val">Some</span>(<span class="ident">segment_index</span>) {
-                        <span class="kw">continue</span>;
-                    }
-                    <span class="ident">last_archived_segment_index</span>.<span class="ident">replace</span>(<span class="ident">segment_index</span>);
-
-                    <span class="kw">let</span> <span class="ident">piece_index_offset</span> <span class="op">=</span> <span class="ident">merkle_num_leaves</span> <span class="op">*</span> <span class="ident">segment_index</span>;
-
-                    <span class="kw">let</span> <span class="ident">pieces_to_plot</span> <span class="op">=</span> <span class="ident">PiecesToPlot</span> {
-                        <span class="ident">piece_indexes</span>: (<span class="ident">piece_index_offset</span>..).<span class="ident">take</span>(<span class="ident">pieces</span>.<span class="ident">count</span>()).<span class="ident">collect</span>(),
-                        <span class="ident">pieces</span>,
-                    };
-                    <span class="kw">if</span> <span class="op">!</span><span class="ident">on_pieces_to_plot</span>(<span class="ident">pieces_to_plot</span>) {
-                        <span class="comment">// No need to continue</span>
-                        <span class="kw">break</span>;
-                    }
-
-                    <span class="kw">let</span> <span class="ident">object_mapping</span> <span class="op">=</span>
-                        <span class="ident">create_global_object_mapping</span>(<span class="ident">piece_index_offset</span>, <span class="ident">object_mapping</span>);
-
-                    <span class="kw">for</span> <span class="ident">object_mappings</span> <span class="kw">in</span> <span class="kw-2">&amp;</span><span class="ident">object_mappings</span> {
-                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">object_mappings</span>.<span class="ident">store</span>(<span class="kw-2">&amp;</span><span class="ident">object_mapping</span>) {
-                            <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to store object mappings for pieces&quot;</span>);
+        <span class="kw">let</span> <span class="ident">archiving_thread</span> <span class="op">=</span> <span class="ident">thread::Builder::new</span>()
+            .<span class="ident">name</span>(<span class="string">&quot;archiving&quot;</span>.<span class="ident">to_string</span>())
+            .<span class="ident">spawn</span>({
+                <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
+                    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">last_archived_segment_index</span> <span class="op">=</span> <span class="prelude-val">None</span>;
+                    <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Ok</span>((<span class="ident">archived_segment</span>, <span class="ident">acknowledgement_sender</span>)) <span class="op">=</span>
+                        <span class="ident">archived_segments_sync_receiver</span>.<span class="ident">recv</span>()
+                    {
+                        <span class="kw">let</span> <span class="ident">ArchivedSegment</span> {
+                            <span class="ident">root_block</span>,
+                            <span class="ident">pieces</span>,
+                            <span class="ident">object_mapping</span>,
+                        } <span class="op">=</span> <span class="ident">archived_segment</span>;
+                        <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">root_block</span>.<span class="ident">segment_index</span>();
+                        <span class="kw">if</span> <span class="ident">last_archived_segment_index</span> <span class="op">==</span> <span class="prelude-val">Some</span>(<span class="ident">segment_index</span>) {
+                            <span class="kw">continue</span>;
                         }
-                    }
-                    <span class="kw">for</span> <span class="ident">object_mappings</span> <span class="kw">in</span> <span class="kw-2">&amp;</span><span class="ident">legacy_object_mappings</span> {
-                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">object_mappings</span>.<span class="ident">store</span>(<span class="kw-2">&amp;</span><span class="ident">object_mapping</span>) {
-                            <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to store legacy object mappings for pieces&quot;</span>);
+                        <span class="ident">last_archived_segment_index</span>.<span class="ident">replace</span>(<span class="ident">segment_index</span>);
+
+                        <span class="kw">let</span> <span class="ident">piece_index_offset</span> <span class="op">=</span> <span class="ident">merkle_num_leaves</span> <span class="op">*</span> <span class="ident">segment_index</span>;
+
+                        <span class="kw">let</span> <span class="ident">pieces_to_plot</span> <span class="op">=</span> <span class="ident">PiecesToPlot</span> {
+                            <span class="ident">piece_indexes</span>: (<span class="ident">piece_index_offset</span>..).<span class="ident">take</span>(<span class="ident">pieces</span>.<span class="ident">count</span>()).<span class="ident">collect</span>(),
+                            <span class="ident">pieces</span>,
+                        };
+                        <span class="kw">if</span> <span class="op">!</span><span class="ident">on_pieces_to_plot</span>(<span class="ident">pieces_to_plot</span>) {
+                            <span class="comment">// No need to continue</span>
+                            <span class="kw">break</span>;
                         }
-                    }
 
-                    <span class="macro">info!</span>(<span class="ident">segment_index</span>, <span class="string">&quot;Plotted segment&quot;</span>);
+                        <span class="kw">let</span> <span class="ident">object_mapping</span> <span class="op">=</span>
+                            <span class="ident">create_global_object_mapping</span>(<span class="ident">piece_index_offset</span>, <span class="ident">object_mapping</span>);
 
-                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(()) <span class="op">=</span> <span class="ident">acknowledgement_sender</span>.<span class="ident">send</span>(()) {
-                        <span class="macro">error!</span>(<span class="string">&quot;Failed to send archived segment acknowledgement&quot;</span>);
+                        <span class="kw">for</span> <span class="ident">object_mappings</span> <span class="kw">in</span> <span class="kw-2">&amp;</span><span class="ident">object_mappings</span> {
+                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">object_mappings</span>.<span class="ident">store</span>(<span class="kw-2">&amp;</span><span class="ident">object_mapping</span>) {
+                                <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to store object mappings for pieces&quot;</span>);
+                            }
+                        }
+                        <span class="kw">for</span> <span class="ident">object_mappings</span> <span class="kw">in</span> <span class="kw-2">&amp;</span><span class="ident">legacy_object_mappings</span> {
+                            <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">object_mappings</span>.<span class="ident">store</span>(<span class="kw-2">&amp;</span><span class="ident">object_mapping</span>) {
+                                <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;Failed to store legacy object mappings for pieces&quot;</span>);
+                            }
+                        }
+
+                        <span class="macro">info!</span>(<span class="ident">segment_index</span>, <span class="string">&quot;Plotted segment&quot;</span>);
+
+                        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(()) <span class="op">=</span> <span class="ident">acknowledgement_sender</span>.<span class="ident">send</span>(()) {
+                            <span class="macro">error!</span>(<span class="string">&quot;Failed to send archived segment acknowledgement&quot;</span>);
+                        }
                     }
                 }
-            }
-        });
+            })
+            .<span class="ident">map</span>(<span class="ident">JoinOnDrop::new</span>)
+            .<span class="ident">map_err</span>(<span class="ident">ArchivingError::ArchivingThread</span>)<span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">&quot;Subscribing to archived segments&quot;</span>);
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segments</span> <span class="op">=</span> <span class="ident">client</span>
@@ -327,13 +350,14 @@
         });
 
         <span class="prelude-val">Ok</span>(<span class="self">Self</span> {
-            <span class="ident">archiving_handle</span>: <span class="prelude-val">Some</span>(<span class="ident">AbortingJoinHandle::new</span>(<span class="ident">archiving_handle</span>)),
+            <span class="ident">archiving_task</span>: <span class="prelude-val">Some</span>(<span class="ident">AbortingJoinHandle::new</span>(<span class="ident">archiving_handle</span>)),
+            <span class="ident">_archiving_thread</span>: <span class="ident">archiving_thread</span>,
         })
     }
 
     <span class="doccomment">/// Waits for the background archiving to finish</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">wait</span>(<span class="kw-2">mut</span> <span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ArchivingError</span><span class="op">&gt;</span> {
-        <span class="self">self</span>.<span class="ident">archiving_handle</span>
+        <span class="self">self</span>.<span class="ident">archiving_task</span>
             .<span class="ident">take</span>()
             .<span class="ident">unwrap</span>()
             .<span class="kw">await</span>

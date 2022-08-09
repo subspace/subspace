@@ -846,6 +846,22 @@
 <span id="840">840</span>
 <span id="841">841</span>
 <span id="842">842</span>
+<span id="843">843</span>
+<span id="844">844</span>
+<span id="845">845</span>
+<span id="846">846</span>
+<span id="847">847</span>
+<span id="848">848</span>
+<span id="849">849</span>
+<span id="850">850</span>
+<span id="851">851</span>
+<span id="852">852</span>
+<span id="853">853</span>
+<span id="854">854</span>
+<span id="855">855</span>
+<span id="856">856</span>
+<span id="857">857</span>
+<span id="858">858</span>
 </pre><pre class="rust"><code><span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">dsn_archiving</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">tests</span>;
@@ -859,16 +875,19 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_disk_farm::SingleDiskSemaphore</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_plot_farm::dsn_archiving::start_archiving</span>;
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::AbortingJoinHandle</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::CallOnDrop</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::ws_rpc_server::PieceGetter</span>;
 <span class="kw">use</span> <span class="ident">anyhow::anyhow</span>;
 <span class="kw">use</span> <span class="ident">async_trait::async_trait</span>;
 <span class="kw">use</span> <span class="ident">derive_more</span>::{<span class="ident">Display</span>, <span class="ident">From</span>};
-<span class="kw">use</span> <span class="ident">futures::future</span>::{<span class="ident">try_join</span>, <span class="ident">try_join_all</span>};
+<span class="kw">use</span> <span class="ident">futures::future::try_join_all</span>;
+<span class="kw">use</span> <span class="ident">futures::stream::FuturesUnordered</span>;
+<span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
 <span class="kw">use</span> <span class="ident">num_traits::Zero</span>;
 <span class="kw">use</span> <span class="ident">serde</span>::{<span class="ident">Deserialize</span>, <span class="ident">Serialize</span>};
 <span class="kw">use</span> <span class="ident">std::future::Future</span>;
 <span class="kw">use</span> <span class="ident">std::path</span>::{<span class="ident">Path</span>, <span class="ident">PathBuf</span>};
+<span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">fs</span>, <span class="ident">io</span>, <span class="ident">mem</span>};
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::is_piece_valid</span>;
@@ -879,7 +898,7 @@
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::Multiaddr</span>;
 <span class="kw">use</span> <span class="ident">subspace_networking::multimess::MultihashCode</span>;
 <span class="kw">use</span> <span class="ident">subspace_networking</span>::{
-    <span class="ident">BootstrappedNetworkingParameters</span>, <span class="ident">Config</span>, <span class="ident">Node</span>, <span class="ident">NodeRunner</span>, <span class="ident">PiecesByRangeRequest</span>,
+    <span class="ident">BootstrappedNetworkingParameters</span>, <span class="ident">Config</span>, <span class="ident">Node</span>, <span class="ident">PiecesByRangeRequest</span>,
     <span class="ident">PiecesByRangeRequestHandler</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives</span>::{<span class="ident">FarmerProtocolInfo</span>, <span class="ident">MAX_SEGMENT_INDEXES_PER_REQUEST</span>};
@@ -1173,12 +1192,10 @@
     <span class="ident">plot</span>: <span class="ident">Plot</span>,
     <span class="ident">commitments</span>: <span class="ident">Commitments</span>,
     <span class="ident">object_mappings</span>: <span class="ident">ObjectMappings</span>,
-    <span class="ident">farming</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Farming</span><span class="op">&gt;</span>,
     <span class="ident">node</span>: <span class="ident">Node</span>,
-    <span class="ident">node_runner</span>: <span class="ident">NodeRunner</span>,
     <span class="ident">single_disk_semaphore</span>: <span class="ident">SingleDiskSemaphore</span>,
     <span class="ident">span</span>: <span class="ident">Span</span>,
-    <span class="ident">background_task_handles</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">AbortingJoinHandle</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">tasks</span>: <span class="ident">FuturesUnordered</span><span class="op">&lt;</span><span class="ident">Pin</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">Future</span><span class="op">&lt;</span><span class="ident">Output</span> <span class="op">=</span> <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">SinglePlotFarm</span> {
@@ -1350,7 +1367,7 @@
             ))
         };
 
-        <span class="kw">let</span> (<span class="ident">node</span>, <span class="ident">node_runner</span>) <span class="op">=</span> <span class="ident">Handle::current</span>().<span class="ident">block_on</span>(<span class="kw">async</span> <span class="kw">move</span> {
+        <span class="kw">let</span> (<span class="ident">node</span>, <span class="kw-2">mut</span> <span class="ident">node_runner</span>) <span class="op">=</span> <span class="ident">Handle::current</span>().<span class="ident">block_on</span>(<span class="kw">async</span> <span class="kw">move</span> {
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">relay_server_node</span>) <span class="op">=</span> <span class="ident">relay_server_node</span> {
                 <span class="ident">relay_server_node</span>.<span class="ident">spawn</span>(<span class="ident">network_node_config</span>).<span class="kw">await</span>
             } <span class="kw">else</span> {
@@ -1362,7 +1379,7 @@
 
         <span class="comment">// Start the farming task</span>
         <span class="kw">let</span> <span class="ident">farming</span> <span class="op">=</span> <span class="ident">enable_farming</span>.<span class="ident">then</span>(<span class="op">|</span><span class="op">|</span> {
-            <span class="ident">Handle::current</span>().<span class="ident">block_on</span>(<span class="ident">Farming::start</span>(
+            <span class="ident">Farming::create</span>(
                 <span class="ident">id</span>,
                 <span class="ident">plot</span>.<span class="ident">clone</span>(),
                 <span class="ident">commitments</span>.<span class="ident">clone</span>(),
@@ -1370,22 +1387,37 @@
                 <span class="ident">single_disk_semaphore</span>.<span class="ident">clone</span>(),
                 <span class="ident">identity</span>,
                 <span class="ident">reward_address</span>,
-            ))
+            )
         });
 
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">farm</span> <span class="op">=</span> <span class="self">Self</span> {
+        <span class="kw">let</span> <span class="ident">tasks</span> <span class="op">=</span>
+            <span class="ident">FuturesUnordered</span>::<span class="op">&lt;</span><span class="ident">Pin</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">Future</span><span class="op">&lt;</span><span class="ident">Output</span> <span class="op">=</span> <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="ident">::new</span>();
+
+        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="kw-2">mut</span> <span class="ident">farming</span>) <span class="op">=</span> <span class="ident">farming</span> {
+            <span class="ident">tasks</span>.<span class="ident">push</span>(<span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
+                <span class="ident">farming</span>.<span class="ident">wait</span>().<span class="kw">await</span><span class="question-mark">?</span>;
+
+                <span class="prelude-val">Ok</span>(())
+            }));
+        }
+
+        <span class="ident">tasks</span>.<span class="ident">push</span>(<span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
+            <span class="ident">node_runner</span>.<span class="ident">run</span>().<span class="kw">await</span>;
+
+            <span class="prelude-val">Ok</span>(())
+        }));
+
+        <span class="kw">let</span> <span class="ident">farm</span> <span class="op">=</span> <span class="self">Self</span> {
             <span class="ident">id</span>,
             <span class="ident">public_key</span>,
             <span class="ident">codec</span>,
             <span class="ident">plot</span>,
             <span class="ident">commitments</span>,
             <span class="ident">object_mappings</span>,
-            <span class="ident">farming</span>,
             <span class="ident">node</span>: <span class="ident">node</span>.<span class="ident">clone</span>(),
-            <span class="ident">node_runner</span>,
             <span class="ident">single_disk_semaphore</span>,
             <span class="ident">span</span>: <span class="ident">Span::current</span>(),
-            <span class="ident">background_task_handles</span>: <span class="macro">vec!</span>[],
+            <span class="ident">tasks</span>,
         };
 
         <span class="comment">// Start DSN archiving</span>
@@ -1399,16 +1431,16 @@
                 <span class="ident">farm</span>.<span class="ident">plotter</span>(),
                 <span class="ident">farm</span>.<span class="ident">single_disk_semaphore</span>.<span class="ident">clone</span>(),
             );
-            <span class="kw">let</span> <span class="ident">dsn_archiving_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> <span class="kw">move</span> {
+
+            <span class="ident">farm</span>.<span class="ident">tasks</span>.<span class="ident">push</span>(<span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
                 <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">archiving_fut</span>.<span class="kw">await</span> {
                     <span class="macro">error!</span>(<span class="op">%</span><span class="ident">error</span>, <span class="string">&quot;DSN archiving task has ended with error&quot;</span>);
                 } <span class="kw">else</span> {
                     <span class="macro">warn!</span>(<span class="string">&quot;DSN archiving task has finished&quot;</span>);
                 }
-            });
 
-            <span class="ident">farm</span>.<span class="ident">background_task_handles</span>
-                .<span class="ident">push</span>(<span class="ident">AbortingJoinHandle::new</span>(<span class="ident">dsn_archiving_handle</span>));
+                <span class="prelude-val">Ok</span>(())
+            }));
         }
 
         <span class="comment">// Start DSN syncing</span>
@@ -1424,7 +1456,7 @@
                 <span class="bool-val">true</span>,
             );
 
-            <span class="kw">let</span> <span class="ident">dsn_sync_handle</span> <span class="op">=</span> <span class="ident">tokio::spawn</span>(<span class="kw">async</span> <span class="kw">move</span> {
+            <span class="ident">farm</span>.<span class="ident">tasks</span>.<span class="ident">push</span>(<span class="ident">Box::pin</span>(<span class="kw">async</span> <span class="kw">move</span> {
                 <span class="kw">match</span> <span class="ident">dsn_sync_fut</span>.<span class="kw">await</span> {
                     <span class="prelude-val">Ok</span>(()) =&gt; {
                         <span class="macro">info!</span>(<span class="string">&quot;DSN sync done successfully&quot;</span>);
@@ -1433,10 +1465,9 @@
                         <span class="macro">error!</span>(<span class="question-mark">?</span><span class="ident">error</span>, <span class="string">&quot;DSN sync failed&quot;</span>);
                     }
                 }
-            });
 
-            <span class="ident">farm</span>.<span class="ident">background_task_handles</span>
-                .<span class="ident">push</span>(<span class="ident">AbortingJoinHandle::new</span>(<span class="ident">dsn_sync_handle</span>));
+                <span class="prelude-val">Ok</span>(())
+            }));
         }
 
         <span class="prelude-val">Ok</span>(<span class="ident">farm</span>)
@@ -1518,16 +1549,8 @@
     }
 
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">run</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
-        <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">farming</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">farming</span>.<span class="ident">as_mut</span>() {
-            <span class="ident">try_join</span>(<span class="ident">farming</span>.<span class="ident">wait</span>(), <span class="kw">async</span> {
-                <span class="self">self</span>.<span class="ident">node_runner</span>.<span class="ident">run</span>().<span class="kw">await</span>;
-
-                <span class="prelude-val">Ok</span>(())
-            })
-            .<span class="ident">instrument</span>(<span class="self">self</span>.<span class="ident">span</span>.<span class="ident">clone</span>())
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        } <span class="kw">else</span> {
-            <span class="self">self</span>.<span class="ident">node_runner</span>.<span class="ident">run</span>().<span class="ident">instrument</span>(<span class="self">self</span>.<span class="ident">span</span>.<span class="ident">clone</span>()).<span class="kw">await</span>;
+        <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">result</span>) <span class="op">=</span> <span class="self">self</span>.<span class="ident">tasks</span>.<span class="ident">next</span>().<span class="ident">instrument</span>(<span class="self">self</span>.<span class="ident">span</span>.<span class="ident">clone</span>()).<span class="kw">await</span> {
+            <span class="ident">result</span><span class="question-mark">?</span>;
         }
 
         <span class="prelude-val">Ok</span>(())
@@ -1677,13 +1700,22 @@
         }
 
         <span class="kw">let</span> <span class="ident">plotter</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">single_plot_plotter</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> (<span class="ident">farm_creation_start_sender</span>, <span class="ident">farm_creation_start_receiver</span>) <span class="op">=</span>
+            <span class="ident">std::sync::mpsc::sync_channel</span>(<span class="number">1</span>);
+        <span class="comment">// Makes sure background blocking task below is finished before this function&#39;s future is</span>
+        <span class="comment">// dropped</span>
+        <span class="kw">let</span> <span class="ident">_plot_pieces_guard</span> <span class="op">=</span> <span class="ident">CallOnDrop::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
+            <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">farm_creation_start_receiver</span>.<span class="ident">recv</span>();
+        });
         <span class="ident">tokio::task::spawn_blocking</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
-            <span class="ident">plotter</span>
-                .<span class="ident">plot_pieces</span>(<span class="ident">PiecesToPlot</span> {
-                    <span class="ident">pieces</span>,
-                    <span class="ident">piece_indexes</span>,
-                })
-                .<span class="ident">map_err</span>(<span class="ident">Into::into</span>)
+            <span class="ident">plotter</span>.<span class="ident">plot_pieces</span>(<span class="ident">PiecesToPlot</span> {
+                <span class="ident">pieces</span>,
+                <span class="ident">piece_indexes</span>,
+            })<span class="question-mark">?</span>;
+
+            <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">farm_creation_start_sender</span>.<span class="ident">send</span>(());
+
+            <span class="prelude-val">Ok</span>(())
         })
         .<span class="kw">await</span><span class="question-mark">?</span>
     }

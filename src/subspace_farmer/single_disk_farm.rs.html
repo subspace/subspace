@@ -538,12 +538,23 @@
 <span id="532">532</span>
 <span id="533">533</span>
 <span id="534">534</span>
+<span id="535">535</span>
+<span id="536">536</span>
+<span id="537">537</span>
+<span id="538">538</span>
+<span id="539">539</span>
+<span id="540">540</span>
+<span id="541">541</span>
+<span id="542">542</span>
+<span id="543">543</span>
+<span id="544">544</span>
+<span id="545">545</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::archiving::Archiving</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::rpc_client::RpcClient</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_plot_farm</span>::{
     <span class="ident">PlotFactory</span>, <span class="ident">SinglePlotFarm</span>, <span class="ident">SinglePlotFarmId</span>, <span class="ident">SinglePlotFarmOptions</span>, <span class="ident">SinglePlotFarmSummary</span>,
 };
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::get_plot_sizes</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils</span>::{<span class="ident">get_plot_sizes</span>, <span class="ident">CallOnDrop</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::ws_rpc_server::PieceGetter</span>;
 <span class="kw">use</span> <span class="ident">anyhow::anyhow</span>;
 <span class="kw">use</span> <span class="ident">derive_more</span>::{<span class="ident">Display</span>, <span class="ident">From</span>};
@@ -854,9 +865,16 @@
 
         <span class="kw">let</span> <span class="ident">single_disk_semaphore</span> <span class="op">=</span> <span class="ident">SingleDiskSemaphore::new</span>(<span class="ident">disk_concurrency</span>);
         <span class="kw">let</span> <span class="ident">verification_client</span> <span class="op">=</span> <span class="ident">archiving_client</span>.<span class="ident">clone</span>();
+        <span class="kw">let</span> (<span class="ident">farm_creation_start_sender</span>, <span class="ident">farm_creation_start_receiver</span>) <span class="op">=</span>
+            <span class="ident">std::sync::mpsc::sync_channel</span>(<span class="number">1</span>);
+        <span class="comment">// Makes sure background blocking task below is finished before this function&#39;s future is</span>
+        <span class="comment">// dropped</span>
+        <span class="kw">let</span> <span class="ident">_farm_creation_start_guard</span> <span class="op">=</span> <span class="ident">CallOnDrop::new</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
+            <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">farm_creation_start_receiver</span>.<span class="ident">recv</span>();
+        });
         <span class="kw">let</span> <span class="ident">single_plot_farms</span> <span class="op">=</span> <span class="ident">tokio::task::spawn_blocking</span>(<span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
             <span class="kw">let</span> <span class="ident">handle</span> <span class="op">=</span> <span class="ident">Handle::current</span>();
-            <span class="ident">single_disk_farm_info</span>
+            <span class="kw">let</span> <span class="ident">single_plot_farms</span> <span class="op">=</span> <span class="ident">single_disk_farm_info</span>
                 .<span class="ident">single_plot_farms</span>()
                 .<span class="ident">into_par_iter</span>()
                 .<span class="ident">zip</span>(<span class="ident">plot_sizes</span>)
@@ -893,7 +911,11 @@
                         <span class="ident">verification_client</span>: <span class="ident">verification_client</span>.<span class="ident">clone</span>(),
                     })
                 })
-                .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">anyhow::Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>()
+                .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">anyhow::Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>()<span class="question-mark">?</span>;
+
+            <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">farm_creation_start_sender</span>.<span class="ident">send</span>(());
+
+            <span class="ident">anyhow::Ok</span>::<span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">SinglePlotFarm</span><span class="op">&gt;</span><span class="op">&gt;</span>(<span class="ident">single_plot_farms</span>)
         })
         .<span class="kw">await</span>
         .<span class="ident">expect</span>(<span class="string">&quot;Not supposed to panic, crash if it does&quot;</span>)<span class="question-mark">?</span>;
