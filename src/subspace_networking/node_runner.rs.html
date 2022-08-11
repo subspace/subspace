@@ -578,6 +578,30 @@
 <span id="572">572</span>
 <span id="573">573</span>
 <span id="574">574</span>
+<span id="575">575</span>
+<span id="576">576</span>
+<span id="577">577</span>
+<span id="578">578</span>
+<span id="579">579</span>
+<span id="580">580</span>
+<span id="581">581</span>
+<span id="582">582</span>
+<span id="583">583</span>
+<span id="584">584</span>
+<span id="585">585</span>
+<span id="586">586</span>
+<span id="587">587</span>
+<span id="588">588</span>
+<span id="589">589</span>
+<span id="590">590</span>
+<span id="591">591</span>
+<span id="592">592</span>
+<span id="593">593</span>
+<span id="594">594</span>
+<span id="595">595</span>
+<span id="596">596</span>
+<span id="597">597</span>
+<span id="598">598</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">Event</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::request_responses</span>::{<span class="ident">Event</span> <span class="kw">as</span> <span class="ident">RequestResponseEvent</span>, <span class="ident">IfDisconnected</span>};
@@ -609,6 +633,8 @@
 
 <span class="comment">// Defines a threshold for starting new connection attempts to known peers.</span>
 <span class="kw">const</span> <span class="ident">CONNECTED_PEERS_THRESHOLD</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">10</span>;
+<span class="comment">// Defines a protocol name specific for the relay server</span>
+<span class="kw">const</span> <span class="ident">RELAY_HOP_PROTOCOL_NAME</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>] <span class="op">=</span> <span class="string">b&quot;/libp2p/circuit/relay/0.2.0/hop&quot;</span>;
 
 <span class="kw">enum</span> <span class="ident">QueryResultSender</span> {
     <span class="ident">GetValue</span> {
@@ -847,46 +873,68 @@
 
     <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">handle_identify_event</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>, <span class="ident">event</span>: <span class="ident">IdentifyEvent</span>) {
         <span class="kw">if</span> <span class="kw">let</span> <span class="ident">IdentifyEvent::Received</span> { <span class="ident">peer_id</span>, <span class="kw-2">mut</span> <span class="ident">info</span> } <span class="op">=</span> <span class="ident">event</span> {
+            <span class="kw">let</span> <span class="ident">local_peer_id</span> <span class="op">=</span> <span class="kw-2">*</span><span class="self">self</span>.<span class="ident">swarm</span>.<span class="ident">local_peer_id</span>();
+
             <span class="kw">if</span> <span class="ident">info</span>.<span class="ident">listen_addrs</span>.<span class="ident">len</span>() <span class="op">&gt;</span> <span class="number">30</span> {
                 <span class="macro">debug!</span>(
-                    <span class="string">&quot;Node {} has reported more than 30 addresses; it is identified by {} and {}&quot;</span>,
-                    <span class="ident">peer_id</span>, <span class="ident">info</span>.<span class="ident">protocol_version</span>, <span class="ident">info</span>.<span class="ident">agent_version</span>
+                    <span class="op">%</span><span class="ident">local_peer_id</span>,
+                    <span class="op">%</span><span class="ident">peer_id</span>,
+                    <span class="string">&quot;Node has reported more than 30 addresses; it is identified by {} and {}&quot;</span>,
+                    <span class="ident">info</span>.<span class="ident">protocol_version</span>, <span class="ident">info</span>.<span class="ident">agent_version</span>
                 );
                 <span class="ident">info</span>.<span class="ident">listen_addrs</span>.<span class="ident">truncate</span>(<span class="number">30</span>);
             }
 
             <span class="kw">let</span> <span class="ident">kademlia</span> <span class="op">=</span> <span class="kw-2">&amp;mut</span> <span class="self">self</span>.<span class="ident">swarm</span>.<span class="ident">behaviour_mut</span>().<span class="ident">kademlia</span>;
-
-            <span class="kw">if</span> <span class="ident">info</span>
+            <span class="kw">let</span> <span class="ident">kademlia_enabled</span> <span class="op">=</span> <span class="ident">info</span>
                 .<span class="ident">protocols</span>
                 .<span class="ident">iter</span>()
-                .<span class="ident">any</span>(<span class="op">|</span><span class="ident">protocol</span><span class="op">|</span> <span class="ident">protocol</span>.<span class="ident">as_bytes</span>() <span class="op">==</span> <span class="ident">kademlia</span>.<span class="ident">protocol_name</span>())
-            {
+                .<span class="ident">any</span>(<span class="op">|</span><span class="ident">protocol</span><span class="op">|</span> <span class="ident">protocol</span>.<span class="ident">as_bytes</span>() <span class="op">==</span> <span class="ident">kademlia</span>.<span class="ident">protocol_name</span>());
+            <span class="kw">let</span> <span class="ident">relay_server_enabled</span> <span class="op">=</span> <span class="ident">info</span>
+                .<span class="ident">protocols</span>
+                .<span class="ident">iter</span>()
+                .<span class="ident">any</span>(<span class="op">|</span><span class="ident">protocol</span><span class="op">|</span> <span class="ident">protocol</span>.<span class="ident">as_bytes</span>() <span class="op">==</span> <span class="ident">RELAY_HOP_PROTOCOL_NAME</span>);
+
+            <span class="kw">let</span> <span class="ident">proper_protocols_supported</span> <span class="op">=</span> <span class="op">!</span><span class="ident">relay_server_enabled</span> <span class="op">&amp;&amp;</span> <span class="ident">kademlia_enabled</span>;
+            <span class="kw">if</span> <span class="ident">proper_protocols_supported</span> {
                 <span class="kw">for</span> <span class="ident">address</span> <span class="kw">in</span> <span class="ident">info</span>.<span class="ident">listen_addrs</span> {
                     <span class="kw">if</span> <span class="op">!</span><span class="self">self</span>.<span class="ident">allow_non_globals_in_dht</span> <span class="op">&amp;&amp;</span> <span class="op">!</span><span class="ident">utils::is_global_address_or_dns</span>(<span class="kw-2">&amp;</span><span class="ident">address</span>)
                     {
                         <span class="macro">trace!</span>(
-                            <span class="string">&quot;Ignoring self-reported non-global address {} from {}.&quot;</span>,
-                            <span class="ident">address</span>,
-                            <span class="ident">peer_id</span>
+                            <span class="op">%</span><span class="ident">local_peer_id</span>,
+                            <span class="op">%</span><span class="ident">peer_id</span>,
+                            <span class="op">%</span><span class="ident">address</span>,
+                            <span class="string">&quot;Ignoring self-reported non-global address.&quot;</span>,
                         );
                         <span class="kw">continue</span>;
                     }
 
                     <span class="macro">trace!</span>(
-                        <span class="string">&quot;Adding self-reported address {} from {} to Kademlia DHT {}.&quot;</span>,
-                        <span class="ident">address</span>,
-                        <span class="ident">peer_id</span>,
+                        <span class="op">%</span><span class="ident">local_peer_id</span>,
+                        <span class="op">%</span><span class="ident">peer_id</span>,
+                        <span class="op">%</span><span class="ident">address</span>,
+                        <span class="string">&quot;Adding self-reported address to Kademlia DHT ({}).&quot;</span>,
                         <span class="ident">String::from_utf8_lossy</span>(<span class="ident">kademlia</span>.<span class="ident">protocol_name</span>()),
                     );
                     <span class="ident">kademlia</span>.<span class="ident">add_address</span>(<span class="kw-2">&amp;</span><span class="ident">peer_id</span>, <span class="ident">address</span>);
                 }
             } <span class="kw">else</span> {
-                <span class="macro">trace!</span>(
-                    <span class="string">&quot;{} doesn&#39;t support our Kademlia DHT protocol {}&quot;</span>,
-                    <span class="ident">peer_id</span>,
-                    <span class="ident">String::from_utf8_lossy</span>(<span class="ident">kademlia</span>.<span class="ident">protocol_name</span>())
-                );
+                <span class="kw">if</span> <span class="op">!</span><span class="ident">kademlia_enabled</span> {
+                    <span class="macro">trace!</span>(
+                        <span class="op">%</span><span class="ident">local_peer_id</span>,
+                        <span class="op">%</span><span class="ident">peer_id</span>,
+                        <span class="string">&quot;Peer doesn&#39;t support our Kademlia DHT protocol ({}). Adding to the DTH skipped.&quot;</span>,
+                        <span class="ident">String::from_utf8_lossy</span>(<span class="ident">kademlia</span>.<span class="ident">protocol_name</span>())
+                    )
+                }
+
+                <span class="kw">if</span> <span class="ident">relay_server_enabled</span> {
+                    <span class="macro">trace!</span>(
+                        <span class="op">%</span><span class="ident">local_peer_id</span>,
+                        <span class="op">%</span><span class="ident">peer_id</span>,
+                        <span class="string">&quot;Peer identified as a relay server. Adding to the DHT skipped.&quot;</span>,
+                    )
+                }
             }
         }
     }
