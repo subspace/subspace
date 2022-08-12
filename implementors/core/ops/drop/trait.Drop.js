@@ -1,3 +1,3 @@
-(function() {var implementors = {};
-implementors["subspace_networking"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"subspace_networking/struct.TopicSubscription.html\" title=\"struct subspace_networking::TopicSubscription\">TopicSubscription</a>","synthetic":false,"types":["subspace_networking::node::TopicSubscription"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"subspace_networking":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"subspace_networking/struct.TopicSubscription.html\" title=\"struct subspace_networking::TopicSubscription\">TopicSubscription</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

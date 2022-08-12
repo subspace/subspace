@@ -1,4 +1,4 @@
-(function() {var implementors = {};
-implementors["cirrus_runtime"] = [{"text":"impl <a class=\"trait\" href=\"cirrus_pallet_executive/pallet/trait.Config.html\" title=\"trait cirrus_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"cirrus_runtime/struct.Runtime.html\" title=\"struct cirrus_runtime::Runtime\">Runtime</a>","synthetic":false,"types":["cirrus_runtime::runtime::Runtime"]}];
-implementors["cirrus_test_runtime"] = [{"text":"impl <a class=\"trait\" href=\"cirrus_pallet_executive/pallet/trait.Config.html\" title=\"trait cirrus_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"cirrus_test_runtime/struct.Runtime.html\" title=\"struct cirrus_test_runtime::Runtime\">Runtime</a>","synthetic":false,"types":["cirrus_test_runtime::runtime::Runtime"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"cirrus_runtime":[["impl <a class=\"trait\" href=\"cirrus_pallet_executive/pallet/trait.Config.html\" title=\"trait cirrus_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"cirrus_runtime/struct.Runtime.html\" title=\"struct cirrus_runtime::Runtime\">Runtime</a>"]],
+"cirrus_test_runtime":[["impl <a class=\"trait\" href=\"cirrus_pallet_executive/pallet/trait.Config.html\" title=\"trait cirrus_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"cirrus_test_runtime/struct.Runtime.html\" title=\"struct cirrus_test_runtime::Runtime\">Runtime</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

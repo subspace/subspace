@@ -1,3 +1,3 @@
-(function() {var implementors = {};
-implementors["subspace_test_runtime"] = [{"text":"impl OnChargeTransaction&lt;<a class=\"struct\" href=\"subspace_test_runtime/struct.Runtime.html\" title=\"struct subspace_test_runtime::Runtime\">Runtime</a>&gt; for <a class=\"struct\" href=\"subspace_test_runtime/struct.OnChargeTransaction.html\" title=\"struct subspace_test_runtime::OnChargeTransaction\">OnChargeTransaction</a>","synthetic":false,"types":["subspace_test_runtime::OnChargeTransaction"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"subspace_test_runtime":[["impl OnChargeTransaction&lt;<a class=\"struct\" href=\"subspace_test_runtime/struct.Runtime.html\" title=\"struct subspace_test_runtime::Runtime\">Runtime</a>&gt; for <a class=\"struct\" href=\"subspace_test_runtime/struct.OnChargeTransaction.html\" title=\"struct subspace_test_runtime::OnChargeTransaction\">OnChargeTransaction</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

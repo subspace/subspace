@@ -1,3 +1,3 @@
-(function() {var implementors = {};
-implementors["subspace_runtime"] = [{"text":"impl <a class=\"trait\" href=\"pallet_runtime_configs/pallet/trait.Config.html\" title=\"trait pallet_runtime_configs::pallet::Config\">Config</a> for <a class=\"struct\" href=\"subspace_runtime/struct.Runtime.html\" title=\"struct subspace_runtime::Runtime\">Runtime</a>","synthetic":false,"types":["subspace_runtime::Runtime"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"subspace_runtime":[["impl <a class=\"trait\" href=\"pallet_runtime_configs/pallet/trait.Config.html\" title=\"trait pallet_runtime_configs::pallet::Config\">Config</a> for <a class=\"struct\" href=\"subspace_runtime/struct.Runtime.html\" title=\"struct subspace_runtime::Runtime\">Runtime</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,7 +1,7 @@
-(function() {var implementors = {};
-implementors["cirrus_runtime"] = [{"text":"impl PalletInfo for <a class=\"struct\" href=\"cirrus_runtime/struct.PalletInfo.html\" title=\"struct cirrus_runtime::PalletInfo\">PalletInfo</a>","synthetic":false,"types":["cirrus_runtime::runtime::PalletInfo"]}];
-implementors["cirrus_test_runtime"] = [{"text":"impl PalletInfo for <a class=\"struct\" href=\"cirrus_test_runtime/struct.PalletInfo.html\" title=\"struct cirrus_test_runtime::PalletInfo\">PalletInfo</a>","synthetic":false,"types":["cirrus_test_runtime::runtime::PalletInfo"]}];
-implementors["subspace_runtime"] = [{"text":"impl PalletInfo for <a class=\"struct\" href=\"subspace_runtime/struct.PalletInfo.html\" title=\"struct subspace_runtime::PalletInfo\">PalletInfo</a>","synthetic":false,"types":["subspace_runtime::PalletInfo"]}];
-implementors["subspace_test_runtime"] = [{"text":"impl PalletInfo for <a class=\"struct\" href=\"subspace_test_runtime/struct.PalletInfo.html\" title=\"struct subspace_test_runtime::PalletInfo\">PalletInfo</a>","synthetic":false,"types":["subspace_test_runtime::PalletInfo"]}];
-implementors["substrate_test_runtime"] = [{"text":"impl PalletInfo for <a class=\"struct\" href=\"substrate_test_runtime/struct.Runtime.html\" title=\"struct substrate_test_runtime::Runtime\">Runtime</a>","synthetic":false,"types":["substrate_test_runtime::Runtime"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"cirrus_runtime":[["impl PalletInfo for <a class=\"struct\" href=\"cirrus_runtime/struct.PalletInfo.html\" title=\"struct cirrus_runtime::PalletInfo\">PalletInfo</a>"]],
+"cirrus_test_runtime":[["impl PalletInfo for <a class=\"struct\" href=\"cirrus_test_runtime/struct.PalletInfo.html\" title=\"struct cirrus_test_runtime::PalletInfo\">PalletInfo</a>"]],
+"subspace_runtime":[["impl PalletInfo for <a class=\"struct\" href=\"subspace_runtime/struct.PalletInfo.html\" title=\"struct subspace_runtime::PalletInfo\">PalletInfo</a>"]],
+"subspace_test_runtime":[["impl PalletInfo for <a class=\"struct\" href=\"subspace_test_runtime/struct.PalletInfo.html\" title=\"struct subspace_test_runtime::PalletInfo\">PalletInfo</a>"]],
+"substrate_test_runtime":[["impl PalletInfo for <a class=\"struct\" href=\"substrate_test_runtime/struct.Runtime.html\" title=\"struct substrate_test_runtime::Runtime\">Runtime</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

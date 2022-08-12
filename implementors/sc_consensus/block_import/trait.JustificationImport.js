@@ -1,3 +1,3 @@
-(function() {var implementors = {};
-implementors["sc_network_test"] = [{"text":"impl JustificationImport&lt;Block&lt;Header&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u64.html\">u64</a>, BlakeTwo256&gt;, <a class=\"enum\" href=\"sc_network_test/enum.Extrinsic.html\" title=\"enum sc_network_test::Extrinsic\">Extrinsic</a>&gt;&gt; for <a class=\"struct\" href=\"sc_network_test/struct.ForceFinalized.html\" title=\"struct sc_network_test::ForceFinalized\">ForceFinalized</a>","synthetic":false,"types":["sc_network_test::ForceFinalized"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"sc_network_test":[["impl JustificationImport&lt;Block&lt;Header&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u64.html\">u64</a>, BlakeTwo256&gt;, <a class=\"enum\" href=\"sc_network_test/enum.Extrinsic.html\" title=\"enum sc_network_test::Extrinsic\">Extrinsic</a>&gt;&gt; for <a class=\"struct\" href=\"sc_network_test/struct.ForceFinalized.html\" title=\"struct sc_network_test::ForceFinalized\">ForceFinalized</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,50 +1,51 @@
-var sourcesIndex = {};
-sourcesIndex["cirrus_block_builder"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["cirrus_client_executor"] = {"name":"","files":["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]};
-sourcesIndex["cirrus_client_executor_gossip"] = {"name":"","files":["lib.rs","worker.rs"]};
-sourcesIndex["cirrus_node"] = {"name":"","files":["lib.rs","rpc.rs","service.rs"]};
-sourcesIndex["cirrus_pallet_executive"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["cirrus_primitives"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["cirrus_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
-sourcesIndex["cirrus_test_runtime"] = {"name":"","files":["lib.rs","runtime.rs"]};
-sourcesIndex["cirrus_test_service"] = {"name":"","files":["chain_spec.rs","lib.rs"]};
-sourcesIndex["cumulus_client_consensus_relay_chain"] = {"name":"","files":["import_queue.rs","lib.rs"]};
-sourcesIndex["orml_vesting"] = {"name":"","files":["lib.rs","weights.rs"]};
-sourcesIndex["pallet_executor"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["pallet_feeds"] = {"name":"","files":["feed_processor.rs","lib.rs"]};
-sourcesIndex["pallet_grandpa_finality_verifier"] = {"name":"","files":["chain.rs","grandpa.rs","lib.rs"]};
-sourcesIndex["pallet_object_store"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["pallet_offences_subspace"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["pallet_rewards"] = {"name":"","files":["default_weights.rs","lib.rs"]};
-sourcesIndex["pallet_runtime_configs"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["pallet_subspace"] = {"name":"","files":["default_weights.rs","equivocation.rs","lib.rs"]};
-sourcesIndex["pallet_transaction_fees"] = {"name":"","files":["default_weights.rs","lib.rs"]};
-sourcesIndex["sc_consensus_fraud_proof"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["sc_consensus_subspace"] = {"name":"","files":["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]};
-sourcesIndex["sc_consensus_subspace_rpc"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["sc_network_test"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["sc_subspace_chain_specs"] = {"name":"","files":["lib.rs","utils.rs"]};
-sourcesIndex["sp_consensus_subspace"] = {"name":"","files":["digests.rs","inherents.rs","lib.rs","offence.rs"]};
-sourcesIndex["sp_executor"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["sp_lightclient"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["sp_objects"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_archiving"] = {"name":"","dirs":[{"name":"archiver","files":["record_shards.rs"]}],"files":["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]};
-sourcesIndex["subspace_core_primitives"] = {"name":"","files":["crypto.rs","lib.rs","objects.rs"]};
-sourcesIndex["subspace_farmer"] = {"name":"","dirs":[{"name":"commitments","files":["databases.rs","metadata.rs"]},{"name":"plot","files":["piece_index_hash_to_offset_db.rs","piece_offset_to_index_db.rs","worker.rs"]},{"name":"rpc_client","files":["bench_rpc_client.rs","node_rpc_client.rs"]},{"name":"single_plot_farm","files":["dsn_archiving.rs"]}],"files":["archiving.rs","commitments.rs","dsn.rs","farming.rs","file_ext.rs","identity.rs","legacy_multi_plots_farm.rs","lib.rs","object_mappings.rs","plot.rs","rpc_client.rs","single_disk_farm.rs","single_plot_farm.rs","utils.rs","ws_rpc_server.rs"]};
-sourcesIndex["subspace_fraud_proof"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_networking"] = {"name":"","dirs":[{"name":"behavior","files":["custom_record_store.rs","persistent_parameters.rs"]},{"name":"request_handlers","files":["generic_request_handler.rs","object_mappings.rs","pieces_by_range.rs"]}],"files":["behavior.rs","create.rs","lib.rs","multimess.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]};
-sourcesIndex["subspace_node"] = {"name":"","dirs":[{"name":"secondary_chain","files":["chain_spec.rs","cli.rs"]}],"files":["chain_spec.rs","chain_spec_utils.rs","import_blocks_from_dsn.rs","lib.rs","secondary_chain.rs"]};
-sourcesIndex["subspace_rpc_primitives"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_runtime"] = {"name":"","files":["feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]};
-sourcesIndex["subspace_runtime_primitives"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_service"] = {"name":"","files":["dsn.rs","lib.rs","pool.rs","rpc.rs"]};
-sourcesIndex["subspace_solving"] = {"name":"","files":["codec.rs","lib.rs"]};
-sourcesIndex["subspace_test_client"] = {"name":"","files":["chain_spec.rs","lib.rs"]};
-sourcesIndex["subspace_test_runtime"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_test_service"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_verification"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["subspace_wasm_tools"] = {"name":"","files":["lib.rs"]};
-sourcesIndex["substrate_test_runtime"] = {"name":"","files":["genesismap.rs","lib.rs","system.rs"]};
-sourcesIndex["substrate_test_runtime_client"] = {"name":"","files":["block_builder_ext.rs","lib.rs","trait_tests.rs"]};
-sourcesIndex["substrate_test_runtime_transaction_pool"] = {"name":"","files":["lib.rs"]};
+var sourcesIndex = JSON.parse('{\
+"cirrus_block_builder":["",[],["lib.rs"]],\
+"cirrus_client_executor":["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]],\
+"cirrus_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
+"cirrus_node":["",[],["lib.rs","rpc.rs","service.rs"]],\
+"cirrus_pallet_executive":["",[],["lib.rs"]],\
+"cirrus_primitives":["",[],["lib.rs"]],\
+"cirrus_runtime":["",[],["lib.rs","runtime.rs"]],\
+"cirrus_test_runtime":["",[],["lib.rs","runtime.rs"]],\
+"cirrus_test_service":["",[],["chain_spec.rs","lib.rs"]],\
+"cumulus_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
+"orml_vesting":["",[],["lib.rs","weights.rs"]],\
+"pallet_executor":["",[],["lib.rs"]],\
+"pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
+"pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
+"pallet_object_store":["",[],["lib.rs"]],\
+"pallet_offences_subspace":["",[],["lib.rs"]],\
+"pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
+"pallet_runtime_configs":["",[],["lib.rs"]],\
+"pallet_subspace":["",[],["default_weights.rs","equivocation.rs","lib.rs"]],\
+"pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
+"sc_consensus_fraud_proof":["",[],["lib.rs"]],\
+"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]],\
+"sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
+"sc_network_test":["",[],["lib.rs"]],\
+"sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
+"sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
+"sp_executor":["",[],["lib.rs"]],\
+"sp_lightclient":["",[],["lib.rs"]],\
+"sp_objects":["",[],["lib.rs"]],\
+"subspace_archiving":["",[["archiver",[],["record_shards.rs"]]],["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]],\
+"subspace_core_primitives":["",[],["crypto.rs","lib.rs","objects.rs"]],\
+"subspace_farmer":["",[["commitments",[],["databases.rs","metadata.rs"]],["plot",[],["piece_index_hash_to_offset_db.rs","piece_offset_to_index_db.rs","worker.rs"]],["rpc_client",[],["bench_rpc_client.rs","node_rpc_client.rs"]],["single_plot_farm",[],["dsn_archiving.rs"]]],["archiving.rs","commitments.rs","dsn.rs","farming.rs","file_ext.rs","identity.rs","legacy_multi_plots_farm.rs","lib.rs","object_mappings.rs","plot.rs","rpc_client.rs","single_disk_farm.rs","single_plot_farm.rs","utils.rs","ws_rpc_server.rs"]],\
+"subspace_fraud_proof":["",[],["lib.rs"]],\
+"subspace_networking":["",[["behavior",[],["custom_record_store.rs","persistent_parameters.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","pieces_by_range.rs"]]],["behavior.rs","create.rs","lib.rs","multimess.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]],\
+"subspace_node":["",[["secondary_chain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","import_blocks_from_dsn.rs","lib.rs","secondary_chain.rs"]],\
+"subspace_rpc_primitives":["",[],["lib.rs"]],\
+"subspace_runtime":["",[],["feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
+"subspace_runtime_primitives":["",[],["lib.rs"]],\
+"subspace_service":["",[],["dsn.rs","lib.rs","pool.rs","rpc.rs"]],\
+"subspace_solving":["",[],["codec.rs","lib.rs"]],\
+"subspace_test_client":["",[],["chain_spec.rs","lib.rs"]],\
+"subspace_test_runtime":["",[],["lib.rs"]],\
+"subspace_test_service":["",[],["lib.rs"]],\
+"subspace_verification":["",[],["lib.rs"]],\
+"subspace_wasm_tools":["",[],["lib.rs"]],\
+"substrate_test_runtime":["",[],["genesismap.rs","lib.rs","system.rs"]],\
+"substrate_test_runtime_client":["",[],["block_builder_ext.rs","lib.rs","trait_tests.rs"]],\
+"substrate_test_runtime_transaction_pool":["",[],["lib.rs"]]\
+}');
 createSourceSidebar();

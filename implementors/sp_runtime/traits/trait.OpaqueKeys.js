@@ -1,7 +1,7 @@
-(function() {var implementors = {};
-implementors["cirrus_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"cirrus_runtime/struct.SessionKeys.html\" title=\"struct cirrus_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["cirrus_runtime::runtime::SessionKeys"]}];
-implementors["cirrus_test_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"cirrus_test_runtime/struct.SessionKeys.html\" title=\"struct cirrus_test_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["cirrus_test_runtime::runtime::SessionKeys"]}];
-implementors["subspace_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"subspace_runtime/struct.SessionKeys.html\" title=\"struct subspace_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["subspace_runtime::SessionKeys"]}];
-implementors["subspace_test_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"subspace_test_runtime/struct.SessionKeys.html\" title=\"struct subspace_test_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["subspace_test_runtime::SessionKeys"]}];
-implementors["substrate_test_runtime"] = [{"text":"impl OpaqueKeys for <a class=\"struct\" href=\"substrate_test_runtime/struct.SessionKeys.html\" title=\"struct substrate_test_runtime::SessionKeys\">SessionKeys</a>","synthetic":false,"types":["substrate_test_runtime::SessionKeys"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"cirrus_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"cirrus_runtime/struct.SessionKeys.html\" title=\"struct cirrus_runtime::SessionKeys\">SessionKeys</a>"]],
+"cirrus_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"cirrus_test_runtime/struct.SessionKeys.html\" title=\"struct cirrus_test_runtime::SessionKeys\">SessionKeys</a>"]],
+"subspace_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"subspace_runtime/struct.SessionKeys.html\" title=\"struct subspace_runtime::SessionKeys\">SessionKeys</a>"]],
+"subspace_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"subspace_test_runtime/struct.SessionKeys.html\" title=\"struct subspace_test_runtime::SessionKeys\">SessionKeys</a>"]],
+"substrate_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"substrate_test_runtime/struct.SessionKeys.html\" title=\"struct substrate_test_runtime::SessionKeys\">SessionKeys</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

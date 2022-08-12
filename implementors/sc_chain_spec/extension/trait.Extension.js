@@ -1,3 +1,3 @@
-(function() {var implementors = {};
-implementors["sc_subspace_chain_specs"] = [{"text":"impl&lt;ExecutionGenesisConfig&gt; Extension for <a class=\"struct\" href=\"sc_subspace_chain_specs/struct.ChainSpecExtensions.html\" title=\"struct sc_subspace_chain_specs::ChainSpecExtensions\">ChainSpecExtensions</a>&lt;ExecutionGenesisConfig&gt; <span class=\"where fmt-newline\">where<br>&nbsp;&nbsp;&nbsp;&nbsp;ExecutionGenesisConfig: RuntimeGenesis + 'static,&nbsp;</span>","synthetic":false,"types":["sc_subspace_chain_specs::ChainSpecExtensions"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {var implementors = {
+"sc_subspace_chain_specs":[["impl&lt;ExecutionGenesisConfig&gt; Extension for <a class=\"struct\" href=\"sc_subspace_chain_specs/struct.ChainSpecExtensions.html\" title=\"struct sc_subspace_chain_specs::ChainSpecExtensions\">ChainSpecExtensions</a>&lt;ExecutionGenesisConfig&gt; <span class=\"where fmt-newline\">where<br>&nbsp;&nbsp;&nbsp;&nbsp;ExecutionGenesisConfig: RuntimeGenesis + 'static,&nbsp;</span>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
