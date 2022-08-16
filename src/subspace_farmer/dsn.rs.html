@@ -315,16 +315,78 @@
 <span id="315">315</span>
 <span id="316">316</span>
 <span id="317">317</span>
+<span id="318">318</span>
+<span id="319">319</span>
+<span id="320">320</span>
+<span id="321">321</span>
+<span id="322">322</span>
+<span id="323">323</span>
+<span id="324">324</span>
+<span id="325">325</span>
+<span id="326">326</span>
+<span id="327">327</span>
+<span id="328">328</span>
+<span id="329">329</span>
+<span id="330">330</span>
+<span id="331">331</span>
+<span id="332">332</span>
+<span id="333">333</span>
+<span id="334">334</span>
+<span id="335">335</span>
+<span id="336">336</span>
+<span id="337">337</span>
+<span id="338">338</span>
+<span id="339">339</span>
+<span id="340">340</span>
+<span id="341">341</span>
+<span id="342">342</span>
+<span id="343">343</span>
+<span id="344">344</span>
+<span id="345">345</span>
+<span id="346">346</span>
+<span id="347">347</span>
+<span id="348">348</span>
+<span id="349">349</span>
+<span id="350">350</span>
+<span id="351">351</span>
+<span id="352">352</span>
+<span id="353">353</span>
+<span id="354">354</span>
+<span id="355">355</span>
+<span id="356">356</span>
+<span id="357">357</span>
+<span id="358">358</span>
+<span id="359">359</span>
+<span id="360">360</span>
+<span id="361">361</span>
+<span id="362">362</span>
+<span id="363">363</span>
+<span id="364">364</span>
+<span id="365">365</span>
+<span id="366">366</span>
+<span id="367">367</span>
+<span id="368">368</span>
+<span id="369">369</span>
+<span id="370">370</span>
+<span id="371">371</span>
+<span id="372">372</span>
+<span id="373">373</span>
+<span id="374">374</span>
+<span id="375">375</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">async_trait::async_trait</span>;
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">SinkExt</span>, <span class="ident">Stream</span>, <span class="ident">StreamExt</span>};
 <span class="kw">use</span> <span class="ident">num_traits</span>::{<span class="ident">WrappingAdd</span>, <span class="ident">WrappingSub</span>};
+<span class="kw">use</span> <span class="ident">scopeguard::guard</span>;
 <span class="kw">use</span> <span class="ident">std::ops::Range</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
     <span class="ident">FlatPieces</span>, <span class="ident">PieceIndex</span>, <span class="ident">PieceIndexHash</span>, <span class="ident">PublicKey</span>, <span class="ident">PIECE_SIZE</span>, <span class="ident">U256</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::core::multihash</span>::{<span class="ident">Code</span>, <span class="ident">MultihashDigest</span>};
-<span class="kw">use</span> <span class="ident">subspace_networking</span>::{<span class="ident">PiecesByRangeRequest</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>};
+<span class="kw">use</span> <span class="ident">subspace_networking::libp2p::PeerId</span>;
+<span class="kw">use</span> <span class="ident">subspace_networking</span>::{
+    <span class="ident">PeerInfoRequest</span>, <span class="ident">PeerSyncStatus</span>, <span class="ident">PiecesByRangeRequest</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>,
+};
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
 
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
@@ -408,6 +470,12 @@
 <span class="kw">pub</span> <span class="kw">trait</span> <span class="ident">DSNSync</span> {
     <span class="kw">type</span> <span class="ident">Error</span>: <span class="ident">std::error::Error</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>;
 
+    <span class="doccomment">/// Notifies about the start of the peer synchronization from the DSN.</span>
+    <span class="kw">fn</span> <span class="ident">notify_sync_start</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
+
+    <span class="doccomment">/// Notifies about the end of the peer synchronization from the DSN.</span>
+    <span class="kw">fn</span> <span class="ident">notify_sync_end</span>(<span class="kw-2">&amp;</span><span class="self">self</span>);
+
     <span class="doccomment">/// Get pieces from the network which fall within the range</span>
     <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">get_pieces</span>(
         <span class="kw-2">&amp;mut</span> <span class="self">self</span>,
@@ -423,6 +491,10 @@
 <span class="kw">impl</span> <span class="ident">DSNSync</span> <span class="kw">for</span> <span class="ident">NoSync</span> {
     <span class="kw">type</span> <span class="ident">Error</span> <span class="op">=</span> <span class="ident">std::convert::Infallible</span>;
 
+    <span class="kw">fn</span> <span class="ident">notify_sync_start</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) {}
+
+    <span class="kw">fn</span> <span class="ident">notify_sync_end</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) {}
+
     <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">get_pieces</span>(
         <span class="kw-2">&amp;mut</span> <span class="self">self</span>,
         <span class="ident">_range</span>: <span class="ident">Range</span><span class="op">&lt;</span><span class="ident">PieceIndexHash</span><span class="op">&gt;</span>,
@@ -434,6 +506,14 @@
 <span class="attribute">#[<span class="ident">async_trait::async_trait</span>]</span>
 <span class="kw">impl</span> <span class="ident">DSNSync</span> <span class="kw">for</span> <span class="ident">subspace_networking::Node</span> {
     <span class="kw">type</span> <span class="ident">Error</span> <span class="op">=</span> <span class="ident">GetPiecesByRangeError</span>;
+
+    <span class="kw">fn</span> <span class="ident">notify_sync_start</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="self">self</span>.<span class="ident">sync_status_handler</span>().<span class="ident">toggle_on</span>();
+    }
+
+    <span class="kw">fn</span> <span class="ident">notify_sync_end</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="self">self</span>.<span class="ident">sync_status_handler</span>().<span class="ident">toggle_off</span>();
+    }
 
     <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">get_pieces</span>(
         <span class="kw-2">&amp;mut</span> <span class="self">self</span>,
@@ -454,10 +534,42 @@
             .<span class="kw">await</span>
             .<span class="ident">map_err</span>(<span class="ident">GetPiecesByRangeError::CannotGetClosestPeers</span>)<span class="question-mark">?</span>;
 
-        <span class="comment">// select first peer for the piece-by-range protocol</span>
-        <span class="kw">let</span> <span class="ident">peer_id</span> <span class="op">=</span> <span class="kw-2">*</span><span class="ident">peers</span>
-            .<span class="ident">first</span>()
-            .<span class="ident">ok_or</span>(<span class="ident">GetPiecesByRangeError::NoClosestPiecesFound</span>)<span class="question-mark">?</span>;
+        <span class="comment">// select appropriate peer for the piece-by-range protocol</span>
+        <span class="kw">if</span> <span class="ident">peers</span>.<span class="ident">is_empty</span>() {
+            <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">GetPiecesByRangeError::NoClosestPiecesFound</span>);
+        }
+
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">peer_id</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">PeerId</span><span class="op">&gt;</span> <span class="op">=</span> <span class="prelude-val">None</span>;
+        <span class="kw">for</span> <span class="ident">peer_id_candidate</span> <span class="kw">in</span> <span class="ident">peers</span> {
+            <span class="kw">let</span> <span class="ident">result</span> <span class="op">=</span> <span class="self">self</span>
+                .<span class="ident">send_generic_request</span>(<span class="ident">peer_id_candidate</span>, <span class="ident">PeerInfoRequest</span>)
+                .<span class="kw">await</span>;
+
+            <span class="macro">trace!</span>(
+                <span class="ident">peer_id</span> <span class="op">=</span> <span class="op">%</span><span class="ident">peer_id_candidate</span>,
+                <span class="string">&quot;Peer info request returned {:?}&quot;</span>,
+                <span class="ident">result</span>
+            );
+
+            <span class="kw">match</span> <span class="ident">result</span> {
+                <span class="prelude-val">Ok</span>(<span class="ident">response</span>) =&gt; {
+                    <span class="kw">if</span> <span class="ident">response</span>.<span class="ident">peer_info</span>.<span class="ident">status</span> <span class="op">==</span> <span class="ident">PeerSyncStatus::Ready</span> {
+                        <span class="ident">peer_id</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">peer_id_candidate</span>);
+                    } <span class="kw">else</span> {
+                        <span class="macro">trace!</span>(
+                            <span class="ident">peer_id</span> <span class="op">=</span> <span class="op">%</span><span class="ident">peer_id_candidate</span>,
+                            <span class="ident">status</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">response</span>.<span class="ident">peer_info</span>.<span class="ident">status</span>,
+                            <span class="string">&quot;Peer was not selected for synchronization.&quot;</span>
+                        );
+                    }
+                }
+                <span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
+                    <span class="macro">error!</span>(<span class="ident">peer_id</span> <span class="op">=</span> <span class="op">%</span><span class="ident">peer_id_candidate</span>, <span class="op">%</span><span class="ident">err</span>, <span class="string">&quot;Peer info request returned an error&quot;</span>);
+                }
+            }
+        }
+
+        <span class="kw">let</span> <span class="ident">peer_id</span> <span class="op">=</span> <span class="ident">peer_id</span>.<span class="ident">ok_or</span>(<span class="ident">GetPiecesByRangeError::NoClosestPiecesFound</span>)<span class="question-mark">?</span>;
 
         <span class="macro">trace!</span>(<span class="op">%</span><span class="ident">peer_id</span>, <span class="question-mark">?</span><span class="ident">start</span>, <span class="question-mark">?</span><span class="ident">end</span>, <span class="string">&quot;Peer found&quot;</span>);
 
@@ -535,11 +647,15 @@
 }
 
 <span class="doccomment">/// Syncs the closest pieces to the public key from the provided DSN.</span>
-<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">sync</span><span class="op">&lt;</span><span class="ident">DSN</span>, <span class="ident">OP</span><span class="op">&gt;</span>(<span class="kw-2">mut</span> <span class="ident">dsn</span>: <span class="ident">DSN</span>, <span class="ident">options</span>: <span class="ident">SyncOptions</span>, <span class="ident">on_sync</span>: <span class="ident">OP</span>) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span>
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">sync</span><span class="op">&lt;</span><span class="ident">DSN</span>, <span class="ident">OP</span><span class="op">&gt;</span>(<span class="ident">dsn</span>: <span class="ident">DSN</span>, <span class="ident">options</span>: <span class="ident">SyncOptions</span>, <span class="ident">on_sync</span>: <span class="ident">OP</span>) -&gt; <span class="ident">anyhow::Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">DSN</span>: <span class="ident">DSNSync</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sized</span>,
     <span class="ident">OP</span>: <span class="ident">OnSync</span>,
 {
+    <span class="ident">dsn</span>.<span class="ident">notify_sync_start</span>();
+    <span class="comment">// We redefine dsn variable to call notify_sync_end() at return of the scope or panic</span>
+    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">dsn</span> <span class="op">=</span> <span class="ident">guard</span>(<span class="ident">dsn</span>, <span class="op">|</span><span class="ident">dsn</span><span class="op">|</span> <span class="ident">dsn</span>.<span class="ident">notify_sync_end</span>());
+
     <span class="kw">let</span> <span class="ident">SyncOptions</span> {
         <span class="ident">max_plot_size</span>,
         <span class="ident">total_pieces</span>,
