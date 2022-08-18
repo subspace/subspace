@@ -371,8 +371,6 @@
 <span id="371">371</span>
 <span id="372">372</span>
 <span id="373">373</span>
-<span id="374">374</span>
-<span id="375">375</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">async_trait::async_trait</span>;
 <span class="kw">use</span> <span class="ident">futures::channel</span>::{<span class="ident">mpsc</span>, <span class="ident">oneshot</span>};
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">SinkExt</span>, <span class="ident">Stream</span>, <span class="ident">StreamExt</span>};
@@ -383,9 +381,9 @@
     <span class="ident">FlatPieces</span>, <span class="ident">PieceIndex</span>, <span class="ident">PieceIndexHash</span>, <span class="ident">PublicKey</span>, <span class="ident">PIECE_SIZE</span>, <span class="ident">U256</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::core::multihash</span>::{<span class="ident">Code</span>, <span class="ident">MultihashDigest</span>};
-<span class="kw">use</span> <span class="ident">subspace_networking::libp2p::PeerId</span>;
 <span class="kw">use</span> <span class="ident">subspace_networking</span>::{
-    <span class="ident">PeerInfoRequest</span>, <span class="ident">PeerSyncStatus</span>, <span class="ident">PiecesByRangeRequest</span>, <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>,
+    <span class="ident">PeerInfo</span>, <span class="ident">PeerInfoRequest</span>, <span class="ident">PeerInfoResponse</span>, <span class="ident">PeerSyncStatus</span>, <span class="ident">PiecesByRangeRequest</span>,
+    <span class="ident">PiecesByRangeResponse</span>, <span class="ident">PiecesToPlot</span>,
 };
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">error</span>, <span class="ident">trace</span>, <span class="ident">warn</span>};
 
@@ -393,6 +391,7 @@
 <span class="kw">mod</span> <span class="ident">tests</span>;
 
 <span class="kw">const</span> <span class="ident">PIECES_CHANNEL_BUFFER_SIZE</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">20</span>;
+<span class="kw">const</span> <span class="ident">GET_CLOSEST_PEER_TIMEOUT</span>: <span class="ident">std::time::Duration</span> <span class="op">=</span> <span class="ident">std::time::Duration::from_secs</span>(<span class="number">7</span>);
 
 <span class="kw">pub</span> <span class="kw">type</span> <span class="ident">PieceIndexHashNumber</span> <span class="op">=</span> <span class="ident">U256</span>;
 
@@ -443,14 +442,14 @@
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">thiserror::Error</span>)]</span>
 <span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">GetPiecesByRangeError</span> {
-    <span class="doccomment">/// Cannot find closest pieces by range.</span>
-    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Cannot find closest pieces by range&quot;</span>)]</span>
-    <span class="ident">NoClosestPiecesFound</span>,
     <span class="doccomment">/// Cannot get closest peers from DHT.</span>
-    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Cannot get closest peers from DHT&quot;</span>)]</span>
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Cannot get closest peers from DHT: {0}&quot;</span>)]</span>
     <span class="ident">CannotGetClosestPeers</span>(<span class="attribute">#[<span class="ident">source</span>]</span> <span class="ident">subspace_networking::GetClosestPeersError</span>),
+    <span class="doccomment">/// There are no farmers which support our protocol</span>
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;There are no farmers which support our protocol&quot;</span>)]</span>
+    <span class="ident">NoSupportedFarmer</span>,
     <span class="doccomment">/// Node runner was dropped, impossible to get pieces by range.</span>
-    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Node runner was dropped, impossible to get pieces by range&quot;</span>)]</span>
+    <span class="attribute">#[<span class="ident">error</span>(<span class="string">&quot;Node runner was dropped, impossible to get pieces by range: {0}&quot;</span>)]</span>
     <span class="ident">NodeRunnerDropped</span>(<span class="attribute">#[<span class="ident">source</span>]</span> <span class="ident">subspace_networking::SendRequestError</span>),
 }
 
@@ -529,47 +528,44 @@
 
         <span class="comment">// obtain closest peers to the middle of the range</span>
         <span class="kw">let</span> <span class="ident">key</span> <span class="op">=</span> <span class="ident">Code::Identity</span>.<span class="ident">digest</span>(<span class="kw-2">&amp;</span><span class="ident">middle</span>);
-        <span class="kw">let</span> <span class="ident">peers</span> <span class="op">=</span> <span class="self">self</span>
-            .<span class="ident">get_closest_peers</span>(<span class="ident">key</span>)
-            .<span class="kw">await</span>
-            .<span class="ident">map_err</span>(<span class="ident">GetPiecesByRangeError::CannotGetClosestPeers</span>)<span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">peer_id</span> <span class="op">=</span> {
+            <span class="kw">let</span> <span class="ident">node</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">clone</span>();
 
-        <span class="comment">// select appropriate peer for the piece-by-range protocol</span>
-        <span class="kw">if</span> <span class="ident">peers</span>.<span class="ident">is_empty</span>() {
-            <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">GetPiecesByRangeError::NoClosestPiecesFound</span>);
-        }
+            <span class="ident">backoff::future::retry</span>(
+                <span class="ident">backoff::ExponentialBackoffBuilder::new</span>()
+                    .<span class="ident">with_max_elapsed_time</span>(<span class="prelude-val">Some</span>(<span class="ident">GET_CLOSEST_PEER_TIMEOUT</span>))
+                    .<span class="ident">build</span>(),
+                <span class="kw">move</span> <span class="op">|</span><span class="op">|</span> {
+                    <span class="kw">let</span> <span class="ident">node</span> <span class="op">=</span> <span class="ident">node</span>.<span class="ident">clone</span>();
+                    <span class="kw">async</span> <span class="kw">move</span> {
+                        <span class="kw">let</span> <span class="ident">peers</span> <span class="op">=</span> <span class="ident">node</span>
+                            .<span class="ident">get_closest_peers</span>(<span class="ident">key</span>)
+                            .<span class="kw">await</span>
+                            .<span class="ident">map_err</span>(<span class="ident">GetPiecesByRangeError::CannotGetClosestPeers</span>)<span class="question-mark">?</span>;
+                        <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span><span class="ident">peers</span>, <span class="string">&quot;Received peers&quot;</span>);
 
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">peer_id</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">PeerId</span><span class="op">&gt;</span> <span class="op">=</span> <span class="prelude-val">None</span>;
-        <span class="kw">for</span> <span class="ident">peer_id_candidate</span> <span class="kw">in</span> <span class="ident">peers</span> {
-            <span class="kw">let</span> <span class="ident">result</span> <span class="op">=</span> <span class="self">self</span>
-                .<span class="ident">send_generic_request</span>(<span class="ident">peer_id_candidate</span>, <span class="ident">PeerInfoRequest</span>)
-                .<span class="kw">await</span>;
+                        <span class="comment">// select first peer for the piece-by-range protocol</span>
+                        <span class="kw">for</span> <span class="ident">id</span> <span class="kw">in</span> <span class="ident">peers</span> {
+                            <span class="kw">match</span> <span class="ident">node</span>.<span class="ident">send_generic_request</span>(<span class="ident">id</span>, <span class="ident">PeerInfoRequest</span>).<span class="kw">await</span> {
+                                <span class="prelude-val">Ok</span>(<span class="ident">PeerInfoResponse</span> { <span class="ident">peer_info</span>: <span class="ident">PeerInfo</span> { <span class="ident">status</span> }}) =&gt; <span class="kw">if</span> <span class="ident">status</span> <span class="op">==</span> <span class="ident">PeerSyncStatus::Ready</span> {
+                                    <span class="kw">return</span> <span class="prelude-val">Ok</span>(<span class="ident">id</span>)
+                                } <span class="kw">else</span> {
+                                    <span class="macro">trace!</span>(<span class="op">%</span><span class="ident">id</span>, <span class="question-mark">?</span><span class="ident">status</span>, <span class="string">&quot;Peer is not ready for synchronization&quot;</span>)
+                                },
+                                <span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
+                                    <span class="macro">debug!</span>(<span class="op">%</span><span class="ident">id</span>, <span class="op">%</span><span class="ident">err</span>, <span class="string">&quot;Peer info request returned an error&quot;</span>)
+                                }
+                            }
+                        }
 
-            <span class="macro">trace!</span>(
-                <span class="ident">peer_id</span> <span class="op">=</span> <span class="op">%</span><span class="ident">peer_id_candidate</span>,
-                <span class="string">&quot;Peer info request returned {:?}&quot;</span>,
-                <span class="ident">result</span>
-            );
-
-            <span class="kw">match</span> <span class="ident">result</span> {
-                <span class="prelude-val">Ok</span>(<span class="ident">response</span>) =&gt; {
-                    <span class="kw">if</span> <span class="ident">response</span>.<span class="ident">peer_info</span>.<span class="ident">status</span> <span class="op">==</span> <span class="ident">PeerSyncStatus::Ready</span> {
-                        <span class="ident">peer_id</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">peer_id_candidate</span>);
-                    } <span class="kw">else</span> {
-                        <span class="macro">trace!</span>(
-                            <span class="ident">peer_id</span> <span class="op">=</span> <span class="op">%</span><span class="ident">peer_id_candidate</span>,
-                            <span class="ident">status</span> <span class="op">=</span> <span class="question-mark">?</span><span class="ident">response</span>.<span class="ident">peer_info</span>.<span class="ident">status</span>,
-                            <span class="string">&quot;Peer was not selected for synchronization.&quot;</span>
-                        );
+                        <span class="prelude-val">Err</span>(<span class="ident">backoff::Error::transient</span>(
+                            <span class="ident">GetPiecesByRangeError::NoSupportedFarmer</span>,
+                        ))
                     }
-                }
-                <span class="prelude-val">Err</span>(<span class="ident">err</span>) =&gt; {
-                    <span class="macro">error!</span>(<span class="ident">peer_id</span> <span class="op">=</span> <span class="op">%</span><span class="ident">peer_id_candidate</span>, <span class="op">%</span><span class="ident">err</span>, <span class="string">&quot;Peer info request returned an error&quot;</span>);
-                }
-            }
-        }
-
-        <span class="kw">let</span> <span class="ident">peer_id</span> <span class="op">=</span> <span class="ident">peer_id</span>.<span class="ident">ok_or</span>(<span class="ident">GetPiecesByRangeError::NoClosestPiecesFound</span>)<span class="question-mark">?</span>;
+                },
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>
+        };
 
         <span class="macro">trace!</span>(<span class="op">%</span><span class="ident">peer_id</span>, <span class="question-mark">?</span><span class="ident">start</span>, <span class="question-mark">?</span><span class="ident">end</span>, <span class="string">&quot;Peer found&quot;</span>);
 
