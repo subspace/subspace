@@ -331,6 +331,21 @@
 <span id="331">331</span>
 <span id="332">332</span>
 <span id="333">333</span>
+<span id="334">334</span>
+<span id="335">335</span>
+<span id="336">336</span>
+<span id="337">337</span>
+<span id="338">338</span>
+<span id="339">339</span>
+<span id="340">340</span>
+<span id="341">341</span>
+<span id="342">342</span>
+<span id="343">343</span>
+<span id="344">344</span>
+<span id="345">345</span>
+<span id="346">346</span>
+<span id="347">347</span>
+<span id="348">348</span>
 </pre><pre class="rust"><code><span class="kw">pub</span> <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::custom_record_store::ValueGetter</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::behavior</span>::{<span class="ident">Behavior</span>, <span class="ident">BehaviorConfig</span>};
@@ -338,6 +353,7 @@
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::node_runner</span>::{<span class="ident">NodeRunner</span>, <span class="ident">NodeRunnerConfig</span>};
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::request_responses::RequestHandler</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::shared::Shared</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::utils::convert_multiaddresses</span>;
 <span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::BootstrappedNetworkingParameters</span>;
 <span class="kw">use</span> <span class="ident">futures::channel::mpsc</span>;
 <span class="kw">use</span> <span class="ident">libp2p::core::muxing::StreamMuxerBox</span>;
@@ -370,6 +386,10 @@
 <span class="comment">// Defines max_negotiating_inbound_streams constant for the swarm.</span>
 <span class="comment">// It must be set for large plots.</span>
 <span class="kw">const</span> <span class="ident">SWARM_MAX_NEGOTIATING_INBOUND_STREAMS</span>: <span class="ident">usize</span> <span class="op">=</span> <span class="number">100000</span>;
+<span class="comment">// The default maximum incoming connection number for the swarm.</span>
+<span class="kw">const</span> <span class="ident">SWARM_MAX_ESTABLISHED_INCOMING_CONNECTIONS</span>: <span class="ident">u32</span> <span class="op">=</span> <span class="number">50</span>;
+<span class="comment">// The default maximum incoming connection number for the swarm.</span>
+<span class="kw">const</span> <span class="ident">SWARM_MAX_ESTABLISHED_OUTGOING_CONNECTIONS</span>: <span class="ident">u32</span> <span class="op">=</span> <span class="number">50</span>;
 
 <span class="doccomment">/// Defines relay configuration for the Node</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Clone</span>, <span class="ident">Debug</span>)]</span>
@@ -408,7 +428,7 @@
     <span class="kw">pub</span> <span class="ident">identify</span>: <span class="ident">IdentifyConfig</span>,
     <span class="doccomment">/// The configuration for the Kademlia behaviour.</span>
     <span class="kw">pub</span> <span class="ident">kademlia</span>: <span class="ident">KademliaConfig</span>,
-    <span class="doccomment">/// The configuration for the Kademlia behaviour.</span>
+    <span class="doccomment">/// The configuration for the Gossip behaviour.</span>
     <span class="kw">pub</span> <span class="ident">gossipsub</span>: <span class="ident">GossipsubConfig</span>,
     <span class="doccomment">/// Externally provided implementation of value getter for Kademlia DHT,</span>
     <span class="kw">pub</span> <span class="ident">value_getter</span>: <span class="ident">ValueGetter</span>,
@@ -433,6 +453,10 @@
     <span class="kw">pub</span> <span class="ident">request_response_protocols</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">RequestHandler</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="doccomment">/// Defines set of peers with a permanent connection (and reconnection if necessary).</span>
     <span class="kw">pub</span> <span class="ident">reserved_peers</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Multiaddr</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Incoming swarm connection limit.</span>
+    <span class="kw">pub</span> <span class="ident">max_established_incoming_connections</span>: <span class="ident">u32</span>,
+    <span class="doccomment">/// Outgoing swarm connection limit.</span>
+    <span class="kw">pub</span> <span class="ident">max_established_outgoing_connections</span>: <span class="ident">u32</span>,
 }
 
 <span class="kw">impl</span> <span class="ident">fmt::Debug</span> <span class="kw">for</span> <span class="ident">Config</span> {
@@ -495,6 +519,8 @@
             <span class="ident">yamux_config</span>,
             <span class="ident">mplex_config</span>,
             <span class="ident">reserved_peers</span>: <span class="ident">Vec::new</span>(),
+            <span class="ident">max_established_incoming_connections</span>: <span class="ident">SWARM_MAX_ESTABLISHED_INCOMING_CONNECTIONS</span>,
+            <span class="ident">max_established_outgoing_connections</span>: <span class="ident">SWARM_MAX_ESTABLISHED_OUTGOING_CONNECTIONS</span>,
         }
     }
 }
@@ -536,6 +562,8 @@
         <span class="ident">networking_parameters_registry</span>,
         <span class="ident">request_response_protocols</span>,
         <span class="ident">reserved_peers</span>,
+        <span class="ident">max_established_incoming_connections</span>,
+        <span class="ident">max_established_outgoing_connections</span>,
     } <span class="op">=</span> <span class="ident">config</span>;
     <span class="kw">let</span> <span class="ident">local_peer_id</span> <span class="op">=</span> <span class="ident">keypair</span>.<span class="ident">public</span>().<span class="ident">to_peer_id</span>();
     <span class="comment">// Create relay client transport and client.</span>
@@ -616,7 +644,9 @@
             <span class="ident">shared_weak</span>,
             <span class="ident">next_random_query_interval</span>: <span class="ident">initial_random_query_interval</span>,
             <span class="ident">networking_parameters_registry</span>,
-            <span class="ident">reserved_peers</span>,
+            <span class="ident">reserved_peers</span>: <span class="ident">convert_multiaddresses</span>(<span class="ident">reserved_peers</span>).<span class="ident">into_iter</span>().<span class="ident">collect</span>(),
+            <span class="ident">max_established_incoming_connections</span>,
+            <span class="ident">max_established_outgoing_connections</span>,
         });
 
         <span class="prelude-val">Ok</span>((<span class="ident">node</span>, <span class="ident">node_runner</span>))
