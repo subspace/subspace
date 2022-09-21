@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["hmac_sha256","Hmac with Sha2-256 hash function."],["sha256_hash","Simple Sha2-256 hashing."],["sha256_hash_pair","Simple Sha2-256 hashing of a pair of values."]]};
+window.SIDEBAR_ITEMS = {"fn":[["blake2b_256_hash","BLAKE2b-256 hashing of a single value."],["blake2b_256_hash_pair","BLAKE2b-256 hashing of a pair of values."],["blake2b_256_hash_with_key","BLAKE2b-256 keyed hashing of a single value."]]};
