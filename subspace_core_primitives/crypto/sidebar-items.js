@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["blake2b_256_hash","BLAKE2b-256 hashing of a single value."],["blake2b_256_hash_pair","BLAKE2b-256 hashing of a pair of values."],["blake2b_256_hash_with_key","BLAKE2b-256 keyed hashing of a single value."]]};
+window.SIDEBAR_ITEMS = {"fn":[["blake2b_256_hash","BLAKE2b-256 hashing of a single value."],["blake2b_256_hash_pair","BLAKE2b-256 hashing of a pair of values."],["blake2b_256_hash_with_key","BLAKE2b-256 keyed hashing of a single value."]],"mod":[["kzg","Tools for KZG commitment scheme"]]};
