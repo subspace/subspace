@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":[["MerkleTreeWitnessError","Errors that can happen when creating a witness"]],"struct":[["MerkleTree","Merkle Tree"],["Witness","Merkle Proof-based witness"]]};

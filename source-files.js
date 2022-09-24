@@ -28,7 +28,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_executor":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
-"subspace_archiving":["",[["archiver",[],["record_shards.rs"]]],["archiver.rs","lib.rs","merkle_tree.rs","reconstructor.rs","utils.rs"]],\
+"subspace_archiving":["",[["archiver",[],["record_shards.rs"]]],["archiver.rs","lib.rs","reconstructor.rs","utils.rs"]],\
 "subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]]],["crypto.rs","lib.rs","objects.rs"]],\
 "subspace_farmer":["",[["commitments",[],["databases.rs","metadata.rs"]],["plot",[],["piece_index_hash_to_offset_db.rs","piece_offset_to_index_db.rs","worker.rs"]],["rpc_client",[],["bench_rpc_client.rs","node_rpc_client.rs"]],["single_plot_farm",[],["dsn_archiving.rs"]]],["archiving.rs","commitments.rs","dsn.rs","farming.rs","file_ext.rs","identity.rs","lib.rs","object_mappings.rs","plot.rs","rpc_client.rs","single_disk_farm.rs","single_plot_farm.rs","utils.rs","ws_rpc_server.rs"]],\
 "subspace_fraud_proof":["",[],["lib.rs"]],\

@@ -923,6 +923,14 @@
 <span id="923">923</span>
 <span id="924">924</span>
 <span id="925">925</span>
+<span id="926">926</span>
+<span id="927">927</span>
+<span id="928">928</span>
+<span id="929">929</span>
+<span id="930">930</span>
+<span id="931">931</span>
+<span id="932">932</span>
+<span id="933">933</span>
 </pre><pre class="rust"><code><span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">dsn_archiving</span>;
 <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
 <span class="kw">mod</span> <span class="ident">tests</span>;
@@ -953,8 +961,10 @@
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">std</span>::{<span class="ident">fs</span>, <span class="ident">io</span>, <span class="ident">mem</span>};
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::is_piece_valid</span>;
+<span class="kw">use</span> <span class="ident">subspace_core_primitives::crypto::kzg</span>;
+<span class="kw">use</span> <span class="ident">subspace_core_primitives::crypto::kzg::Kzg</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
-    <span class="ident">Blake2b256Hash</span>, <span class="ident">FlatPieces</span>, <span class="ident">Piece</span>, <span class="ident">PieceIndex</span>, <span class="ident">PieceIndexHash</span>, <span class="ident">PublicKey</span>,
+    <span class="ident">FlatPieces</span>, <span class="ident">Piece</span>, <span class="ident">PieceIndex</span>, <span class="ident">PieceIndexHash</span>, <span class="ident">PublicKey</span>, <span class="ident">RecordsRoot</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::identity::sr25519</span>;
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p::Multiaddr</span>;
@@ -1697,12 +1707,15 @@
             <span class="ident">total_pieces</span>: <span class="ident">farmer_protocol_info</span>.<span class="ident">total_pieces</span>,
         };
 
+        <span class="kw">let</span> <span class="ident">kzg</span> <span class="op">=</span> <span class="ident">Kzg::new</span>(<span class="ident">kzg::test_public_parameters</span>());
+
         <span class="kw">let</span> <span class="ident">plotter</span> <span class="op">=</span> <span class="ident">VerifyingPlotter</span> {
             <span class="ident">single_plot_plotter</span>: <span class="self">self</span>.<span class="ident">plotter</span>(),
             <span class="ident">span</span>: <span class="self">self</span>.<span class="ident">span</span>.<span class="ident">clone</span>(),
             <span class="ident">verification_client</span>,
             <span class="ident">farmer_protocol_info</span>,
             <span class="ident">pieces_verification_enabled</span>,
+            <span class="ident">kzg</span>,
         };
 
         <span class="ident">dsn::sync</span>(<span class="self">self</span>.<span class="ident">node</span>.<span class="ident">clone</span>(), <span class="ident">options</span>, <span class="ident">plotter</span>)
@@ -1738,6 +1751,7 @@
     <span class="ident">single_plot_plotter</span>: <span class="ident">SinglePlotPlotter</span>,
     <span class="ident">farmer_protocol_info</span>: <span class="ident">FarmerProtocolInfo</span>,
     <span class="ident">pieces_verification_enabled</span>: <span class="ident">bool</span>,
+    <span class="ident">kzg</span>: <span class="ident">Kzg</span>,
 }
 
 <span class="kw">impl</span><span class="op">&lt;</span><span class="ident">RC</span>: <span class="ident">RpcClient</span><span class="op">&gt;</span> <span class="ident">VerifyingPlotter</span><span class="op">&lt;</span><span class="ident">RC</span><span class="op">&gt;</span> {
@@ -1751,17 +1765,17 @@
             <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">PiecesVerificationError::InvalidRawData</span>);
         }
 
-        <span class="kw">let</span> <span class="ident">merkle_num_leaves</span> <span class="op">=</span> (<span class="self">self</span>.<span class="ident">farmer_protocol_info</span>.<span class="ident">recorded_history_segment_size</span>
+        <span class="kw">let</span> <span class="ident">pieces_in_segment</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">farmer_protocol_info</span>.<span class="ident">recorded_history_segment_size</span>
             <span class="op">/</span> <span class="self">self</span>.<span class="ident">farmer_protocol_info</span>.<span class="ident">record_size</span>.<span class="ident">get</span>()
-            <span class="op">*</span> <span class="number">2</span>) <span class="kw">as</span> <span class="ident">u64</span>;
-        <span class="kw">if</span> <span class="ident">merkle_num_leaves</span>.<span class="ident">is_zero</span>() {
+            <span class="op">*</span> <span class="number">2</span>;
+        <span class="kw">if</span> <span class="ident">pieces_in_segment</span>.<span class="ident">is_zero</span>() {
             <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">PiecesVerificationError::InvalidFarmerProtocolInfo</span>);
         }
 
         <span class="comment">// Calculate segment indexes collection</span>
         <span class="kw">let</span> <span class="ident">segment_indexes</span> <span class="op">=</span> <span class="ident">piece_indexes</span>
             .<span class="ident">iter</span>()
-            .<span class="ident">map</span>(<span class="op">|</span><span class="ident">piece_index</span><span class="op">|</span> <span class="ident">piece_index</span> <span class="op">/</span> <span class="ident">merkle_num_leaves</span>)
+            .<span class="ident">map</span>(<span class="op">|</span><span class="ident">piece_index</span><span class="op">|</span> <span class="ident">piece_index</span> <span class="op">/</span> <span class="ident">u64::from</span>(<span class="ident">pieces_in_segment</span>))
             .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="kw">_</span><span class="op">&gt;</span><span class="op">&gt;</span>();
 
         <span class="comment">// Split segment indexes collection into allowed max sized chunks</span>
@@ -1791,14 +1805,16 @@
                     <span class="prelude-val">Err</span>(<span class="ident">PiecesVerificationError::NoRecordsRootFound</span>)
                 }
             })
-            .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">Blake2b256Hash</span><span class="op">&gt;</span>, <span class="ident">PiecesVerificationError</span><span class="op">&gt;</span><span class="op">&gt;</span>()<span class="question-mark">?</span>;
+            .<span class="ident">collect</span>::<span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">RecordsRoot</span><span class="op">&gt;</span>, <span class="ident">PiecesVerificationError</span><span class="op">&gt;</span><span class="op">&gt;</span>()<span class="question-mark">?</span>;
 
         <span class="comment">// Perform an actual piece validity check</span>
         <span class="kw">for</span> ((<span class="ident">piece</span>, <span class="ident">piece_index</span>), <span class="ident">root</span>) <span class="kw">in</span> <span class="ident">pieces</span>.<span class="ident">as_pieces</span>().<span class="ident">zip</span>(<span class="ident">piece_indexes</span>).<span class="ident">zip</span>(<span class="ident">roots</span>) {
-            <span class="kw">let</span> <span class="ident">position</span> <span class="op">=</span> <span class="ident">u32::try_from</span>(<span class="ident">piece_index</span> <span class="op">%</span> <span class="ident">merkle_num_leaves</span>)
+            <span class="kw">let</span> <span class="ident">position</span> <span class="op">=</span> <span class="ident">u32::try_from</span>(<span class="ident">piece_index</span> <span class="op">%</span> <span class="ident">u64::from</span>(<span class="ident">pieces_in_segment</span>))
                 .<span class="ident">expect</span>(<span class="string">&quot;Position within segment always fits into u32; qed&quot;</span>);
 
             <span class="kw">if</span> <span class="op">!</span><span class="ident">is_piece_valid</span>(
+                <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">kzg</span>,
+                <span class="ident">pieces_in_segment</span>,
                 <span class="ident">piece</span>,
                 <span class="ident">root</span>,
                 <span class="ident">position</span>,

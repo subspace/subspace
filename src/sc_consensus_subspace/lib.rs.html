@@ -1385,6 +1385,19 @@
 <span id="1385">1385</span>
 <span id="1386">1386</span>
 <span id="1387">1387</span>
+<span id="1388">1388</span>
+<span id="1389">1389</span>
+<span id="1390">1390</span>
+<span id="1391">1391</span>
+<span id="1392">1392</span>
+<span id="1393">1393</span>
+<span id="1394">1394</span>
+<span id="1395">1395</span>
+<span id="1396">1396</span>
+<span id="1397">1397</span>
+<span id="1398">1398</span>
+<span id="1399">1399</span>
+<span id="1400">1400</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -1466,10 +1479,12 @@
 <span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver</span>::{<span class="ident">ArchivedSegment</span>, <span class="ident">Archiver</span>};
+<span class="kw">use</span> <span class="ident">subspace_core_primitives::crypto::kzg</span>;
+<span class="kw">use</span> <span class="ident">subspace_core_primitives::crypto::kzg::Kzg</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives::objects::BlockObjectMapping</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
     <span class="ident">Blake2b256Hash</span>, <span class="ident">BlockWeight</span>, <span class="ident">RootBlock</span>, <span class="ident">Salt</span>, <span class="ident">SegmentIndex</span>, <span class="ident">Solution</span>, <span class="ident">SolutionRange</span>,
-    <span class="ident">MERKLE_NUM_LEAVES</span>, <span class="ident">RECORDED_HISTORY_SEGMENT_SIZE</span>, <span class="ident">RECORD_SIZE</span>,
+    <span class="ident">PIECES_IN_SEGMENT</span>, <span class="ident">RECORDED_HISTORY_SEGMENT_SIZE</span>, <span class="ident">RECORD_SIZE</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_solving</span>::{<span class="ident">derive_global_challenge</span>, <span class="ident">derive_target</span>, <span class="ident">REWARD_SIGNING_CONTEXT</span>};
 <span class="kw">use</span> <span class="ident">subspace_verification</span>::{<span class="ident">Error</span> <span class="kw">as</span> <span class="ident">VerificationPrimitiveError</span>, <span class="ident">VerifySolutionParams</span>};
@@ -1875,6 +1890,7 @@
     <span class="doccomment">/// Root blocks that are expected to appear in the corresponding blocks, used for block</span>
     <span class="doccomment">/// validation</span>
     <span class="ident">root_blocks</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">LruCache</span><span class="op">&lt;</span><span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>, <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">RootBlock</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">kzg</span>: <span class="ident">Kzg</span>,
 }
 
 <span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>: <span class="ident">BlockT</span><span class="op">&gt;</span> <span class="ident">SubspaceLink</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> {
@@ -2337,23 +2353,27 @@
         }
 
         <span class="kw">let</span> <span class="ident">segment_index</span>: <span class="ident">SegmentIndex</span> <span class="op">=</span>
-            <span class="ident">pre_digest</span>.<span class="ident">solution</span>.<span class="ident">piece_index</span> <span class="op">/</span> <span class="ident">SegmentIndex::from</span>(<span class="ident">MERKLE_NUM_LEAVES</span>);
+            <span class="ident">pre_digest</span>.<span class="ident">solution</span>.<span class="ident">piece_index</span> <span class="op">/</span> <span class="ident">SegmentIndex::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>);
         <span class="kw">let</span> <span class="ident">position</span> <span class="op">=</span>
-            <span class="ident">u32::try_from</span>(<span class="ident">pre_digest</span>.<span class="ident">solution</span>.<span class="ident">piece_index</span> <span class="op">%</span> <span class="ident">u64::from</span>(<span class="ident">MERKLE_NUM_LEAVES</span>))
+            <span class="ident">u32::try_from</span>(<span class="ident">pre_digest</span>.<span class="ident">solution</span>.<span class="ident">piece_index</span> <span class="op">%</span> <span class="ident">u64::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>))
                 .<span class="ident">expect</span>(<span class="string">&quot;Position within segment always fits into u32; qed&quot;</span>);
 
         <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced</span>
         <span class="comment">// extrinsics with root blocks are not yet in runtime.</span>
         <span class="kw">let</span> <span class="ident">maybe_records_root</span> <span class="op">=</span> <span class="kw">if</span> <span class="ident">block_number</span>.<span class="ident">is_one</span>() {
-            <span class="kw">let</span> <span class="ident">archived_segments</span> <span class="op">=</span> <span class="ident">Archiver::new</span>(<span class="ident">RECORD_SIZE</span>, <span class="ident">RECORDED_HISTORY_SEGMENT_SIZE</span>)
-                .<span class="ident">expect</span>(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
-                .<span class="ident">add_block</span>(
-                    <span class="self">self</span>.<span class="ident">client</span>
-                        .<span class="ident">block</span>(<span class="kw-2">&amp;</span><span class="ident">BlockId::Number</span>(<span class="ident">Zero::zero</span>()))<span class="question-mark">?</span>
-                        .<span class="ident">ok_or</span>(<span class="ident">Error::GenesisUnavailable</span>)<span class="question-mark">?</span>
-                        .<span class="ident">encode</span>(),
-                    <span class="ident">BlockObjectMapping::default</span>(),
-                );
+            <span class="kw">let</span> <span class="ident">archived_segments</span> <span class="op">=</span> <span class="ident">Archiver::new</span>(
+                <span class="ident">RECORD_SIZE</span>,
+                <span class="ident">RECORDED_HISTORY_SEGMENT_SIZE</span>,
+                <span class="self">self</span>.<span class="ident">subspace_link</span>.<span class="ident">kzg</span>.<span class="ident">clone</span>(),
+            )
+            .<span class="ident">expect</span>(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
+            .<span class="ident">add_block</span>(
+                <span class="self">self</span>.<span class="ident">client</span>
+                    .<span class="ident">block</span>(<span class="kw-2">&amp;</span><span class="ident">BlockId::Number</span>(<span class="ident">Zero::zero</span>()))<span class="question-mark">?</span>
+                    .<span class="ident">ok_or</span>(<span class="ident">Error::GenesisUnavailable</span>)<span class="question-mark">?</span>
+                    .<span class="ident">encode</span>(),
+                <span class="ident">BlockObjectMapping::default</span>(),
+            );
             <span class="ident">archived_segments</span>.<span class="ident">into_iter</span>().<span class="ident">find_map</span>(<span class="op">|</span><span class="ident">archived_segment</span><span class="op">|</span> {
                 <span class="kw">if</span> <span class="ident">archived_segment</span>.<span class="ident">root_block</span>.<span class="ident">segment_index</span>() <span class="op">==</span> <span class="ident">segment_index</span> {
                     <span class="prelude-val">Some</span>(<span class="ident">archived_segment</span>.<span class="ident">root_block</span>.<span class="ident">records_root</span>())
@@ -2370,6 +2390,8 @@
         <span class="comment">// Piece is not checked during initial block verification because it requires access to</span>
         <span class="comment">// root block, check it now.</span>
         <span class="ident">subspace_verification::check_piece</span>(
+            <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">subspace_link</span>.<span class="ident">kzg</span>,
+            <span class="ident">PIECES_IN_SEGMENT</span>,
             <span class="ident">records_root</span>,
             <span class="ident">position</span>,
             <span class="ident">RECORD_SIZE</span>,
@@ -2698,6 +2720,9 @@
         .<span class="ident">expect</span>(<span class="string">&quot;Must always be able to get chain constants&quot;</span>)
         .<span class="ident">confirmation_depth_k</span>();
 
+    <span class="comment">// TODO: Probably should have public parameters in chain constants instead</span>
+    <span class="kw">let</span> <span class="ident">kzg</span> <span class="op">=</span> <span class="ident">Kzg::new</span>(<span class="ident">kzg::test_public_parameters</span>());
+
     <span class="kw">let</span> <span class="ident">link</span> <span class="op">=</span> <span class="ident">SubspaceLink</span> {
         <span class="ident">config</span>,
         <span class="ident">new_slot_notification_sender</span>,
@@ -2708,6 +2733,7 @@
         <span class="ident">archived_segment_notification_stream</span>,
         <span class="ident">imported_block_notification_stream</span>,
         <span class="ident">root_blocks</span>: <span class="ident">Arc::new</span>(<span class="ident">Mutex::new</span>(<span class="ident">LruCache::new</span>(<span class="ident">confirmation_depth_k</span> <span class="kw">as</span> <span class="ident">usize</span>))),
+        <span class="ident">kzg</span>,
     };
 
     <span class="kw">let</span> <span class="ident">import</span> <span class="op">=</span> <span class="ident">SubspaceBlockImport::new</span>(
