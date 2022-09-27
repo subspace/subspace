@@ -531,6 +531,45 @@
 <span id="531">531</span>
 <span id="532">532</span>
 <span id="533">533</span>
+<span id="534">534</span>
+<span id="535">535</span>
+<span id="536">536</span>
+<span id="537">537</span>
+<span id="538">538</span>
+<span id="539">539</span>
+<span id="540">540</span>
+<span id="541">541</span>
+<span id="542">542</span>
+<span id="543">543</span>
+<span id="544">544</span>
+<span id="545">545</span>
+<span id="546">546</span>
+<span id="547">547</span>
+<span id="548">548</span>
+<span id="549">549</span>
+<span id="550">550</span>
+<span id="551">551</span>
+<span id="552">552</span>
+<span id="553">553</span>
+<span id="554">554</span>
+<span id="555">555</span>
+<span id="556">556</span>
+<span id="557">557</span>
+<span id="558">558</span>
+<span id="559">559</span>
+<span id="560">560</span>
+<span id="561">561</span>
+<span id="562">562</span>
+<span id="563">563</span>
+<span id="564">564</span>
+<span id="565">565</span>
+<span id="566">566</span>
+<span id="567">567</span>
+<span id="568">568</span>
+<span id="569">569</span>
+<span id="570">570</span>
+<span id="571">571</span>
+<span id="572">572</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later</span>
 
@@ -558,6 +597,7 @@
 <span class="kw">use</span> <span class="ident">derive_more</span>::{<span class="ident">Deref</span>, <span class="ident">DerefMut</span>, <span class="ident">Into</span>};
 <span class="kw">use</span> <span class="ident">dsn::start_dsn_node</span>;
 <span class="kw">use</span> <span class="ident">frame_system_rpc_runtime_api::AccountNonceApi</span>;
+<span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
 <span class="kw">use</span> <span class="ident">jsonrpsee::RpcModule</span>;
 <span class="kw">use</span> <span class="ident">pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi</span>;
 <span class="kw">use</span> <span class="ident">sc_basic_authorship::ProposerFactory</span>;
@@ -570,6 +610,7 @@
     <span class="ident">RewardSigningNotification</span>, <span class="ident">SubspaceLink</span>, <span class="ident">SubspaceParams</span>,
 };
 <span class="kw">use</span> <span class="ident">sc_executor</span>::{<span class="ident">NativeElseWasmExecutor</span>, <span class="ident">NativeExecutionDispatch</span>};
+<span class="kw">use</span> <span class="ident">sc_piece_cache</span>::{<span class="ident">AuxPieceCache</span>, <span class="ident">PieceCache</span>};
 <span class="kw">use</span> <span class="ident">sc_service::error::Error</span> <span class="kw">as</span> <span class="ident">ServiceError</span>;
 <span class="kw">use</span> <span class="ident">sc_service</span>::{
     <span class="ident">Configuration</span>, <span class="ident">NetworkStarter</span>, <span class="ident">PartialComponents</span>, <span class="ident">SpawnTaskHandle</span>, <span class="ident">SpawnTasksParams</span>,
@@ -589,9 +630,11 @@
 <span class="kw">use</span> <span class="ident">sp_session::SessionKeys</span>;
 <span class="kw">use</span> <span class="ident">sp_transaction_pool::runtime_api::TaggedTransactionQueue</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
+<span class="kw">use</span> <span class="ident">subspace_core_primitives::PIECES_IN_SEGMENT</span>;
 <span class="kw">use</span> <span class="ident">subspace_fraud_proof::VerifyFraudProof</span>;
 <span class="kw">use</span> <span class="ident">subspace_runtime_primitives::opaque::Block</span>;
 <span class="kw">use</span> <span class="ident">subspace_runtime_primitives</span>::{<span class="ident">AccountId</span>, <span class="ident">Balance</span>, <span class="ident">Hash</span>, <span class="ident">Index</span> <span class="kw">as</span> <span class="ident">Nonce</span>};
+<span class="kw">use</span> <span class="ident">tracing::error</span>;
 
 <span class="doccomment">/// Error type for Subspace service.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">thiserror::Error</span>, <span class="ident">Debug</span>)]</span>
@@ -688,6 +731,7 @@
                 <span class="ident">Transaction</span> <span class="op">=</span> <span class="ident">TransactionFor</span><span class="op">&lt;</span><span class="ident">FullClient</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span>, <span class="ident">Block</span><span class="op">&gt;</span>,
             <span class="op">&gt;</span>,
             <span class="ident">SubspaceLink</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
+            <span class="ident">AuxPieceCache</span><span class="op">&lt;</span><span class="ident">FullClient</span><span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span><span class="op">&gt;</span>,
             <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Telemetry</span><span class="op">&gt;</span>,
         ),
     <span class="op">&gt;</span>,
@@ -795,6 +839,39 @@
         },
     )<span class="question-mark">?</span>;
 
+    <span class="kw">let</span> <span class="ident">piece_cache</span> <span class="op">=</span> <span class="ident">AuxPieceCache::new</span>(<span class="ident">client</span>.<span class="ident">clone</span>());
+
+    <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces</span>
+    <span class="ident">task_manager</span>
+        .<span class="ident">spawn_handle</span>()
+        .<span class="ident">spawn_blocking</span>(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
+            <span class="kw">let</span> <span class="ident">piece_cache</span> <span class="op">=</span> <span class="ident">piece_cache</span>.<span class="ident">clone</span>();
+            <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">archived_segment_notification_stream</span> <span class="op">=</span> <span class="ident">subspace_link</span>
+                .<span class="ident">archived_segment_notification_stream</span>()
+                .<span class="ident">subscribe</span>();
+
+            <span class="kw">async</span> <span class="kw">move</span> {
+                <span class="kw">while</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">archived_segment_notification</span>) <span class="op">=</span>
+                    <span class="ident">archived_segment_notification_stream</span>.<span class="ident">next</span>().<span class="kw">await</span>
+                {
+                    <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">archived_segment_notification</span>
+                        .<span class="ident">archived_segment</span>
+                        .<span class="ident">root_block</span>
+                        .<span class="ident">segment_index</span>();
+                    <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">piece_cache</span>.<span class="ident">add_pieces</span>(
+                        <span class="ident">segment_index</span> <span class="op">*</span> <span class="ident">u64::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>),
+                        <span class="kw-2">&amp;</span><span class="ident">archived_segment_notification</span>.<span class="ident">archived_segment</span>.<span class="ident">pieces</span>,
+                    ) {
+                        <span class="macro">error!</span>(
+                            <span class="op">%</span><span class="ident">segment_index</span>,
+                            <span class="op">%</span><span class="ident">error</span>,
+                            <span class="string">&quot;Failed to store pieces for segment in cache&quot;</span>
+                        );
+                    }
+                }
+            }
+        });
+
     <span class="ident">sc_consensus_subspace::start_subspace_archiver</span>(
         <span class="kw-2">&amp;</span><span class="ident">subspace_link</span>,
         <span class="ident">client</span>.<span class="ident">clone</span>(),
@@ -828,7 +905,7 @@
         <span class="ident">keystore_container</span>,
         <span class="ident">select_chain</span>,
         <span class="ident">transaction_pool</span>,
-        <span class="ident">other</span>: (<span class="ident">block_import</span>, <span class="ident">subspace_link</span>, <span class="ident">telemetry</span>),
+        <span class="ident">other</span>: (<span class="ident">block_import</span>, <span class="ident">subspace_link</span>, <span class="ident">piece_cache</span>, <span class="ident">telemetry</span>),
     })
 }
 
@@ -908,7 +985,7 @@
         <span class="ident">keystore_container</span>,
         <span class="ident">select_chain</span>,
         <span class="ident">transaction_pool</span>,
-        <span class="ident">other</span>: (<span class="ident">block_import</span>, <span class="ident">subspace_link</span>, <span class="kw-2">mut</span> <span class="ident">telemetry</span>),
+        <span class="ident">other</span>: (<span class="ident">block_import</span>, <span class="ident">subspace_link</span>, <span class="ident">piece_cache</span>, <span class="kw-2">mut</span> <span class="ident">telemetry</span>),
     } <span class="op">=</span> <span class="ident">new_partial</span>::<span class="op">&lt;</span><span class="ident">RuntimeApi</span>, <span class="ident">ExecutorDispatch</span><span class="op">&gt;</span>(<span class="kw-2">&amp;</span><span class="ident">config</span>)<span class="question-mark">?</span>;
 
     <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Some</span>(<span class="ident">dsn_config</span>) <span class="op">=</span> <span class="ident">config</span>.<span class="ident">dsn_config</span>.<span class="ident">clone</span>() {
@@ -1036,6 +1113,7 @@
                     <span class="ident">reward_signing_notification_stream</span>: <span class="ident">reward_signing_notification_stream</span>.<span class="ident">clone</span>(),
                     <span class="ident">archived_segment_notification_stream</span>: <span class="ident">archived_segment_notification_stream</span>
                         .<span class="ident">clone</span>(),
+                    <span class="ident">piece_cache</span>: <span class="ident">piece_cache</span>.<span class="ident">clone</span>(),
                 };
 
                 <span class="ident">rpc::create_full</span>(<span class="ident">deps</span>).<span class="ident">map_err</span>(<span class="ident">Into::into</span>)

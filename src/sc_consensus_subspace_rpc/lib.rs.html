@@ -569,6 +569,12 @@
 <span id="569">569</span>
 <span id="570">570</span>
 <span id="571">571</span>
+<span id="572">572</span>
+<span id="573">573</span>
+<span id="574">574</span>
+<span id="575">575</span>
+<span id="576">576</span>
+<span id="577">577</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -603,6 +609,7 @@
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace</span>::{
     <span class="ident">ArchivedSegmentNotification</span>, <span class="ident">NewSlotNotification</span>, <span class="ident">RewardSigningNotification</span>,
 };
+<span class="kw">use</span> <span class="ident">sc_piece_cache::PieceCache</span>;
 <span class="kw">use</span> <span class="ident">sc_rpc::SubscriptionTaskExecutor</span>;
 <span class="kw">use</span> <span class="ident">sc_utils::mpsc::TracingUnboundedSender</span>;
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiError</span>, <span class="ident">ProvideRuntimeApi</span>};
@@ -622,8 +629,8 @@
 <span class="kw">use</span> <span class="ident">std::time::Duration</span>;
 <span class="kw">use</span> <span class="ident">subspace_archiving::archiver::ArchivedSegment</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
-    <span class="ident">RecordsRoot</span>, <span class="ident">SegmentIndex</span>, <span class="ident">Solution</span>, <span class="ident">PIECES_IN_SEGMENT</span>, <span class="ident">RECORDED_HISTORY_SEGMENT_SIZE</span>,
-    <span class="ident">RECORD_SIZE</span>,
+    <span class="ident">Piece</span>, <span class="ident">PieceIndex</span>, <span class="ident">RecordsRoot</span>, <span class="ident">SegmentIndex</span>, <span class="ident">Solution</span>, <span class="ident">PIECES_IN_SEGMENT</span>,
+    <span class="ident">RECORDED_HISTORY_SEGMENT_SIZE</span>, <span class="ident">RECORD_SIZE</span>,
 };
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives</span>::{
     <span class="ident">FarmerProtocolInfo</span>, <span class="ident">RewardSignatureResponse</span>, <span class="ident">RewardSigningInfo</span>, <span class="ident">SlotInfo</span>, <span class="ident">SolutionResponse</span>,
@@ -678,6 +685,9 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="ident">segment_indexes</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">SegmentIndex</span><span class="op">&gt;</span>,
     ) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">Vec</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">RecordsRoot</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>;
+
+    <span class="attribute">#[<span class="ident">method</span>(<span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;subspace_getPiece&quot;</span>, <span class="ident">blocking</span>)]</span>
+    <span class="kw">fn</span> <span class="ident">get_piece</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">piece_index</span>: <span class="ident">PieceIndex</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Piece</span><span class="op">&gt;</span><span class="op">&gt;</span>;
 }
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Default</span>)]</span>
@@ -699,7 +709,7 @@
 }
 
 <span class="doccomment">/// Implements the [`SubspaceRpcApiServer`] trait for interacting with Subspace.</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> {
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span>, <span class="ident">PC</span><span class="op">&gt;</span> {
     <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
     <span class="ident">executor</span>: <span class="ident">SubscriptionTaskExecutor</span>,
     <span class="ident">new_slot_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">NewSlotNotification</span><span class="op">&gt;</span>,
@@ -708,6 +718,7 @@
     <span class="ident">solution_response_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">SolutionResponseSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">reward_signature_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">BlockSignatureSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
     <span class="ident">archived_segment_acknowledgement_senders</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">ArchivedSegmentAcknowledgementSenders</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">piece_cache</span>: <span class="ident">PC</span>,
     <span class="ident">next_subscription_id</span>: <span class="ident">AtomicU64</span>,
     <span class="ident">_phantom</span>: <span class="ident">PhantomData</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
 }
@@ -719,17 +730,7 @@
 <span class="doccomment">/// every subscriber, after which RPC server waits for the same number of</span>
 <span class="doccomment">/// `subspace_submitSolutionResponse` requests with `SolutionResponse` in them or until</span>
 <span class="doccomment">/// timeout is exceeded. The first valid solution for a particular slot wins, others are ignored.</span>
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>
-<span class="kw">where</span>
-    <span class="ident">Block</span>: <span class="ident">BlockT</span>,
-    <span class="ident">Client</span>: <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
-        <span class="op">+</span> <span class="ident">Send</span>
-        <span class="op">+</span> <span class="ident">Sync</span>
-        <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
-{
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span>, <span class="ident">PC</span><span class="op">&gt;</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span>, <span class="ident">PC</span><span class="op">&gt;</span> {
     <span class="doccomment">/// Creates a new instance of the `SubspaceRpc` handler.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">new</span>(
         <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Client</span><span class="op">&gt;</span>,
@@ -739,6 +740,7 @@
         <span class="ident">archived_segment_notification_stream</span>: <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span>
             <span class="ident">ArchivedSegmentNotification</span>,
         <span class="op">&gt;</span>,
+        <span class="ident">piece_cache</span>: <span class="ident">PC</span>,
     ) -&gt; <span class="self">Self</span> {
         <span class="self">Self</span> {
             <span class="ident">client</span>,
@@ -749,6 +751,7 @@
             <span class="ident">solution_response_senders</span>: <span class="ident">Arc::default</span>(),
             <span class="ident">reward_signature_senders</span>: <span class="ident">Arc::default</span>(),
             <span class="ident">archived_segment_acknowledgement_senders</span>: <span class="ident">Arc::default</span>(),
+            <span class="ident">piece_cache</span>,
             <span class="ident">next_subscription_id</span>: <span class="ident">AtomicU64::default</span>(),
             <span class="ident">_phantom</span>: <span class="ident">PhantomData::default</span>(),
         }
@@ -756,7 +759,7 @@
 }
 
 <span class="attribute">#[<span class="ident">async_trait</span>]</span>
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span> <span class="ident">SubspaceRpcApiServer</span> <span class="kw">for</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span>, <span class="ident">PC</span><span class="op">&gt;</span> <span class="ident">SubspaceRpcApiServer</span> <span class="kw">for</span> <span class="ident">SubspaceRpc</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Client</span>, <span class="ident">PC</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">Block</span>: <span class="ident">BlockT</span>,
     <span class="ident">Client</span>: <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
@@ -766,6 +769,7 @@
         <span class="op">+</span> <span class="ident">Sync</span>
         <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     <span class="ident">Client::Api</span>: <span class="ident">SubspaceRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
+    <span class="ident">PC</span>: <span class="ident">PieceCache</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn</span> <span class="ident">get_farmer_protocol_info</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="ident">FarmerProtocolInfo</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">best_block_id</span> <span class="op">=</span> <span class="ident">BlockId::Hash</span>(<span class="self">self</span>.<span class="ident">client</span>.<span class="ident">info</span>().<span class="ident">best_hash</span>);
@@ -1138,6 +1142,14 @@
         }
 
         <span class="ident">records_root_result</span>
+    }
+
+    <span class="kw">fn</span> <span class="ident">get_piece</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">piece_index</span>: <span class="ident">PieceIndex</span>) -&gt; <span class="ident">RpcResult</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Piece</span><span class="op">&gt;</span><span class="op">&gt;</span> {
+        <span class="self">self</span>.<span class="ident">piece_cache</span>.<span class="ident">get_piece</span>(<span class="ident">piece_index</span>).<span class="ident">map_err</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> {
+            <span class="macro">error!</span>(<span class="string">&quot;Failed to get piece with index {piece_index} from cache: {error}&quot;</span>);
+
+            <span class="ident">JsonRpseeError::Custom</span>(<span class="string">&quot;Internal error during `get_piece` call&quot;</span>.<span class="ident">to_string</span>())
+        })
     }
 }
 </code></pre></div>

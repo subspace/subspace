@@ -106,6 +106,13 @@
 <span id="106">106</span>
 <span id="107">107</span>
 <span id="108">108</span>
+<span id="109">109</span>
+<span id="110">110</span>
+<span id="111">111</span>
+<span id="112">112</span>
+<span id="113">113</span>
+<span id="114">114</span>
+<span id="115">115</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later</span>
 
@@ -137,6 +144,7 @@
     <span class="ident">ArchivedSegmentNotification</span>, <span class="ident">NewSlotNotification</span>, <span class="ident">RewardSigningNotification</span>,
 };
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace_rpc</span>::{<span class="ident">SubspaceRpc</span>, <span class="ident">SubspaceRpcApiServer</span>};
+<span class="kw">use</span> <span class="ident">sc_piece_cache::PieceCache</span>;
 <span class="kw">use</span> <span class="ident">sc_rpc::SubscriptionTaskExecutor</span>;
 <span class="kw">use</span> <span class="ident">sc_rpc_api::DenyUnsafe</span>;
 <span class="kw">use</span> <span class="ident">sc_transaction_pool_api::TransactionPool</span>;
@@ -150,7 +158,7 @@
 <span class="kw">use</span> <span class="ident">substrate_frame_rpc_system</span>::{<span class="ident">System</span>, <span class="ident">SystemApiServer</span>};
 
 <span class="doccomment">/// Full client dependencies.</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">FullDeps</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">P</span><span class="op">&gt;</span> {
+<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">FullDeps</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">P</span>, <span class="ident">PC</span><span class="op">&gt;</span> {
     <span class="doccomment">/// The client instance to use.</span>
     <span class="kw">pub</span> <span class="ident">client</span>: <span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">C</span><span class="op">&gt;</span>,
     <span class="doccomment">/// Transaction pool instance.</span>
@@ -167,11 +175,14 @@
     <span class="doccomment">/// A stream with notifications about archived segment creation.</span>
     <span class="kw">pub</span> <span class="ident">archived_segment_notification_stream</span>:
         <span class="ident">SubspaceNotificationStream</span><span class="op">&lt;</span><span class="ident">ArchivedSegmentNotification</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Caching layer for pieces produced during archiving to make them available for some time</span>
+    <span class="doccomment">/// after they were produced.</span>
+    <span class="kw">pub</span> <span class="ident">piece_cache</span>: <span class="ident">PC</span>,
 }
 
 <span class="doccomment">/// Instantiate all full RPC extensions.</span>
-<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create_full</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">P</span><span class="op">&gt;</span>(
-    <span class="ident">deps</span>: <span class="ident">FullDeps</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">P</span><span class="op">&gt;</span>,
+<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">create_full</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">P</span>, <span class="ident">PC</span><span class="op">&gt;</span>(
+    <span class="ident">deps</span>: <span class="ident">FullDeps</span><span class="op">&lt;</span><span class="ident">C</span>, <span class="ident">P</span>, <span class="ident">PC</span><span class="op">&gt;</span>,
 ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">RpcModule</span><span class="op">&lt;</span>()<span class="op">&gt;</span>, <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">std::error::Error</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span><span class="op">&gt;</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">C</span>: <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
@@ -186,6 +197,7 @@
         <span class="op">+</span> <span class="ident">BlockBuilder</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>
         <span class="op">+</span> <span class="ident">sp_consensus_subspace::SubspaceApi</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">FarmerPublicKey</span><span class="op">&gt;</span>,
     <span class="ident">P</span>: <span class="ident">TransactionPool</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="ident">PC</span>: <span class="ident">PieceCache</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">module</span> <span class="op">=</span> <span class="ident">RpcModule::new</span>(());
     <span class="kw">let</span> <span class="ident">FullDeps</span> {
@@ -196,6 +208,7 @@
         <span class="ident">new_slot_notification_stream</span>,
         <span class="ident">reward_signing_notification_stream</span>,
         <span class="ident">archived_segment_notification_stream</span>,
+        <span class="ident">piece_cache</span>,
     } <span class="op">=</span> <span class="ident">deps</span>;
 
     <span class="ident">module</span>.<span class="ident">merge</span>(<span class="ident">System::new</span>(<span class="ident">client</span>.<span class="ident">clone</span>(), <span class="ident">pool</span>, <span class="ident">deny_unsafe</span>).<span class="ident">into_rpc</span>())<span class="question-mark">?</span>;
@@ -208,6 +221,7 @@
             <span class="ident">new_slot_notification_stream</span>,
             <span class="ident">reward_signing_notification_stream</span>,
             <span class="ident">archived_segment_notification_stream</span>,
+            <span class="ident">piece_cache</span>,
         )
         .<span class="ident">into_rpc</span>(),
     )<span class="question-mark">?</span>;
