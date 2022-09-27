@@ -492,6 +492,10 @@
 <span id="492">492</span>
 <span id="493">493</span>
 <span id="494">494</span>
+<span id="495">495</span>
+<span id="496">496</span>
+<span id="497">497</span>
+<span id="498">498</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2020 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// This file is part of Polkadot.</span>
 
@@ -514,7 +518,7 @@
 <span class="kw">use</span> <span class="ident">futures::channel::mpsc</span>;
 <span class="kw">use</span> <span class="ident">futures</span>::{<span class="ident">future</span>, <span class="ident">FutureExt</span>, <span class="ident">SinkExt</span>, <span class="ident">Stream</span>, <span class="ident">StreamExt</span>, <span class="ident">TryFutureExt</span>};
 <span class="kw">use</span> <span class="ident">sc_client_api</span>::{<span class="ident">AuxStore</span>, <span class="ident">BlockBackend</span>};
-<span class="kw">use</span> <span class="ident">sc_consensus::BlockImport</span>;
+<span class="kw">use</span> <span class="ident">sc_consensus</span>::{<span class="ident">BlockImport</span>, <span class="ident">ForkChoiceStrategy</span>};
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiError</span>, <span class="ident">BlockT</span>, <span class="ident">ProvideRuntimeApi</span>};
 <span class="kw">use</span> <span class="ident">sp_block_builder::BlockBuilder</span>;
 <span class="kw">use</span> <span class="ident">sp_blockchain::HeaderBackend</span>;
@@ -561,6 +565,8 @@
     <span class="kw">pub</span> <span class="ident">parent_hash</span>: <span class="ident">Block::Hash</span>,
     <span class="doccomment">/// block&#39;s number.</span>
     <span class="kw">pub</span> <span class="ident">number</span>: <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
+    <span class="doccomment">/// Fork choice of the block.</span>
+    <span class="kw">pub</span> <span class="ident">fork_choice</span>: <span class="ident">ForkChoiceStrategy</span>,
 }
 
 <span class="attribute">#[<span class="ident">allow</span>(<span class="ident">clippy::too_many_arguments</span>)]</span>
@@ -603,7 +609,7 @@
     <span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span>,
     <span class="ident">TransactionPool</span>: <span class="ident">sc_transaction_pool_api::TransactionPool</span><span class="op">&lt;</span><span class="ident">Block</span> <span class="op">=</span> <span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     <span class="ident">Backend</span>: <span class="ident">sc_client_api::Backend</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
-    <span class="ident">IBNS</span>: <span class="ident">Stream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> (<span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">mpsc::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
+    <span class="ident">IBNS</span>: <span class="ident">Stream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> (<span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>, <span class="ident">mpsc::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     <span class="ident">NSNS</span>: <span class="ident">Stream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> (<span class="ident">Slot</span>, <span class="ident">Blake2b256Hash</span>)<span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span>,
     <span class="ident">TransactionFor</span><span class="op">&lt;</span><span class="ident">Backend</span>, <span class="ident">Block</span><span class="op">&gt;</span>: <span class="ident">sp_trie::HashDBT</span><span class="op">&lt;</span><span class="ident">HashFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>, <span class="ident">sp_trie::DBValue</span><span class="op">&gt;</span>,
     <span class="ident">E</span>: <span class="ident">CodeExecutor</span>,
@@ -617,10 +623,10 @@
             {
                 <span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="ident">span</span>.<span class="ident">clone</span>();
 
-                <span class="kw">move</span> <span class="op">|</span><span class="ident">primary_hash</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span><span class="op">|</span> {
+                <span class="kw">move</span> <span class="op">|</span><span class="ident">primary_info</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span><span class="op">|</span> {
                     <span class="ident">bundle_processor</span>
                         .<span class="ident">clone</span>()
-                        .<span class="ident">process_bundles</span>(<span class="ident">primary_hash</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span>)
+                        .<span class="ident">process_bundles</span>(<span class="ident">primary_info</span>, <span class="ident">bundles</span>, <span class="ident">shuffling_seed</span>, <span class="ident">maybe_new_runtime</span>)
                         .<span class="ident">instrument</span>(<span class="ident">span</span>.<span class="ident">clone</span>())
                         .<span class="ident">boxed</span>()
                 }
@@ -632,7 +638,8 @@
                          <span class="ident">hash</span>,
                          <span class="ident">parent_hash</span>: <span class="kw">_</span>,
                          <span class="ident">number</span>,
-                     }<span class="op">|</span> (<span class="ident">hash</span>, <span class="ident">number</span>),
+                         <span class="ident">fork_choice</span>,
+                     }<span class="op">|</span> (<span class="ident">hash</span>, <span class="ident">number</span>, <span class="ident">fork_choice</span>),
                 )
                 .<span class="ident">collect</span>(),
             <span class="ident">Box::pin</span>(<span class="ident">imported_block_notification_stream</span>),
@@ -713,7 +720,7 @@
     <span class="ident">primary_chain_client</span>: <span class="kw-2">&amp;</span><span class="ident">PClient</span>,
     <span class="ident">best_secondary_number</span>: <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
     <span class="ident">processor</span>: <span class="ident">ProcessorFn</span>,
-    <span class="kw-2">mut</span> <span class="ident">leaves</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>)<span class="op">&gt;</span>,
+    <span class="kw-2">mut</span> <span class="ident">leaves</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>)<span class="op">&gt;</span>,
     <span class="kw-2">mut</span> <span class="ident">block_imports</span>: <span class="ident">BlockImports</span>,
     <span class="ident">block_import_throttling_buffer_size</span>: <span class="ident">u32</span>,
 ) <span class="kw">where</span>
@@ -722,14 +729,14 @@
     <span class="ident">PClient</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>,
     <span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span>,
     <span class="ident">ProcessorFn</span>: <span class="ident">Fn</span>(
-            (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>),
+            (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>),
             <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">OpaqueBundle</span><span class="op">&lt;</span><span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">PBlock::Hash</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span>,
             <span class="ident">Randomness</span>,
             <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span><span class="op">&gt;</span>,
         ) -&gt; <span class="ident">Pin</span><span class="op">&lt;</span><span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">Future</span><span class="op">&lt;</span><span class="ident">Output</span> <span class="op">=</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">sp_blockchain::Error</span><span class="op">&gt;</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span><span class="op">&gt;</span><span class="op">&gt;</span>
         <span class="op">+</span> <span class="ident">Send</span>
         <span class="op">+</span> <span class="ident">Sync</span>,
-    <span class="ident">BlockImports</span>: <span class="ident">Stream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> (<span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">mpsc::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Unpin</span>,
+    <span class="ident">BlockImports</span>: <span class="ident">Stream</span><span class="op">&lt;</span><span class="ident">Item</span> <span class="op">=</span> (<span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>, <span class="ident">mpsc::Sender</span><span class="op">&lt;</span>()<span class="op">&gt;</span>)<span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Unpin</span>,
 {
     <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">active_leaves</span> <span class="op">=</span> <span class="ident">HashMap::with_capacity</span>(<span class="ident">leaves</span>.<span class="ident">len</span>());
 
@@ -738,14 +745,14 @@
         .<span class="ident">unwrap_or_else</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="macro">panic!</span>(<span class="string">&quot;Secondary number must fit into u32; qed&quot;</span>));
 
     <span class="comment">// Notify about active leaves on startup before starting the loop</span>
-    <span class="kw">for</span> (<span class="ident">hash</span>, <span class="ident">number</span>) <span class="kw">in</span> <span class="ident">std::mem::take</span>(<span class="kw-2">&amp;mut</span> <span class="ident">leaves</span>) {
+    <span class="kw">for</span> (<span class="ident">hash</span>, <span class="ident">number</span>, <span class="ident">fork_choice</span>) <span class="kw">in</span> <span class="ident">std::mem::take</span>(<span class="kw-2">&amp;mut</span> <span class="ident">leaves</span>) {
         <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">active_leaves</span>.<span class="ident">insert</span>(<span class="ident">hash</span>, <span class="ident">number</span>);
         <span class="comment">// Skip the blocks that have been processed by the execution chain.</span>
         <span class="kw">if</span> <span class="ident">number</span> <span class="op">&gt;</span> <span class="ident">best_secondary_number</span>.<span class="ident">into</span>() {
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">process_primary_block</span>::<span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="kw">_</span>, <span class="kw">_</span><span class="op">&gt;</span>(
                 <span class="ident">primary_chain_client</span>,
                 <span class="kw-2">&amp;</span><span class="ident">processor</span>,
-                (<span class="ident">hash</span>, <span class="ident">number</span>),
+                (<span class="ident">hash</span>, <span class="ident">number</span>, <span class="ident">fork_choice</span>),
             )
             .<span class="kw">await</span>
             {
@@ -768,7 +775,7 @@
     <span class="kw">loop</span> {
         <span class="macro">tokio::select!</span> {
             <span class="ident">maybe_block_import</span> <span class="op">=</span> <span class="ident">block_imports</span>.<span class="ident">next</span>() =&gt; {
-                <span class="kw">let</span> (<span class="ident">block_number</span>, <span class="kw-2">mut</span> <span class="ident">block_import_acknowledgement_sender</span>) <span class="op">=</span> <span class="kw">match</span> <span class="ident">maybe_block_import</span> {
+                <span class="kw">let</span> (<span class="ident">block_number</span>, <span class="ident">fork_choice</span>, <span class="kw-2">mut</span> <span class="ident">block_import_acknowledgement_sender</span>) <span class="op">=</span> <span class="kw">match</span> <span class="ident">maybe_block_import</span> {
                     <span class="prelude-val">Some</span>(<span class="ident">block_import</span>) =&gt; <span class="ident">block_import</span>,
                     <span class="prelude-val">None</span> =&gt; {
                         <span class="comment">// Can be None on graceful shutdown.</span>
@@ -783,6 +790,7 @@
                     <span class="ident">hash</span>: <span class="ident">header</span>.<span class="ident">hash</span>(),
                     <span class="ident">parent_hash</span>: <span class="kw-2">*</span><span class="ident">header</span>.<span class="ident">parent_hash</span>(),
                     <span class="ident">number</span>: <span class="kw-2">*</span><span class="ident">header</span>.<span class="ident">number</span>(),
+                    <span class="ident">fork_choice</span>
                 };
                 <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">block_info_sender</span>.<span class="ident">feed</span>(<span class="ident">block_info</span>).<span class="kw">await</span>;
                 <span class="kw">let</span> <span class="kw">_</span> <span class="op">=</span> <span class="ident">block_import_acknowledgement_sender</span>.<span class="ident">send</span>(()).<span class="kw">await</span>;
@@ -867,7 +875,7 @@
     <span class="ident">PClient</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span>,
     <span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span>,
     <span class="ident">ProcessorFn</span>: <span class="ident">Fn</span>(
-            (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>),
+            (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>),
             <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">OpaqueBundle</span><span class="op">&lt;</span><span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">PBlock::Hash</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span>,
             <span class="ident">Randomness</span>,
             <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span><span class="op">&gt;</span>,
@@ -890,7 +898,7 @@
     <span class="ident">process_primary_block</span>::<span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="kw">_</span>, <span class="kw">_</span><span class="op">&gt;</span>(
         <span class="ident">primary_chain_client</span>,
         <span class="ident">processor</span>,
-        (<span class="ident">block_info</span>.<span class="ident">hash</span>, <span class="ident">block_info</span>.<span class="ident">number</span>),
+        (<span class="ident">block_info</span>.<span class="ident">hash</span>, <span class="ident">block_info</span>.<span class="ident">number</span>, <span class="ident">block_info</span>.<span class="ident">fork_choice</span>),
     )
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -904,7 +912,7 @@
 <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">process_primary_block</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">PBlock</span>, <span class="ident">PClient</span>, <span class="ident">ProcessorFn</span><span class="op">&gt;</span>(
     <span class="ident">primary_chain_client</span>: <span class="kw-2">&amp;</span><span class="ident">PClient</span>,
     <span class="ident">processor</span>: <span class="kw-2">&amp;</span><span class="ident">ProcessorFn</span>,
-    (<span class="ident">block_hash</span>, <span class="ident">block_number</span>): (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>),
+    (<span class="ident">block_hash</span>, <span class="ident">block_number</span>, <span class="ident">fork_choice</span>): (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>),
 ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ApiError</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">Block</span>: <span class="ident">BlockT</span>,
@@ -912,7 +920,7 @@
     <span class="ident">PClient</span>: <span class="ident">HeaderBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">BlockBackend</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">ProvideRuntimeApi</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span>,
     <span class="ident">PClient::Api</span>: <span class="ident">ExecutorApi</span><span class="op">&lt;</span><span class="ident">PBlock</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span>,
     <span class="ident">ProcessorFn</span>: <span class="ident">Fn</span>(
-            (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>),
+            (<span class="ident">PBlock::Hash</span>, <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">ForkChoiceStrategy</span>),
             <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">OpaqueBundle</span><span class="op">&lt;</span><span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">PBlock</span><span class="op">&gt;</span>, <span class="ident">PBlock::Hash</span>, <span class="ident">Block::Hash</span><span class="op">&gt;</span><span class="op">&gt;</span>,
             <span class="ident">Randomness</span>,
             <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span><span class="op">&gt;</span>,
@@ -977,7 +985,7 @@
         .<span class="ident">extrinsics_shuffling_seed</span>(<span class="kw-2">&amp;</span><span class="ident">block_id</span>, <span class="ident">header</span>)<span class="question-mark">?</span>;
 
     <span class="ident">processor</span>(
-        (<span class="ident">block_hash</span>, <span class="ident">block_number</span>),
+        (<span class="ident">block_hash</span>, <span class="ident">block_number</span>, <span class="ident">fork_choice</span>),
         <span class="ident">bundles</span>,
         <span class="ident">shuffling_seed</span>,
         <span class="ident">maybe_new_runtime</span>,
