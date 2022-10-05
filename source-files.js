@@ -13,7 +13,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_executor":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
-"pallet_messenger":["",[],["lib.rs"]],\
+"pallet_messenger":["",[],["lib.rs","messages.rs","verification.rs"]],\
 "pallet_object_store":["",[],["lib.rs"]],\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
@@ -29,6 +29,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_executor":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
+"sp_messenger":["",[],["lib.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["record_shards.rs"]]],["archiver.rs","lib.rs","reconstructor.rs","utils.rs"]],\
 "subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]]],["crypto.rs","lib.rs","objects.rs"]],\
