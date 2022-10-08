@@ -11,6 +11,7 @@ var sourcesIndex = JSON.parse('{\
 "cumulus_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_executor":["",[],["lib.rs"]],\
+"pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
 "pallet_messenger":["",[],["lib.rs","messages.rs","verification.rs"]],\
