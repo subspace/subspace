@@ -5,5 +5,6 @@
 "pallet_feeds":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_feeds/enum.Error.html\" title=\"enum pallet_feeds::Error\">Error</a>&lt;T&gt;"]],
 "pallet_grandpa_finality_verifier":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_grandpa_finality_verifier/pallet/enum.Error.html\" title=\"enum pallet_grandpa_finality_verifier::pallet::Error\">Error</a>&lt;T&gt;"]],
 "pallet_messenger":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_messenger/enum.Error.html\" title=\"enum pallet_messenger::Error\">Error</a>&lt;T&gt;"]],
-"pallet_subspace":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_subspace/enum.Error.html\" title=\"enum pallet_subspace::Error\">Error</a>&lt;T&gt;"]]
+"pallet_subspace":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_subspace/enum.Error.html\" title=\"enum pallet_subspace::Error\">Error</a>&lt;T&gt;"]],
+"pallet_transporter":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_transporter/enum.Error.html\" title=\"enum pallet_transporter::Error\">Error</a>&lt;T&gt;"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -21,6 +21,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_runtime_configs":["",[],["lib.rs"]],\
 "pallet_subspace":["",[],["default_weights.rs","equivocation.rs","lib.rs"]],\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
+"pallet_transporter":["",[],["lib.rs"]],\
 "sc_consensus_fraud_proof":["",[],["lib.rs"]],\
 "sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
