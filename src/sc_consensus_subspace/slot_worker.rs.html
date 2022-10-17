@@ -551,6 +551,12 @@
 <span id="551">551</span>
 <span id="552">552</span>
 <span id="553">553</span>
+<span id="554">554</span>
+<span id="555">555</span>
+<span id="556">556</span>
+<span id="557">557</span>
+<span id="558">558</span>
+<span id="559">559</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.</span>
 <span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0</span>
@@ -579,7 +585,6 @@
 <span class="kw">use</span> <span class="ident">sc_telemetry::TelemetryHandle</span>;
 <span class="kw">use</span> <span class="ident">sc_utils::mpsc::tracing_unbounded</span>;
 <span class="kw">use</span> <span class="ident">schnorrkel::context::SigningContext</span>;
-<span class="kw">use</span> <span class="ident">schnorrkel::PublicKey</span>;
 <span class="kw">use</span> <span class="ident">sp_api</span>::{<span class="ident">ApiError</span>, <span class="ident">NumberFor</span>, <span class="ident">ProvideRuntimeApi</span>, <span class="ident">TransactionFor</span>};
 <span class="kw">use</span> <span class="ident">sp_blockchain</span>::{<span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ClientError</span>, <span class="ident">HeaderBackend</span>, <span class="ident">HeaderMetadata</span>};
 <span class="kw">use</span> <span class="ident">sp_consensus</span>::{<span class="ident">BlockOrigin</span>, <span class="ident">Environment</span>, <span class="ident">Error</span> <span class="kw">as</span> <span class="ident">ConsensusError</span>, <span class="ident">Proposer</span>, <span class="ident">SyncOracle</span>};
@@ -595,9 +600,9 @@
 <span class="kw">use</span> <span class="ident">std::pin::Pin</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
-    <span class="ident">Randomness</span>, <span class="ident">RewardSignature</span>, <span class="ident">Salt</span>, <span class="ident">Solution</span>, <span class="ident">PIECES_IN_SEGMENT</span>, <span class="ident">RECORD_SIZE</span>,
+    <span class="ident">Randomness</span>, <span class="ident">RewardSignature</span>, <span class="ident">Salt</span>, <span class="ident">SectorId</span>, <span class="ident">SegmentIndex</span>, <span class="ident">Solution</span>, <span class="ident">PIECES_IN_SEGMENT</span>,
 };
-<span class="kw">use</span> <span class="ident">subspace_solving</span>::{<span class="ident">derive_global_challenge</span>, <span class="ident">derive_target</span>};
+<span class="kw">use</span> <span class="ident">subspace_solving::derive_global_challenge</span>;
 <span class="kw">use</span> <span class="ident">subspace_verification</span>::{
     <span class="ident">check_reward_signature</span>, <span class="ident">is_within_solution_range</span>, <span class="ident">verify_solution</span>, <span class="ident">PieceCheckParams</span>,
     <span class="ident">VerifySolutionParams</span>,
@@ -763,14 +768,29 @@
                 <span class="kw">continue</span>;
             }
 
-            <span class="kw">let</span> <span class="ident">max_plot_size</span> <span class="op">=</span> <span class="ident">runtime_api</span>.<span class="ident">max_plot_size</span>(<span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()<span class="question-mark">?</span>;
-            <span class="kw">let</span> <span class="ident">segment_index</span> <span class="op">=</span> <span class="ident">solution</span>.<span class="ident">piece_index</span> <span class="op">/</span> <span class="ident">u64::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>);
-            <span class="kw">let</span> <span class="ident">position</span> <span class="op">=</span> <span class="ident">u32::try_from</span>(<span class="ident">solution</span>.<span class="ident">piece_index</span> <span class="op">%</span> <span class="ident">u64::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>))
+            <span class="kw">let</span> <span class="ident">sector_id</span> <span class="op">=</span> <span class="ident">SectorId::new</span>(<span class="kw-2">&amp;</span>(<span class="kw-2">&amp;</span><span class="ident">solution</span>.<span class="ident">public_key</span>).<span class="ident">into</span>(), <span class="ident">solution</span>.<span class="ident">sector_index</span>);
+
+            <span class="kw">let</span> <span class="ident">piece_index</span> <span class="op">=</span>
+                <span class="kw">match</span> <span class="ident">sector_id</span>.<span class="ident">derive_piece_index</span>(<span class="ident">solution</span>.<span class="ident">piece_offset</span>, <span class="ident">solution</span>.<span class="ident">total_pieces</span>) {
+                    <span class="prelude-val">Ok</span>(<span class="ident">piece_index</span>) =&gt; <span class="ident">piece_index</span>,
+                    <span class="prelude-val">Err</span>(()) =&gt; {
+                        <span class="macro">warn!</span>(
+                            <span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>,
+                            <span class="string">&quot;Ignoring solution for slot {} provided by farmer due to zero total \
+                            pieces at which sector was supposedly created, which is impossible&quot;</span>,
+                            <span class="ident">slot</span>,
+                        );
+                        <span class="kw">continue</span>;
+                    }
+                };
+            <span class="kw">let</span> <span class="ident">segment_index</span>: <span class="ident">SegmentIndex</span> <span class="op">=</span> <span class="ident">piece_index</span> <span class="op">/</span> <span class="ident">SegmentIndex::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>);
+            <span class="kw">let</span> <span class="ident">position</span> <span class="op">=</span> <span class="ident">u32::try_from</span>(<span class="ident">piece_index</span> <span class="op">%</span> <span class="ident">u64::from</span>(<span class="ident">PIECES_IN_SEGMENT</span>))
                 .<span class="ident">expect</span>(<span class="string">&quot;Position within segment always fits into u32; qed&quot;</span>);
             <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">maybe_records_root</span> <span class="op">=</span> <span class="ident">runtime_api</span>
                 .<span class="ident">records_root</span>(<span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>, <span class="ident">segment_index</span>)
                 .<span class="ident">ok</span>()<span class="question-mark">?</span>;
-            <span class="kw">let</span> <span class="ident">total_pieces</span> <span class="op">=</span> <span class="ident">runtime_api</span>.<span class="ident">total_pieces</span>(<span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()<span class="question-mark">?</span>;
+            <span class="comment">// TODO: This will be necessary for verifying sector expiration in the future</span>
+            <span class="kw">let</span> <span class="ident">_total_pieces</span> <span class="op">=</span> <span class="ident">runtime_api</span>.<span class="ident">total_pieces</span>(<span class="kw-2">&amp;</span><span class="ident">parent_block_id</span>).<span class="ident">ok</span>()<span class="question-mark">?</span>;
 
             <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced</span>
             <span class="comment">// extrinsics with root blocks are not yet in runtime.</span>
@@ -807,15 +827,11 @@
                 <span class="ident">VerifySolutionParams</span> {
                     <span class="ident">global_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">global_randomness</span>,
                     <span class="ident">solution_range</span>: <span class="ident">voting_solution_range</span>,
-                    <span class="ident">salt</span>,
                     <span class="ident">piece_check_params</span>: <span class="prelude-val">Some</span>(<span class="ident">PieceCheckParams</span> {
-                        <span class="ident">records_root</span>,
+                        <span class="ident">records_root</span>: <span class="kw-2">&amp;</span><span class="ident">records_root</span>,
                         <span class="ident">position</span>,
                         <span class="ident">kzg</span>: <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="ident">subspace_link</span>.<span class="ident">kzg</span>,
                         <span class="ident">pieces_in_segment</span>: <span class="ident">PIECES_IN_SEGMENT</span>,
-                        <span class="ident">record_size</span>: <span class="ident">RECORD_SIZE</span>,
-                        <span class="ident">max_plot_size</span>,
-                        <span class="ident">total_pieces</span>,
                     }),
                 },
             );
@@ -823,18 +839,14 @@
             <span class="kw">if</span> <span class="kw">let</span> <span class="prelude-val">Err</span>(<span class="ident">error</span>) <span class="op">=</span> <span class="ident">solution_verification_result</span> {
                 <span class="macro">warn!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Invalid solution received for slot {slot}: {error:?}&quot;</span>);
             } <span class="kw">else</span> {
-                <span class="comment">// Verification of the local challenge was done before this</span>
-                <span class="kw">let</span> <span class="ident">target</span> <span class="op">=</span> <span class="ident">derive_target</span>(
-                    <span class="kw-2">&amp;</span><span class="ident">PublicKey::from_bytes</span>(<span class="ident">solution</span>.<span class="ident">public_key</span>.<span class="ident">as_ref</span>())
-                        .<span class="ident">expect</span>(<span class="string">&quot;Always correct length; qed&quot;</span>),
-                    <span class="ident">global_challenge</span>,
-                    <span class="kw-2">&amp;</span><span class="ident">solution</span>.<span class="ident">local_challenge</span>,
-                )
-                .<span class="ident">expect</span>(<span class="string">&quot;Verification of the local challenge was done before this; qed&quot;</span>);
+                <span class="kw">let</span> <span class="ident">local_challenge</span> <span class="op">=</span> <span class="ident">sector_id</span>.<span class="ident">derive_local_challenge</span>(<span class="kw-2">&amp;</span><span class="ident">global_challenge</span>);
+
+                <span class="kw">let</span> <span class="ident">expanded_chunk</span> <span class="op">=</span> <span class="ident">solution</span>.<span class="ident">chunk</span>.<span class="ident">expand</span>(<span class="ident">local_challenge</span>);
+
                 <span class="comment">// If solution is of high enough quality and block pre-digest wasn&#39;t produced yet,</span>
                 <span class="comment">// block reward is claimed</span>
                 <span class="kw">if</span> <span class="ident">maybe_pre_digest</span>.<span class="ident">is_none</span>()
-                    <span class="op">&amp;&amp;</span> <span class="ident">is_within_solution_range</span>(<span class="ident">target</span>, <span class="ident">solution</span>.<span class="ident">tag</span>, <span class="ident">solution_range</span>)
+                    <span class="op">&amp;&amp;</span> <span class="ident">is_within_solution_range</span>(<span class="ident">local_challenge</span>, <span class="ident">expanded_chunk</span>, <span class="ident">solution_range</span>)
                 {
                     <span class="macro">info!</span>(<span class="ident">target</span>: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;🚜 Claimed block at slot {slot}&quot;</span>);
 
