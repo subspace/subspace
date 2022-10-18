@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"cirrus_runtime":[["impl <a class=\"trait\" href=\"pallet_executor_registry/pallet/trait.Config.html\" title=\"trait pallet_executor_registry::pallet::Config\">Config</a> for <a class=\"struct\" href=\"cirrus_runtime/struct.Runtime.html\" title=\"struct cirrus_runtime::Runtime\">Runtime</a>"]],
+"cirrus_test_runtime":[["impl <a class=\"trait\" href=\"pallet_executor_registry/pallet/trait.Config.html\" title=\"trait pallet_executor_registry::pallet::Config\">Config</a> for <a class=\"struct\" href=\"cirrus_test_runtime/struct.Runtime.html\" title=\"struct cirrus_test_runtime::Runtime\">Runtime</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

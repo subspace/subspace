@@ -824,6 +824,63 @@
 <span id="824">824</span>
 <span id="825">825</span>
 <span id="826">826</span>
+<span id="827">827</span>
+<span id="828">828</span>
+<span id="829">829</span>
+<span id="830">830</span>
+<span id="831">831</span>
+<span id="832">832</span>
+<span id="833">833</span>
+<span id="834">834</span>
+<span id="835">835</span>
+<span id="836">836</span>
+<span id="837">837</span>
+<span id="838">838</span>
+<span id="839">839</span>
+<span id="840">840</span>
+<span id="841">841</span>
+<span id="842">842</span>
+<span id="843">843</span>
+<span id="844">844</span>
+<span id="845">845</span>
+<span id="846">846</span>
+<span id="847">847</span>
+<span id="848">848</span>
+<span id="849">849</span>
+<span id="850">850</span>
+<span id="851">851</span>
+<span id="852">852</span>
+<span id="853">853</span>
+<span id="854">854</span>
+<span id="855">855</span>
+<span id="856">856</span>
+<span id="857">857</span>
+<span id="858">858</span>
+<span id="859">859</span>
+<span id="860">860</span>
+<span id="861">861</span>
+<span id="862">862</span>
+<span id="863">863</span>
+<span id="864">864</span>
+<span id="865">865</span>
+<span id="866">866</span>
+<span id="867">867</span>
+<span id="868">868</span>
+<span id="869">869</span>
+<span id="870">870</span>
+<span id="871">871</span>
+<span id="872">872</span>
+<span id="873">873</span>
+<span id="874">874</span>
+<span id="875">875</span>
+<span id="876">876</span>
+<span id="877">877</span>
+<span id="878">878</span>
+<span id="879">879</span>
+<span id="880">880</span>
+<span id="881">881</span>
+<span id="882">882</span>
+<span id="883">883</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -853,8 +910,10 @@
 <span class="kw">use</span> <span class="ident">frame_system::offchain::SubmitTransaction</span>;
 <span class="kw">pub</span> <span class="kw">use</span> <span class="ident">pallet</span>::<span class="kw-2">*</span>;
 <span class="kw">use</span> <span class="ident">sp_executor</span>::{
-    <span class="ident">BundleEquivocationProof</span>, <span class="ident">ExecutionReceipt</span>, <span class="ident">FraudProof</span>, <span class="ident">InvalidTransactionCode</span>,
-    <span class="ident">InvalidTransactionProof</span>, <span class="ident">SignedOpaqueBundle</span>,
+    <span class="ident">calculate_bundle_election_threshold</span>, <span class="ident">derive_bundle_election_solution</span>,
+    <span class="ident">is_election_solution_within_threshold</span>, <span class="ident">read_bundle_election_params</span>, <span class="ident">verify_vrf_proof</span>,
+    <span class="ident">BundleElectionParams</span>, <span class="ident">BundleEquivocationProof</span>, <span class="ident">ExecutionReceipt</span>, <span class="ident">ExecutorId</span>, <span class="ident">FraudProof</span>,
+    <span class="ident">InvalidTransactionCode</span>, <span class="ident">InvalidTransactionProof</span>, <span class="ident">ProofOfElection</span>, <span class="ident">SignedOpaqueBundle</span>,
 };
 <span class="kw">use</span> <span class="ident">sp_runtime::traits</span>::{<span class="ident">BlockNumberProvider</span>, <span class="ident">CheckedSub</span>, <span class="ident">One</span>, <span class="ident">Saturating</span>, <span class="ident">Zero</span>};
 <span class="kw">use</span> <span class="ident">sp_runtime::transaction_validity</span>::{<span class="ident">InvalidTransaction</span>, <span class="ident">TransactionValidityError</span>};
@@ -925,6 +984,14 @@
         <span class="ident">UnexpectedSigner</span>,
         <span class="doccomment">/// Invalid transaction bundle signature.</span>
         <span class="ident">BadSignature</span>,
+        <span class="doccomment">/// Invalid vrf proof.</span>
+        <span class="ident">BadVrfProof</span>,
+        <span class="doccomment">/// Can not retrieve the state needed from the storage proof.</span>
+        <span class="ident">BadStorageProof</span>,
+        <span class="doccomment">/// Bundle author is not found in the authority set.</span>
+        <span class="ident">AuthorityNotFound</span>,
+        <span class="doccomment">/// Election solution does not satisfy the threshold.</span>
+        <span class="ident">InvalidElectionSolution</span>,
         <span class="doccomment">/// An invalid execution receipt found in the bundle.</span>
         <span class="ident">Receipt</span>(<span class="ident">ExecutionReceiptError</span>),
     }
@@ -1412,6 +1479,58 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="kw">fn</span> <span class="ident">validate_bundle_election</span>(
+        <span class="ident">executor_id</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutorId</span>,
+        <span class="ident">proof_of_election</span>: <span class="kw-2">&amp;</span><span class="ident">ProofOfElection</span>,
+    ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">BundleError</span><span class="op">&gt;</span> {
+        <span class="kw">let</span> <span class="ident">ProofOfElection</span> {
+            <span class="ident">domain_id</span>,
+            <span class="ident">vrf_output</span>,
+            <span class="ident">vrf_proof</span>,
+            <span class="ident">vrf_public_key</span>,
+            <span class="ident">slot_randomness</span>,
+            <span class="ident">state_root</span>,
+            <span class="ident">storage_proof</span>,
+        } <span class="op">=</span> <span class="ident">proof_of_election</span>;
+
+        <span class="ident">verify_vrf_proof</span>(<span class="ident">vrf_public_key</span>, <span class="ident">vrf_output</span>, <span class="ident">vrf_proof</span>, <span class="ident">slot_randomness</span>)
+            .<span class="ident">map_err</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="ident">BundleError::BadVrfProof</span>)<span class="question-mark">?</span>;
+
+        <span class="comment">// TODO: verify `state_root` is valid.</span>
+
+        <span class="kw">let</span> <span class="ident">BundleElectionParams</span> {
+            <span class="ident">authorities</span>,
+            <span class="ident">total_stake_weight</span>,
+            <span class="ident">slot_probability</span>,
+        } <span class="op">=</span> <span class="ident">read_bundle_election_params</span>(<span class="ident">storage_proof</span>.<span class="ident">clone</span>(), <span class="ident">state_root</span>)
+            .<span class="ident">map_err</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="ident">BundleError::BadStorageProof</span>)<span class="question-mark">?</span>;
+
+        <span class="kw">let</span> <span class="ident">stake_weight</span> <span class="op">=</span> <span class="ident">authorities</span>
+            .<span class="ident">iter</span>()
+            .<span class="ident">find_map</span>(<span class="op">|</span>(<span class="ident">authority</span>, <span class="ident">weight</span>)<span class="op">|</span> {
+                <span class="kw">if</span> <span class="ident">authority</span> <span class="op">==</span> <span class="ident">executor_id</span> {
+                    <span class="prelude-val">Some</span>(<span class="ident">weight</span>)
+                } <span class="kw">else</span> {
+                    <span class="prelude-val">None</span>
+                }
+            })
+            .<span class="ident">ok_or</span>(<span class="ident">BundleError::AuthorityNotFound</span>)<span class="question-mark">?</span>;
+
+        <span class="kw">let</span> <span class="ident">election_solution</span> <span class="op">=</span> <span class="ident">derive_bundle_election_solution</span>(<span class="kw-2">*</span><span class="ident">domain_id</span>, <span class="ident">vrf_output</span>);
+
+        <span class="kw">let</span> <span class="ident">threshold</span> <span class="op">=</span> <span class="ident">calculate_bundle_election_threshold</span>(
+            <span class="kw-2">*</span><span class="ident">stake_weight</span>,
+            <span class="ident">total_stake_weight</span>,
+            <span class="ident">slot_probability</span>,
+        );
+
+        <span class="kw">if</span> <span class="op">!</span><span class="ident">is_election_solution_within_threshold</span>(<span class="ident">election_solution</span>, <span class="ident">threshold</span>) {
+            <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">BundleError::InvalidElectionSolution</span>);
+        }
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
     <span class="kw">fn</span> <span class="ident">validate_execution_receipts</span>(
         <span class="ident">execution_receipts</span>: <span class="kw-2">&amp;</span>[<span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">T::BlockNumber</span>, <span class="ident">T::Hash</span>, <span class="ident">T::SecondaryHash</span><span class="op">&gt;</span>],
     ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">ExecutionReceiptError</span><span class="op">&gt;</span> {
@@ -1472,6 +1591,7 @@
     <span class="kw">fn</span> <span class="ident">validate_bundle</span>(
         <span class="ident">SignedOpaqueBundle</span> {
             <span class="ident">bundle</span>,
+            <span class="ident">proof_of_election</span>,
             <span class="ident">signature</span>,
             <span class="ident">signer</span>,
         }: <span class="kw-2">&amp;</span><span class="ident">SignedOpaqueBundle</span><span class="op">&lt;</span><span class="ident">T::BlockNumber</span>, <span class="ident">T::Hash</span>, <span class="ident">T::SecondaryHash</span><span class="op">&gt;</span>,
@@ -1480,13 +1600,7 @@
             <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">BundleError::BadSignature</span>);
         }
 
-        <span class="comment">// TODO: upgrade once the trusted executor system is upgraded.</span>
-        <span class="kw">let</span> <span class="ident">expected_executor</span> <span class="op">=</span> <span class="ident"><span class="self">Self</span>::executor</span>()
-            .<span class="ident">map</span>(<span class="op">|</span>(<span class="kw">_</span>, <span class="ident">authority_id</span>)<span class="op">|</span> <span class="ident">authority_id</span>)
-            .<span class="ident">expect</span>(<span class="string">&quot;Executor must be initialized before launching the executor chain; qed&quot;</span>);
-        <span class="kw">if</span> <span class="kw-2">*</span><span class="ident">signer</span> <span class="op">!</span><span class="op">=</span> <span class="ident">expected_executor</span> {
-            <span class="kw">return</span> <span class="prelude-val">Err</span>(<span class="ident">BundleError::UnexpectedSigner</span>);
-        }
+        <span class="ident"><span class="self">Self</span>::validate_bundle_election</span>(<span class="ident">signer</span>, <span class="ident">proof_of_election</span>)<span class="question-mark">?</span>;
 
         <span class="ident"><span class="self">Self</span>::validate_execution_receipts</span>(<span class="kw-2">&amp;</span><span class="ident">bundle</span>.<span class="ident">receipts</span>).<span class="ident">map_err</span>(<span class="ident">BundleError::Receipt</span>)<span class="question-mark">?</span>;
 
