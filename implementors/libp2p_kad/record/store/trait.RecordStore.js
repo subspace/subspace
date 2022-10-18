@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"subspace_networking":[["impl&lt;'a, Rs:&nbsp;<a class=\"trait\" href=\"subspace_networking/trait.RecordStorage.html\" title=\"trait subspace_networking::RecordStorage\">RecordStorage</a>&lt;'a&gt;, Ps:&nbsp;ProviderStorage&lt;'a&gt;&gt; RecordStore&lt;'a&gt; for <a class=\"struct\" href=\"subspace_networking/struct.CustomRecordStore.html\" title=\"struct subspace_networking::CustomRecordStore\">CustomRecordStore</a>&lt;Rs, Ps&gt;"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
