@@ -14,7 +14,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
-"pallet_messenger":["",[],["lib.rs","messages.rs","verification.rs"]],\
+"pallet_messenger":["",[],["lib.rs","messages.rs","relayer.rs","verification.rs"]],\
 "pallet_object_store":["",[],["lib.rs"]],\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
