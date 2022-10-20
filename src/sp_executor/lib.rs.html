@@ -677,13 +677,6 @@
 <span id="677">677</span>
 <span id="678">678</span>
 <span id="679">679</span>
-<span id="680">680</span>
-<span id="681">681</span>
-<span id="682">682</span>
-<span id="683">683</span>
-<span id="684">684</span>
-<span id="685">685</span>
-<span id="686">686</span>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.</span>
 <span class="comment">// SPDX-License-Identifier: Apache-2.0</span>
 
@@ -707,7 +700,8 @@
 <span class="kw">use</span> <span class="ident">merlin::Transcript</span>;
 <span class="kw">use</span> <span class="ident">parity_scale_codec</span>::{<span class="ident">Decode</span>, <span class="ident">Encode</span>};
 <span class="kw">use</span> <span class="ident">scale_info::TypeInfo</span>;
-<span class="kw">use</span> <span class="ident">schnorrkel::vrf</span>::{<span class="ident">VRFOutput</span>, <span class="ident">VRFProof</span>};
+<span class="kw">use</span> <span class="ident">schnorrkel::vrf</span>::{<span class="ident">VRFOutput</span>, <span class="ident">VRFProof</span>, <span class="ident">VRF_OUTPUT_LENGTH</span>, <span class="ident">VRF_PROOF_LENGTH</span>};
+<span class="kw">use</span> <span class="ident">schnorrkel::SignatureResult</span>;
 <span class="kw">use</span> <span class="ident">sp_consensus_slots::Slot</span>;
 <span class="kw">use</span> <span class="ident">sp_core::crypto::KeyTypeId</span>;
 <span class="kw">use</span> <span class="ident">sp_core::H256</span>;
@@ -720,14 +714,17 @@
 <span class="kw">use</span> <span class="ident">sp_std::vec</span>;
 <span class="kw">use</span> <span class="ident">sp_std::vec::Vec</span>;
 <span class="kw">use</span> <span class="ident">sp_trie</span>::{<span class="ident">read_trie_value</span>, <span class="ident">LayoutV1</span>, <span class="ident">StorageProof</span>};
-<span class="kw">use</span> <span class="ident">subspace_core_primitives::crypto::blake2b_256_hash_list</span>;
 <span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">Blake2b256Hash</span>, <span class="ident">BlockNumber</span>, <span class="ident">Randomness</span>};
 <span class="kw">use</span> <span class="ident">subspace_runtime_primitives::AccountId</span>;
 
-<span class="kw">const</span> <span class="ident">VRF_TRANSCRIPT_LABEL</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>] <span class="op">=</span> <span class="string">b&quot;executor&quot;</span>;
-
 <span class="doccomment">/// Key type for Executor.</span>
 <span class="kw">const</span> <span class="ident">KEY_TYPE</span>: <span class="ident">KeyTypeId</span> <span class="op">=</span> <span class="ident">KeyTypeId</span>(<span class="kw-2">*</span><span class="string">b&quot;exec&quot;</span>);
+
+<span class="kw">const</span> <span class="ident">VRF_TRANSCRIPT_LABEL</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>] <span class="op">=</span> <span class="string">b&quot;executor&quot;</span>;
+
+<span class="kw">const</span> <span class="ident">ELECTION_RANDOMNESS_CONTEXT</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>] <span class="op">=</span> <span class="string">b&quot;election_randomness_context&quot;</span>;
+
+<span class="kw">type</span> <span class="ident">ElectionRandomness</span> <span class="op">=</span> [<span class="ident">u8</span>; <span class="ident">core::mem::size_of</span>::<span class="op">&lt;</span><span class="ident">u128</span><span class="op">&gt;</span>()];
 
 <span class="kw">mod</span> <span class="ident">app</span> {
     <span class="kw">use</span> <span class="ident"><span class="kw">super</span>::KEY_TYPE</span>;
@@ -745,13 +742,13 @@
 <span class="kw">pub</span> <span class="kw">type</span> <span class="ident">ExecutorPair</span> <span class="op">=</span> <span class="ident">app::Pair</span>;
 
 <span class="doccomment">/// An executor authority identifier.</span>
-<span class="kw">pub</span> <span class="kw">type</span> <span class="ident">ExecutorId</span> <span class="op">=</span> <span class="ident">app::Public</span>;
+<span class="kw">pub</span> <span class="kw">type</span> <span class="ident">ExecutorPublicKey</span> <span class="op">=</span> <span class="ident">app::Public</span>;
 
 <span class="doccomment">/// A type that implements `BoundToRuntimeAppPublic`, used for executor signing key.</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">ExecutorKey</span>;
 
 <span class="kw">impl</span> <span class="ident">sp_runtime::BoundToRuntimeAppPublic</span> <span class="kw">for</span> <span class="ident">ExecutorKey</span> {
-    <span class="kw">type</span> <span class="ident">Public</span> <span class="op">=</span> <span class="ident">ExecutorId</span>;
+    <span class="kw">type</span> <span class="ident">Public</span> <span class="op">=</span> <span class="ident">ExecutorPublicKey</span>;
 }
 
 <span class="doccomment">/// Stake weight in the domain bundle election.</span>
@@ -803,19 +800,30 @@
     }
 }
 
+<span class="kw">fn</span> <span class="ident">derive_election_randomness</span>(
+    <span class="ident">vrf_output</span>: [<span class="ident">u8</span>; <span class="ident">VRF_OUTPUT_LENGTH</span>],
+    <span class="ident">public_key</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutorPublicKey</span>,
+    <span class="ident">slot_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">Blake2b256Hash</span>,
+) -&gt; <span class="ident">SignatureResult</span><span class="op">&lt;</span><span class="ident">ElectionRandomness</span><span class="op">&gt;</span> {
+    <span class="kw">let</span> <span class="ident">in_out</span> <span class="op">=</span> <span class="ident">VRFOutput</span>(<span class="ident">vrf_output</span>).<span class="ident">attach_input_hash</span>(
+        <span class="kw-2">&amp;</span><span class="ident">schnorrkel::PublicKey::from_bytes</span>(<span class="ident">public_key</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>,
+        <span class="ident">make_local_randomness_transcript</span>(<span class="ident">slot_randomness</span>),
+    )<span class="question-mark">?</span>;
+
+    <span class="prelude-val">Ok</span>(<span class="ident">in_out</span>.<span class="ident">make_bytes</span>(<span class="ident">ELECTION_RANDOMNESS_CONTEXT</span>))
+}
+
 <span class="doccomment">/// Returns the solution for the challenge of producing a bundle.</span>
-<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">derive_bundle_election_solution</span>(<span class="ident">domain_id</span>: <span class="ident">DomainId</span>, <span class="ident">vrf_output</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>]) -&gt; <span class="ident">u128</span> {
-    <span class="kw">let</span> <span class="ident">local_domain_randomness</span> <span class="op">=</span> <span class="ident">blake2b_256_hash_list</span>(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span><span class="ident">domain_id</span>.<span class="ident">to_le_bytes</span>(), <span class="ident">vrf_output</span>]);
+<span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">derive_bundle_election_solution</span>(
+    <span class="ident">vrf_output</span>: [<span class="ident">u8</span>; <span class="ident">VRF_OUTPUT_LENGTH</span>],
+    <span class="ident">public_key</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutorPublicKey</span>,
+    <span class="ident">slot_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">Blake2b256Hash</span>,
+) -&gt; <span class="ident">SignatureResult</span><span class="op">&lt;</span><span class="ident">u128</span><span class="op">&gt;</span> {
+    <span class="kw">let</span> <span class="ident">election_randomness</span> <span class="op">=</span> <span class="ident">derive_election_randomness</span>(<span class="ident">vrf_output</span>, <span class="ident">public_key</span>, <span class="ident">slot_randomness</span>)<span class="question-mark">?</span>;
 
-    <span class="kw">let</span> <span class="ident">election_solution</span> <span class="op">=</span> <span class="ident">u128::from_le_bytes</span>(
-        <span class="ident">local_domain_randomness</span>
-            .<span class="ident">split_at</span>(<span class="ident">core::mem::size_of</span>::<span class="op">&lt;</span><span class="ident">u128</span><span class="op">&gt;</span>())
-            .<span class="number">0</span>
-            .<span class="ident">try_into</span>()
-            .<span class="ident">expect</span>(<span class="string">&quot;Local domain randomness must fit into u128; qed&quot;</span>),
-    );
+    <span class="kw">let</span> <span class="ident">election_solution</span> <span class="op">=</span> <span class="ident">u128::from_le_bytes</span>(<span class="ident">election_randomness</span>);
 
-    <span class="ident">election_solution</span>
+    <span class="prelude-val">Ok</span>(<span class="ident">election_solution</span>)
 }
 
 <span class="doccomment">/// Returns the election threshold based on the stake weight proportion and slot probability.</span>
@@ -897,7 +905,7 @@
 <span class="doccomment">/// Parameters for the bundle election.</span>
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Decode</span>, <span class="ident">Encode</span>, <span class="ident">TypeInfo</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>, <span class="ident">Clone</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">BundleElectionParams</span> {
-    <span class="kw">pub</span> <span class="ident">authorities</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">ExecutorId</span>, <span class="ident">StakeWeight</span>)<span class="op">&gt;</span>,
+    <span class="kw">pub</span> <span class="ident">authorities</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">ExecutorPublicKey</span>, <span class="ident">StakeWeight</span>)<span class="op">&gt;</span>,
     <span class="kw">pub</span> <span class="ident">total_stake_weight</span>: <span class="ident">StakeWeight</span>,
     <span class="kw">pub</span> <span class="ident">slot_probability</span>: (<span class="ident">u64</span>, <span class="ident">u64</span>),
 }
@@ -912,12 +920,12 @@
 
 <span class="doccomment">/// Verify the vrf proof generated in the bundle election.</span>
 <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">verify_vrf_proof</span>(
-    <span class="ident">public_key</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>],
+    <span class="ident">public_key</span>: <span class="kw-2">&amp;</span><span class="ident">ExecutorPublicKey</span>,
     <span class="ident">vrf_output</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>],
     <span class="ident">vrf_proof</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>],
     <span class="ident">slot_randomness</span>: <span class="kw-2">&amp;</span><span class="ident">Blake2b256Hash</span>,
 ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">VrfProofError</span><span class="op">&gt;</span> {
-    <span class="kw">let</span> <span class="ident">public_key</span> <span class="op">=</span> <span class="ident">schnorrkel::PublicKey::from_bytes</span>(<span class="ident">public_key</span>)
+    <span class="kw">let</span> <span class="ident">public_key</span> <span class="op">=</span> <span class="ident">schnorrkel::PublicKey::from_bytes</span>(<span class="ident">public_key</span>.<span class="ident">as_ref</span>())
         .<span class="ident">map_err</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="ident">VrfProofError::VrfSignatureConstructionError</span>)<span class="question-mark">?</span>;
 
     <span class="ident">public_key</span>
@@ -957,7 +965,7 @@
 
     <span class="kw">let</span> <span class="ident">authorities</span> <span class="op">=</span>
         <span class="ident">read_value</span>(<span class="kw-2">&amp;</span><span class="ident">AUTHORITIES</span>)<span class="question-mark">?</span>.<span class="ident">ok_or</span>(<span class="ident">ReadBundleElectionParamsError::MissingValue</span>)<span class="question-mark">?</span>;
-    <span class="kw">let</span> <span class="ident">authorities</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">ExecutorId</span>, <span class="ident">StakeWeight</span>)<span class="op">&gt;</span> <span class="op">=</span>
+    <span class="kw">let</span> <span class="ident">authorities</span>: <span class="ident">Vec</span><span class="op">&lt;</span>(<span class="ident">ExecutorPublicKey</span>, <span class="ident">StakeWeight</span>)<span class="op">&gt;</span> <span class="op">=</span>
         <span class="ident">Decode::decode</span>(<span class="kw-2">&amp;mut</span> <span class="ident">authorities</span>.<span class="ident">as_slice</span>())
             .<span class="ident">map_err</span>(<span class="op">|</span><span class="kw">_</span><span class="op">|</span> <span class="ident">ReadBundleElectionParamsError::DecodeError</span>)<span class="question-mark">?</span>;
 
@@ -980,14 +988,15 @@
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Decode</span>, <span class="ident">Encode</span>, <span class="ident">TypeInfo</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>, <span class="ident">Clone</span>)]</span>
 <span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">ProofOfElection</span> {
+    <span class="comment">// TODO: remove it once confirmed useless.</span>
     <span class="doccomment">/// Domain id.</span>
     <span class="kw">pub</span> <span class="ident">domain_id</span>: <span class="ident">DomainId</span>,
     <span class="doccomment">/// VRF output.</span>
-    <span class="kw">pub</span> <span class="ident">vrf_output</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>,
+    <span class="kw">pub</span> <span class="ident">vrf_output</span>: [<span class="ident">u8</span>; <span class="ident">VRF_OUTPUT_LENGTH</span>],
     <span class="doccomment">/// VRF proof.</span>
-    <span class="kw">pub</span> <span class="ident">vrf_proof</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>,
+    <span class="kw">pub</span> <span class="ident">vrf_proof</span>: [<span class="ident">u8</span>; <span class="ident">VRF_PROOF_LENGTH</span>],
     <span class="doccomment">/// VRF public key.</span>
-    <span class="kw">pub</span> <span class="ident">vrf_public_key</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>,
+    <span class="kw">pub</span> <span class="ident">executor_public_key</span>: <span class="ident">ExecutorPublicKey</span>,
     <span class="doccomment">/// Slot randomness.</span>
     <span class="kw">pub</span> <span class="ident">slot_randomness</span>: <span class="ident">Blake2b256Hash</span>,
     <span class="doccomment">/// State root corresponding to the storage proof above.</span>
@@ -997,12 +1006,13 @@
 }
 
 <span class="kw">impl</span> <span class="ident">ProofOfElection</span> {
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">dummy</span>() -&gt; <span class="self">Self</span> {
+    <span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">feature</span> <span class="op">=</span> <span class="string">&quot;std&quot;</span>)]</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">with_public_key</span>(<span class="ident">executor_public_key</span>: <span class="ident">ExecutorPublicKey</span>) -&gt; <span class="self">Self</span> {
         <span class="self">Self</span> {
             <span class="ident">domain_id</span>: <span class="ident">DomainId::default</span>(),
-            <span class="ident">vrf_output</span>: <span class="ident">Vec::new</span>(),
-            <span class="ident">vrf_proof</span>: <span class="ident">Vec::new</span>(),
-            <span class="ident">vrf_public_key</span>: <span class="ident">Vec::new</span>(),
+            <span class="ident">vrf_output</span>: [<span class="number">0u8</span>; <span class="ident">VRF_OUTPUT_LENGTH</span>],
+            <span class="ident">vrf_proof</span>: [<span class="number">0u8</span>; <span class="ident">VRF_PROOF_LENGTH</span>],
+            <span class="ident">executor_public_key</span>,
             <span class="ident">slot_randomness</span>: <span class="ident">Blake2b256Hash::default</span>(),
             <span class="ident">state_root</span>: <span class="ident">H256::default</span>(),
             <span class="ident">storage_proof</span>: <span class="ident">StorageProof::empty</span>(),
@@ -1068,8 +1078,6 @@
     <span class="kw">pub</span> <span class="ident">proof_of_election</span>: <span class="ident">ProofOfElection</span>,
     <span class="doccomment">/// Signature of the bundle.</span>
     <span class="kw">pub</span> <span class="ident">signature</span>: <span class="ident">ExecutorSignature</span>,
-    <span class="doccomment">/// Signer of the signature.</span>
-    <span class="kw">pub</span> <span class="ident">signer</span>: <span class="ident">ExecutorId</span>,
 }
 
 <span class="doccomment">/// [`SignedBundle`] with opaque extrinsic.</span>
@@ -1094,7 +1102,6 @@
             <span class="ident">bundle</span>: <span class="self">self</span>.<span class="ident">bundle</span>.<span class="ident">into_opaque_bundle</span>(),
             <span class="ident">proof_of_election</span>: <span class="self">self</span>.<span class="ident">proof_of_election</span>,
             <span class="ident">signature</span>: <span class="self">self</span>.<span class="ident">signature</span>,
-            <span class="ident">signer</span>: <span class="self">self</span>.<span class="ident">signer</span>,
         }
     }
 }
@@ -1118,27 +1125,6 @@
     <span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">Hash</span>, <span class="ident">SecondaryHash</span><span class="op">&gt;</span>
 {
     <span class="doccomment">/// Returns the hash of this execution receipt.</span>
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">hash</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">H256</span> {
-        <span class="ident">BlakeTwo256::hash_of</span>(<span class="self">self</span>)
-    }
-}
-
-<span class="comment">// TODO: Remove this when the bundle gossip is disabled.</span>
-<span class="doccomment">/// Signed version of [`ExecutionReceipt`] which will be gossiped over the executors network.</span>
-<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Decode</span>, <span class="ident">Encode</span>, <span class="ident">TypeInfo</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>, <span class="ident">Clone</span>)]</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">Hash</span>, <span class="ident">SecondaryHash</span><span class="op">&gt;</span> {
-    <span class="doccomment">/// Execution receipt</span>
-    <span class="kw">pub</span> <span class="ident">execution_receipt</span>: <span class="ident">ExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">Hash</span>, <span class="ident">SecondaryHash</span><span class="op">&gt;</span>,
-    <span class="doccomment">/// Signature of the execution receipt.</span>
-    <span class="kw">pub</span> <span class="ident">signature</span>: <span class="ident">ExecutorSignature</span>,
-    <span class="doccomment">/// Signer of the signature.</span>
-    <span class="kw">pub</span> <span class="ident">signer</span>: <span class="ident">ExecutorId</span>,
-}
-
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Number</span>: <span class="ident">Encode</span>, <span class="ident">Hash</span>: <span class="ident">Encode</span>, <span class="ident">SecondaryHash</span>: <span class="ident">Encode</span><span class="op">&gt;</span>
-    <span class="ident">SignedExecutionReceipt</span><span class="op">&lt;</span><span class="ident">Number</span>, <span class="ident">Hash</span>, <span class="ident">SecondaryHash</span><span class="op">&gt;</span>
-{
-    <span class="doccomment">/// Returns the hash of signed execution receipt.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">hash</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">H256</span> {
         <span class="ident">BlakeTwo256::hash_of</span>(<span class="self">self</span>)
     }
@@ -1358,7 +1344,7 @@
         <span class="kw">fn</span> <span class="ident">execution_wasm_bundle</span>() -&gt; <span class="ident">Cow</span><span class="op">&lt;</span><span class="lifetime">&#39;static</span>, [<span class="ident">u8</span>]<span class="op">&gt;</span>;
 
         <span class="doccomment">/// Returns the authority id of current executor.</span>
-        <span class="kw">fn</span> <span class="ident">executor_id</span>() -&gt; <span class="ident">ExecutorId</span>;
+        <span class="kw">fn</span> <span class="ident">executor_id</span>() -&gt; <span class="ident">ExecutorPublicKey</span>;
 
         <span class="doccomment">/// Returns the best execution chain number.</span>
         <span class="kw">fn</span> <span class="ident">best_execution_chain_number</span>() -&gt; <span class="ident">NumberFor</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>;
