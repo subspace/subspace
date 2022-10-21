@@ -1,6 +1,6 @@
 (function() {var implementors = {
-"cirrus_runtime":[["impl <a class=\"trait\" href=\"cirrus_runtime/trait.BuildStorage.html\" title=\"trait cirrus_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"cirrus_runtime/struct.GenesisConfig.html\" title=\"struct cirrus_runtime::GenesisConfig\">GenesisConfig</a>"]],
 "cirrus_test_runtime":[["impl <a class=\"trait\" href=\"cirrus_test_runtime/trait.BuildStorage.html\" title=\"trait cirrus_test_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"cirrus_test_runtime/struct.GenesisConfig.html\" title=\"struct cirrus_test_runtime::GenesisConfig\">GenesisConfig</a>"]],
 "subspace_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_runtime/struct.GenesisConfig.html\" title=\"struct subspace_runtime::GenesisConfig\">GenesisConfig</a>"]],
-"subspace_test_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_test_runtime/struct.GenesisConfig.html\" title=\"struct subspace_test_runtime::GenesisConfig\">GenesisConfig</a>"]]
+"subspace_test_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_test_runtime/struct.GenesisConfig.html\" title=\"struct subspace_test_runtime::GenesisConfig\">GenesisConfig</a>"]],
+"system_domain_runtime":[["impl <a class=\"trait\" href=\"system_domain_runtime/trait.BuildStorage.html\" title=\"trait system_domain_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"system_domain_runtime/struct.GenesisConfig.html\" title=\"struct system_domain_runtime::GenesisConfig\">GenesisConfig</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

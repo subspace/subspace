@@ -2,15 +2,13 @@ var sourcesIndex = JSON.parse('{\
 "cirrus_block_builder":["",[],["lib.rs"]],\
 "cirrus_client_executor":["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]],\
 "cirrus_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
-"cirrus_node":["",[],["lib.rs","rpc.rs","service.rs"]],\
 "cirrus_pallet_executive":["",[],["lib.rs"]],\
-"cirrus_primitives":["",[],["lib.rs"]],\
-"cirrus_runtime":["",[],["lib.rs","runtime.rs"]],\
 "cirrus_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "cirrus_test_service":["",[],["chain_spec.rs","lib.rs"]],\
 "cumulus_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
+"domain_service":["",[],["lib.rs","rpc.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
-"pallet_executor":["",[],["lib.rs"]],\
+"pallet_domains":["",[],["lib.rs"]],\
 "pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
@@ -29,7 +27,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_piece_cache":["",[],["lib.rs"]],\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
-"sp_executor":["",[],["lib.rs"]],\
+"sp_domains":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
@@ -51,6 +49,8 @@ var sourcesIndex = JSON.parse('{\
 "subspace_wasm_tools":["",[],["lib.rs"]],\
 "substrate_test_runtime":["",[],["genesismap.rs","lib.rs","system.rs"]],\
 "substrate_test_runtime_client":["",[],["block_builder_ext.rs","lib.rs","trait_tests.rs"]],\
-"substrate_test_runtime_transaction_pool":["",[],["lib.rs"]]\
+"substrate_test_runtime_transaction_pool":["",[],["lib.rs"]],\
+"system_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
+"system_runtime_primitives":["",[],["lib.rs"]]\
 }');
 createSourceSidebar();

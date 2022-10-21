@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":[["new_full","Start a node with the given parachain `Configuration` and relay chain `Configuration`."]],"struct":[["CirrusRuntimeExecutor","Native executor instance."],["NewFull","Full node along with some other components."]],"type":[["FullBackend",""],["FullClient","Cirrus-like full client."],["FullPool",""]]};
