@@ -1,12 +1,12 @@
 var sourcesIndex = JSON.parse('{\
-"cirrus_block_builder":["",[],["lib.rs"]],\
-"cirrus_client_executor":["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]],\
-"cirrus_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
-"cirrus_pallet_executive":["",[],["lib.rs"]],\
-"cirrus_test_runtime":["",[],["lib.rs","runtime.rs"]],\
-"cirrus_test_service":["",[],["chain_spec.rs","lib.rs"]],\
-"cumulus_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
+"domain_block_builder":["",[],["lib.rs"]],\
+"domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
+"domain_client_executor":["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]],\
+"domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
+"domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_service":["",[],["lib.rs","rpc.rs"]],\
+"domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
+"domain_test_service":["",[],["chain_spec.rs","lib.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_domains":["",[],["lib.rs"]],\
 "pallet_executor_registry":["",[],["lib.rs"]],\

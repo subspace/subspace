@@ -1,5 +1,5 @@
 (function() {var implementors = {
-"cirrus_test_runtime":[["impl Dispatchable for <a class=\"enum\" href=\"cirrus_test_runtime/enum.Call.html\" title=\"enum cirrus_test_runtime::Call\">Call</a>"]],
+"domain_test_runtime":[["impl Dispatchable for <a class=\"enum\" href=\"domain_test_runtime/enum.Call.html\" title=\"enum domain_test_runtime::Call\">Call</a>"]],
 "subspace_runtime":[["impl Dispatchable for <a class=\"enum\" href=\"subspace_runtime/enum.Call.html\" title=\"enum subspace_runtime::Call\">Call</a>"]],
 "subspace_test_runtime":[["impl Dispatchable for <a class=\"enum\" href=\"subspace_test_runtime/enum.Call.html\" title=\"enum subspace_test_runtime::Call\">Call</a>"]],
 "substrate_test_runtime":[["impl Dispatchable for <a class=\"enum\" href=\"substrate_test_runtime/enum.Extrinsic.html\" title=\"enum substrate_test_runtime::Extrinsic\">Extrinsic</a>"]],
