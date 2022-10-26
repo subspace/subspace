@@ -110,18 +110,14 @@
 <span id="110">110</span>
 <span id="111">111</span>
 <span id="112">112</span>
-<span id="113">113</span>
-<span id="114">114</span>
-</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_disk_plot</span>::{<span class="ident">PlottingError</span>, <span class="ident">SectorMetadata</span>};
+</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_disk_plot::piece_receiver::PieceReceiver</span>;
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::single_disk_plot</span>::{<span class="ident">PlottingError</span>, <span class="ident">SectorMetadata</span>};
 <span class="kw">use</span> <span class="ident">bitvec::order::Lsb0</span>;
 <span class="kw">use</span> <span class="ident">bitvec::prelude</span>::<span class="kw-2">*</span>;
 <span class="kw">use</span> <span class="ident">parity_scale_codec::Encode</span>;
-<span class="kw">use</span> <span class="ident">std::future::Future</span>;
 <span class="kw">use</span> <span class="ident">std::io</span>;
 <span class="kw">use</span> <span class="ident">std::sync::atomic</span>::{<span class="ident">AtomicBool</span>, <span class="ident">Ordering</span>};
-<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{
-    <span class="ident">plot_sector_size</span>, <span class="ident">Piece</span>, <span class="ident">PieceIndex</span>, <span class="ident">PublicKey</span>, <span class="ident">SectorId</span>, <span class="ident">PIECE_SIZE</span>,
-};
+<span class="kw">use</span> <span class="ident">subspace_core_primitives</span>::{<span class="ident">plot_sector_size</span>, <span class="ident">PieceIndex</span>, <span class="ident">PublicKey</span>, <span class="ident">SectorId</span>, <span class="ident">PIECE_SIZE</span>};
 <span class="kw">use</span> <span class="ident">subspace_rpc_primitives::FarmerProtocolInfo</span>;
 <span class="kw">use</span> <span class="ident">subspace_solving::derive_chunk_otp</span>;
 <span class="kw">use</span> <span class="ident">thiserror::Error</span>;
@@ -143,18 +139,17 @@
 <span class="doccomment">///</span>
 <span class="doccomment">/// NOTE: Even though this function is async, it has blocking code inside and must be running in a</span>
 <span class="doccomment">/// separate thread in order to prevent blocking an executor.</span>
-<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">plot_sector</span><span class="op">&lt;</span><span class="ident">GP</span>, <span class="ident">GPF</span>, <span class="ident">S</span>, <span class="ident">SM</span><span class="op">&gt;</span>(
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">plot_sector</span><span class="op">&lt;</span><span class="ident">PR</span>, <span class="ident">S</span>, <span class="ident">SM</span><span class="op">&gt;</span>(
     <span class="ident">public_key</span>: <span class="kw-2">&amp;</span><span class="ident">PublicKey</span>,
     <span class="ident">sector_index</span>: <span class="ident">u64</span>,
-    <span class="ident">get_piece</span>: <span class="ident">GP</span>,
+    <span class="ident">piece_receiver</span>: <span class="kw-2">&amp;mut</span> <span class="ident">PR</span>,
     <span class="ident">cancelled</span>: <span class="kw-2">&amp;</span><span class="ident">AtomicBool</span>,
     <span class="ident">farmer_protocol_info</span>: <span class="kw-2">&amp;</span><span class="ident">FarmerProtocolInfo</span>,
     <span class="kw-2">mut</span> <span class="ident">sector</span>: <span class="ident">S</span>,
     <span class="kw-2">mut</span> <span class="ident">sector_metadata</span>: <span class="ident">SM</span>,
 ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">PlotSectorError</span><span class="op">&gt;</span>
 <span class="kw">where</span>
-    <span class="ident">GP</span>: <span class="ident">Fn</span>(<span class="ident">PieceIndex</span>) -&gt; <span class="ident">GPF</span>,
-    <span class="ident">GPF</span>: <span class="ident">Future</span><span class="op">&lt;</span><span class="ident">Output</span> <span class="op">=</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Piece</span><span class="op">&gt;</span>, <span class="ident">Box</span><span class="op">&lt;</span><span class="kw">dyn</span> <span class="ident">std::error::Error</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">PR</span>: <span class="ident">PieceReceiver</span>,
     <span class="ident">S</span>: <span class="ident">io::Write</span>,
     <span class="ident">SM</span>: <span class="ident">io::Write</span>,
 {
@@ -182,7 +177,8 @@
             <span class="ident">farmer_protocol_info</span>.<span class="ident">total_pieces</span>,
         );
 
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">piece</span> <span class="op">=</span> <span class="ident">get_piece</span>(<span class="ident">piece_index</span>)
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">piece</span> <span class="op">=</span> <span class="ident">piece_receiver</span>
+            .<span class="ident">get_piece</span>(<span class="ident">piece_index</span>)
             .<span class="kw">await</span>
             .<span class="ident">map_err</span>(<span class="op">|</span><span class="ident">error</span><span class="op">|</span> <span class="ident">PlottingError::FailedToRetrievePiece</span> { <span class="ident">piece_index</span>, <span class="ident">error</span> })<span class="question-mark">?</span>
             .<span class="ident">ok_or</span>(<span class="ident">PlottingError::PieceNotFound</span> { <span class="ident">piece_index</span> })<span class="question-mark">?</span>;
