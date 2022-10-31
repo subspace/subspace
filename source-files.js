@@ -3,6 +3,7 @@ var sourcesIndex = JSON.parse('{\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
 "domain_client_executor":["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
+"domain_client_message_relayer":["",[],["lib.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_service":["",[],["lib.rs","rpc.rs"]],\
 "domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
@@ -29,7 +30,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domains":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
-"sp_messenger":["",[],["endpoint.rs","lib.rs"]],\
+"sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["record_shards.rs"]]],["archiver.rs","lib.rs","reconstructor.rs","utils.rs"]],\
 "subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]]],["crypto.rs","lib.rs","objects.rs"]],\
