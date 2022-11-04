@@ -3,12 +3,13 @@ var sourcesIndex = JSON.parse('{\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
 "domain_client_executor":["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","worker.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
-"domain_client_message_relayer":["",[],["lib.rs"]],\
+"domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_service":["",[],["lib.rs","rpc.rs"]],\
 "domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "domain_test_service":["",[],["chain_spec.rs","lib.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
+"pallet_domain_tracker":["",[],["lib.rs"]],\
 "pallet_domains":["",[],["lib.rs"]],\
 "pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
@@ -28,6 +29,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_piece_cache":["",[],["lib.rs"]],\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
+"sp_domain_tracker":["",[],["lib.rs"]],\
 "sp_domains":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\

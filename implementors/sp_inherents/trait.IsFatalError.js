@@ -1,3 +1,4 @@
 (function() {var implementors = {
-"sp_consensus_subspace":[["impl IsFatalError for <a class=\"enum\" href=\"sp_consensus_subspace/inherents/enum.InherentError.html\" title=\"enum sp_consensus_subspace::inherents::InherentError\">InherentError</a>"]]
+"sp_consensus_subspace":[["impl IsFatalError for <a class=\"enum\" href=\"sp_consensus_subspace/inherents/enum.InherentError.html\" title=\"enum sp_consensus_subspace::inherents::InherentError\">InherentError</a>"]],
+"sp_domain_tracker":[["impl&lt;E:&nbsp;Encode&gt; IsFatalError for <a class=\"struct\" href=\"sp_domain_tracker/struct.NoFatalError.html\" title=\"struct sp_domain_tracker::NoFatalError\">NoFatalError</a>&lt;E&gt;"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

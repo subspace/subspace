@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":[["INHERENT_IDENTIFIER","The identifier for the `domain-tracker` inherent."]],"struct":[["InherentType","Inherent type provided by the domain-tracker."],["NoFatalError",""]]};
