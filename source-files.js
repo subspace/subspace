@@ -9,6 +9,7 @@ var sourcesIndex = JSON.parse('{\
 "domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "domain_test_service":["",[],["chain_spec.rs","lib.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
+"pallet_domain_registry":["",[],["lib.rs"]],\
 "pallet_domain_tracker":["",[],["lib.rs"]],\
 "pallet_domains":["",[],["lib.rs"]],\
 "pallet_executor_registry":["",[],["lib.rs"]],\
