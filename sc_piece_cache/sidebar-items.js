@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["AuxPieceCache","Cache of pieces in aux storage"]],"trait":[["PieceCache","Caching layer for pieces produced during archiving to make them available for some time after they were produced."]]};
+window.SIDEBAR_ITEMS = {"constant":[["MAX_SEGMENTS_NUMBER_IN_CACHE","Defines maximum segments number stored in the cache (as pieces)."]],"struct":[["AuxPieceCache","Cache of pieces in aux storage"]],"trait":[["PieceCache","Caching layer for pieces produced during archiving to make them available for some time after they were produced."]]};

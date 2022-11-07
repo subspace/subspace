@@ -144,8 +144,17 @@
 <span id="144">144</span>
 <span id="145">145</span>
 <span id="146">146</span>
-</pre><pre class="rust"><code><span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
+<span id="147">147</span>
+<span id="148">148</span>
+<span id="149">149</span>
+<span id="150">150</span>
+<span id="151">151</span>
+</pre><pre class="rust"><code><span class="kw">mod</span> <span class="ident">piece_record_store</span>;
+
+<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::dsn::piece_record_store</span>::{<span class="ident">AuxRecordStorage</span>, <span class="ident">SegmentIndexGetter</span>};
+<span class="kw">use</span> <span class="ident">futures::StreamExt</span>;
 <span class="kw">use</span> <span class="ident">sc_consensus_subspace</span>::{<span class="ident">ArchivedSegmentNotification</span>, <span class="ident">SubspaceLink</span>};
+<span class="kw">use</span> <span class="ident">sc_piece_cache::AuxPieceCache</span>;
 <span class="kw">use</span> <span class="ident">sp_core::traits::SpawnEssentialNamed</span>;
 <span class="kw">use</span> <span class="ident">sp_runtime::traits::Block</span> <span class="kw">as</span> <span class="ident">BlockT</span>;
 <span class="kw">use</span> <span class="ident">std::sync::Arc</span>;
@@ -153,7 +162,7 @@
 <span class="kw">use</span> <span class="ident">subspace_networking::libp2p</span>::{<span class="ident">identity</span>, <span class="ident">Multiaddr</span>};
 <span class="kw">use</span> <span class="ident">subspace_networking</span>::{
     <span class="ident">BootstrappedNetworkingParameters</span>, <span class="ident">CreationError</span>, <span class="ident">CustomRecordStore</span>, <span class="ident">MemoryProviderStorage</span>,
-    <span class="ident">MemoryRecordStorage</span>, <span class="ident">PieceByHashRequestHandler</span>, <span class="ident">PieceByHashResponse</span>, <span class="ident">PieceKey</span>, <span class="ident">ToMultihash</span>,
+    <span class="ident">PieceByHashRequestHandler</span>, <span class="ident">PieceByHashResponse</span>, <span class="ident">PieceKey</span>, <span class="ident">ToMultihash</span>,
 };
 <span class="kw">use</span> <span class="ident">tracing</span>::{<span class="ident">debug</span>, <span class="ident">info</span>, <span class="ident">trace</span>, <span class="ident">Instrument</span>};
 
@@ -174,11 +183,13 @@
 
 <span class="doccomment">/// Start an archiver that will listen for archived segments and send it to DSN network using</span>
 <span class="doccomment">/// pub-sub protocol.</span>
-<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">start_dsn_node</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Spawner</span><span class="op">&gt;</span>(
+<span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">start_dsn_node</span><span class="op">&lt;</span><span class="ident">Block</span>, <span class="ident">Spawner</span>, <span class="ident">AS</span>: <span class="ident">sc_client_api::AuxStore</span> <span class="op">+</span> <span class="ident">Sync</span> <span class="op">+</span> <span class="ident">Send</span> <span class="op">+</span> <span class="lifetime">&#39;static</span><span class="op">&gt;</span>(
     <span class="ident">subspace_link</span>: <span class="kw-2">&amp;</span><span class="ident">SubspaceLink</span><span class="op">&lt;</span><span class="ident">Block</span><span class="op">&gt;</span>,
     <span class="ident">dsn_config</span>: <span class="ident">DsnConfig</span>,
     <span class="ident">spawner</span>: <span class="ident">Spawner</span>,
+    <span class="ident">piece_cache</span>: <span class="ident">AuxPieceCache</span><span class="op">&lt;</span><span class="ident">AS</span><span class="op">&gt;</span>,
     <span class="ident">piece_getter</span>: <span class="ident">PieceGetter</span>,
+    <span class="ident">segment_index_getter</span>: <span class="ident">SegmentIndexGetter</span>,
 ) -&gt; <span class="prelude-ty">Result</span><span class="op">&lt;</span>(), <span class="ident">CreationError</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">Block</span>: <span class="ident">BlockT</span>,
@@ -187,10 +198,12 @@
     <span class="kw">let</span> <span class="ident">span</span> <span class="op">=</span> <span class="macro">tracing::info_span!</span>(<span class="ident">sc_tracing::logging::PREFIX_LOG_SPAN</span>, <span class="ident">name</span> <span class="op">=</span> <span class="string">&quot;DSN&quot;</span>);
     <span class="kw">let</span> <span class="ident">_enter</span> <span class="op">=</span> <span class="ident">span</span>.<span class="ident">enter</span>();
 
+    <span class="kw">let</span> <span class="ident">record_storage</span> <span class="op">=</span> <span class="ident">AuxRecordStorage::new</span>(<span class="ident">piece_cache</span>, <span class="ident">segment_index_getter</span>);
+
     <span class="macro">trace!</span>(<span class="string">&quot;Subspace networking starting.&quot;</span>);
 
     <span class="kw">let</span> <span class="ident">networking_config</span> <span class="op">=</span> <span class="ident">subspace_networking::Config</span>::<span class="op">&lt;</span>
-        <span class="ident">CustomRecordStore</span><span class="op">&lt;</span><span class="ident">MemoryRecordStorage</span>, <span class="ident">MemoryProviderStorage</span><span class="op">&gt;</span>,
+        <span class="ident">CustomRecordStore</span><span class="op">&lt;</span><span class="ident">AuxRecordStorage</span><span class="op">&lt;</span><span class="ident">AS</span><span class="op">&gt;</span>, <span class="ident">MemoryProviderStorage</span><span class="op">&gt;</span>,
     <span class="op">&gt;</span> {
         <span class="ident">keypair</span>: <span class="ident">dsn_config</span>.<span class="ident">keypair</span>,
         <span class="ident">listen_on</span>: <span class="ident">dsn_config</span>.<span class="ident">dsn_listen_on</span>,
@@ -210,10 +223,7 @@
 
             <span class="prelude-val">Some</span>(<span class="ident">PieceByHashResponse</span> { <span class="ident">piece</span>: <span class="ident">result</span> })
         })],
-        <span class="ident">record_store</span>: <span class="ident">CustomRecordStore::new</span>(
-            <span class="ident">MemoryRecordStorage::default</span>(),
-            <span class="ident">MemoryProviderStorage::default</span>(),
-        ),
+        <span class="ident">record_store</span>: <span class="ident">CustomRecordStore::new</span>(<span class="ident">record_storage</span>, <span class="ident">MemoryProviderStorage::default</span>()),
         ..<span class="ident">subspace_networking::Config::with_generated_keypair</span>()
     };
 
