@@ -32,6 +32,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_tracker":["",[],["lib.rs"]],\
 "sp_domains":["",[],["lib.rs"]],\
+"sp_executor_registry":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
