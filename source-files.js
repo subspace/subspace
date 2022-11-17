@@ -32,6 +32,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_piece_cache":["",[],["lib.rs"]],\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
+"sp_domain_digests":["",[],["lib.rs"]],\
 "sp_domain_tracker":["",[],["lib.rs"]],\
 "sp_domains":["",[],["bundle_election.rs","lib.rs"]],\
 "sp_executor_registry":["",[],["lib.rs"]],\

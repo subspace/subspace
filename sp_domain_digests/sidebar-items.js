@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"trait":[["AsPredigest","Trait to provide simpler abstractions to create predigests for runtime."]]};

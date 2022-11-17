@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["Error","Relayer error types."]]};
+window.SIDEBAR_ITEMS = {"enum":[["Error","Relayer error types."]],"mod":[["worker",""]]};

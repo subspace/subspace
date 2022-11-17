@@ -214,13 +214,6 @@
 <a href="#214" id="214">214</a>
 <a href="#215" id="215">215</a>
 <a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -256,13 +249,13 @@
 </span><span class="kw">mod </span>pallet {
     <span class="kw">use </span><span class="kw">crate</span>::StateRootOf;
     <span class="kw">use </span>frame_support::pallet_prelude::<span class="kw-2">*</span>;
-    <span class="kw">use </span>frame_system::ensure_none;
-    <span class="kw">use </span>frame_system::pallet_prelude::{BlockNumberFor, OriginFor};
+    <span class="kw">use </span>frame_system::pallet_prelude::BlockNumberFor;
     <span class="kw">use </span>sp_core::storage::StorageKey;
-    <span class="kw">use </span>sp_domain_tracker::{InherentType, NoFatalError, INHERENT_IDENTIFIER};
+    <span class="kw">use </span>sp_domain_digests::AsPredigest;
+    <span class="kw">use </span>sp_domain_tracker::CoreDomainTracker;
     <span class="kw">use </span>sp_domains::DomainId;
     <span class="kw">use </span>sp_messenger::DomainTracker;
-    <span class="kw">use </span>sp_runtime::traits::{CheckedSub, One};
+    <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, One};
     <span class="kw">use </span>sp_std::vec::Vec;
 
     <span class="attr">#[pallet::config]
@@ -271,7 +264,10 @@
         </span><span class="kw">type </span>RuntimeEvent: From&lt;Event&lt;<span class="self">Self</span>&gt;&gt; + IsType&lt;&lt;<span class="self">Self </span><span class="kw">as </span>frame_system::Config&gt;::RuntimeEvent&gt;;
 
         <span class="doccomment">/// Total number of confirmed state roots to store at a time.
-        </span><span class="kw">type </span>StateRootsBound: Get&lt;u32&gt;;
+        </span><span class="kw">type </span>ConfirmedStateRootsBound: Get&lt;u32&gt;;
+
+        <span class="doccomment">/// K depth confirmation for relayers to relay messages.
+        </span><span class="kw">type </span>RelayerConfirmationDepth: Get&lt;<span class="self">Self</span>::BlockNumber&gt;;
     }
 
     <span class="attr">#[pallet::pallet]
@@ -280,17 +276,10 @@
     </span><span class="kw">pub struct </span>Pallet&lt;T&gt;(<span class="kw">_</span>);
 
     <span class="doccomment">/// All confirmed domain state roots bounded to the StateRootBound value.
+    /// Max number of state roots per domain is bound to StateRootBound.
     </span><span class="attr">#[pallet::storage]
-    #[pallet::getter(<span class="kw">fn </span>system_domain_state_roots)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>SystemDomainStateRoots&lt;T: Config&gt; =
-        StorageValue&lt;<span class="kw">_</span>, Vec&lt;StateRootOf&lt;T&gt;&gt;, ValueQuery&gt;;
-
-    <span class="doccomment">/// Latest Confirmed Core domain state roots bounded to the StateRootBound value.
-    /// This is essentially used by relayer and updated by the system domain runtime when there is
-    /// a new state root confirmed for a given core domain.
-    </span><span class="attr">#[pallet::storage]
-    #[pallet::getter(<span class="kw">fn </span>core_domains_state_root)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>CoreDomainsStateRoot&lt;T: Config&gt; = StorageDoubleMap&lt;
+    #[pallet::getter(<span class="kw">fn </span>confirmed_domain_state_roots)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>ConfirmedDomainStateRoots&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
         Identity,
         DomainId,
@@ -300,129 +289,126 @@
         OptionQuery,
     &gt;;
 
-    <span class="doccomment">/// Flag to allow only one update per block through inherent.
+    <span class="doccomment">/// All unconfirmed domain state roots.
     </span><span class="attr">#[pallet::storage]
-    #[pallet::getter(<span class="kw">fn </span>state_roots_updated)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>StateRootsUpdated&lt;T: Config&gt; = StorageValue&lt;<span class="kw">_</span>, bool, ValueQuery&gt;;
+    #[pallet::getter(<span class="kw">fn </span>unconfirmed_domain_state_roots)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>UnconfirmedDomainStateRoots&lt;T: Config&gt; = StorageDoubleMap&lt;
+        <span class="kw">_</span>,
+        Identity,
+        DomainId,
+        Identity,
+        T::BlockNumber,
+        StateRootOf&lt;T&gt;,
+        OptionQuery,
+    &gt;;
+
+    <span class="doccomment">/// Latest block number of the domain.
+    </span><span class="attr">#[pallet::storage]
+    #[pallet::getter(<span class="kw">fn </span>latest_domain_block_number)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>LatestDomainBlockNumber&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, T::BlockNumber, OptionQuery&gt;;
 
     <span class="doccomment">/// Events emitted by pallet-domain-tracker.
     </span><span class="attr">#[pallet::event]
-    #[pallet::generate_deposit(<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
-    </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {
-        <span class="doccomment">/// Emits when state roots are updated.
-        </span>StateRootsUpdated,
-    }
-
-    <span class="doccomment">/// Errors emitted by pallet-domain-tracker.
-    </span><span class="attr">#[pallet::error]
-    </span><span class="kw">pub enum </span>Error&lt;T&gt; {
-        <span class="doccomment">/// Emits on second call to set state roots of the domain.
-        </span>StateRootsAlreadyUpdated,
-    }
-
-    <span class="attr">#[pallet::call]
-    </span><span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
-        <span class="doccomment">/// Updates the state root of the system domain.
-        /// Also ensures the state root count is bounded to the max limit for each domain.
-        </span><span class="attr">#[pallet::weight((<span class="number">10_000</span>, Pays::No))]
-        </span><span class="kw">pub fn </span>update_system_domain_state_root(
-            origin: OriginFor&lt;T&gt;,
-            state_root: StateRootOf&lt;T&gt;,
-        ) -&gt; DispatchResult {
-            ensure_none(origin)<span class="question-mark">?</span>;
-            <span class="macro">ensure!</span>(
-                !StateRootsUpdated::&lt;T&gt;::get(),
-                Error::&lt;T&gt;::StateRootsAlreadyUpdated
-            );
-
-            <span class="self">Self</span>::do_update_system_domain_state_root(state_root);
-            StateRootsUpdated::&lt;T&gt;::set(<span class="bool-val">true</span>);
-            <span class="self">Self</span>::deposit_event(Event::&lt;T&gt;::StateRootsUpdated);
-            <span class="prelude-val">Ok</span>(())
-        }
-    }
-
-    <span class="attr">#[pallet::inherent]
-    </span><span class="kw">impl</span>&lt;T: Config&gt; ProvideInherent <span class="kw">for </span>Pallet&lt;T&gt; {
-        <span class="kw">type </span>Call = Call&lt;T&gt;;
-        <span class="kw">type </span>Error = NoFatalError&lt;()&gt;;
-        <span class="kw">const </span>INHERENT_IDENTIFIER: InherentIdentifier = INHERENT_IDENTIFIER;
-
-        <span class="kw">fn </span>create_inherent(data: <span class="kw-2">&amp;</span>InherentData) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Call&gt; {
-            <span class="kw">let </span>inherent_data = data
-                .get_data::&lt;InherentType&lt;StateRootOf&lt;T&gt;&gt;&gt;(<span class="kw-2">&amp;</span>INHERENT_IDENTIFIER)
-                .expect(<span class="string">&quot;Domain tracker inherent data is not correctly encoded&quot;</span>)
-                .expect(<span class="string">&quot;Domain tracker inherent data must be provided.&quot;</span>);
-
-            <span class="prelude-val">Some</span>(Call::update_system_domain_state_root {
-                state_root: inherent_data.system_domain_state_root,
-            })
-        }
-
-        <span class="kw">fn </span>is_inherent(call: <span class="kw-2">&amp;</span><span class="self">Self</span>::Call) -&gt; bool {
-            <span class="macro">matches!</span>(call, Call::update_system_domain_state_root { .. })
-        }
-    }
+    </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {}
 
     <span class="attr">#[pallet::hooks]
     </span><span class="kw">impl</span>&lt;T: Config&gt; Hooks&lt;BlockNumberFor&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
-        <span class="kw">fn </span>on_finalize(_n: BlockNumberFor&lt;T&gt;) {
-            <span class="macro">assert!</span>(
-                StateRootsUpdated::&lt;T&gt;::take(),
-                <span class="string">&quot;StateRoots must be updated once a block.&quot;
-            </span>);
+        <span class="kw">fn </span>on_initialize(_n: BlockNumberFor&lt;T&gt;) -&gt; Weight {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(state_root_update) = &lt;frame_system::Pallet&lt;T&gt;&gt;::digest()
+                .logs
+                .iter()
+                .find_map(|s| {
+                    s.as_system_domain_state_root_update::&lt;T::BlockNumber, StateRootOf&lt;T&gt;&gt;()
+                })
+            {
+                <span class="self">Self</span>::add_system_domain_state_root(
+                    state_root_update.number,
+                    state_root_update.state_root,
+                );
+            }
+
+            Weight::zero()
         }
     }
 
     <span class="kw">impl</span>&lt;T: Config&gt; DomainTracker&lt;T::BlockNumber, StateRootOf&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
         <span class="kw">fn </span>system_domain_state_roots() -&gt; Vec&lt;StateRootOf&lt;T&gt;&gt; {
-            SystemDomainStateRoots::&lt;T&gt;::get()
+            <span class="kw">let </span>confirmed_state_roots: Vec&lt;StateRootOf&lt;T&gt;&gt; =
+                ConfirmedDomainStateRoots::&lt;T&gt;::iter_prefix_values(DomainId::SYSTEM).collect();
+            confirmed_state_roots
         }
 
         <span class="kw">fn </span>storage_key_for_core_domain_state_root(
             domain_id: DomainId,
             block_number: T::BlockNumber,
         ) -&gt; StorageKey {
-            StorageKey(CoreDomainsStateRoot::&lt;T&gt;::hashed_key_for(
+            StorageKey(ConfirmedDomainStateRoots::&lt;T&gt;::hashed_key_for(
                 domain_id,
                 block_number,
             ))
         }
     }
 
-    <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
-        <span class="kw">pub fn </span>do_update_system_domain_state_root(state_root: StateRootOf&lt;T&gt;) {
-            SystemDomainStateRoots::&lt;T&gt;::mutate(|state_roots| {
-                state_roots.push(state_root);
-                <span class="kw">if </span>state_roots.len() &gt; T::StateRootsBound::get() <span class="kw">as </span>usize {
-                    <span class="kw">let </span>first_idx = state_roots.len() - T::StateRootsBound::get() <span class="kw">as </span>usize;
-                    <span class="kw-2">*</span>state_roots = state_roots.split_off(first_idx);
-                }
-            });
-        }
-
-        <span class="doccomment">/// Adds a new state root for the core domain mapped to domain_id.
-        /// This is only called on system domain runtime by the domain registry.
-        /// TODO(ved): ensure this is called when the core domain state roots are available.
-        </span><span class="kw">pub fn </span>add_confirmed_core_domain_state_root(
+    <span class="kw">impl</span>&lt;T: Config&gt; CoreDomainTracker&lt;T::BlockNumber, StateRootOf&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
+        <span class="kw">fn </span>add_core_domain_state_root(
             domain_id: DomainId,
             block_number: T::BlockNumber,
             state_root: StateRootOf&lt;T&gt;,
         ) {
-            CoreDomainsStateRoot::&lt;T&gt;::insert(domain_id, block_number, state_root);
-            <span class="comment">// ensure to bound the total state roots
-            </span><span class="kw">match </span>block_number.checked_sub(<span class="kw-2">&amp;</span>T::StateRootsBound::get().into()) {
-                <span class="comment">// nothing to clean up yet
-                </span><span class="prelude-val">None </span>=&gt; (),
-                <span class="prelude-val">Some</span>(<span class="kw-2">mut </span>from) =&gt; {
-                    <span class="kw">while </span>CoreDomainsStateRoot::&lt;T&gt;::take(domain_id, from).is_some() {
-                        from = <span class="kw">match </span>from.checked_sub(<span class="kw-2">&amp;</span>One::one()) {
-                            <span class="prelude-val">None </span>=&gt; <span class="kw">return</span>,
-                            <span class="prelude-val">Some</span>(from) =&gt; from,
-                        }
+            <span class="kw">let _ </span>= <span class="self">Self</span>::add_and_confirm_domain_state_root(domain_id, block_number, state_root);
+        }
+    }
+
+    <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
+        <span class="doccomment">/// Adds new state root at a given block.
+        /// Also, confirms block state root at confirmation depth.
+        /// Also, prunes confirmed state roots beyond StateRootBound.
+        </span><span class="kw">pub fn </span>add_system_domain_state_root(
+            block_number: T::BlockNumber,
+            state_root: StateRootOf&lt;T&gt;,
+        ) {
+            <span class="kw">let _ </span>=
+                <span class="self">Self</span>::add_and_confirm_domain_state_root(DomainId::SYSTEM, block_number, state_root);
+        }
+
+        <span class="kw">fn </span>add_and_confirm_domain_state_root(
+            domain_id: DomainId,
+            block_number: T::BlockNumber,
+            state_root: StateRootOf&lt;T&gt;,
+        ) -&gt; <span class="prelude-ty">Option</span>&lt;()&gt; {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(latest_block_number) = LatestDomainBlockNumber::&lt;T&gt;::get(domain_id) {
+                <span class="kw">if </span>block_number &lt;= latest_block_number {
+                    <span class="comment">// remove all the blocks that are pruned due to fork
+                    </span><span class="kw">let </span><span class="kw-2">mut </span>prune_block_above = block_number;
+                    <span class="kw">while </span>UnconfirmedDomainStateRoots::&lt;T&gt;::take(domain_id, prune_block_above)
+                        .is_some()
+                    {
+                        prune_block_above = prune_block_above.checked_add(<span class="kw-2">&amp;</span>One::one())<span class="question-mark">?</span>;
                     }
                 }
             }
+
+            UnconfirmedDomainStateRoots::&lt;T&gt;::insert(domain_id, block_number, state_root);
+            LatestDomainBlockNumber::&lt;T&gt;::insert(domain_id, block_number);
+            <span class="comment">// confirm state root at relayer confirmation depth
+            </span><span class="kw">let </span>confirmed_block = block_number.checked_sub(<span class="kw-2">&amp;</span>T::RelayerConfirmationDepth::get())<span class="question-mark">?</span>;
+            <span class="kw">let </span>confirmed_state_root =
+                UnconfirmedDomainStateRoots::&lt;T&gt;::take(domain_id, confirmed_block)<span class="question-mark">?</span>;
+            ConfirmedDomainStateRoots::&lt;T&gt;::insert(
+                domain_id,
+                confirmed_block,
+                confirmed_state_root,
+            );
+
+            <span class="comment">// prune confirmed state roots that are below StateRootBound
+            </span><span class="kw">let </span><span class="kw-2">mut </span>prune_from_and_below = confirmed_block
+                .checked_sub(<span class="kw-2">&amp;</span>T::BlockNumber::from(T::ConfirmedStateRootsBound::get()))<span class="question-mark">?</span>;
+            <span class="kw">while </span>ConfirmedDomainStateRoots::&lt;T&gt;::take(domain_id, prune_from_and_below).is_some() {
+                prune_from_and_below = prune_from_and_below.checked_sub(<span class="kw-2">&amp;</span>One::one())<span class="question-mark">?
+            </span>}
+
+            <span class="prelude-val">Some</span>(())
         }
 
         <span class="doccomment">/// Returns storage key to generate storage proof for the relayer.
@@ -430,17 +416,17 @@
         </span><span class="kw">pub fn </span>storage_key_for_core_domain_state_root(
             domain_id: DomainId,
             block_number: T::BlockNumber,
-        ) -&gt; <span class="prelude-ty">Option</span>&lt;StorageKey&gt; {
+        ) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt; {
             <span class="kw">if </span>!domain_id.is_core()
-                || !CoreDomainsStateRoot::&lt;T&gt;::contains_key(domain_id, block_number)
+                || !ConfirmedDomainStateRoots::&lt;T&gt;::contains_key(domain_id, block_number)
             {
                 <span class="kw">return </span><span class="prelude-val">None</span>;
             };
 
-            <span class="prelude-val">Some</span>(StorageKey(CoreDomainsStateRoot::&lt;T&gt;::hashed_key_for(
+            <span class="prelude-val">Some</span>(ConfirmedDomainStateRoots::&lt;T&gt;::hashed_key_for(
                 domain_id,
                 block_number,
-            )))
+            ))
         }
     }
 }
