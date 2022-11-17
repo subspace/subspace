@@ -1,5 +1,4 @@
 (function() {var implementors = {
-"domain_service":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"domain_service/struct.SystemDomainRuntimeExecutor.html\" title=\"struct domain_service::SystemDomainRuntimeExecutor\">SystemDomainRuntimeExecutor</a>"]],
 "domain_test_service":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"domain_test_service/struct.RuntimeExecutor.html\" title=\"struct domain_test_service::RuntimeExecutor\">RuntimeExecutor</a>"]],
 "subspace_node":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"subspace_node/struct.ExecutorDispatch.html\" title=\"struct subspace_node::ExecutorDispatch\">ExecutorDispatch</a>"]],
 "subspace_test_client":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"subspace_test_client/struct.TestExecutorDispatch.html\" title=\"struct subspace_test_client::TestExecutorDispatch\">TestExecutorDispatch</a>"]],

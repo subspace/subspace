@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":[["INHERENT_IDENTIFIER","The identifier for the `domain-tracker` inherent."]],"struct":[["InherentType","Inherent type provided by the domain-tracker."],["NoFatalError",""]]};
+window.SIDEBAR_ITEMS = {"constant":[["INHERENT_IDENTIFIER","The identifier for the `domain-tracker` inherent."]],"struct":[["InherentType","Inherent type provided by the domain-tracker."],["NoFatalError",""]],"trait":[["DomainTrackerApi","Api useful for relayers to fetch messages and submit transactions."]]};

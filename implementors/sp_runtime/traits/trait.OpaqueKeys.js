@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_payments_domain_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.SessionKeys.html\" title=\"struct core_payments_domain_runtime::SessionKeys\">SessionKeys</a>"]],
 "domain_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"domain_test_runtime/struct.SessionKeys.html\" title=\"struct domain_test_runtime::SessionKeys\">SessionKeys</a>"]],
 "subspace_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"subspace_runtime/struct.SessionKeys.html\" title=\"struct subspace_runtime::SessionKeys\">SessionKeys</a>"]],
 "subspace_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"subspace_test_runtime/struct.SessionKeys.html\" title=\"struct subspace_test_runtime::SessionKeys\">SessionKeys</a>"]],

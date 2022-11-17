@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":[["CircularBuffer","Represents a FIFO `CircularBuffer<T>` data structure."]],"trait":[["IsQueue","Defines methods that would be expected on a queue data structure"]]};

@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_payments_domain_runtime":[["impl <a class=\"trait\" href=\"core_payments_domain_runtime/trait.BuildStorage.html\" title=\"trait core_payments_domain_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.GenesisConfig.html\" title=\"struct core_payments_domain_runtime::GenesisConfig\">GenesisConfig</a>"]],
 "domain_test_runtime":[["impl <a class=\"trait\" href=\"domain_test_runtime/trait.BuildStorage.html\" title=\"trait domain_test_runtime::BuildStorage\">BuildStorage</a> for <a class=\"struct\" href=\"domain_test_runtime/struct.GenesisConfig.html\" title=\"struct domain_test_runtime::GenesisConfig\">GenesisConfig</a>"]],
 "subspace_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_runtime/struct.GenesisConfig.html\" title=\"struct subspace_runtime::GenesisConfig\">GenesisConfig</a>"]],
 "subspace_test_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_test_runtime/struct.GenesisConfig.html\" title=\"struct subspace_test_runtime::GenesisConfig\">GenesisConfig</a>"]],

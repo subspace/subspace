@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":[["circular_buffer","It’s a copy of the `CircularBuffer` from `queues = \"1.1.0\"` We need a custom `remove_value` method for our use case."],["multihash",""]]};
+window.SIDEBAR_ITEMS = {"mod":[["multihash",""]]};

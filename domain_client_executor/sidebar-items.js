@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["GossipMessageError","Error type for domain gossip handling."]],"struct":[["Executor","The implementation of the Domain `Executor`."]]};
+window.SIDEBAR_ITEMS = {"struct":[["CoreExecutor","The implementation of the Domain `Executor`."],["SystemExecutor","The implementation of the Domain `Executor`."]]};

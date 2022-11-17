@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_payments_domain_runtime":[["impl Config&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.unit.html\">()</a>&gt; for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.Runtime.html\" title=\"struct core_payments_domain_runtime::Runtime\">Runtime</a>"]],
 "domain_test_runtime":[["impl Config&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.unit.html\">()</a>&gt; for <a class=\"struct\" href=\"domain_test_runtime/struct.Runtime.html\" title=\"struct domain_test_runtime::Runtime\">Runtime</a>"]],
 "subspace_runtime":[["impl Config&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.unit.html\">()</a>&gt; for <a class=\"struct\" href=\"subspace_runtime/struct.Runtime.html\" title=\"struct subspace_runtime::Runtime\">Runtime</a>"]],
 "subspace_test_runtime":[["impl Config&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.unit.html\">()</a>&gt; for <a class=\"struct\" href=\"subspace_test_runtime/struct.Runtime.html\" title=\"struct subspace_test_runtime::Runtime\">Runtime</a>"]],

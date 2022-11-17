@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":[["FarmingError","Errors that happen during farming"]],"fn":[["audit_sector","Audit a single sector"]],"struct":[["EligibleSector","Sector that can be used to create a solution that is within desired solution range"]]};

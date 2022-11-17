@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_payments_domain_runtime":[["impl <a class=\"trait\" href=\"domain_pallet_executive/pallet/trait.Config.html\" title=\"trait domain_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.Runtime.html\" title=\"struct core_payments_domain_runtime::Runtime\">Runtime</a>"]],
 "domain_test_runtime":[["impl <a class=\"trait\" href=\"domain_pallet_executive/pallet/trait.Config.html\" title=\"trait domain_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"domain_test_runtime/struct.Runtime.html\" title=\"struct domain_test_runtime::Runtime\">Runtime</a>"]],
 "system_domain_runtime":[["impl <a class=\"trait\" href=\"domain_pallet_executive/pallet/trait.Config.html\" title=\"trait domain_pallet_executive::pallet::Config\">Config</a> for <a class=\"struct\" href=\"system_domain_runtime/struct.Runtime.html\" title=\"struct system_domain_runtime::Runtime\">Runtime</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

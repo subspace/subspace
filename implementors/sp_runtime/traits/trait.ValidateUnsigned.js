@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_payments_domain_runtime":[["impl ValidateUnsigned for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.Runtime.html\" title=\"struct core_payments_domain_runtime::Runtime\">Runtime</a>"]],
 "domain_test_runtime":[["impl ValidateUnsigned for <a class=\"struct\" href=\"domain_test_runtime/struct.Runtime.html\" title=\"struct domain_test_runtime::Runtime\">Runtime</a>"]],
 "pallet_domain_registry":[["impl&lt;T:&nbsp;<a class=\"trait\" href=\"pallet_domain_registry/trait.Config.html\" title=\"trait pallet_domain_registry::Config\">Config</a>&gt; ValidateUnsigned for <a class=\"struct\" href=\"pallet_domain_registry/struct.Pallet.html\" title=\"struct pallet_domain_registry::Pallet\">Pallet</a>&lt;T&gt;"]],
 "pallet_domains":[["impl&lt;T:&nbsp;<a class=\"trait\" href=\"pallet_domains/trait.Config.html\" title=\"trait pallet_domains::Config\">Config</a>&gt; ValidateUnsigned for <a class=\"struct\" href=\"pallet_domains/struct.Pallet.html\" title=\"struct pallet_domains::Pallet\">Pallet</a>&lt;T&gt;"]],

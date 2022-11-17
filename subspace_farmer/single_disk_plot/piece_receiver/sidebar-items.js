@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":[["PieceReceiver",""]]};
+window.SIDEBAR_ITEMS = {};
