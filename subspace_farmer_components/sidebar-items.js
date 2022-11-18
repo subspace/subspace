@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":[["farming",""],["file_ext","File extension trait"],["plotting",""]]};
+window.SIDEBAR_ITEMS = {"mod":[["farming",""],["file_ext","File extension trait"],["plotting",""]],"struct":[["FarmerProtocolInfo","Information about the protocol necessary for farmer operation"]]};
