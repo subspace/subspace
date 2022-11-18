@@ -361,19 +361,63 @@
 <a href="#361" id="361">361</a>
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
-</pre><pre class="rust"><code><span class="kw">use </span>domain_client_executor::CoreExecutor;
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::Configuration;
+<span class="kw">use </span>domain_client_executor::CoreExecutor;
 <span class="kw">use </span>domain_client_executor_gossip::ExecutorGossipParams;
-<span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
+<span class="kw">use </span>domain_runtime_primitives::{DomainCoreApi, RelayerId};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::Stream;
+<span class="kw">use </span>jsonrpsee::tracing;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
 <span class="kw">use </span>sc_client_api::{BlockBackend, ProofProvider, StateBackendFor};
 <span class="kw">use </span>sc_consensus::ForkChoiceStrategy;
+<span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_network::NetworkService;
 <span class="kw">use </span>sc_service::{
-    BuildNetworkParams, Configuration, NetworkStarter, PartialComponents, SpawnTasksParams,
-    TFullBackend, TFullClient, TaskManager,
+    BuildNetworkParams, Configuration <span class="kw">as </span>ServiceConfiguration, NetworkStarter, PartialComponents,
+    SpawnTasksParams, TFullBackend, TFullClient, TaskManager,
 };
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker, TelemetryWorkerHandle};
 <span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
@@ -384,6 +428,7 @@
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_domains::{DomainId, ExecutorApi};
+<span class="kw">use </span>sp_messenger::RelayerApi;
 <span class="kw">use </span>sp_offchain::OffchainWorkerApi;
 <span class="kw">use </span>sp_session::SessionKeys;
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
@@ -412,7 +457,7 @@
 /// be able to perform chain operations.
 </span><span class="attr">#[allow(clippy::type_complexity)]
 </span><span class="kw">fn </span>new_partial&lt;RuntimeApi, Executor&gt;(
-    config: <span class="kw-2">&amp;</span>Configuration,
+    config: <span class="kw-2">&amp;</span>ServiceConfiguration,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;
     PartialComponents&lt;
         FullClient&lt;RuntimeApi, Executor&gt;,
@@ -424,6 +469,7 @@
             <span class="prelude-ty">Option</span>&lt;Telemetry&gt;,
             <span class="prelude-ty">Option</span>&lt;TelemetryWorkerHandle&gt;,
             NativeElseWasmExecutor&lt;Executor&gt;,
+            SubspaceNotificationStream&lt;NumberFor&lt;Block&gt;&gt;,
         ),
     &gt;,
     sc_service::Error,
@@ -477,11 +523,12 @@
         client.clone(),
     );
 
-    <span class="kw">let </span>(import_queue, <span class="kw">_</span>) = domain_client_consensus_relay_chain::import_queue(
-        client.clone(),
-        <span class="kw-2">&amp;</span>task_manager.spawn_essential_handle(),
-        config.prometheus_registry(),
-    )<span class="question-mark">?</span>;
+    <span class="kw">let </span>(import_queue, import_block_notification_stream) =
+        domain_client_consensus_relay_chain::import_queue(
+            client.clone(),
+            <span class="kw-2">&amp;</span>task_manager.spawn_essential_handle(),
+            config.prometheus_registry(),
+        )<span class="question-mark">?</span>;
 
     <span class="kw">let </span>params = PartialComponents {
         backend,
@@ -491,7 +538,12 @@
         task_manager,
         transaction_pool,
         select_chain: (),
-        other: (telemetry, telemetry_worker_handle, executor),
+        other: (
+            telemetry,
+            telemetry_worker_handle,
+            executor,
+            import_block_notification_stream,
+        ),
     };
 
     <span class="prelude-val">Ok</span>(params)
@@ -528,7 +580,8 @@
         + DomainCoreApi&lt;Block, AccountId&gt;
         + TaggedTransactionQueue&lt;Block&gt;
         + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
-        + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;,
+        + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
+        + RelayerApi&lt;Block, RelayerId, NumberFor&lt;Block&gt;&gt;,
 {
     <span class="doccomment">/// Task manager.
     </span><span class="kw">pub </span>task_manager: TaskManager,
@@ -567,6 +620,7 @@
     domain_id: DomainId,
     <span class="kw-2">mut </span>secondary_chain_config: Configuration,
     system_domain_client: Arc&lt;SClient&gt;,
+    secondary_network: Arc&lt;NetworkService&lt;SBlock, SBlock::Hash&gt;&gt;,
     primary_chain_client: Arc&lt;PClient&gt;,
     primary_network: Arc&lt;NetworkService&lt;PBlock, PBlock::Hash&gt;&gt;,
     select_chain: <span class="kw-2">&amp;</span>SC,
@@ -589,8 +643,9 @@
     </span>PBlock: BlockT,
     SBlock: BlockT,
     SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + ProofProvider&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
-    SClient::Api:
-        DomainCoreApi&lt;SBlock, AccountId&gt; + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
+    SClient::Api: DomainCoreApi&lt;SBlock, AccountId&gt;
+        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;
+        + sp_domain_tracker::DomainTrackerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;,
     PClient: HeaderBackend&lt;PBlock&gt;
         + BlockBackend&lt;PBlock&gt;
         + ProvideRuntimeApi&lt;PBlock&gt;
@@ -613,30 +668,33 @@
         + DomainCoreApi&lt;Block, AccountId&gt;
         + TaggedTransactionQueue&lt;Block&gt;
         + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
-        + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;,
+        + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
+        + RelayerApi&lt;Block, RelayerId, NumberFor&lt;Block&gt;&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
 {
     <span class="comment">// TODO: Do we even need block announcement on secondary node?
     // secondary_chain_config.announce_block = false;
 
     </span>secondary_chain_config
+        .service_config
         .network
         .extra_sets
         .push(domain_client_executor_gossip::executor_gossip_peers_set_config());
 
-    <span class="kw">let </span>params = new_partial(<span class="kw-2">&amp;</span>secondary_chain_config)<span class="question-mark">?</span>;
+    <span class="kw">let </span>params = new_partial(<span class="kw-2">&amp;</span>secondary_chain_config.service_config)<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>(<span class="kw-2">mut </span>telemetry, _telemetry_worker_handle, code_executor) = params.other;
+    <span class="kw">let </span>(<span class="kw-2">mut </span>telemetry, _telemetry_worker_handle, code_executor, import_block_notification_stream) =
+        params.other;
 
     <span class="kw">let </span>client = params.client.clone();
     <span class="kw">let </span>backend = params.backend.clone();
 
-    <span class="kw">let </span>validator = secondary_chain_config.role.is_authority();
+    <span class="kw">let </span>validator = secondary_chain_config.service_config.role.is_authority();
     <span class="kw">let </span>transaction_pool = params.transaction_pool.clone();
     <span class="kw">let </span><span class="kw-2">mut </span>task_manager = params.task_manager;
     <span class="kw">let </span>(network, system_rpc_tx, tx_handler_controller, network_starter) =
         sc_service::build_network(BuildNetworkParams {
-            config: <span class="kw-2">&amp;</span>secondary_chain_config,
+            config: <span class="kw-2">&amp;</span>secondary_chain_config.service_config,
             client: client.clone(),
             transaction_pool: transaction_pool.clone(),
             spawn_handle: task_manager.spawn_handle(),
@@ -649,7 +707,10 @@
     <span class="kw">let </span>rpc_builder = {
         <span class="kw">let </span>client = client.clone();
         <span class="kw">let </span>transaction_pool = transaction_pool.clone();
-        <span class="kw">let </span>chain_spec = secondary_chain_config.chain_spec.cloned_box();
+        <span class="kw">let </span>chain_spec = secondary_chain_config
+            .service_config
+            .chain_spec
+            .cloned_box();
 
         Box::new(<span class="kw">move </span>|deny_unsafe, <span class="kw">_</span>| {
             <span class="kw">let </span>deps = <span class="kw">crate</span>::rpc::FullDeps {
@@ -668,7 +729,7 @@
         client: client.clone(),
         transaction_pool: transaction_pool.clone(),
         task_manager: <span class="kw-2">&amp;mut </span>task_manager,
-        config: secondary_chain_config,
+        config: secondary_chain_config.service_config,
         keystore: params.keystore_container.sync_keystore(),
         backend: backend.clone(),
         network: network.clone(),
@@ -684,7 +745,7 @@
 
     <span class="kw">let </span>executor = CoreExecutor::new(
         domain_id,
-        system_domain_client,
+        system_domain_client.clone(),
         primary_chain_client,
         primary_network,
         <span class="kw-2">&amp;</span>spawn_essential,
@@ -710,6 +771,27 @@
             bundle_receiver,
         });
     spawn_essential.spawn_essential_blocking(<span class="string">&quot;domain-gossip&quot;</span>, <span class="prelude-val">None</span>, Box::pin(executor_gossip));
+
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(relayer_id) = secondary_chain_config.maybe_relayer_id {
+        <span class="macro">tracing::info!</span>(
+            <span class="string">&quot;Starting core domain relayer with relayer_id[{:?}]&quot;</span>,
+            relayer_id
+        );
+        <span class="kw">let </span>relayer_worker = domain_client_message_relayer::worker::relay_core_domain_messages(
+            relayer_id,
+            client.clone(),
+            system_domain_client,
+            import_block_notification_stream.subscribe(),
+            secondary_network,
+            network.clone(),
+        );
+
+        spawn_essential.spawn_essential_blocking(
+            <span class="string">&quot;core-domain-relayer&quot;</span>,
+            <span class="prelude-val">None</span>,
+            Box::pin(relayer_worker),
+        );
+    }
 
     <span class="kw">let </span>new_full = NewFull {
         task_manager,
