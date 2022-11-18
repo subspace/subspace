@@ -44,7 +44,7 @@ var sourcesIndex = JSON.parse('{\
 "subspace_farmer":["",[["rpc_client",[],["bench_rpc_client.rs","node_rpc_client.rs"]],["single_disk_plot",[],["piece_publisher.rs","piece_reader.rs","piece_receiver.rs"]]],["identity.rs","lib.rs","object_mappings.rs","reward_signing.rs","rpc_client.rs","single_disk_plot.rs","utils.rs","ws_rpc_server.rs"]],\
 "subspace_farmer_components":["",[],["farming.rs","file_ext.rs","lib.rs","plotting.rs"]],\
 "subspace_fraud_proof":["",[],["lib.rs"]],\
-"subspace_networking":["",[["behavior",[],["custom_record_store.rs","persistent_parameters.rs","record_binary_heap.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","peer_info.rs","piece_by_key.rs","pieces_by_range.rs"]],["utils",[],["multihash.rs"]]],["behavior.rs","create.rs","lib.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]],\
+"subspace_networking":["",[["behavior",[],["custom_record_store.rs","persistent_parameters.rs","record_binary_heap.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","peer_info.rs","piece_by_key.rs","pieces_by_range.rs"]],["utils",[],["multihash.rs","prometheus.rs"]]],["behavior.rs","create.rs","lib.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["core_domain",[],["cli.rs","core_payments_chain_spec.rs"]],["secondary_chain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","core_domain.rs","import_blocks_from_dsn.rs","lib.rs","secondary_chain.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[],["feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
