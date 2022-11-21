@@ -245,6 +245,30 @@
 <a href="#245" id="245">245</a>
 <a href="#246" id="246">246</a>
 <a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -267,28 +291,35 @@
 
 </span><span class="kw">pub mod </span>chain_spec;
 
-<span class="kw">use </span>bitvec::prelude::<span class="kw-2">*</span>;
+<span class="kw">use </span>async_trait::async_trait;
+<span class="kw">use </span>futures::executor::block_on;
 <span class="kw">use </span>futures::{SinkExt, StreamExt};
-<span class="kw">use </span>sc_client_api::BlockBackend;
+<span class="kw">use </span>sc_client_api::{BlockBackend, HeaderBackend};
 <span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
 <span class="kw">use </span>sc_consensus_subspace::{NewSlotNotification, RewardSigningNotification};
 <span class="kw">use </span>sp_api::{BlockId, ProvideRuntimeApi};
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, FarmerSignature, SubspaceApi};
-<span class="kw">use </span>sp_core::crypto::UncheckedFrom;
 <span class="kw">use </span>sp_core::{Decode, Encode};
-<span class="kw">use </span>std::num::{NonZeroU16, NonZeroU64};
+<span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::io::Cursor;
+<span class="kw">use </span>std::num::{NonZeroU32, NonZeroU64};
+<span class="kw">use </span>std::sync::atomic::AtomicBool;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_archiving::archiver::ArchivedSegment;
-<span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Kzg, Witness};
-<span class="kw">use </span>subspace_core_primitives::crypto::{blake2b_256_254_hash, kzg};
+<span class="kw">use </span>subspace_core_primitives::crypto::kzg;
+<span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
+<span class="kw">use </span>subspace_core_primitives::sector_codec::SectorCodec;
 <span class="kw">use </span>subspace_core_primitives::{
-    Chunk, Piece, PieceIndex, PublicKey, SectorId, Solution, PIECE_SIZE,
-    RECORDED_HISTORY_SEGMENT_SIZE, RECORD_SIZE,
+    Piece, PieceIndex, PublicKey, Solution, PLOT_SECTOR_SIZE, RECORDED_HISTORY_SEGMENT_SIZE,
+    RECORD_SIZE,
 };
+<span class="kw">use </span>subspace_farmer_components::farming::audit_sector;
+<span class="kw">use </span>subspace_farmer_components::plotting::{plot_sector, PieceReceiver};
+<span class="kw">use </span>subspace_farmer_components::{FarmerProtocolInfo, SectorMetadata};
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
 <span class="kw">use </span>subspace_service::{FullClient, NewFull};
-<span class="kw">use </span>subspace_solving::{create_chunk_signature, derive_chunk_otp, REWARD_SIGNING_CONTEXT};
+<span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
 <span class="kw">use </span>zeroize::Zeroizing;
 
 <span class="doccomment">/// Subspace native executor instance.
@@ -367,24 +398,33 @@
     client: Arc&lt;Client&gt;,
     new_slot_notification_stream: SubspaceNotificationStream&lt;NewSlotNotification&gt;,
 ) <span class="kw">where
-    </span>Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    </span>Client: ProvideRuntimeApi&lt;Block&gt;
+        + BlockBackend&lt;Block&gt;
+        + HeaderBackend&lt;Block&gt;
+        + Send
+        + Sync
+        + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
 {
-    <span class="kw">let </span>(archived_segment_sender, archived_segment_receiver) = futures::channel::oneshot::channel();
+    <span class="kw">let </span>(plotting_result_sender, plotting_result_receiver) = futures::channel::oneshot::channel();
+
+    <span class="kw">let </span>sector_codec = SectorCodec::new(PLOT_SECTOR_SIZE <span class="kw">as </span>usize).unwrap();
 
     std::thread::spawn({
+        <span class="kw">let </span>keypair = keypair.clone();
+
         <span class="kw">move </span>|| {
-            <span class="kw">let </span>archived_segment = get_archived_segment(client.as_ref());
-            archived_segment_sender.send(archived_segment).unwrap();
+            <span class="kw">let </span>(farmer_protocol_info, sector, sector_metadata) =
+                block_on(plot_one_segment(client.as_ref(), <span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>sector_codec));
+            plotting_result_sender
+                .send((farmer_protocol_info, sector, sector_metadata))
+                .unwrap();
         }
     });
 
-    <span class="comment">// TODO: This constant should come from the chain itself
-    </span><span class="kw">let </span>space_l = NonZeroU16::new(<span class="number">20</span>).unwrap();
-    <span class="kw">let </span>chunks_in_sector = u64::from(RECORD_SIZE) * u64::from(u8::BITS) / u64::from(space_l.get());
-    <span class="kw">let </span>archived_segment = archived_segment_receiver.<span class="kw">await</span>.unwrap();
-    <span class="kw">let </span>total_pieces = NonZeroU64::new(archived_segment.pieces.count() <span class="kw">as </span>PieceIndex).unwrap();
+    <span class="kw">let </span>(farmer_protocol_info, sector, sector_metadata) = plotting_result_receiver.<span class="kw">await</span>.unwrap();
     <span class="kw">let </span>sector_index = <span class="number">0</span>;
+    <span class="kw">let </span>public_key = PublicKey::from(keypair.public.to_bytes());
 
     <span class="kw">let </span><span class="kw-2">mut </span>new_slot_notification_stream = new_slot_notification_stream.subscribe();
 
@@ -394,86 +434,64 @@
     }) = new_slot_notification_stream.next().<span class="kw">await
     </span>{
         <span class="kw">if </span>u64::from(new_slot_info.slot) % <span class="number">2 </span>== <span class="number">0 </span>{
-            <span class="kw">let </span>sector_id =
-                SectorId::new(<span class="kw-2">&amp;</span>PublicKey::from(keypair.public.to_bytes()), sector_index);
-            <span class="kw">let </span>local_challenge = sector_id.derive_local_challenge(<span class="kw-2">&amp;</span>new_slot_info.global_challenge);
-            <span class="kw">let </span>audit_index: u64 = local_challenge % chunks_in_sector;
-            <span class="kw">let </span>audit_piece_offset = (audit_index / u64::from(u8::BITS)) / PIECE_SIZE <span class="kw">as </span>u64;
-            <span class="comment">// Offset of the piece in sector (in bytes)
-            </span><span class="kw">let </span>audit_piece_bytes_offset = audit_piece_offset * PIECE_SIZE <span class="kw">as </span>u64;
-            <span class="comment">// Audit index (chunk) within corresponding piece
-            </span><span class="kw">let </span>audit_index_within_piece =
-                audit_index - audit_piece_bytes_offset * u64::from(u8::BITS);
-            <span class="kw">let </span>piece_index = sector_id.derive_piece_index(audit_piece_offset, total_pieces);
-            <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::try_from(
-                archived_segment
-                    .pieces
-                    .as_pieces()
-                    .nth(piece_index <span class="kw">as </span>usize)
-                    .unwrap(),
+            <span class="kw">let </span>eligible_sector = audit_sector(
+                <span class="kw-2">&amp;</span>public_key,
+                sector_index,
+                <span class="kw-2">&amp;</span>new_slot_info.global_challenge,
+                new_slot_info.solution_range,
+                Cursor::new(<span class="kw-2">&amp;</span>sector),
+            )
+            .unwrap()
+            .expect(<span class="string">&quot;With max solution range there must be a sector eligible; qed&quot;</span>);
+            <span class="kw">let </span>solution = eligible_sector
+                .try_into_solutions(
+                    <span class="kw-2">&amp;</span>keypair,
+                    public_key,
+                    <span class="kw-2">&amp;</span>farmer_protocol_info,
+                    <span class="kw-2">&amp;</span>sector_codec,
+                    sector.as_slice(),
+                    sector_metadata.as_slice(),
+                )
+                .unwrap()
+                .into_iter()
+                .next()
+                .expect(<span class="string">&quot;With max solution range there must be a solution; qed&quot;</span>);
+            <span class="comment">// Lazy conversion to a different type of public key and reward address
+            </span><span class="kw">let </span>solution = Solution::&lt;FarmerPublicKey, FarmerPublicKey&gt;::decode(
+                <span class="kw-2">&amp;mut </span>solution.encode().as_slice(),
             )
             .unwrap();
-            <span class="comment">// Encode piece
-            </span><span class="kw">let </span>(record, witness_bytes) = piece.split_at_mut(RECORD_SIZE <span class="kw">as </span>usize);
-            <span class="kw">let </span>piece_witness =
-                Witness::try_from_bytes((<span class="kw-2">&amp;*</span>witness_bytes).try_into().unwrap()).unwrap();
-            <span class="kw">let </span>piece_record_hash = blake2b_256_254_hash(record);
-
-            <span class="comment">// TODO: Extract encoding into separate function reusable in
-            //  farmer and otherwise
-            </span>record
-                .view_bits_mut::&lt;Lsb0&gt;()
-                .chunks_mut(space_l.get() <span class="kw">as </span>usize)
-                .enumerate()
-                .for_each(|(chunk_index, bits)| {
-                    <span class="comment">// Derive one-time pad
-                    </span><span class="kw">let </span><span class="kw-2">mut </span>otp = derive_chunk_otp(<span class="kw-2">&amp;</span>sector_id, witness_bytes, chunk_index <span class="kw">as </span>u32);
-                    <span class="comment">// XOR chunk bit by bit with one-time pad
-                    </span>bits.iter_mut()
-                        .zip(otp.view_bits_mut::&lt;Lsb0&gt;().iter())
-                        .for_each(|(<span class="kw-2">mut </span>a, b)| {
-                            <span class="kw-2">*</span>a ^= <span class="kw-2">*</span>b;
-                        });
-                });
-
-            <span class="comment">// TODO: We are skipping witness part of the piece or else it is not
-            //  decodable
-            </span><span class="kw">let </span>maybe_chunk = piece[..RECORD_SIZE <span class="kw">as </span>usize]
-                .view_bits()
-                .chunks_exact(space_l.get() <span class="kw">as </span>usize)
-                .nth(audit_index_within_piece <span class="kw">as </span>usize);
-
-            <span class="kw">let </span>chunk = <span class="kw">match </span>maybe_chunk {
-                <span class="prelude-val">Some</span>(chunk) =&gt; Chunk::from(chunk),
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="comment">// TODO: Record size is not multiple of `space_l`, last bits
-                    //  were not encoded and should not be used for solving
-                    </span><span class="kw">continue</span>;
-                }
-            };
-
-            <span class="kw">let </span>chunk_signature = create_chunk_signature(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>chunk);
-
-            <span class="kw">let _ </span>= solution_sender
-                .send(Solution {
-                    public_key: FarmerPublicKey::unchecked_from(keypair.public.to_bytes()),
-                    reward_address: FarmerPublicKey::unchecked_from(keypair.public.to_bytes()),
-                    sector_index,
-                    total_pieces,
-                    piece_offset: audit_piece_offset,
-                    piece_record_hash,
-                    piece_witness,
-                    chunk,
-                    chunk_signature,
-                })
-                .<span class="kw">await</span>;
+            <span class="kw">let _ </span>= solution_sender.send(solution).<span class="kw">await</span>;
         }
     }
 }
 
-<span class="kw">fn </span>get_archived_segment&lt;Client&gt;(client: <span class="kw-2">&amp;</span>Client) -&gt; ArchivedSegment
+<span class="kw">struct </span>TestPieceReceiver {
+    archived_segment: ArchivedSegment,
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>PieceReceiver <span class="kw">for </span>TestPieceReceiver {
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self
+            </span>.archived_segment
+            .pieces
+            .as_pieces()
+            .nth(piece_index <span class="kw">as </span>usize)
+            .map(|piece_bytes| Piece::try_from(piece_bytes).unwrap()))
+    }
+}
+
+<span class="kw">async fn </span>plot_one_segment&lt;Client&gt;(
+    client: <span class="kw-2">&amp;</span>Client,
+    keypair: <span class="kw-2">&amp;</span>schnorrkel::Keypair,
+    sector_codec: <span class="kw-2">&amp;</span>SectorCodec,
+) -&gt; (FarmerProtocolInfo, Vec&lt;u8&gt;, Vec&lt;u8&gt;)
 <span class="kw">where
-    </span>Client: BlockBackend&lt;Block&gt;,
+    </span>Client: BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
 {
     <span class="kw">let </span>genesis_block_id = BlockId::Number(sp_runtime::traits::Zero::zero());
 
@@ -481,16 +499,46 @@
     <span class="kw">let </span><span class="kw-2">mut </span>archiver = subspace_archiving::archiver::Archiver::new(
         RECORD_SIZE,
         RECORDED_HISTORY_SEGMENT_SIZE,
-        kzg,
+        kzg.clone(),
     )
     .expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>);
 
     <span class="kw">let </span>genesis_block = client.block(<span class="kw-2">&amp;</span>genesis_block_id).unwrap().unwrap();
-    archiver
+    <span class="kw">let </span>archived_segment = archiver
         .add_block(genesis_block.encode(), BlockObjectMapping::default())
         .into_iter()
         .next()
-        .expect(<span class="string">&quot;First block is always producing one segment; qed&quot;</span>)
+        .expect(<span class="string">&quot;First block is always producing one segment; qed&quot;</span>);
+    <span class="kw">let </span>total_pieces = NonZeroU64::new(archived_segment.pieces.count() <span class="kw">as </span>u64).unwrap();
+    <span class="kw">let </span><span class="kw-2">mut </span>sector = <span class="macro">vec!</span>[<span class="number">0u8</span>; PLOT_SECTOR_SIZE <span class="kw">as </span>usize];
+    <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata = <span class="macro">vec!</span>[<span class="number">0u8</span>; SectorMetadata::encoded_size()];
+    <span class="kw">let </span>sector_index = <span class="number">0</span>;
+    <span class="kw">let </span>piece_receiver = TestPieceReceiver { archived_segment };
+    <span class="kw">let </span>public_key = PublicKey::from(keypair.public.to_bytes());
+    <span class="kw">let </span>farmer_protocol_info = FarmerProtocolInfo {
+        genesis_hash: client.info().genesis_hash.to_fixed_bytes(),
+        record_size: NonZeroU32::new(RECORD_SIZE).unwrap(),
+        recorded_history_segment_size: RECORDED_HISTORY_SEGMENT_SIZE,
+        total_pieces,
+        <span class="comment">// TODO: This constant should come from the chain itself
+        </span>sector_expiration: <span class="number">100</span>,
+    };
+
+    plot_sector(
+        <span class="kw-2">&amp;</span>public_key,
+        sector_index,
+        <span class="kw-2">&amp;</span>piece_receiver,
+        <span class="kw-2">&amp;</span>AtomicBool::new(<span class="bool-val">false</span>),
+        <span class="kw-2">&amp;</span>farmer_protocol_info,
+        <span class="kw-2">&amp;</span>kzg,
+        sector_codec,
+        Cursor::new(sector.as_mut_slice()),
+        Cursor::new(sector_metadata.as_mut_slice()),
+    )
+    .<span class="kw">await
+    </span>.expect(<span class="string">&quot;Plotting one sector in memory must not fail&quot;</span>);
+
+    (farmer_protocol_info, sector, sector_metadata)
 }
 </code></pre></div>
 </section></div></main><div id="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="subspace_test_client" data-themes="" data-resource-suffix="" data-rustdoc-version="1.67.0-nightly (a00f8ba7f 2022-11-15)" data-search-js="search-df80cc3cb87b6482.js" data-settings-js="settings-7873449fa8c00e11.js" data-settings-css="settings-af96d9e2fc13e081.css" ></div></body></html>

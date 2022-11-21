@@ -244,6 +244,11 @@
 <a href="#244" id="244">244</a>
 <a href="#245" id="245">245</a>
 <a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -270,10 +275,11 @@
 <span class="kw">use </span>schnorrkel::{SignatureError, SignatureResult};
 <span class="kw">use </span>sp_arithmetic::traits::SaturatedConversion;
 <span class="kw">use </span>subspace_archiving::archiver;
+<span class="kw">use </span>subspace_core_primitives::crypto::blake2b_256_hash;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
-    BlockNumber, Chunk, ChunkSignature, PublicKey, Randomness, RecordsRoot, RewardSignature,
-    SectorId, SlotNumber, Solution, SolutionRange, RANDOMNESS_CONTEXT,
+    BlockNumber, ChunkSignature, PieceIndex, PublicKey, Randomness, RecordsRoot, RewardSignature,
+    Scalar, SectorId, SlotNumber, Solution, SolutionRange, PIECES_IN_SECTOR, RANDOMNESS_CONTEXT,
 };
 <span class="kw">use </span>subspace_solving::{
     create_chunk_signature_transcript, derive_global_challenge, verify_chunk_signature,
@@ -335,13 +341,21 @@
     <span class="prelude-val">Ok</span>(())
 }
 
+<span class="doccomment">/// Derive audit chunk from scalar bytes contained within plotted piece
+</span><span class="kw">pub fn </span>derive_audit_chunk(chunk_bytes: <span class="kw-2">&amp;</span>[u8; Scalar::FULL_BYTES]) -&gt; SolutionRange {
+    <span class="kw">let </span>hash = blake2b_256_hash(chunk_bytes);
+    SolutionRange::from_le_bytes([
+        hash[<span class="number">0</span>], hash[<span class="number">1</span>], hash[<span class="number">2</span>], hash[<span class="number">3</span>], hash[<span class="number">4</span>], hash[<span class="number">5</span>], hash[<span class="number">6</span>], hash[<span class="number">7</span>],
+    ])
+}
+
 <span class="doccomment">/// Returns true if `solution.tag` is within the solution range.
 </span><span class="kw">pub fn </span>is_within_solution_range(
     local_challenge: SolutionRange,
-    expanded_chunk: SolutionRange,
+    audit_chunk: SolutionRange,
     solution_range: SolutionRange,
 ) -&gt; bool {
-    subspace_core_primitives::bidirectional_distance(<span class="kw-2">&amp;</span>local_challenge, <span class="kw-2">&amp;</span>expanded_chunk)
+    subspace_core_primitives::bidirectional_distance(<span class="kw-2">&amp;</span>local_challenge, <span class="kw-2">&amp;</span>audit_chunk)
         &lt;= solution_range / <span class="number">2
 </span>}
 
@@ -350,8 +364,6 @@
 </span><span class="kw">pub struct </span>PieceCheckParams&lt;<span class="lifetime">&#39;a</span>&gt; {
     <span class="doccomment">/// Records root of segment to which piece belongs
     </span><span class="kw">pub </span>records_root: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>RecordsRoot,
-    <span class="doccomment">/// Position of the piece in the segment
-    </span><span class="kw">pub </span>position: u32,
     <span class="doccomment">/// KZG instance
     </span><span class="kw">pub </span>kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
     <span class="doccomment">/// Number of pieces in a segment
@@ -393,14 +405,18 @@
     <span class="kw">let </span>local_challenge =
         sector_id.derive_local_challenge(<span class="kw-2">&amp;</span>derive_global_challenge(global_randomness, slot));
 
-    <span class="kw">let </span>expanded_chunk = solution.chunk.expand(local_challenge);
+    <span class="kw">let </span>chunk_bytes = solution.chunk.to_bytes();
 
-    <span class="kw">if </span>!is_within_solution_range(local_challenge, expanded_chunk, solution_range) {
+    <span class="kw">if </span>!is_within_solution_range(
+        local_challenge,
+        derive_audit_chunk(<span class="kw-2">&amp;</span>chunk_bytes),
+        solution_range,
+    ) {
         <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OutsideSolutionRange);
     }
 
     <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = verify_chunk_signature(
-        <span class="kw-2">&amp;</span>solution.chunk,
+        <span class="kw-2">&amp;</span>chunk_bytes,
         <span class="kw-2">&amp;</span>solution.chunk_signature,
         <span class="kw-2">&amp;</span>schnorrkel::PublicKey::from_bytes(public_key.as_ref())
             .expect(<span class="string">&quot;Always correct length; qed&quot;</span>),
@@ -412,22 +428,16 @@
 
     </span><span class="kw">if let </span><span class="prelude-val">Some</span>(PieceCheckParams {
         records_root,
-        position,
         kzg,
         pieces_in_segment,
     }) = piece_check_params
     {
-        <span class="comment">// TODO: Derive `position` in the future and delete `piece_offset` from solution, example
-        //  code below
-        // let chunks_in_sector = u64::from(record_size) * u64::from(u8::BITS) / u64::from(space_l.get());
-        // let audit_index: u64 = local_challenge % chunks_in_sector;
-        // let audit_piece_offset = (audit_index / u64::from(u8::BITS)) / PIECE_SIZE as u64;
-        // let piece_index = sector_id
-        //     .derive_piece_index(audit_piece_offset, solution.total_pieces)
-        //     .map_err(|()| CheckVoteError::TotalNumberOfPiecesCantBeZero)?;
-        // let position = u32::try_from(piece_index % u64::from(pieces_in_segment))
-        //     .expect(&quot;Position within segment always fits into u32; qed&quot;);
-        // TODO: Check that chunk belongs to a piece
+        <span class="kw">let </span>audit_piece_offset: PieceIndex = local_challenge % PIECES_IN_SECTOR;
+        <span class="kw">let </span>piece_index = sector_id.derive_piece_index(audit_piece_offset, solution.total_pieces);
+        <span class="kw">let </span>position = u32::try_from(piece_index % u64::from(pieces_in_segment))
+            .expect(<span class="string">&quot;Position within segment always fits into u32; qed&quot;</span>);
+
+        <span class="comment">// TODO: Check that chunk belongs to the encoded piece
 
         </span>check_piece(kzg, pieces_in_segment, records_root, position, solution)<span class="question-mark">?</span>;
     }
@@ -441,12 +451,12 @@
 /// function.
 </span><span class="kw">pub fn </span>derive_randomness(
     public_key: <span class="kw-2">&amp;</span>PublicKey,
-    chunk: <span class="kw-2">&amp;</span>Chunk,
+    chunk_bytes: <span class="kw-2">&amp;</span>[u8; Scalar::FULL_BYTES],
     chunk_signature: <span class="kw-2">&amp;</span>ChunkSignature,
 ) -&gt; SignatureResult&lt;Randomness&gt; {
     <span class="kw">let </span>in_out = VRFOutput(chunk_signature.output).attach_input_hash(
         <span class="kw-2">&amp;</span>schnorrkel::PublicKey::from_bytes(public_key.as_ref())<span class="question-mark">?</span>,
-        create_chunk_signature_transcript(chunk),
+        create_chunk_signature_transcript(chunk_bytes),
     )<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(in_out.make_bytes(RANDOMNESS_CONTEXT))

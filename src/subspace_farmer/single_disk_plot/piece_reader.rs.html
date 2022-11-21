@@ -123,14 +123,12 @@
 <a href="#123" id="123">123</a>
 <a href="#124" id="124">124</a>
 <a href="#125" id="125">125</a>
-</pre><pre class="rust"><code><span class="kw">use </span>bitvec::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>futures::channel::{mpsc, oneshot};
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+</pre><pre class="rust"><code><span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::SinkExt;
-<span class="kw">use </span>std::num::{NonZeroU16, NonZeroU32};
-<span class="kw">use </span>subspace_core_primitives::{
-    Piece, PublicKey, SectorId, SectorIndex, PIECE_SIZE, PLOT_SECTOR_SIZE,
-};
-<span class="kw">use </span>subspace_solving::derive_chunk_otp;
+<span class="kw">use </span>subspace_core_primitives::sector_codec::SectorCodec;
+<span class="kw">use </span>subspace_core_primitives::{Piece, Scalar, SectorIndex, PIECE_SIZE, PLOT_SECTOR_SIZE};
 <span class="kw">use </span>tracing::warn;
 
 <span class="attr">#[derive(Debug)]
@@ -177,15 +175,12 @@
     </span>}
 }
 
-<span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_piece(
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_piece(
     sector_index: SectorIndex,
     piece_offset: u64,
     sector_count: u64,
-    public_key: <span class="kw-2">&amp;</span>PublicKey,
     first_sector_index: SectorIndex,
-    record_size: NonZeroU32,
-    space_l: NonZeroU16,
+    sector_codec: <span class="kw-2">&amp;</span>SectorCodec,
     global_plot: <span class="kw-2">&amp;</span>[u8],
 ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
     <span class="kw">if </span>sector_index &lt; first_sector_index {
@@ -221,30 +216,39 @@
         </span>);
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
-    <span class="kw">let </span>sector_bytes = <span class="kw-2">&amp;</span>global_plot[(sector_offset * PLOT_SECTOR_SIZE) <span class="kw">as </span>usize..];
-    <span class="kw">let </span>piece_bytes = <span class="kw-2">&amp;</span>sector_bytes[piece_offset <span class="kw">as </span>usize * PIECE_SIZE..][..PIECE_SIZE];
-    <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::try_from(piece_bytes).ok()<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>sector_id = SectorId::new(public_key, sector_index);
+    <span class="kw">let </span>piece = {
+        <span class="kw">let </span>sector_bytes = <span class="kw-2">&amp;</span>global_plot[(sector_offset * PLOT_SECTOR_SIZE) <span class="kw">as </span>usize..]
+            [..PLOT_SECTOR_SIZE <span class="kw">as </span>usize];
 
-    <span class="comment">// Decode piece
-    </span><span class="kw">let </span>(record, witness_bytes) = piece.split_at_mut(record_size.get() <span class="kw">as </span>usize);
-    <span class="comment">// TODO: Extract encoding into separate function reusable in farmer and
-    //  otherwise
-    </span>record
-        .view_bits_mut::&lt;Lsb0&gt;()
-        .chunks_mut(space_l.get() <span class="kw">as </span>usize)
-        .enumerate()
-        .for_each(|(chunk_index, bits)| {
-            <span class="comment">// Derive one-time pad
-            </span><span class="kw">let </span><span class="kw-2">mut </span>otp = derive_chunk_otp(<span class="kw-2">&amp;</span>sector_id, witness_bytes, chunk_index <span class="kw">as </span>u32);
-            <span class="comment">// XOR chunk bit by bit with one-time pad
-            </span>bits.iter_mut()
-                .zip(otp.view_bits_mut::&lt;Lsb0&gt;().iter())
-                .for_each(|(<span class="kw-2">mut </span>a, b)| {
-                    <span class="kw-2">*</span>a ^= <span class="kw-2">*</span>b;
-                });
-        });
+        <span class="kw">let </span><span class="kw-2">mut </span>sector_bytes_scalars = sector_bytes
+            .chunks_exact(Scalar::FULL_BYTES)
+            .map(|bytes| {
+                Scalar::from(
+                    &lt;<span class="kw-2">&amp;</span>[u8; Scalar::FULL_BYTES]&gt;::try_from(bytes)
+                        .expect(<span class="string">&quot;Chunked into scalar full bytes above; qed&quot;</span>),
+                )
+            })
+            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        sector_codec.decode(<span class="kw-2">&amp;mut </span>sector_bytes_scalars).ok()<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>scalars_in_piece = PIECE_SIZE / Scalar::SAFE_BYTES;
+        <span class="kw">let </span>piece_scalars =
+            <span class="kw-2">&amp;</span>sector_bytes_scalars[piece_offset <span class="kw">as </span>usize * scalars_in_piece..][..scalars_in_piece];
+
+        <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
+        piece
+            .chunks_exact_mut(Scalar::SAFE_BYTES)
+            .zip(piece_scalars)
+            .for_each(|(output, input)| {
+                <span class="comment">// After decoding we get piece scalar bytes padded with zero byte, so we can read
+                // the whole thing first and then copy just first `Scalar::SAFE_BYTES` we actually
+                // care about
+                </span>output.copy_from_slice(<span class="kw-2">&amp;</span>input.to_bytes()[..Scalar::SAFE_BYTES]);
+            });
+
+        piece
+    };
 
     <span class="prelude-val">Some</span>(piece)
 }
