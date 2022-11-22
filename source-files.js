@@ -41,7 +41,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_objects":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["record_shards.rs"]]],["archiver.rs","lib.rs","reconstructor.rs","utils.rs"]],\
 "subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]]],["crypto.rs","lib.rs","objects.rs","sector_codec.rs"]],\
-"subspace_farmer":["",[["rpc_client",[],["bench_rpc_client.rs","node_rpc_client.rs"]],["single_disk_plot",[],["piece_publisher.rs","piece_reader.rs","piece_receiver.rs"]]],["identity.rs","lib.rs","object_mappings.rs","reward_signing.rs","rpc_client.rs","single_disk_plot.rs","utils.rs","ws_rpc_server.rs"]],\
+"subspace_farmer":["",[["rpc_client",[],["node_rpc_client.rs"]],["single_disk_plot",[],["piece_publisher.rs","piece_reader.rs","piece_receiver.rs"]]],["identity.rs","lib.rs","object_mappings.rs","reward_signing.rs","rpc_client.rs","single_disk_plot.rs","utils.rs","ws_rpc_server.rs"]],\
 "subspace_farmer_components":["",[],["farming.rs","file_ext.rs","lib.rs","plotting.rs"]],\
 "subspace_fraud_proof":["",[],["lib.rs"]],\
 "subspace_networking":["",[["behavior",[],["custom_record_store.rs","persistent_parameters.rs","record_binary_heap.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","peer_info.rs","piece_by_key.rs","pieces_by_range.rs"]],["utils",[],["multihash.rs","prometheus.rs"]]],["behavior.rs","create.rs","lib.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]],\

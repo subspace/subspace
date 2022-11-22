@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":[["bench_rpc_client",""]],"trait":[["RpcClient","Abstraction of the Remote Procedure Call Client"]],"type":[["Error","To become error type agnostic"]]};
+window.SIDEBAR_ITEMS = {"trait":[["RpcClient","Abstraction of the Remote Procedure Call Client"]],"type":[["Error","To become error type agnostic"]]};

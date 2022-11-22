@@ -592,6 +592,48 @@
 <a href="#592" id="592">592</a>
 <a href="#593" id="593">593</a>
 <a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -621,6 +663,7 @@
 <span class="kw">use </span>dsn::start_dsn_node;
 <span class="kw">pub use </span>dsn::DsnConfig;
 <span class="kw">use </span>frame_system_rpc_runtime_api::AccountNonceApi;
+<span class="kw">use </span>futures::channel::oneshot;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>jsonrpsee::RpcModule;
 <span class="kw">use </span>pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi;
@@ -654,9 +697,10 @@
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, BlockIdTo};
 <span class="kw">use </span>sp_session::SessionKeys;
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
-<span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>std::sync::{Arc, Mutex};
 <span class="kw">use </span>subspace_core_primitives::PIECES_IN_SEGMENT;
 <span class="kw">use </span>subspace_fraud_proof::VerifyFraudProof;
+<span class="kw">use </span>subspace_networking::libp2p::multiaddr::Protocol;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
 <span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Hash, Index <span class="kw">as </span>Nonce};
 <span class="kw">use </span>tracing::error;
@@ -691,6 +735,10 @@
     <span class="doccomment">/// Subspace networking (DSN) error.
     </span><span class="attr">#[error(transparent)]
     </span>SubspaceDsn(<span class="attr">#[from] </span>subspace_networking::CreationError),
+
+    <span class="doccomment">/// Other.
+    </span><span class="attr">#[error(transparent)]
+    </span>Other(Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;),
 }
 
 <span class="doccomment">/// Subspace-like full client.
@@ -720,18 +768,8 @@
     <span class="doccomment">/// Whether slot notifications need to be present even if node is not responsible for block
     /// authoring.
     </span><span class="kw">pub </span>force_new_slot_notifications: bool,
-    <span class="doccomment">/// Subspace networking configuration (for DSN). Will not be started if set to `None`.
-    </span><span class="kw">pub </span>dsn_config: <span class="prelude-ty">Option</span>&lt;DsnConfig&gt;,
-}
-
-<span class="kw">impl </span>From&lt;Configuration&gt; <span class="kw">for </span>SubspaceConfiguration {
-    <span class="kw">fn </span>from(base: Configuration) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            base,
-            force_new_slot_notifications: <span class="bool-val">false</span>,
-            dsn_config: <span class="prelude-val">None</span>,
-        }
-    }
+    <span class="doccomment">/// Subspace networking configuration (for DSN).
+    </span><span class="kw">pub </span>dsn_config: DsnConfig,
 }
 
 <span class="doccomment">/// Creates `PartialComponents` for Subspace client.
@@ -1005,14 +1043,17 @@
         other: (block_import, subspace_link, piece_cache, <span class="kw-2">mut </span>telemetry),
     } = new_partial::&lt;RuntimeApi, ExecutorDispatch&gt;(<span class="kw-2">&amp;</span>config)<span class="question-mark">?</span>;
 
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(dsn_config) = config.dsn_config.clone() {
-        <span class="kw">let </span>piece_cache = piece_cache.clone();
-        start_dsn_node(
+    <span class="kw">let </span>dsn_bootstrap_nodes = {
+        <span class="kw">let </span>node = start_dsn_node(
             <span class="kw-2">&amp;</span>subspace_link,
-            dsn_config,
+            config.dsn_config.clone(),
             task_manager.spawn_essential_handle(),
             piece_cache.clone(),
-            Arc::new(<span class="kw">move </span>|piece_index| piece_cache.get_piece(<span class="kw-2">*</span>piece_index).ok().flatten()),
+            Arc::new({
+                <span class="kw">let </span>piece_cache = piece_cache.clone();
+
+                <span class="kw">move </span>|piece_index| piece_cache.get_piece(<span class="kw-2">*</span>piece_index).ok().flatten()
+            }),
             Arc::new({
                 <span class="kw">let </span>client = client.clone();
 
@@ -1029,7 +1070,50 @@
             }),
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-    }
+
+        <span class="comment">// Fall back to node itself as bootstrap node for DSN so farmer always has someone to
+        // connect to
+        </span><span class="kw">if </span>config.dsn_config.bootstrap_nodes.is_empty() {
+            <span class="kw">let </span>(node_address_sender, node_address_receiver) = oneshot::channel();
+            <span class="kw">let </span>_handler = node.on_new_listener(Arc::new({
+                <span class="kw">let </span>node_address_sender = Mutex::new(<span class="prelude-val">Some</span>(node_address_sender));
+
+                <span class="kw">move </span>|address| {
+                    <span class="kw">if </span><span class="macro">matches!</span>(address.iter().next(), <span class="prelude-val">Some</span>(Protocol::Ip4(<span class="kw">_</span>))) {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(node_address_sender) = node_address_sender
+                            .lock()
+                            .expect(<span class="string">&quot;Must not be poisoned here&quot;</span>)
+                            .take()
+                        {
+                            node_address_sender.send(address.clone()).unwrap();
+                        }
+                    }
+                }
+            }));
+
+            <span class="kw">let </span><span class="kw-2">mut </span>node_listeners = node.listeners();
+
+            <span class="kw">if </span>node_listeners.is_empty() {
+                <span class="kw">let </span><span class="prelude-val">Ok</span>(listener) = node_address_receiver.<span class="kw">await else </span>{
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Other(
+                        <span class="string">&quot;Oneshot receiver dropped before DSN node listener was ready&quot;
+                            </span>.to_string()
+                            .into(),
+                    ));
+                };
+
+                node_listeners = <span class="macro">vec!</span>[listener];
+            }
+
+            node_listeners.iter_mut().for_each(|multiaddr| {
+                multiaddr.push(Protocol::P2p(node.id().into()));
+            });
+
+            node_listeners
+        } <span class="kw">else </span>{
+            config.dsn_config.bootstrap_nodes.clone()
+        }
+    };
 
     sc_consensus_subspace::start_subspace_archiver(
         <span class="kw-2">&amp;</span>subspace_link,
@@ -1156,7 +1240,7 @@
                     reward_signing_notification_stream: reward_signing_notification_stream.clone(),
                     archived_segment_notification_stream: archived_segment_notification_stream
                         .clone(),
-                    piece_cache: piece_cache.clone(),
+                    dsn_bootstrap_nodes: dsn_bootstrap_nodes.clone(),
                 };
 
                 rpc::create_full(deps).map_err(Into::into)

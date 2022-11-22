@@ -479,14 +479,6 @@
 <a href="#479" id="479">479</a>
 <a href="#480" id="480">480</a>
 <a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -521,7 +513,6 @@
 <span class="kw">use </span>sc_consensus_subspace::{
     ArchivedSegmentNotification, NewSlotNotification, RewardSigningNotification,
 };
-<span class="kw">use </span>sc_piece_cache::PieceCache;
 <span class="kw">use </span>sc_rpc::SubscriptionTaskExecutor;
 <span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
@@ -537,12 +528,12 @@
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_archiving::archiver::ArchivedSegment;
 <span class="kw">use </span>subspace_core_primitives::{
-    Piece, PieceIndex, RecordsRoot, SegmentIndex, Solution, RECORDED_HISTORY_SEGMENT_SIZE,
-    RECORD_SIZE,
+    RecordsRoot, SegmentIndex, Solution, RECORDED_HISTORY_SEGMENT_SIZE, RECORD_SIZE,
 };
 <span class="kw">use </span>subspace_farmer_components::FarmerProtocolInfo;
+<span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
 <span class="kw">use </span>subspace_rpc_primitives::{
-    RewardSignatureResponse, RewardSigningInfo, SlotInfo, SolutionResponse,
+    FarmerAppInfo, RewardSignatureResponse, RewardSigningInfo, SlotInfo, SolutionResponse,
     MAX_SEGMENT_INDEXES_PER_REQUEST,
 };
 
@@ -553,8 +544,8 @@
 </span><span class="attr">#[rpc(client, server)]
 </span><span class="kw">pub trait </span>SubspaceRpcApi {
     <span class="doccomment">/// Ger metadata necessary for farmer operation
-    </span><span class="attr">#[method(name = <span class="string">&quot;subspace_getFarmerProtocolInfo&quot;</span>)]
-    </span><span class="kw">fn </span>get_farmer_protocol_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerProtocolInfo&gt;;
+    </span><span class="attr">#[method(name = <span class="string">&quot;subspace_getFarmerAppInfo&quot;</span>)]
+    </span><span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt;;
 
     <span class="attr">#[method(name = <span class="string">&quot;subspace_submitSolutionResponse&quot;</span>)]
     </span><span class="kw">fn </span>submit_solution_response(<span class="kw-2">&amp;</span><span class="self">self</span>, solution_response: SolutionResponse) -&gt; RpcResult&lt;()&gt;;
@@ -591,9 +582,6 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
     ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RecordsRoot&gt;&gt;&gt;;
-
-    <span class="attr">#[method(name = <span class="string">&quot;subspace_getPiece&quot;</span>, blocking)]
-    </span><span class="kw">fn </span>get_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; RpcResult&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;;
 }
 
 <span class="attr">#[derive(Default)]
@@ -609,7 +597,7 @@
 }
 
 <span class="doccomment">/// Implements the [`SubspaceRpcApiServer`] trait for interacting with Subspace.
-</span><span class="kw">pub struct </span>SubspaceRpc&lt;Block, Client, PC&gt; {
+</span><span class="kw">pub struct </span>SubspaceRpc&lt;Block, Client&gt; {
     client: Arc&lt;Client&gt;,
     executor: SubscriptionTaskExecutor,
     new_slot_notification_stream: SubspaceNotificationStream&lt;NewSlotNotification&gt;,
@@ -617,7 +605,7 @@
     archived_segment_notification_stream: SubspaceNotificationStream&lt;ArchivedSegmentNotification&gt;,
     solution_response_senders: Arc&lt;Mutex&lt;SolutionResponseSenders&gt;&gt;,
     reward_signature_senders: Arc&lt;Mutex&lt;BlockSignatureSenders&gt;&gt;,
-    piece_cache: PC,
+    dsn_bootstrap_nodes: Vec&lt;Multiaddr&gt;,
     _phantom: PhantomData&lt;Block&gt;,
 }
 
@@ -628,7 +616,7 @@
 /// every subscriber, after which RPC server waits for the same number of
 /// `subspace_submitSolutionResponse` requests with `SolutionResponse` in them or until
 /// timeout is exceeded. The first valid solution for a particular slot wins, others are ignored.
-</span><span class="kw">impl</span>&lt;Block, Client, PC&gt; SubspaceRpc&lt;Block, Client, PC&gt; {
+</span><span class="kw">impl</span>&lt;Block, Client&gt; SubspaceRpc&lt;Block, Client&gt; {
     <span class="doccomment">/// Creates a new instance of the `SubspaceRpc` handler.
     </span><span class="kw">pub fn </span>new(
         client: Arc&lt;Client&gt;,
@@ -638,7 +626,7 @@
         archived_segment_notification_stream: SubspaceNotificationStream&lt;
             ArchivedSegmentNotification,
         &gt;,
-        piece_cache: PC,
+        dsn_bootstrap_nodes: Vec&lt;Multiaddr&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             client,
@@ -648,14 +636,14 @@
             archived_segment_notification_stream,
             solution_response_senders: Arc::default(),
             reward_signature_senders: Arc::default(),
-            piece_cache,
+            dsn_bootstrap_nodes,
             _phantom: PhantomData::default(),
         }
     }
 }
 
 <span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;Block, Client, PC&gt; SubspaceRpcApiServer <span class="kw">for </span>SubspaceRpc&lt;Block, Client, PC&gt;
+</span><span class="kw">impl</span>&lt;Block, Client&gt; SubspaceRpcApiServer <span class="kw">for </span>SubspaceRpc&lt;Block, Client&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt;
@@ -665,9 +653,8 @@
         + Sync
         + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceRuntimeApi&lt;Block, FarmerPublicKey&gt;,
-    PC: PieceCache + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
-    <span class="kw">fn </span>get_farmer_protocol_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerProtocolInfo&gt; {
+    <span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt; {
         <span class="kw">let </span>best_block_id = BlockId::Hash(<span class="self">self</span>.client.info().best_hash);
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
 
@@ -682,9 +669,8 @@
                 JsonRpseeError::Custom(<span class="string">&quot;Internal error&quot;</span>.to_string())
             })<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>farmer_protocol_info: <span class="prelude-ty">Result</span>&lt;FarmerProtocolInfo, ApiError&gt; = <span class="kw">try </span>{
-            FarmerProtocolInfo {
-                genesis_hash,
+        <span class="kw">let </span>farmer_app_info: <span class="prelude-ty">Result</span>&lt;FarmerAppInfo, ApiError&gt; = <span class="kw">try </span>{
+            <span class="kw">let </span>protocol_info = FarmerProtocolInfo {
                 record_size: NonZeroU32::new(RECORD_SIZE).ok_or_else(|| {
                     <span class="macro">error!</span>(<span class="string">&quot;Incorrect record_size constant provided.&quot;</span>);
                     ApiError::Application(<span class="string">&quot;Incorrect record_size set&quot;</span>.to_string().into())
@@ -693,10 +679,16 @@
                 total_pieces: runtime_api.total_pieces(<span class="kw-2">&amp;</span>best_block_id)<span class="question-mark">?</span>,
                 <span class="comment">// TODO: Fetch this from the runtime
                 </span>sector_expiration: <span class="number">100</span>,
+            };
+
+            FarmerAppInfo {
+                genesis_hash,
+                dsn_bootstrap_nodes: <span class="self">self</span>.dsn_bootstrap_nodes.clone(),
+                protocol_info,
             }
         };
 
-        farmer_protocol_info.map_err(|error| {
+        farmer_app_info.map_err(|error| {
             <span class="macro">error!</span>(<span class="string">&quot;Failed to get data from runtime API: {}&quot;</span>, error);
             JsonRpseeError::Custom(<span class="string">&quot;Internal error&quot;</span>.to_string())
         })
@@ -966,14 +958,6 @@
         }
 
         records_root_result
-    }
-
-    <span class="kw">fn </span>get_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; RpcResult&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt; {
-        <span class="self">self</span>.piece_cache.get_piece(piece_index).map_err(|error| {
-            <span class="macro">error!</span>(<span class="string">&quot;Failed to get piece with index {piece_index} from cache: {error}&quot;</span>);
-
-            JsonRpseeError::Custom(<span class="string">&quot;Internal error during `get_piece` call&quot;</span>.to_string())
-        })
     }
 }
 </code></pre></div>
