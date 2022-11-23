@@ -634,7 +634,6 @@
 <a href="#634" id="634">634</a>
 <a href="#635" id="635">635</a>
 <a href="#636" id="636">636</a>
-<a href="#637" id="637">637</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -771,8 +770,6 @@
     </span><span class="kw">pub </span>force_new_slot_notifications: bool,
     <span class="doccomment">/// Subspace networking configuration (for DSN).
     </span><span class="kw">pub </span>dsn_config: DsnConfig,
-    <span class="doccomment">/// Piece cache size in bytes.
-    </span><span class="kw">pub </span>piece_cache_size: u64,
 }
 
 <span class="doccomment">/// Creates `PartialComponents` for Subspace client.
@@ -797,6 +794,7 @@
                 Transaction = TransactionFor&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;, Block&gt;,
             &gt;,
             SubspaceLink&lt;Block&gt;,
+            AuxPieceCache&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
             <span class="prelude-ty">Option</span>&lt;Telemetry&gt;,
         ),
     &gt;,
@@ -903,6 +901,39 @@
         },
     )<span class="question-mark">?</span>;
 
+    <span class="kw">let </span>piece_cache = AuxPieceCache::new(client.clone());
+
+    <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces
+    </span>task_manager
+        .spawn_handle()
+        .spawn_blocking(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
+            <span class="kw">let </span>piece_cache = piece_cache.clone();
+            <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
+                .archived_segment_notification_stream()
+                .subscribe();
+
+            <span class="kw">async move </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(archived_segment_notification) =
+                    archived_segment_notification_stream.next().<span class="kw">await
+                </span>{
+                    <span class="kw">let </span>segment_index = archived_segment_notification
+                        .archived_segment
+                        .root_block
+                        .segment_index();
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_cache.add_pieces(
+                        segment_index * u64::from(PIECES_IN_SEGMENT),
+                        <span class="kw-2">&amp;</span>archived_segment_notification.archived_segment.pieces,
+                    ) {
+                        <span class="macro">error!</span>(
+                            %segment_index,
+                            %error,
+                            <span class="string">&quot;Failed to store pieces for segment in cache&quot;
+                        </span>);
+                    }
+                }
+            }
+        });
+
     <span class="kw">let </span>slot_duration = subspace_link.slot_duration();
     <span class="kw">let </span>import_queue = sc_consensus_subspace::import_queue(
         block_import.clone(),
@@ -928,7 +959,7 @@
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, subspace_link, telemetry),
+        other: (block_import, subspace_link, piece_cache, telemetry),
     })
 }
 
@@ -1009,41 +1040,8 @@
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, subspace_link, <span class="kw-2">mut </span>telemetry),
+        other: (block_import, subspace_link, piece_cache, <span class="kw-2">mut </span>telemetry),
     } = new_partial::&lt;RuntimeApi, ExecutorDispatch&gt;(<span class="kw-2">&amp;</span>config)<span class="question-mark">?</span>;
-
-    <span class="kw">let </span>piece_cache = AuxPieceCache::new(client.clone(), config.piece_cache_size);
-
-    <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces
-    </span>task_manager
-        .spawn_handle()
-        .spawn_blocking(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
-            <span class="kw">let </span>piece_cache = piece_cache.clone();
-            <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
-                .archived_segment_notification_stream()
-                .subscribe();
-
-            <span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>(archived_segment_notification) =
-                    archived_segment_notification_stream.next().<span class="kw">await
-                </span>{
-                    <span class="kw">let </span>segment_index = archived_segment_notification
-                        .archived_segment
-                        .root_block
-                        .segment_index();
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_cache.add_pieces(
-                        segment_index * u64::from(PIECES_IN_SEGMENT),
-                        <span class="kw-2">&amp;</span>archived_segment_notification.archived_segment.pieces,
-                    ) {
-                        <span class="macro">error!</span>(
-                            %segment_index,
-                            %error,
-                            <span class="string">&quot;Failed to store pieces for segment in cache&quot;
-                        </span>);
-                    }
-                }
-            }
-        });
 
     <span class="kw">let </span>dsn_bootstrap_nodes = {
         <span class="kw">let </span>node = start_dsn_node(
