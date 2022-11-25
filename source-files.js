@@ -1,7 +1,7 @@
 var sourcesIndex = JSON.parse('{\
 "core_payments_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
-"domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
+"domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs","notification.rs"]],\
 "domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_bundle_producer.rs","core_domain_worker.rs","core_executor.rs","domain_block_processor.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","system_bundle_processor.rs","system_bundle_producer.rs","system_domain_worker.rs","system_executor.rs","utils.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\

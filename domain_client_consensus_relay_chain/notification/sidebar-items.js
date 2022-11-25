@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":[["channel","Creates a new pair of receiver and sender of notifications."]],"struct":[["SubspaceNotificationSender","The sending half of the Subspace notification channel(s)."],["SubspaceNotificationStream","The receiving half of the Subspace notification channel."]]};
