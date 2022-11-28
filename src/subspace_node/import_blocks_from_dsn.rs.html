@@ -266,6 +266,11 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -283,14 +288,12 @@
 // along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.
 
 </span><span class="kw">use </span>clap::Parser;
-<span class="kw">use </span>futures::stream::FuturesOrdered;
-<span class="kw">use </span>futures::StreamExt;
-<span class="kw">use </span>log::info;
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>sc_cli::{CliConfiguration, ImportParams, SharedParams};
 <span class="kw">use </span>sc_client_api::{BlockBackend, HeaderBackend};
 <span class="kw">use </span>sc_consensus::{BlockImportError, BlockImportStatus, IncomingBlock, Link};
 <span class="kw">use </span>sc_service::ImportQueue;
+<span class="kw">use </span>sc_tracing::tracing::{debug, info, trace};
 <span class="kw">use </span>sp_consensus::BlockOrigin;
 <span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header, NumberFor};
@@ -416,6 +419,10 @@
         node_runner.run().<span class="kw">await</span>;
     });
 
+    <span class="macro">debug!</span>(<span class="string">&quot;Waiting for connected peers...&quot;</span>);
+    <span class="kw">let _ </span>= node.wait_for_connected_peers().<span class="kw">await</span>;
+    <span class="macro">debug!</span>(<span class="string">&quot;Connected to peers.&quot;</span>);
+
     <span class="kw">let </span>best_block_number = client.info().best_number;
     <span class="kw">let </span><span class="kw-2">mut </span>link = WaitLink::new();
     <span class="kw">let </span><span class="kw-2">mut </span>imported_blocks = <span class="number">0</span>;
@@ -427,23 +434,26 @@
     <span class="comment">// TODO: Check latest known root block on chain and skip downloading of corresponding segments
     // Collection is intentional to make sure downloading starts right away and not lazily
     </span><span class="kw">for </span>segment_index <span class="kw">in </span><span class="number">0</span>.. {
-        <span class="kw">let </span>source_pieces_results = (<span class="number">0</span>..pieces_in_segment / <span class="number">2</span>)
-            .map(|piece_position| {
-                <span class="kw">let </span>piece_index: PieceIndex = segment_index * pieces_in_segment + piece_position;
+        <span class="kw">let </span>pieces_indexes = (<span class="number">0</span>..pieces_in_segment / <span class="number">2</span>).map(|piece_position| {
+            <span class="kw">let </span>piece_index: PieceIndex = segment_index * pieces_in_segment + piece_position;
 
-                node.get_value(multihash::create_multihash_by_piece_index(piece_index))
-            })
-            .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;()
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-            .<span class="kw">await</span>;
+            piece_index
+        });
 
         <span class="kw">let </span><span class="kw-2">mut </span>pieces = <span class="macro">vec!</span>[<span class="prelude-val">None</span>::&lt;Piece&gt;; pieces_in_segment <span class="kw">as </span>usize];
         <span class="kw">let </span><span class="kw-2">mut </span>found_one_piece = <span class="bool-val">false</span>;
 
-        <span class="kw">for </span>(source_piece_result, piece) <span class="kw">in </span>source_pieces_results.into_iter().zip(pieces.iter_mut())
-        {
-            <span class="kw">let </span>maybe_piece =
-                source_piece_result.map_err(|error| sc_service::Error::Other(error.to_string()))<span class="question-mark">?</span>;
+        <span class="kw">for </span>(piece_index, piece) <span class="kw">in </span>pieces_indexes.zip(pieces.iter_mut()) {
+            <span class="kw">let </span>maybe_piece = node
+                .get_value(multihash::create_multihash_by_piece_index(piece_index))
+                .<span class="kw">await
+                </span>.map_err(|error| sc_service::Error::Other(error.to_string()))<span class="question-mark">?</span>;
+
+            <span class="macro">trace!</span>(
+                <span class="question-mark">?</span>piece_index,
+                success = maybe_piece.is_some(),
+                <span class="string">&quot;Piece request completed.&quot;</span>,
+            );
 
             <span class="kw">if let </span><span class="prelude-val">Some</span>(piece_vec) = maybe_piece {
                 found_one_piece = <span class="bool-val">true</span>;
@@ -527,7 +537,7 @@
     }
 
     <span class="macro">info!</span>(
-        <span class="string">&quot;🎉 Imported {} blocks, best #{}, exiting&quot;</span>,
+        <span class="string">&quot;🎉 Imported {} blocks, best #{}, exiting...&quot;</span>,
         imported_blocks,
         client.info().best_number
     );
