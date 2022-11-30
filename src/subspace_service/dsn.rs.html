@@ -145,30 +145,21 @@
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a>
-<a href="#150" id="150">150</a>
-<a href="#151" id="151">151</a>
-<a href="#152" id="152">152</a>
-<a href="#153" id="153">153</a>
-<a href="#154" id="154">154</a>
-<a href="#155" id="155">155</a>
-<a href="#156" id="156">156</a>
-<a href="#157" id="157">157</a>
 </pre><pre class="rust"><code><span class="kw">mod </span>piece_record_store;
 
 <span class="kw">use </span><span class="kw">crate</span>::dsn::piece_record_store::{AuxRecordStorage, SegmentIndexGetter};
-<span class="kw">use </span>futures::StreamExt;
-<span class="kw">use </span>sc_consensus_subspace::{ArchivedSegmentNotification, SubspaceLink};
+<span class="kw">use </span>futures::{Stream, StreamExt};
+<span class="kw">use </span>sc_client_api::AuxStore;
+<span class="kw">use </span>sc_consensus_subspace::ArchivedSegmentNotification;
 <span class="kw">use </span>sc_piece_cache::AuxPieceCache;
-<span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
+<span class="kw">use </span>sp_core::traits::SpawnNamed;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, PieceIndexHash, PIECES_IN_SEGMENT};
 <span class="kw">use </span>subspace_networking::libp2p::{identity, Multiaddr};
 <span class="kw">use </span>subspace_networking::{
     BootstrappedNetworkingParameters, CreationError, CustomRecordStore, MemoryProviderStorage,
-    Node, PieceByHashRequestHandler, PieceByHashResponse, PieceKey, ToMultihash,
+    Node, NodeRunner, PieceByHashRequestHandler, PieceByHashResponse, PieceKey, ToMultihash,
 };
 <span class="kw">use </span>tracing::{debug, info, trace, Instrument};
 
@@ -190,31 +181,28 @@
     </span><span class="kw">pub </span>allow_non_global_addresses_in_dht: bool,
 }
 
-<span class="doccomment">/// Start an archiver that will listen for archived segments and send it to DSN network using
-/// pub-sub protocol.
-</span><span class="kw">pub async fn </span>start_dsn_node&lt;Block, Spawner, AS: sc_client_api::AuxStore + Sync + Send + <span class="lifetime">&#39;static</span>&gt;(
-    subspace_link: <span class="kw-2">&amp;</span>SubspaceLink&lt;Block&gt;,
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>create_dsn_instance&lt;Block, AS&gt;(
     dsn_config: DsnConfig,
-    spawner: Spawner,
     piece_cache: AuxPieceCache&lt;AS&gt;,
     piece_getter: PieceGetter,
     segment_index_getter: SegmentIndexGetter,
-) -&gt; <span class="prelude-ty">Result</span>&lt;Node, CreationError&gt;
+) -&gt; <span class="prelude-ty">Result</span>&lt;
+    (
+        Node,
+        NodeRunner&lt;CustomRecordStore&lt;AuxRecordStorage&lt;AS&gt;, MemoryProviderStorage&gt;&gt;,
+    ),
+    CreationError,
+&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Spawner: SpawnEssentialNamed,
+    AS: AuxStore + Sync + Send + <span class="lifetime">&#39;static</span>,
 {
-    <span class="kw">let </span>span = <span class="macro">tracing::info_span!</span>(sc_tracing::logging::PREFIX_LOG_SPAN, name = <span class="string">&quot;DSN&quot;</span>);
-    <span class="kw">let </span>_enter = span.enter();
-
     <span class="comment">// TODO: Combine `AuxPieceCache` with `AuxRecordStorage` and remove `PieceCache` abstraction
     </span><span class="kw">let </span>record_storage = AuxRecordStorage::new(piece_cache, segment_index_getter);
 
     <span class="macro">trace!</span>(<span class="string">&quot;Subspace networking starting.&quot;</span>);
 
-    <span class="kw">let </span>networking_config = subspace_networking::Config::&lt;
-        CustomRecordStore&lt;AuxRecordStorage&lt;AS&gt;, MemoryProviderStorage&gt;,
-    &gt; {
+    <span class="kw">let </span>networking_config = subspace_networking::Config {
         keypair: dsn_config.keypair,
         listen_on: dsn_config.listen_on,
         allow_non_global_addresses_in_dht: dsn_config.allow_non_global_addresses_in_dht,
@@ -237,58 +225,51 @@
         ..subspace_networking::Config::with_generated_keypair()
     };
 
-    <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) = subspace_networking::create(networking_config).<span class="kw">await</span><span class="question-mark">?</span>;
+    subspace_networking::create(networking_config).<span class="kw">await
+</span>}
 
-    <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
+<span class="doccomment">/// Start an archiver that will listen for archived segments and send it to DSN network using
+/// pub-sub protocol.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>start_dsn_archiver&lt;Spawner&gt;(
+    <span class="kw-2">mut </span>archived_segment_notification_stream: <span class="kw">impl </span>Stream&lt;Item = ArchivedSegmentNotification&gt; + Unpin,
+    node: Node,
+    spawner: Spawner,
+) <span class="kw">where
+    </span>Spawner: SpawnNamed,
+{
+    <span class="macro">trace!</span>(<span class="string">&quot;Subspace DSN archiver started.&quot;</span>);
 
-    spawner.spawn_essential(
-        <span class="string">&quot;node-runner&quot;</span>,
-        <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-        Box::pin(
-            <span class="kw">async move </span>{
-                node_runner.run().<span class="kw">await</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>last_published_segment_index: <span class="prelude-ty">Option</span>&lt;u64&gt; = <span class="prelude-val">None</span>;
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(ArchivedSegmentNotification {
+        archived_segment, ..
+    }) = archived_segment_notification_stream.next().<span class="kw">await
+    </span>{
+        <span class="kw">let </span>segment_index = archived_segment.root_block.segment_index();
+        <span class="kw">let </span>first_piece_index = segment_index * u64::from(PIECES_IN_SEGMENT);
+
+        <span class="macro">info!</span>(%segment_index, <span class="string">&quot;Processing a segment.&quot;</span>);
+
+        <span class="comment">// skip repeating publication
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(last_published_segment_index) = last_published_segment_index {
+            <span class="kw">if </span>last_published_segment_index == segment_index {
+                <span class="macro">info!</span>(<span class="question-mark">?</span>segment_index, <span class="string">&quot;Archived segment skipped.&quot;</span>);
+                <span class="kw">continue</span>;
             }
-            .in_current_span(),
-        ),
-    );
+        }
+        <span class="kw">let </span>keys_iter = (first_piece_index..)
+            .take(archived_segment.pieces.count())
+            .map(|idx| (idx, PieceIndexHash::from_index(idx)))
+            .map(|(idx, hash)| (idx, hash.to_multihash()));
 
-    <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
-        .archived_segment_notification_stream()
-        .subscribe();
+        spawner.spawn(
+            <span class="string">&quot;segment-publishing&quot;</span>,
+            <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
+            Box::pin({
+                <span class="kw">let </span>node = node.clone();
 
-    spawner.spawn_essential(
-        <span class="string">&quot;archiver&quot;</span>,
-        <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-        Box::pin({
-            <span class="kw">let </span>node = node.clone();
-
-            <span class="kw">async move </span>{
-                <span class="macro">trace!</span>(<span class="string">&quot;Subspace DSN archiver started.&quot;</span>);
-
-                <span class="kw">let </span><span class="kw-2">mut </span>last_published_segment_index: <span class="prelude-ty">Option</span>&lt;u64&gt; = <span class="prelude-val">None</span>;
-                <span class="kw">while let </span><span class="prelude-val">Some</span>(ArchivedSegmentNotification {
-                    archived_segment, ..
-                }) = archived_segment_notification_stream.next().<span class="kw">await
-                </span>{
-                    <span class="kw">let </span>segment_index = archived_segment.root_block.segment_index();
-                    <span class="kw">let </span>first_piece_index = segment_index * u64::from(PIECES_IN_SEGMENT);
-
-                    <span class="macro">info!</span>(%segment_index, <span class="string">&quot;Processing a segment.&quot;</span>);
-
-                    <span class="comment">// skip repeating publication
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(last_published_segment_index) = last_published_segment_index {
-                        <span class="kw">if </span>last_published_segment_index == segment_index {
-                            <span class="macro">info!</span>(<span class="question-mark">?</span>segment_index, <span class="string">&quot;Archived segment skipped.&quot;</span>);
-                            <span class="kw">continue</span>;
-                        }
-                    }
-                    <span class="kw">let </span>keys_iter = (first_piece_index..)
-                        .take(archived_segment.pieces.count())
-                        .map(|idx| (idx, PieceIndexHash::from_index(idx)))
-                        .map(|(idx, hash)| (idx, hash.to_multihash()));
-
+                <span class="kw">async move </span>{
                     <span class="kw">for </span>((_idx, key), piece) <span class="kw">in </span>keys_iter.zip(archived_segment.pieces.as_pieces()) {
-                        <span class="comment">//TODO: restore annoucing after https://github.com/libp2p/rust-libp2p/issues/3048
+                        <span class="comment">//TODO: restore announcing after https://github.com/libp2p/rust-libp2p/issues/3048
                         // trace!(?key, ?idx, &quot;Announcing key...&quot;);
                         //
                         // let announcing_result = node.start_announcing(key).await;
@@ -302,15 +283,14 @@
                         <span class="comment">//TODO: ensure republication of failed announcements
                     </span>}
 
-                    last_published_segment_index = <span class="prelude-val">Some</span>(segment_index);
                     <span class="macro">info!</span>(%segment_index, <span class="string">&quot;Segment processed.&quot;</span>);
                 }
-            }
-            .in_current_span()
-        }),
-    );
+                .in_current_span()
+            }),
+        );
 
-    <span class="prelude-val">Ok</span>(node)
+        last_published_segment_index = <span class="prelude-val">Some</span>(segment_index);
+    }
 }
 </code></pre></div>
 </section></div></main><div id="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="subspace_service" data-themes="" data-resource-suffix="" data-rustdoc-version="1.67.0-nightly (a00f8ba7f 2022-11-15)" data-search-js="search-df80cc3cb87b6482.js" data-settings-js="settings-7873449fa8c00e11.js" data-settings-css="settings-af96d9e2fc13e081.css" ></div></body></html>
