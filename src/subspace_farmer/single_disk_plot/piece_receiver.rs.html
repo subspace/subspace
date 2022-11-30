@@ -199,10 +199,56 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
 </pre><pre class="rust"><code><span class="kw">use </span>async_trait::async_trait;
+<span class="kw">use </span>backoff::future::retry;
+<span class="kw">use </span>backoff::ExponentialBackoff;
+<span class="kw">use </span>futures::stream::FuturesUnordered;
+<span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::Decode;
 <span class="kw">use </span>std::collections::BTreeSet;
 <span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::future::Future;
+<span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, PieceIndexHash};
@@ -210,11 +256,17 @@
 <span class="kw">use </span>subspace_networking::libp2p::PeerId;
 <span class="kw">use </span>subspace_networking::utils::multihash::MultihashCode;
 <span class="kw">use </span>subspace_networking::{Node, PieceByHashRequest, PieceKey, ToMultihash};
-<span class="kw">use </span>tokio::time::sleep;
+<span class="kw">use </span>tokio::time::{sleep, timeout};
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
 
-<span class="doccomment">/// Defines a duration between get_piece calls.
-</span><span class="kw">const </span>GET_PIECE_WAITING_DURATION_IN_SECS: u64 = <span class="number">1</span>;
+<span class="doccomment">/// Defines initial duration between get_piece calls.
+</span><span class="kw">const </span>GET_PIECE_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
+<span class="doccomment">/// Defines max duration between get_piece calls.
+</span><span class="kw">const </span>GET_PIECE_MAX_INTERVAL: Duration = Duration::from_secs(<span class="number">5</span>);
+<span class="doccomment">/// Delay for getting piece from cache before resorting to archival storage
+</span><span class="kw">const </span>GET_PIECE_ARCHIVAL_STORAGE_DELAY: Duration = Duration::from_secs(<span class="number">1</span>);
+<span class="doccomment">/// Max time allocated for getting piece from DSN before attempt is considered to fail
+</span><span class="kw">const </span>GET_PIECE_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
 
 <span class="comment">// Temporary struct serving pieces from different providers using configuration arguments.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>MultiChannelPieceReceiver&lt;<span class="lifetime">&#39;a</span>&gt; {
@@ -382,23 +434,51 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
         <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece request.&quot;</span>);
 
-        <span class="comment">// until we get a valid piece
-        </span><span class="kw">loop </span>{
-            <span class="self">self</span>.check_cancellation()<span class="question-mark">?</span>;
+        <span class="kw">let </span>backoff = ExponentialBackoff {
+            initial_interval: GET_PIECE_INITIAL_INTERVAL,
+            max_interval: GET_PIECE_MAX_INTERVAL,
+            <span class="comment">// Try until we get a valid piece
+            </span>max_elapsed_time: <span class="prelude-val">None</span>,
+            ..ExponentialBackoff::default()
+        };
 
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_from_cache(piece_index).<span class="kw">await </span>{
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+        retry(backoff, || <span class="kw">async </span>{
+            <span class="self">self</span>.check_cancellation()
+                .map_err(backoff::Error::Permanent)<span class="question-mark">?</span>;
+
+            <span class="comment">// Try to pull pieces in two ways, whichever is faster
+            </span><span class="kw">let </span><span class="kw-2">mut </span>piece_attempts = [
+                timeout(
+                    GET_PIECE_TIMEOUT,
+                    Box::pin(<span class="self">self</span>.get_piece_from_cache(piece_index))
+                        <span class="kw">as </span>Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="kw">_</span>&gt; + Send&gt;&gt;,
+                ),
+                timeout(
+                    GET_PIECE_TIMEOUT,
+                    Box::pin(<span class="kw">async </span>{
+                        <span class="comment">// Prefer cache if it can return quickly, otherwise fall back to archival storage
+                        </span>sleep(GET_PIECE_ARCHIVAL_STORAGE_DELAY).<span class="kw">await</span>;
+                        <span class="self">self</span>.get_piece_from_archival_storage(piece_index).<span class="kw">await
+                    </span>}) <span class="kw">as </span>Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="kw">_</span>&gt; + Send&gt;&gt;,
+                ),
+            ]
+            .into_iter()
+            .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;();
+
+            <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_piece) = piece_attempts.next().<span class="kw">await </span>{
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece)) = maybe_piece {
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+                }
             }
 
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_from_archival_storage(piece_index).<span class="kw">await </span>{
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
-            }
+            <span class="macro">warn!</span>(%piece_index, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
 
-            <span class="macro">warn!</span>(%piece_index, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Starting a new attempt...&quot;</span>);
-
-            sleep(Duration::from_secs(GET_PIECE_WAITING_DURATION_IN_SECS)).<span class="kw">await</span>;
-        }
-    }
+            <span class="prelude-val">Err</span>(backoff::Error::transient(
+                <span class="string">&quot;Couldn&#39;t get piece from DSN&quot;</span>.into(),
+            ))
+        })
+        .<span class="kw">await
+    </span>}
 }
 </code></pre></div>
 </section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="subspace_farmer" data-themes="" data-resource-suffix="" data-rustdoc-version="1.67.0-nightly (a00f8ba7f 2022-11-15)" data-search-js="search-df80cc3cb87b6482.js" data-settings-js="settings-7873449fa8c00e11.js" data-settings-css="settings-af96d9e2fc13e081.css" ></div></body></html>
