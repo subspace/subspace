@@ -889,6 +889,20 @@
 <a href="#889" id="889">889</a>
 <a href="#890" id="890">890</a>
 <a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -920,7 +934,9 @@
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::bundle_election::{verify_system_bundle_solution, verify_vrf_proof};
 <span class="kw">use </span>sp_domains::fraud_proof::{BundleEquivocationProof, FraudProof, InvalidTransactionProof};
-<span class="kw">use </span>sp_domains::{ExecutionReceipt, InvalidTransactionCode, ProofOfElection, SignedOpaqueBundle};
+<span class="kw">use </span>sp_domains::{
+    DomainId, ExecutionReceipt, InvalidTransactionCode, ProofOfElection, SignedOpaqueBundle,
+};
 <span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Saturating, Zero};
 <span class="kw">use </span>sp_runtime::transaction_validity::TransactionValidityError;
 <span class="kw">use </span>sp_runtime::RuntimeAppPublic;
@@ -934,7 +950,7 @@
     <span class="kw">use </span>sp_core::H256;
     <span class="kw">use </span>sp_domains::fraud_proof::{BundleEquivocationProof, FraudProof, InvalidTransactionProof};
     <span class="kw">use </span>sp_domains::{
-        ExecutionReceipt, ExecutorPublicKey, InvalidTransactionCode, SignedOpaqueBundle,
+        DomainId, ExecutionReceipt, ExecutorPublicKey, InvalidTransactionCode, SignedOpaqueBundle,
     };
     <span class="kw">use </span>sp_runtime::traits::{
         CheckEqual, MaybeDisplay, MaybeMallocSizeOf, One, SimpleBitOps, Zero,
@@ -1055,13 +1071,15 @@
     #[pallet::generate_deposit(<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
     </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {
         <span class="comment">// TODO: We do not rely on this event to collect the receipts included in a block, perhaps can be removed later.
-        </span><span class="doccomment">/// A new execution receipt was backed.
-        </span>NewExecutionReceipt {
+        </span><span class="doccomment">/// A new system domain receipt was backed.
+        </span>NewSystemDomainReceipt {
+            domain_id: DomainId,
             primary_number: T::BlockNumber,
             primary_hash: T::Hash,
         },
         <span class="doccomment">/// A domain bundle was included.
         </span>BundleStored {
+            domain_id: DomainId,
             bundle_hash: H256,
             bundle_author: ExecutorPublicKey,
         },
@@ -1089,33 +1107,39 @@
                 signed_opaque_bundle
             );
 
-            <span class="kw">let </span>oldest_receipt_number = OldestReceiptNumber::&lt;T&gt;::get();
-            <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get();
+            <span class="kw">let </span>domain_id = signed_opaque_bundle.domain_id();
 
-            <span class="kw">for </span>receipt <span class="kw">in </span><span class="kw-2">&amp;</span>signed_opaque_bundle.bundle.receipts {
-                <span class="comment">// Ignore the receipt if it has already been pruned.
-                </span><span class="kw">if </span>receipt.primary_number &lt; oldest_receipt_number {
-                    <span class="kw">continue</span>;
-                }
+            <span class="comment">// Only process the system domain receipts.
+            </span><span class="kw">if </span>domain_id.is_system() {
+                <span class="kw">let </span>oldest_receipt_number = OldestReceiptNumber::&lt;T&gt;::get();
+                <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get();
 
-                <span class="kw">if </span>receipt.primary_number &lt;= best_number {
-                    <span class="comment">// Either increase the vote for a known receipt or add a fork receipt at this height.
-                    </span><span class="self">Self</span>::apply_non_new_best_receipt(receipt);
-                } <span class="kw">else if </span>receipt.primary_number == best_number + One::one() {
-                    <span class="self">Self</span>::apply_new_best_receipt(receipt);
-                    best_number += One::one();
-                } <span class="kw">else </span>{
-                    <span class="comment">// Reject the entire Bundle due to the missing receipt(s) between [best_number, .., receipt.primary_number].
-                    //
-                    // This should never happen as pre_dispatch_submit_bundle ensures no missing receipt.
-                    </span><span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Bundle(BundleError::Receipt(
-                        ExecutionReceiptError::MissingParent,
-                    ))
-                    .into());
+                <span class="kw">for </span>receipt <span class="kw">in </span><span class="kw-2">&amp;</span>signed_opaque_bundle.bundle.receipts {
+                    <span class="comment">// Ignore the receipt if it has already been pruned.
+                    </span><span class="kw">if </span>receipt.primary_number &lt; oldest_receipt_number {
+                        <span class="kw">continue</span>;
+                    }
+
+                    <span class="kw">if </span>receipt.primary_number &lt;= best_number {
+                        <span class="comment">// Either increase the vote for a known receipt or add a fork receipt at this height.
+                        </span><span class="self">Self</span>::apply_non_new_best_receipt(domain_id, receipt);
+                    } <span class="kw">else if </span>receipt.primary_number == best_number + One::one() {
+                        <span class="self">Self</span>::apply_new_best_receipt(domain_id, receipt);
+                        best_number += One::one();
+                    } <span class="kw">else </span>{
+                        <span class="comment">// Reject the entire Bundle due to the missing receipt(s) between [best_number, .., receipt.primary_number].
+                        //
+                        // This should never happen as pre_dispatch_submit_bundle ensures no missing receipt.
+                        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Bundle(BundleError::Receipt(
+                            ExecutionReceiptError::MissingParent,
+                        ))
+                        .into());
+                    }
                 }
             }
 
             <span class="self">Self</span>::deposit_event(Event::BundleStored {
+                domain_id,
                 bundle_hash: signed_opaque_bundle.hash(),
                 bundle_author: signed_opaque_bundle.proof_of_election.executor_public_key,
             });
@@ -1407,7 +1431,7 @@
             trace: Vec::new(),
             trace_root: Default::default(),
         };
-        <span class="self">Self</span>::apply_new_best_receipt(<span class="kw-2">&amp;</span>genesis_receipt);
+        <span class="self">Self</span>::apply_new_best_receipt(DomainId::SYSTEM, <span class="kw-2">&amp;</span>genesis_receipt);
         <span class="comment">// Explicitly initialize the oldest receipt number even not necessary as ValueQuery is used.
         </span>OldestReceiptNumber::&lt;T&gt;::put::&lt;T::BlockNumber&gt;(Zero::zero());
     }
@@ -1626,6 +1650,7 @@
     }
 
     <span class="kw">fn </span>apply_new_best_receipt(
+        domain_id: DomainId,
         execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
     ) {
         <span class="kw">let </span>primary_hash = execution_receipt.primary_hash;
@@ -1661,13 +1686,15 @@
             <span class="kw">let _ </span>= &lt;StateRoots&lt;T&gt;&gt;::clear_prefix(to_prune, u32::MAX, <span class="prelude-val">None</span>);
         }
 
-        <span class="self">Self</span>::deposit_event(Event::NewExecutionReceipt {
+        <span class="self">Self</span>::deposit_event(Event::NewSystemDomainReceipt {
+            domain_id,
             primary_number,
             primary_hash,
         });
     }
 
     <span class="kw">fn </span>apply_non_new_best_receipt(
+        domain_id: DomainId,
         execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
     ) {
         <span class="kw">let </span>primary_hash = execution_receipt.primary_hash;
@@ -1685,7 +1712,8 @@
 
                 &lt;StateRoots&lt;T&gt;&gt;::insert(primary_number, execution_receipt.domain_hash, state_root);
             }
-            <span class="self">Self</span>::deposit_event(Event::NewExecutionReceipt {
+            <span class="self">Self</span>::deposit_event(Event::NewSystemDomainReceipt {
+                domain_id,
                 primary_number,
                 primary_hash,
             });
