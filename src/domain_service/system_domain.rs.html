@@ -373,9 +373,22 @@
 <a href="#373" id="373">373</a>
 <a href="#374" id="374">374</a>
 <a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::Configuration;
 <span class="kw">use </span>domain_client_consensus_relay_chain::notification::SubspaceNotificationStream;
-<span class="kw">use </span>domain_client_executor::SystemExecutor;
+<span class="kw">use </span>domain_client_executor::{
+    EssentialExecutorParams, SystemExecutor, SystemGossipMessageValidator,
+};
 <span class="kw">use </span>domain_client_executor_gossip::ExecutorGossipParams;
 <span class="kw">use </span>domain_runtime_primitives::{AccountId, Balance, DomainCoreApi, Hash, RelayerId};
 <span class="kw">use </span>futures::channel::mpsc;
@@ -690,28 +703,37 @@
     <span class="kw">let </span>(bundle_sender, bundle_receiver) = tracing_unbounded(<span class="string">&quot;domain_bundle_stream&quot;</span>);
 
     <span class="kw">let </span>executor = SystemExecutor::new(
-        primary_chain_client,
-        primary_network,
         <span class="kw-2">&amp;</span>spawn_essential,
         select_chain,
-        imported_block_notification_stream,
-        new_slot_notification_stream,
-        client.clone(),
-        Box::new(task_manager.spawn_handle()),
-        transaction_pool,
-        Arc::new(bundle_sender),
-        backend.clone(),
-        code_executor.clone(),
-        validator,
-        params.keystore_container.sync_keystore(),
-        block_import_throttling_buffer_size,
+        EssentialExecutorParams {
+            primary_chain_client: primary_chain_client.clone(),
+            primary_network,
+            client: client.clone(),
+            transaction_pool: transaction_pool.clone(),
+            backend: backend.clone(),
+            code_executor: code_executor.clone(),
+            is_authority: validator,
+            keystore: params.keystore_container.sync_keystore(),
+            spawner: Box::new(task_manager.spawn_handle()),
+            bundle_sender: Arc::new(bundle_sender),
+            block_import_throttling_buffer_size,
+            imported_block_notification_stream,
+            new_slot_notification_stream,
+        },
     )
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
+    <span class="kw">let </span>gossip_message_validator = SystemGossipMessageValidator::new(
+        primary_chain_client,
+        client.clone(),
+        Box::new(task_manager.spawn_handle()),
+        transaction_pool,
+        executor.fraud_proof_generator(),
+    );
     <span class="kw">let </span>executor_gossip =
         domain_client_executor_gossip::start_gossip_worker(ExecutorGossipParams {
             network: network.clone(),
-            executor: executor.clone(),
+            executor: gossip_message_validator,
             bundle_receiver,
         });
     spawn_essential.spawn_essential_blocking(<span class="string">&quot;domain-gossip&quot;</span>, <span class="prelude-val">None</span>, Box::pin(executor_gossip));

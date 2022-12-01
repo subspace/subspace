@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["CoreExecutor","The implementation of the Domain `Executor`."],["SystemExecutor","The implementation of the Domain `Executor`."]]};
+window.SIDEBAR_ITEMS = {"struct":[["CoreExecutor","The implementation of the Domain `Executor`."],["CoreGossipMessageValidator","The implementation of the Domain `Executor`."],["EssentialExecutorParams",""],["SystemExecutor","The implementation of the Domain `Executor`."],["SystemGossipMessageValidator","The implementation of the Domain `Executor`."]]};
