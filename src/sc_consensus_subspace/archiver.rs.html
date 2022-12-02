@@ -542,6 +542,15 @@
 <a href="#542" id="542">542</a>
 <a href="#543" id="543">543</a>
 <a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -563,7 +572,7 @@
     SubspaceNotificationSender,
 };
 <span class="kw">use </span>codec::Encode;
-<span class="kw">use </span>futures::{SinkExt, StreamExt};
+<span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>log::{debug, error, info, warn};
 <span class="kw">use </span>sc_client_api::{AuxStore, Backend <span class="kw">as </span>BackendT, BlockBackend, Finalizer, LockImportRun};
 <span class="kw">use </span>sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_INFO};
@@ -963,6 +972,7 @@
                 subspace_link.imported_block_notification_stream.subscribe();
             <span class="kw">let </span>archived_segment_notification_sender =
                 subspace_link.archived_segment_notification_sender.clone();
+            <span class="kw">let </span>root_blocks = Arc::clone(<span class="kw-2">&amp;</span>subspace_link.root_blocks);
 
             <span class="kw">async move </span>{
                 <span class="comment">// Farmers may have not received all previous segments, send them now.
@@ -976,12 +986,12 @@
 
                 <span class="kw">while let </span><span class="prelude-val">Some</span>(ImportedBlockNotification {
                     block_number,
-                    <span class="kw-2">mut </span>root_block_sender,
-                    block_import_acknowledgement_sender,
+                    <span class="comment">// Just to be very explicit that block import shouldn&#39;t continue until archiving
+                    // is over
+                    </span>block_import_acknowledgement_sender: _block_import_acknowledgement_sender,
                     ..
                 }) = imported_block_notification_stream.next().<span class="kw">await
                 </span>{
-                    drop(block_import_acknowledgement_sender);
                     <span class="kw">let </span>block_number_to_archive =
                         <span class="kw">match </span>block_number.checked_sub(<span class="kw-2">&amp;</span>confirmation_depth_k.into()) {
                             <span class="prelude-val">Some</span>(block_number_to_archive) =&gt; block_number_to_archive,
@@ -1044,6 +1054,8 @@
                         block_number_to_archive,
                         encoded_block.len() <span class="kw">as </span>f32 / <span class="number">1024.0
                     </span>);
+
+                    <span class="kw">let </span><span class="kw-2">mut </span>new_root_blocks = Vec::new();
                     <span class="kw">for </span>archived_segment <span class="kw">in </span>archiver.add_block(encoded_block, block_object_mappings)
                     {
                         <span class="kw">let </span>root_block = archived_segment.root_block;
@@ -1054,7 +1066,13 @@
                         )
                         .<span class="kw">await</span>;
 
-                        <span class="kw">let _ </span>= root_block_sender.send(root_block).<span class="kw">await</span>;
+                        new_root_blocks.push(root_block);
+                    }
+
+                    <span class="kw">if </span>!new_root_blocks.is_empty() {
+                        root_blocks
+                            .lock()
+                            .put(block_number + One::one(), new_root_blocks);
                     }
 
                     finalize_block(
