@@ -1092,7 +1092,8 @@
 };
 <span class="kw">use </span>sp_domains::fraud_proof::{BundleEquivocationProof, FraudProof, InvalidTransactionProof};
 <span class="kw">use </span>sp_domains::{
-    DomainId, ExecutionReceipt, ExecutorPublicKey, ProofOfElection, SignedOpaqueBundle, StakeWeight,
+    BundleSolution, DomainId, ExecutionReceipt, ExecutorPublicKey, ProofOfElection,
+    SignedOpaqueBundle, StakeWeight,
 };
 <span class="kw">use </span>sp_executor_registry::{ExecutorRegistry, OnNewEpoch};
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Hash, One, Saturating, Zero};
@@ -1413,7 +1414,7 @@
         ) -&gt; DispatchResult {
             ensure_none(origin)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>domain_id = signed_opaque_bundle.proof_of_election.domain_id;
+            <span class="kw">let </span>domain_id = signed_opaque_bundle.domain_id();
 
             <span class="kw">let </span>oldest_receipt_number = OldestReceiptNumber::&lt;T&gt;::get(domain_id);
             <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get(domain_id);
@@ -1589,9 +1590,6 @@
 
         <span class="doccomment">/// Invalid core domain bundle solution.
         </span>BadBundleElectionSolution,
-
-        <span class="doccomment">/// Either `core_block_hash` or `core_state_root` is missing in the proof of election.
-        </span>CoreBlockInfoNotFound,
 
         <span class="doccomment">/// Cannot verify the core domain state root.
         </span>StateRootUnverifiable,
@@ -1814,6 +1812,15 @@
     <span class="kw">fn </span>pre_dispatch_submit_core_bundle(
         signed_opaque_bundle: <span class="kw-2">&amp;</span>SignedOpaqueBundle&lt;T::BlockNumber, T::Hash, T::Hash&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;T&gt;&gt; {
+        <span class="kw">let </span>BundleSolution::Core {
+            proof_of_election,
+            core_block_number,
+            core_block_hash,
+            core_state_root
+        } = <span class="kw-2">&amp;</span>signed_opaque_bundle.bundle_solution <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
+        };
+
         <span class="comment">// The validity of vrf proof itself has been verified on the primary chain, thus only the
         // proof_of_election is necessary to be checked here.
         </span><span class="kw">let </span>ProofOfElection {
@@ -1823,23 +1830,16 @@
             state_root,
             executor_public_key,
             global_challenge,
-            core_block_number,
-            core_block_hash,
-            core_state_root,
             ..
-        } = <span class="kw-2">&amp;</span>signed_opaque_bundle.proof_of_election;
+        } = <span class="kw-2">&amp;</span>proof_of_election;
 
         <span class="kw">if </span>!domain_id.is_core() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
         }
 
-        <span class="kw">let </span>core_block_number =
-            T::BlockNumber::from(core_block_number.ok_or(Error::&lt;T&gt;::CoreBlockInfoNotFound)<span class="question-mark">?</span>);
+        <span class="kw">let </span>core_block_number = T::BlockNumber::from(<span class="kw-2">*</span>core_block_number);
 
         <span class="kw">if </span>!core_block_number.is_zero() {
-            <span class="kw">let </span>core_block_hash = core_block_hash.ok_or(Error::&lt;T&gt;::CoreBlockInfoNotFound)<span class="question-mark">?</span>;
-            <span class="kw">let </span>core_state_root = core_state_root.ok_or(Error::&lt;T&gt;::CoreBlockInfoNotFound)<span class="question-mark">?</span>;
-
             <span class="kw">let </span>maybe_state_root =
                 signed_opaque_bundle
                     .bundle
@@ -1848,7 +1848,7 @@
                     .find_map(|receipt| {
                         receipt.trace.last().and_then(|state_root| {
                             <span class="kw">if </span>(receipt.primary_number, receipt.domain_hash)
-                                == (core_block_number, core_block_hash)
+                                == (core_block_number, <span class="kw-2">*</span>core_block_hash)
                             {
                                 <span class="prelude-val">Some</span>(<span class="kw-2">*</span>state_root)
                             } <span class="kw">else </span>{
@@ -1863,7 +1863,7 @@
                     .ok_or(Error::&lt;T&gt;::StateRootUnverifiable)<span class="question-mark">?</span>,
             };
 
-            <span class="kw">if </span>expected_state_root != core_state_root {
+            <span class="kw">if </span>expected_state_root != <span class="kw-2">*</span>core_state_root {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::BadStateRoot);
             }
         }
