@@ -1053,17 +1053,6 @@
 <a href="#1053" id="1053">1053</a>
 <a href="#1054" id="1054">1054</a>
 <a href="#1055" id="1055">1055</a>
-<a href="#1056" id="1056">1056</a>
-<a href="#1057" id="1057">1057</a>
-<a href="#1058" id="1058">1058</a>
-<a href="#1059" id="1059">1059</a>
-<a href="#1060" id="1060">1060</a>
-<a href="#1061" id="1061">1061</a>
-<a href="#1062" id="1062">1062</a>
-<a href="#1063" id="1063">1063</a>
-<a href="#1064" id="1064">1064</a>
-<a href="#1065" id="1065">1065</a>
-<a href="#1066" id="1066">1066</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2022 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -1107,18 +1096,15 @@
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>libp2p::core::connection::ConnectionId;
-<span class="kw">use </span>libp2p::core::transport::ListenerId;
-<span class="kw">use </span>libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
+<span class="kw">use </span>libp2p::core::{Multiaddr, PeerId};
 <span class="kw">pub use </span>libp2p::request_response::{InboundFailure, OutboundFailure, RequestId};
 <span class="kw">use </span>libp2p::request_response::{
     ProtocolSupport, RequestResponse, RequestResponseCodec, RequestResponseConfig,
     RequestResponseEvent, RequestResponseMessage, ResponseChannel,
 };
+<span class="kw">use </span>libp2p::swarm::behaviour::{ConnectionClosed, DialFailure, FromSwarm, ListenFailure};
 <span class="kw">use </span>libp2p::swarm::handler::multi::MultiHandler;
-<span class="kw">use </span>libp2p::swarm::{
-    ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction,
-    PollParameters,
-};
+<span class="kw">use </span>libp2p::swarm::{ConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters};
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::collections::hash_map::Entry;
 <span class="kw">use </span>std::collections::HashMap;
@@ -1501,125 +1487,117 @@
         )
     }
 
+    <span class="doccomment">/// Informs the behaviour about an event from the [`Swarm`](crate::Swarm).
+    </span><span class="kw">fn </span>on_swarm_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: FromSwarm&lt;<span class="self">Self</span>::ConnectionHandler&gt;) {
+        <span class="kw">match </span>event {
+            FromSwarm::ConnectionEstablished(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::ConnectionEstablished(inner));
+                }
+            }
+            FromSwarm::ConnectionClosed(inner) =&gt; {
+                <span class="kw">for </span>(p_name, handler) <span class="kw">in </span>inner.handler.into_iter() {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>((protocol, <span class="kw">_</span>)) = <span class="self">self</span>.protocols.get_mut(p_name.as_str()) {
+                        protocol.on_swarm_event(FromSwarm::ConnectionClosed(ConnectionClosed {
+                            peer_id: inner.peer_id,
+                            connection_id: inner.connection_id,
+                            endpoint: inner.endpoint,
+                            handler,
+                            remaining_established: inner.remaining_established,
+                        }));
+                    } <span class="kw">else </span>{
+                        <span class="macro">error!</span>(
+                            target: LOG_TARGET,
+                            <span class="string">&quot;inject_connection_closed: no request-response instance registered \
+                            for protocol {:?}&quot;</span>,
+                            p_name,
+                        )
+                    }
+                }
+            }
+            FromSwarm::AddressChange(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::AddressChange(inner));
+                }
+            }
+            FromSwarm::DialFailure(inner) =&gt; {
+                <span class="kw">for </span>((protocol, <span class="kw">_</span>), (<span class="kw">_</span>, handler)) <span class="kw">in
+                    </span><span class="self">self</span>.protocols.values_mut().zip(inner.handler.into_iter())
+                {
+                    protocol.on_swarm_event(FromSwarm::DialFailure(DialFailure {
+                        peer_id: inner.peer_id,
+                        handler,
+                        error: inner.error,
+                    }));
+                }
+            }
+            FromSwarm::ListenFailure(inner) =&gt; {
+                <span class="kw">for </span>((protocol, <span class="kw">_</span>), (<span class="kw">_</span>, handler)) <span class="kw">in
+                    </span><span class="self">self</span>.protocols.values_mut().zip(inner.handler.into_iter())
+                {
+                    protocol.on_swarm_event(FromSwarm::ListenFailure(ListenFailure {
+                        local_addr: inner.local_addr,
+                        send_back_addr: inner.send_back_addr,
+                        handler,
+                    }));
+                }
+            }
+            FromSwarm::NewListener(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::NewListener(inner));
+                }
+            }
+            FromSwarm::NewListenAddr(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::NewListenAddr(inner));
+                }
+            }
+            FromSwarm::ExpiredListenAddr(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::ExpiredListenAddr(inner));
+                }
+            }
+            FromSwarm::ListenerError(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::ListenerError(inner));
+                }
+            }
+            FromSwarm::ListenerClosed(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::ListenerClosed(inner));
+                }
+            }
+            FromSwarm::NewExternalAddr(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::NewExternalAddr(inner));
+                }
+            }
+            FromSwarm::ExpiredExternalAddr(inner) =&gt; {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
+                    protocol.on_swarm_event(FromSwarm::ExpiredExternalAddr(inner));
+                }
+            }
+        };
+    }
+
     <span class="kw">fn </span>addresses_of_peer(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: <span class="kw-2">&amp;</span>PeerId) -&gt; Vec&lt;Multiaddr&gt; {
         Vec::new()
     }
 
-    <span class="kw">fn </span>inject_connection_established(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        peer_id: <span class="kw-2">&amp;</span>PeerId,
-        conn: <span class="kw-2">&amp;</span>ConnectionId,
-        endpoint: <span class="kw-2">&amp;</span>ConnectedPoint,
-        failed_addresses: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Vec&lt;Multiaddr&gt;&gt;,
-        other_established: usize,
-    ) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_connection_established(
-                p,
-                peer_id,
-                conn,
-                endpoint,
-                failed_addresses,
-                other_established,
-            )
-        }
-    }
-
-    <span class="kw">fn </span>inject_connection_closed(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        peer_id: <span class="kw-2">&amp;</span>PeerId,
-        conn: <span class="kw-2">&amp;</span>ConnectionId,
-        endpoint: <span class="kw-2">&amp;</span>ConnectedPoint,
-        handler: &lt;<span class="self">Self</span>::ConnectionHandler <span class="kw">as </span>IntoConnectionHandler&gt;::Handler,
-        remaining_established: usize,
-    ) {
-        <span class="kw">for </span>(p_name, event) <span class="kw">in </span>handler.into_iter() {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>((proto, <span class="kw">_</span>)) = <span class="self">self</span>.protocols.get_mut(p_name.as_str()) {
-                proto.inject_connection_closed(
-                    peer_id,
-                    conn,
-                    endpoint,
-                    event,
-                    remaining_established,
-                )
-            } <span class="kw">else </span>{
-                <span class="macro">error!</span>(
-                    target: LOG_TARGET,
-                    <span class="string">&quot;inject_connection_closed: no request-response instance registered for protocol {:?}&quot;</span>,
-                    p_name,
-                )
-            }
-        }
-    }
-
-    <span class="kw">fn </span>inject_event(
+    <span class="kw">fn </span>on_connection_handler_event(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         peer_id: PeerId,
         connection: ConnectionId,
         (p_name, event): &lt;<span class="self">Self</span>::ConnectionHandler <span class="kw">as </span>ConnectionHandler&gt;::OutEvent,
     ) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>((proto, <span class="kw">_</span>)) = <span class="self">self</span>.protocols.get_mut(<span class="kw-2">&amp;*</span>p_name) {
-            <span class="kw">return </span>proto.inject_event(peer_id, connection, event);
+            <span class="kw">return </span>proto.on_connection_handler_event(peer_id, connection, event);
         }
 
         <span class="macro">warn!</span>(
             target: LOG_TARGET,
             <span class="string">&quot;inject_node_event: no request-response instance registered for protocol {:?}&quot;</span>, p_name
         )
-    }
-
-    <span class="kw">fn </span>inject_new_external_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>Multiaddr) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_new_external_addr(p, addr)
-        }
-    }
-
-    <span class="kw">fn </span>inject_expired_external_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>Multiaddr) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_expired_external_addr(p, addr)
-        }
-    }
-
-    <span class="kw">fn </span>inject_expired_listen_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: ListenerId, addr: <span class="kw-2">&amp;</span>Multiaddr) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_expired_listen_addr(p, id, addr)
-        }
-    }
-
-    <span class="kw">fn </span>inject_dial_failure(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        peer_id: <span class="prelude-ty">Option</span>&lt;PeerId&gt;,
-        <span class="kw">_</span>: <span class="self">Self</span>::ConnectionHandler,
-        error: <span class="kw-2">&amp;</span>libp2p::swarm::DialError,
-    ) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            <span class="kw">let </span>handler = p.new_handler();
-            NetworkBehaviour::inject_dial_failure(p, peer_id, handler, error)
-        }
-    }
-
-    <span class="kw">fn </span>inject_new_listener(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: ListenerId) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_new_listener(p, id)
-        }
-    }
-
-    <span class="kw">fn </span>inject_new_listen_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: ListenerId, addr: <span class="kw-2">&amp;</span>Multiaddr) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_new_listen_addr(p, id, addr)
-        }
-    }
-
-    <span class="kw">fn </span>inject_listener_error(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: ListenerId, err: <span class="kw-2">&amp;</span>(<span class="kw">dyn </span>std::error::Error + <span class="lifetime">&#39;static</span>)) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_listener_error(p, id, err)
-        }
-    }
-
-    <span class="kw">fn </span>inject_listener_closed(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: ListenerId, reason: <span class="prelude-ty">Result</span>&lt;(), <span class="kw-2">&amp;</span>io::Error&gt;) {
-        <span class="kw">for </span>(p, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
-            NetworkBehaviour::inject_listener_closed(p, id, reason)
-        }
     }
 
     <span class="kw">fn </span>poll(
