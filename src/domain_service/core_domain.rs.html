@@ -296,9 +296,36 @@
 <a href="#296" id="296">296</a>
 <a href="#297" id="297">297</a>
 <a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
 </pre><pre class="rust"><code><span class="kw">use crate</span>::{new_partial, Configuration, FullBackend, FullClient, FullPool};
+<span class="kw">use </span>cross_domain_message_gossip::DomainTxPoolSink;
 <span class="kw">use </span>domain_client_executor::{CoreExecutor, CoreGossipMessageValidator, EssentialExecutorParams};
 <span class="kw">use </span>domain_client_executor_gossip::ExecutorGossipParams;
+<span class="kw">use </span>domain_client_message_relayer::GossipMessageSink;
 <span class="kw">use </span>domain_runtime_primitives::opaque::Block;
 <span class="kw">use </span>domain_runtime_primitives::{AccountId, Balance, DomainCoreApi, Hash, RelayerId};
 <span class="kw">use </span>futures::channel::mpsc;
@@ -371,7 +398,7 @@
     <span class="doccomment">/// Code executor.
     </span><span class="kw">pub </span>code_executor: Arc&lt;CodeExecutor&gt;,
     <span class="doccomment">/// Network.
-    </span><span class="kw">pub </span>network: Arc&lt;sc_network::NetworkService&lt;Block, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
+    </span><span class="kw">pub </span>network: Arc&lt;NetworkService&lt;Block, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
     <span class="doccomment">/// RPCHandlers to make RPC queries.
     </span><span class="kw">pub </span>rpc_handlers: sc_service::RpcHandlers,
     <span class="doccomment">/// Network starter.
@@ -379,6 +406,8 @@
     <span class="doccomment">/// Executor.
     </span><span class="kw">pub </span>executor:
         CoreDomainExecutor&lt;SBlock, PBlock, SClient, PClient, RuntimeApi, ExecutorDispatch&gt;,
+    <span class="doccomment">/// Transaction pool sink
+    </span><span class="kw">pub </span>tx_pool_sink: DomainTxPoolSink,
 }
 
 <span class="doccomment">/// Start a node with the given parachain `Configuration` and relay chain `Configuration`.
@@ -406,6 +435,7 @@
     imported_block_notification_stream: IBNS,
     new_slot_notification_stream: NSNS,
     block_import_throttling_buffer_size: u32,
+    gossip_message_sink: GossipMessageSink,
 ) -&gt; sc_service::error::Result&lt;
     NewFull&lt;
         Arc&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
@@ -421,10 +451,12 @@
 <span class="kw">where
     </span>PBlock: BlockT,
     SBlock: BlockT,
+    SBlock::Hash: Into&lt;Hash&gt;,
     SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + ProofProvider&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
     SClient::Api: DomainCoreApi&lt;SBlock, AccountId&gt;
         + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;
-        + sp_domain_tracker::DomainTrackerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;,
+        + sp_domain_tracker::DomainTrackerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
+        + RelayerApi&lt;SBlock, RelayerId, NumberFor&lt;SBlock&gt;&gt;,
     PClient: HeaderBackend&lt;PBlock&gt;
         + BlockBackend&lt;PBlock&gt;
         + ProvideRuntimeApi&lt;PBlock&gt;
@@ -572,6 +604,7 @@
             system_domain_client,
             secondary_network,
             network.clone(),
+            gossip_message_sink,
         );
 
         spawn_essential.spawn_essential_blocking(
@@ -580,6 +613,22 @@
             Box::pin(relayer_worker),
         );
     }
+
+    <span class="kw">let </span>(msg_sender, msg_receiver) = tracing_unbounded(<span class="string">&quot;core_domain_message_channel&quot;</span>);
+
+    <span class="comment">// start cross domain message listener for system domain
+    </span><span class="kw">let </span>core_domain_listener = cross_domain_message_gossip::start_domain_message_listener(
+        domain_id,
+        client.clone(),
+        params.transaction_pool.clone(),
+        msg_receiver,
+    );
+
+    spawn_essential.spawn_essential_blocking(
+        <span class="string">&quot;core-domain-message-listener&quot;</span>,
+        <span class="prelude-val">None</span>,
+        Box::pin(core_domain_listener),
+    );
 
     <span class="kw">let </span>new_full = NewFull {
         task_manager,
@@ -590,6 +639,7 @@
         rpc_handlers,
         network_starter,
         executor,
+        tx_pool_sink: msg_sender,
     };
 
     <span class="prelude-val">Ok</span>(new_full)

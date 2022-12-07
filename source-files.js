@@ -1,5 +1,6 @@
 var sourcesIndex = JSON.parse('{\
 "core_payments_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
+"cross_domain_message_gossip":["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
 "domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_bundle_producer.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","merkle_tree.rs","system_bundle_processor.rs","system_bundle_producer.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs"]],\
