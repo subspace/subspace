@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":[["AuxPieceCache","Cache of pieces in aux storage"]],"trait":[["PieceCache","Caching layer for pieces produced during archiving to make them available for some time after they were produced."]]};

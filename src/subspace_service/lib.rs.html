@@ -674,6 +674,41 @@
 <a href="#674" id="674">674</a>
 <a href="#675" id="675">675</a>
 <a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -694,10 +729,12 @@
 </span><span class="attr">#![feature(type_changing_struct_update)]
 
 </span><span class="kw">mod </span>dsn;
+<span class="kw">pub mod </span>piece_cache;
 <span class="kw">mod </span>pool;
 <span class="kw">pub mod </span>rpc;
 
 <span class="kw">use </span><span class="kw">crate</span>::dsn::create_dsn_instance;
+<span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
 <span class="kw">pub use </span><span class="kw">crate</span>::pool::FullPool;
 <span class="kw">use </span>derive_more::{Deref, DerefMut, Into};
 <span class="kw">use </span>domain_runtime_primitives::Hash <span class="kw">as </span>DomainHash;
@@ -718,7 +755,6 @@
     RewardSigningNotification, SubspaceLink, SubspaceParams,
 };
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
-<span class="kw">use </span>sc_piece_cache::{AuxPieceCache, PieceCache};
 <span class="kw">use </span>sc_service::error::Error <span class="kw">as </span>ServiceError;
 <span class="kw">use </span>sc_service::{
     Configuration, NetworkStarter, PartialComponents, SpawnTaskHandle, SpawnTasksParams,
@@ -744,6 +780,8 @@
 <span class="kw">use </span>subspace_core_primitives::PIECES_IN_SEGMENT;
 <span class="kw">use </span>subspace_fraud_proof::VerifyFraudProof;
 <span class="kw">use </span>subspace_networking::libp2p::multiaddr::Protocol;
+<span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
+<span class="kw">use </span>subspace_networking::Node;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
 <span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Hash, Index <span class="kw">as </span>Nonce};
 <span class="kw">use </span>tracing::{error, info, Instrument};
@@ -800,6 +838,26 @@
     Hash,
 &gt;;
 
+<span class="doccomment">/// Subspace networking instantiation variant
+</span><span class="attr">#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+</span><span class="kw">pub enum </span>SubspaceNetworking {
+    <span class="doccomment">/// Use existing networking instance
+    </span>Reuse {
+        <span class="doccomment">/// Node instance
+        </span>node: Node,
+        <span class="doccomment">/// Bootstrap nodes used (that can be also sent to the farmer over RPC)
+        </span>bootstrap_nodes: Vec&lt;Multiaddr&gt;,
+    },
+    <span class="doccomment">/// Networking must be instantiated internally
+    </span>Create {
+        <span class="doccomment">/// Configuration to use for DSN instantiation
+        </span>config: DsnConfig,
+        <span class="doccomment">/// Piece cache size in bytes
+        </span>piece_cache_size: u64,
+    },
+}
+
 <span class="doccomment">/// Subspace-specific service configuration.
 </span><span class="attr">#[derive(Debug, Deref, DerefMut, Into)]
 </span><span class="kw">pub struct </span>SubspaceConfiguration {
@@ -811,10 +869,8 @@
     <span class="doccomment">/// Whether slot notifications need to be present even if node is not responsible for block
     /// authoring.
     </span><span class="kw">pub </span>force_new_slot_notifications: bool,
-    <span class="doccomment">/// Subspace networking configuration (for DSN).
-    </span><span class="kw">pub </span>dsn_config: DsnConfig,
-    <span class="doccomment">/// Piece cache size in bytes.
-    </span><span class="kw">pub </span>piece_cache_size: u64,
+    <span class="doccomment">/// Subspace networking (DSN).
+    </span><span class="kw">pub </span>subspace_networking: SubspaceNetworking,
 }
 
 <span class="doccomment">/// Creates `PartialComponents` for Subspace client.
@@ -1023,8 +1079,22 @@
 &gt;;
 
 <span class="doccomment">/// Builds a new service for a full client.
-</span><span class="kw">pub async fn </span>new_full&lt;RuntimeApi, ExecutorDispatch&gt;(
+</span><span class="attr">#[allow(clippy::type_complexity)]
+</span><span class="kw">pub async fn </span>new_full&lt;RuntimeApi, ExecutorDispatch, I&gt;(
     config: SubspaceConfiguration,
+    partial_components: PartialComponents&lt;
+        FullClient&lt;RuntimeApi, ExecutorDispatch&gt;,
+        FullBackend,
+        FullSelectChain,
+        DefaultImportQueue&lt;Block, FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
+        FullPool&lt;
+            Block,
+            FullClient&lt;RuntimeApi, ExecutorDispatch&gt;,
+            FraudProofVerifier&lt;RuntimeApi, ExecutorDispatch&gt;,
+        &gt;,
+        (I, SubspaceLink&lt;Block&gt;, <span class="prelude-ty">Option</span>&lt;Telemetry&gt;),
+    &gt;,
+
     enable_rpc_extensions: bool,
     block_proposal_slot_portion: SlotProportion,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;FullNode&lt;RuntimeApi, ExecutorDispatch&gt;, Error&gt;
@@ -1046,6 +1116,13 @@
         + PreValidationObjectApi&lt;Block, domain_runtime_primitives::Hash&gt;
         + SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
+    I: BlockImport&lt;
+            Block,
+            Error = ConsensusError,
+            Transaction = TransactionFor&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;, Block&gt;,
+        &gt; + Send
+        + Sync
+        + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>PartialComponents {
         client,
@@ -1056,105 +1133,98 @@
         select_chain,
         transaction_pool,
         other: (block_import, subspace_link, <span class="kw-2">mut </span>telemetry),
-    } = new_partial::&lt;RuntimeApi, ExecutorDispatch&gt;(<span class="kw-2">&amp;</span>config)<span class="question-mark">?</span>;
+    } = partial_components;
 
-    <span class="kw">let </span>piece_cache = AuxPieceCache::new(client.clone(), config.piece_cache_size);
+    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking.clone() {
+        SubspaceNetworking::Reuse {
+            node,
+            bootstrap_nodes,
+        } =&gt; (node, bootstrap_nodes),
+        SubspaceNetworking::Create {
+            config,
+            piece_cache_size,
+        } =&gt; {
+            <span class="kw">let </span>piece_cache = PieceCache::new(client.clone(), piece_cache_size);
 
-    <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces
-    </span>task_manager
-        .spawn_handle()
-        .spawn_blocking(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
-            <span class="kw">let </span>piece_cache = piece_cache.clone();
-            <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
-                .archived_segment_notification_stream()
-                .subscribe();
+            <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces
+            </span>task_manager
+                .spawn_handle()
+                .spawn_blocking(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
+                    <span class="kw">let </span>piece_cache = piece_cache.clone();
+                    <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
+                        .archived_segment_notification_stream()
+                        .subscribe();
 
-            <span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>(archived_segment_notification) =
-                    archived_segment_notification_stream.next().<span class="kw">await
-                </span>{
-                    <span class="kw">let </span>segment_index = archived_segment_notification
-                        .archived_segment
-                        .root_block
-                        .segment_index();
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_cache.add_pieces(
-                        segment_index * u64::from(PIECES_IN_SEGMENT),
-                        <span class="kw-2">&amp;</span>archived_segment_notification.archived_segment.pieces,
-                    ) {
-                        <span class="macro">error!</span>(
-                            %segment_index,
-                            %error,
-                            <span class="string">&quot;Failed to store pieces for segment in cache&quot;
-                        </span>);
+                    <span class="kw">async move </span>{
+                        <span class="kw">while let </span><span class="prelude-val">Some</span>(archived_segment_notification) =
+                            archived_segment_notification_stream.next().<span class="kw">await
+                        </span>{
+                            <span class="kw">let </span>segment_index = archived_segment_notification
+                                .archived_segment
+                                .root_block
+                                .segment_index();
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_cache.add_pieces(
+                                segment_index * u64::from(PIECES_IN_SEGMENT),
+                                <span class="kw-2">&amp;</span>archived_segment_notification.archived_segment.pieces,
+                            ) {
+                                <span class="macro">error!</span>(
+                                    %segment_index,
+                                    %error,
+                                    <span class="string">&quot;Failed to store pieces for segment in cache&quot;
+                                </span>);
+                            }
+                        }
                     }
-                }
+                });
+
+            <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) =
+                create_dsn_instance::&lt;Block, <span class="kw">_</span>&gt;(config.clone(), piece_cache.clone())
+                    .instrument(<span class="macro">tracing::info_span!</span>(
+                        sc_tracing::logging::PREFIX_LOG_SPAN,
+                        name = <span class="string">&quot;DSN&quot;
+                    </span>))
+                    .<span class="kw">await</span><span class="question-mark">?</span>;
+
+            <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
+
+            task_manager.spawn_essential_handle().spawn_essential(
+                <span class="string">&quot;node-runner&quot;</span>,
+                <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
+                Box::pin(
+                    <span class="kw">async move </span>{
+                        node_runner.run().<span class="kw">await</span>;
+                    }
+                    .in_current_span(),
+                ),
+            );
+
+            (node, config.bootstrap_nodes)
+        }
+    };
+
+    <span class="kw">let </span>dsn_archiving_fut = start_dsn_archiver(
+        subspace_link
+            .archived_segment_notification_stream()
+            .subscribe(),
+        node.clone(),
+        task_manager.spawn_handle(),
+    );
+
+    task_manager.spawn_essential_handle().spawn_essential(
+        <span class="string">&quot;archiver&quot;</span>,
+        <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
+        Box::pin(
+            <span class="kw">async move </span>{
+                dsn_archiving_fut.<span class="kw">await</span>;
             }
-        });
+            .in_current_span(),
+        ),
+    );
 
     <span class="kw">let </span>dsn_bootstrap_nodes = {
-        <span class="kw">let </span>span = <span class="macro">tracing::info_span!</span>(sc_tracing::logging::PREFIX_LOG_SPAN, name = <span class="string">&quot;DSN&quot;</span>);
-        <span class="kw">let </span>_enter = span.enter();
-
-        <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) = create_dsn_instance::&lt;Block, <span class="kw">_</span>&gt;(
-            config.dsn_config.clone(),
-            piece_cache.clone(),
-            Arc::new({
-                <span class="kw">let </span>piece_cache = piece_cache.clone();
-
-                <span class="kw">move </span>|piece_index| piece_cache.get_piece(<span class="kw-2">*</span>piece_index).ok().flatten()
-            }),
-            Arc::new({
-                <span class="kw">let </span>client = client.clone();
-
-                <span class="kw">move </span>|| {
-                    <span class="kw">let </span>best_block_id = BlockId::Hash(client.info().best_hash);
-                    <span class="kw">let </span>total_pieces = client
-                        .runtime_api()
-                        .total_pieces(<span class="kw-2">&amp;</span>best_block_id)
-                        .expect(<span class="string">&quot;Can&#39;t receive total pieces number.&quot;</span>);
-
-                    <span class="comment">// segment index with a zero-based index-shift
-                    </span>(total_pieces.get() / PIECES_IN_SEGMENT <span class="kw">as </span>u64).saturating_sub(<span class="number">1</span>)
-                }
-            }),
-        )
-        .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
-
-        task_manager.spawn_essential_handle().spawn_essential(
-            <span class="string">&quot;node-runner&quot;</span>,
-            <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-            Box::pin(
-                <span class="kw">async move </span>{
-                    node_runner.run().<span class="kw">await</span>;
-                }
-                .in_current_span(),
-            ),
-        );
-
-        <span class="kw">let </span>dsn_archiving_fut = start_dsn_archiver(
-            subspace_link
-                .archived_segment_notification_stream()
-                .subscribe(),
-            node.clone(),
-            task_manager.spawn_handle(),
-        );
-
-        task_manager.spawn_essential_handle().spawn_essential(
-            <span class="string">&quot;archiver&quot;</span>,
-            <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-            Box::pin(
-                <span class="kw">async move </span>{
-                    dsn_archiving_fut.<span class="kw">await</span>;
-                }
-                .in_current_span(),
-            ),
-        );
-
         <span class="comment">// Fall back to node itself as bootstrap node for DSN so farmer always has someone to
         // connect to
-        </span><span class="kw">if </span>config.dsn_config.bootstrap_nodes.is_empty() {
+        </span><span class="kw">if </span>bootstrap_nodes.is_empty() {
             <span class="kw">let </span>(node_address_sender, node_address_receiver) = oneshot::channel();
             <span class="kw">let </span>_handler = node.on_new_listener(Arc::new({
                 <span class="kw">let </span>node_address_sender = Mutex::new(<span class="prelude-val">Some</span>(node_address_sender));
@@ -1192,7 +1262,7 @@
 
             node_listeners
         } <span class="kw">else </span>{
-            config.dsn_config.bootstrap_nodes.clone()
+            bootstrap_nodes.clone()
         }
     };
 
