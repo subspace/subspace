@@ -885,6 +885,17 @@
 <a href="#885" id="885">885</a>
 <a href="#886" id="886">886</a>
 <a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -987,8 +998,8 @@
         </span>BadSignature,
         <span class="doccomment">/// Invalid vrf proof.
         </span>BadVrfProof,
-        <span class="doccomment">/// Can not verify the state root as the receipt is not been on the primary chain.
-        </span>StateRootUnverifiable,
+        <span class="doccomment">/// State of a system domain block is missing.
+        </span>StateRootNotFound,
         <span class="doccomment">/// Invalid state root in the proof of election.
         </span>BadStateRoot,
         <span class="doccomment">/// The type of state root is not H256.
@@ -1466,9 +1477,18 @@
             ..
         } = proof_of_election;
 
-        <span class="kw">if </span>!block_number.is_zero() {
-            <span class="kw">let </span>block_number = T::BlockNumber::from(<span class="kw-2">*</span>block_number);
+        <span class="kw">let </span>block_number = T::BlockNumber::from(<span class="kw-2">*</span>block_number);
 
+        <span class="kw">let </span>new_best_receipt_number = receipts
+            .iter()
+            .map(|receipt| receipt.primary_number)
+            .max()
+            .unwrap_or_default()
+            .max(<span class="self">Self</span>::head_receipt_number());
+
+        <span class="kw">let </span>state_root_verifiable = block_number &lt;= new_best_receipt_number;
+
+        <span class="kw">if </span>!block_number.is_zero() &amp;&amp; state_root_verifiable {
             <span class="kw">let </span>maybe_state_root = receipts.iter().find_map(|receipt| {
                 receipt.trace.last().and_then(|state_root| {
                     <span class="kw">if </span>(receipt.primary_number, receipt.domain_hash) == (block_number, <span class="kw-2">*</span>block_hash)
@@ -1483,7 +1503,7 @@
             <span class="kw">let </span>expected_state_root = <span class="kw">match </span>maybe_state_root {
                 <span class="prelude-val">Some</span>(v) =&gt; v,
                 <span class="prelude-val">None </span>=&gt; StateRoots::&lt;T&gt;::get(block_number, block_hash)
-                    .ok_or(BundleError::StateRootUnverifiable)<span class="question-mark">?</span>,
+                    .ok_or(BundleError::StateRootNotFound)<span class="question-mark">?</span>,
             };
 
             <span class="kw">if </span>expected_state_root != <span class="kw-2">*</span>state_root {
@@ -1500,7 +1520,8 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>validate_execution_receipts(
+    <span class="doccomment">/// Common validation of receipts in all kinds of domain bundle.
+    </span><span class="kw">fn </span>validate_execution_receipts(
         execution_receipts: <span class="kw-2">&amp;</span>[ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ExecutionReceiptError&gt; {
         <span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;T&gt;::current_block_number();
@@ -1519,8 +1540,6 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(ExecutionReceiptError::Unsorted);
         }
 
-        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get();
-
         <span class="kw">for </span>execution_receipt <span class="kw">in </span>execution_receipts {
             <span class="comment">// Due to `initialize_block` is skipped while calling the runtime api, the block
             // hash mapping for last block is unknown to the transaction pool, but this info
@@ -1535,17 +1554,6 @@
             {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(ExecutionReceiptError::UnknownBlock);
             }
-
-            <span class="comment">// Ensure the receipt is not too new.
-            </span><span class="kw">let </span>primary_number = execution_receipt.primary_number;
-
-            <span class="kw">if </span>primary_number == current_block_number
-                || primary_number &gt; best_number + T::MaximumReceiptDrift::get()
-            {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ExecutionReceiptError::TooFarInFuture);
-            }
-
-            best_number += One::one();
         }
 
         <span class="prelude-val">Ok</span>(())
@@ -1575,11 +1583,25 @@
         )
         .map_err(|<span class="kw">_</span>| BundleError::BadVrfProof)<span class="question-mark">?</span>;
 
+        <span class="self">Self</span>::validate_execution_receipts(<span class="kw-2">&amp;</span>bundle.receipts).map_err(BundleError::Receipt)<span class="question-mark">?</span>;
+
         <span class="kw">if </span>proof_of_election.domain_id.is_system() {
             <span class="self">Self</span>::validate_system_bundle_solution(<span class="kw-2">&amp;</span>bundle.receipts, proof_of_election)<span class="question-mark">?</span>;
-        }
 
-        <span class="self">Self</span>::validate_execution_receipts(<span class="kw-2">&amp;</span>bundle.receipts).map_err(BundleError::Receipt)<span class="question-mark">?</span>;
+            <span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;T&gt;::current_block_number();
+
+            <span class="kw">let </span>(<span class="kw">_</span>, best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get();
+            <span class="kw">let </span>max_allowed = best_number + T::MaximumReceiptDrift::get();
+
+            <span class="kw">for </span>execution_receipt <span class="kw">in </span><span class="kw-2">&amp;</span>bundle.receipts {
+                <span class="kw">let </span>primary_number = execution_receipt.primary_number;
+
+                <span class="comment">// Ensure the receipt is not too new.
+                </span><span class="kw">if </span>primary_number == current_block_number || primary_number &gt; max_allowed {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::Receipt(ExecutionReceiptError::TooFarInFuture));
+                }
+            }
+        }
 
         <span class="prelude-val">Ok</span>(())
     }

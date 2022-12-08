@@ -1096,6 +1096,29 @@
 <a href="#1096" id="1096">1096</a>
 <a href="#1097" id="1097">1097</a>
 <a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1642,8 +1665,8 @@
         <span class="doccomment">/// Invalid core domain bundle solution.
         </span>BadBundleElectionSolution,
 
-        <span class="doccomment">/// Cannot verify the core domain state root.
-        </span>StateRootUnverifiable,
+        <span class="doccomment">/// State root of a core domain block is missing.
+        </span>StateRootNotFound,
 
         <span class="doccomment">/// Invalid core domain state root.
         </span>BadStateRoot,
@@ -1653,6 +1676,9 @@
 
         <span class="doccomment">/// A missing core domain parent receipt.
         </span>MissingParentReceipt,
+
+        <span class="doccomment">/// Core domain receipt is too far in the future.
+        </span>ReceiptTooFarInFuture,
     }
 
     <span class="attr">#[pallet::event]
@@ -1875,17 +1901,24 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
         };
 
-        <span class="kw">let </span><span class="kw-2">mut </span>best_number = <span class="self">Self</span>::head_receipt_number(signed_opaque_bundle.domain_id());
+        <span class="kw">let </span>head_receipt_number = <span class="self">Self</span>::head_receipt_number(signed_opaque_bundle.domain_id());
+        <span class="kw">let </span>max_allowed = head_receipt_number + T::MaximumReceiptDrift::get();
+
+        <span class="kw">let </span><span class="kw-2">mut </span>new_best_number = head_receipt_number;
         <span class="kw">for </span>receipt <span class="kw">in </span><span class="kw-2">&amp;</span>signed_opaque_bundle.bundle.receipts {
             <span class="comment">// Non-best receipt
-            </span><span class="kw">if </span>receipt.primary_number &lt;= best_number {
+            </span><span class="kw">if </span>receipt.primary_number &lt;= new_best_number {
                 <span class="kw">continue</span>;
             <span class="comment">// New nest receipt.
-            </span>} <span class="kw">else if </span>receipt.primary_number == best_number + One::one() {
-                best_number += One::one();
+            </span>} <span class="kw">else if </span>receipt.primary_number == new_best_number + One::one() {
+                new_best_number += One::one();
             <span class="comment">// Missing receipt.
             </span>} <span class="kw">else </span>{
                 <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::MissingParentReceipt);
+            }
+
+            <span class="kw">if </span>receipt.primary_number &gt; max_allowed {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::ReceiptTooFarInFuture);
             }
         }
 
@@ -1907,7 +1940,20 @@
 
         <span class="kw">let </span>core_block_number = T::BlockNumber::from(<span class="kw-2">*</span>core_block_number);
 
-        <span class="kw">if </span>!core_block_number.is_zero() {
+        <span class="comment">// Considering this senario, a core domain stalls at block 1 for a long time and then
+        // resumes at block 1000, assuming `MaximumReceiptDrift` is 128, the range of receipts
+        // in the new bundle created at block 1000 would be [1, 1+128], thus the state root
+        // corresponding to block 1000, i.e., `core_state_root`, can not be verified, in which
+        // case the `core_state_root` verification will be skipped.
+        //
+        // We can not simply remove the `MaximumReceiptDrift` constraint as it&#39;s unwise to
+        // fill in an indefinite number of missing receipts in one single bundle when the
+        // domain resumes because the computation resource per block is limited anyway.
+        //
+        // This edge case does not impact the security due to the fraud-proof mecahnism.
+        </span><span class="kw">let </span>state_root_verifiable = core_block_number &lt;= new_best_number;
+
+        <span class="kw">if </span>!core_block_number.is_zero() &amp;&amp; state_root_verifiable {
             <span class="kw">let </span>maybe_state_root =
                 signed_opaque_bundle
                     .bundle
@@ -1928,7 +1974,7 @@
             <span class="kw">let </span>expected_state_root = <span class="kw">match </span>maybe_state_root {
                 <span class="prelude-val">Some</span>(v) =&gt; v,
                 <span class="prelude-val">None </span>=&gt; StateRoots::&lt;T&gt;::get((domain_id, core_block_number, core_block_hash))
-                    .ok_or(Error::&lt;T&gt;::StateRootUnverifiable)<span class="question-mark">?</span>,
+                    .ok_or(Error::&lt;T&gt;::StateRootNotFound)<span class="question-mark">?</span>,
             };
 
             <span class="kw">if </span>expected_state_root != <span class="kw-2">*</span>core_state_root {
