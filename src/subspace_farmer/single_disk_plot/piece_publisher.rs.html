@@ -152,8 +152,6 @@
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
-<a href="#155" id="155">155</a>
-<a href="#156" id="156">156</a>
 </pre><pre class="rust"><code><span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::ExponentialBackoff;
 <span class="kw">use </span>futures::stream::FuturesUnordered;
@@ -161,8 +159,6 @@
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>std::collections::BTreeSet;
 <span class="kw">use </span>std::error::Error;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
@@ -186,13 +182,19 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>PieceSectorPublisher {
     dsn_node: Node,
     cancelled: Arc&lt;AtomicBool&gt;,
+    semaphore: Arc&lt;Semaphore&gt;,
 }
 
 <span class="kw">impl </span>PieceSectorPublisher {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(dsn_node: Node, cancelled: Arc&lt;AtomicBool&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+        dsn_node: Node,
+        cancelled: Arc&lt;AtomicBool&gt;,
+        semaphore: Arc&lt;Semaphore&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             dsn_node,
             cancelled,
+            semaphore,
         }
     }
 
@@ -210,15 +212,13 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>publish_pieces(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_indexes: Vec&lt;PieceIndex&gt;,
-        piece_publisher_batch_size: usize,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
-        <span class="kw">let </span>semaphore = Arc::new(Semaphore::new(piece_publisher_batch_size));
-
         <span class="kw">let </span><span class="kw-2">mut </span>pieces_receiving_futures = piece_indexes
             .iter()
             .map(|piece_index| {
                 Box::pin(<span class="kw">async </span>{
-                    <span class="kw">let </span>_permit = semaphore
+                    <span class="kw">let </span>_permit = <span class="self">self
+                        </span>.semaphore
                         .acquire()
                         .<span class="kw">await
                         </span>.expect(<span class="string">&quot;Should be valid on non-closed semaphore&quot;</span>);
@@ -253,12 +253,8 @@
             <span class="self">self</span>.check_cancellation()
                 .map_err(backoff::Error::Permanent)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>publish_timeout_result: <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw">_</span>&gt;, Elapsed&gt; = timeout(
-                PUT_PIECE_TIMEOUT,
-                Box::pin(<span class="self">self</span>.publish_single_piece(piece_index))
-                    <span class="kw">as </span>Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="kw">_</span>&gt; + Send&gt;&gt;,
-            )
-            .<span class="kw">await</span>;
+            <span class="kw">let </span>publish_timeout_result: <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw">_</span>&gt;, Elapsed&gt; =
+                timeout(PUT_PIECE_TIMEOUT, <span class="self">self</span>.publish_single_piece(piece_index)).<span class="kw">await</span>;
 
             <span class="kw">if let </span><span class="prelude-val">Ok</span>(publish_result) = publish_timeout_result {
                 <span class="kw">if </span>publish_result.is_ok() {

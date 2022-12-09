@@ -709,6 +709,15 @@
 <a href="#709" id="709">709</a>
 <a href="#710" id="710">710</a>
 <a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -848,6 +857,8 @@
         </span>node: Node,
         <span class="doccomment">/// Bootstrap nodes used (that can be also sent to the farmer over RPC)
         </span>bootstrap_nodes: Vec&lt;Multiaddr&gt;,
+        <span class="doccomment">/// Defines piece publishing batch size
+        </span>piece_publisher_batch_size: usize,
     },
     <span class="doccomment">/// Networking must be instantiated internally
     </span>Create {
@@ -1135,72 +1146,78 @@
         other: (block_import, subspace_link, <span class="kw-2">mut </span>telemetry),
     } = partial_components;
 
-    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking.clone() {
-        SubspaceNetworking::Reuse {
-            node,
-            bootstrap_nodes,
-        } =&gt; (node, bootstrap_nodes),
-        SubspaceNetworking::Create {
-            config,
-            piece_cache_size,
-        } =&gt; {
-            <span class="kw">let </span>piece_cache = PieceCache::new(client.clone(), piece_cache_size);
+    <span class="kw">let </span>(node, bootstrap_nodes, piece_publisher_batch_size) =
+        <span class="kw">match </span>config.subspace_networking.clone() {
+            SubspaceNetworking::Reuse {
+                node,
+                bootstrap_nodes,
+                piece_publisher_batch_size,
+            } =&gt; (node, bootstrap_nodes, piece_publisher_batch_size),
+            SubspaceNetworking::Create {
+                config,
+                piece_cache_size,
+            } =&gt; {
+                <span class="kw">let </span>piece_cache = PieceCache::new(client.clone(), piece_cache_size);
 
-            <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces
-            </span>task_manager
-                .spawn_handle()
-                .spawn_blocking(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
-                    <span class="kw">let </span>piece_cache = piece_cache.clone();
-                    <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
-                        .archived_segment_notification_stream()
-                        .subscribe();
+                <span class="comment">// Start before archiver below, so we don&#39;t have potential race condition and miss pieces
+                </span>task_manager
+                    .spawn_handle()
+                    .spawn_blocking(<span class="string">&quot;subspace-piece-cache&quot;</span>, <span class="prelude-val">None</span>, {
+                        <span class="kw">let </span>piece_cache = piece_cache.clone();
+                        <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_notification_stream = subspace_link
+                            .archived_segment_notification_stream()
+                            .subscribe();
 
-                    <span class="kw">async move </span>{
-                        <span class="kw">while let </span><span class="prelude-val">Some</span>(archived_segment_notification) =
-                            archived_segment_notification_stream.next().<span class="kw">await
-                        </span>{
-                            <span class="kw">let </span>segment_index = archived_segment_notification
-                                .archived_segment
-                                .root_block
-                                .segment_index();
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_cache.add_pieces(
-                                segment_index * u64::from(PIECES_IN_SEGMENT),
-                                <span class="kw-2">&amp;</span>archived_segment_notification.archived_segment.pieces,
-                            ) {
-                                <span class="macro">error!</span>(
-                                    %segment_index,
-                                    %error,
-                                    <span class="string">&quot;Failed to store pieces for segment in cache&quot;
-                                </span>);
+                        <span class="kw">async move </span>{
+                            <span class="kw">while let </span><span class="prelude-val">Some</span>(archived_segment_notification) =
+                                archived_segment_notification_stream.next().<span class="kw">await
+                            </span>{
+                                <span class="kw">let </span>segment_index = archived_segment_notification
+                                    .archived_segment
+                                    .root_block
+                                    .segment_index();
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_cache.add_pieces(
+                                    segment_index * u64::from(PIECES_IN_SEGMENT),
+                                    <span class="kw-2">&amp;</span>archived_segment_notification.archived_segment.pieces,
+                                ) {
+                                    <span class="macro">error!</span>(
+                                        %segment_index,
+                                        %error,
+                                        <span class="string">&quot;Failed to store pieces for segment in cache&quot;
+                                    </span>);
+                                }
                             }
                         }
-                    }
-                });
+                    });
 
-            <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) =
-                create_dsn_instance::&lt;Block, <span class="kw">_</span>&gt;(config.clone(), piece_cache.clone())
-                    .instrument(<span class="macro">tracing::info_span!</span>(
-                        sc_tracing::logging::PREFIX_LOG_SPAN,
-                        name = <span class="string">&quot;DSN&quot;
-                    </span>))
-                    .<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) =
+                    create_dsn_instance::&lt;Block, <span class="kw">_</span>&gt;(config.clone(), piece_cache.clone())
+                        .instrument(<span class="macro">tracing::info_span!</span>(
+                            sc_tracing::logging::PREFIX_LOG_SPAN,
+                            name = <span class="string">&quot;DSN&quot;
+                        </span>))
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
 
-            <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
+                <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
 
-            task_manager.spawn_essential_handle().spawn_essential(
-                <span class="string">&quot;node-runner&quot;</span>,
-                <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-                Box::pin(
-                    <span class="kw">async move </span>{
-                        node_runner.run().<span class="kw">await</span>;
-                    }
-                    .in_current_span(),
-                ),
-            );
+                task_manager.spawn_essential_handle().spawn_essential(
+                    <span class="string">&quot;node-runner&quot;</span>,
+                    <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
+                    Box::pin(
+                        <span class="kw">async move </span>{
+                            node_runner.run().<span class="kw">await</span>;
+                        }
+                        .in_current_span(),
+                    ),
+                );
 
-            (node, config.bootstrap_nodes)
-        }
-    };
+                (
+                    node,
+                    config.bootstrap_nodes,
+                    config.piece_publisher_batch_size,
+                )
+            }
+        };
 
     <span class="kw">let </span>dsn_archiving_fut = start_dsn_archiver(
         subspace_link
@@ -1208,6 +1225,7 @@
             .subscribe(),
         node.clone(),
         task_manager.spawn_handle(),
+        piece_publisher_batch_size,
     );
 
     task_manager.spawn_essential_handle().spawn_essential(

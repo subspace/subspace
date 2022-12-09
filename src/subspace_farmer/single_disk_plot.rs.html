@@ -1446,10 +1446,10 @@
     </span><span class="kw">pub </span>reward_address: PublicKey,
     <span class="doccomment">/// Optional DSN Node.
     </span><span class="kw">pub </span>dsn_node: Node,
-    <span class="doccomment">/// Defines size for the pieces batch of the piece receiving process.
-    </span><span class="kw">pub </span>piece_receiver_batch_size: usize,
-    <span class="doccomment">/// Defines size for the pieces batch of the piece publishing process.
-    </span><span class="kw">pub </span>piece_publisher_batch_size: usize,
+    <span class="doccomment">/// Semaphore to limit concurrency of piece receiving process.
+    </span><span class="kw">pub </span>piece_receiver_semaphore: Arc&lt;tokio::sync::Semaphore&gt;,
+    <span class="doccomment">/// Semaphore to limit concurrency of piece publishing process.
+    </span><span class="kw">pub </span>piece_publisher_semaphore: Arc&lt;tokio::sync::Semaphore&gt;,
 }
 
 <span class="doccomment">/// Errors happening when trying to create/open single disk plot
@@ -1643,8 +1643,8 @@
             rpc_client,
             reward_address,
             dsn_node,
-            piece_receiver_batch_size,
-            piece_publisher_batch_size,
+            piece_publisher_semaphore,
+            piece_receiver_semaphore,
         } = options;
 
         <span class="comment">// TODO: Account for plot overhead
@@ -1823,7 +1823,7 @@
                 <span class="kw">let </span>rpc_client = rpc_client.clone();
                 <span class="kw">let </span>error_sender = Arc::clone(<span class="kw-2">&amp;</span>error_sender);
                 <span class="kw">let </span>piece_publisher =
-                    PieceSectorPublisher::new(dsn_node.clone(), shutting_down.clone());
+                    PieceSectorPublisher::new(dsn_node.clone(), shutting_down.clone(), piece_publisher_semaphore);
 
                 <span class="kw">move </span>|| {
                     <span class="kw">let </span>_tokio_handle_guard = handle.enter();
@@ -1884,7 +1884,7 @@
                                 <span class="kw-2">&amp;</span>sector_codec,
                                 sector,
                                 sector_metadata,
-                                piece_receiver_batch_size,
+                                <span class="kw-2">&amp;</span>piece_receiver_semaphore,
                             )) {
                                 <span class="prelude-val">Ok</span>(plotted_sector) =&gt; {
                                     <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Sector plotted&quot;</span>);
@@ -1913,7 +1913,7 @@
 
                                 <span class="kw">async move </span>{
                                     <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = piece_publisher
-                                        .publish_pieces(plotted_sector.piece_indexes, piece_publisher_batch_size)
+                                        .publish_pieces(plotted_sector.piece_indexes)
                                         .<span class="kw">await
                                     </span>{
                                         <span class="macro">warn!</span>(%sector_index, %error, <span class="string">&quot;Failed to publish pieces to DSN&quot;</span>);
