@@ -260,6 +260,24 @@
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
 <a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
 <span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::ExponentialBackoff;
@@ -270,6 +288,7 @@
 <span class="kw">use </span>sp_core::traits::SpawnNamed;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_archiving::archiver::ArchivedSegment;
@@ -282,7 +301,7 @@
 <span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tokio::time::error::Elapsed;
 <span class="kw">use </span>tokio::time::timeout;
-<span class="kw">use </span>tracing::{debug, error, info, trace, Instrument};
+<span class="kw">use </span>tracing::{debug, error, info, trace, warn, Instrument};
 
 <span class="doccomment">/// Max time allocated for putting piece from DSN before attempt is considered to fail
 </span><span class="kw">const </span>PUBLISH_PIECE_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
@@ -371,12 +390,14 @@
     node: Node,
     spawner: Spawner,
     piece_publisher_batch_size: usize,
+    segment_publish_concurrency: NonZeroUsize,
 ) <span class="kw">where
     </span>Spawner: SpawnNamed,
 {
     <span class="macro">trace!</span>(<span class="string">&quot;Subspace DSN archiver started.&quot;</span>);
 
     <span class="kw">let </span>piece_publisher_semaphore = Arc::new(Semaphore::new(piece_publisher_batch_size));
+    <span class="kw">let </span>segment_publish_semaphore = Arc::new(Semaphore::new(segment_publish_concurrency.get()));
 
     <span class="kw">let </span><span class="kw-2">mut </span>last_published_segment_index: <span class="prelude-ty">Option</span>&lt;u64&gt; = <span class="prelude-val">None</span>;
     <span class="kw">while let </span><span class="prelude-val">Some</span>(ArchivedSegmentNotification {
@@ -396,6 +417,18 @@
             }
         }
 
+        <span class="kw">let </span>publishing_permit = <span class="kw">match </span>segment_publish_semaphore.clone().acquire_owned().<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(publishing_permit) =&gt; publishing_permit,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="macro">warn!</span>(
+                    %segment_index,
+                    %error,
+                    <span class="string">&quot;Semaphore was closed, interrupting publishing&quot;
+                </span>);
+                <span class="kw">return</span>;
+            }
+        };
+
         spawner.spawn(
             <span class="string">&quot;segment-publishing&quot;</span>,
             <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
@@ -411,8 +444,11 @@
                         archived_segment,
                         <span class="kw-2">&amp;</span>piece_publisher_semaphore,
                     )
-                    .<span class="kw">await
-                </span>}
+                    .<span class="kw">await</span>;
+
+                    <span class="comment">// Release only after publishing is finished
+                    </span>drop(publishing_permit);
+                }
                 .in_current_span()
             }),
         );
