@@ -1120,6 +1120,35 @@
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a>
+<a href="#1146" id="1146">1146</a>
+<a href="#1147" id="1147">1147</a>
+<a href="#1148" id="1148">1148</a>
+<a href="#1149" id="1149">1149</a>
+<a href="#1150" id="1150">1150</a>
+<a href="#1151" id="1151">1151</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1179,8 +1208,10 @@
     <span class="kw">use </span>codec::Codec;
     <span class="kw">use </span>frame_support::pallet_prelude::{StorageMap, StorageNMap, <span class="kw-2">*</span>};
     <span class="kw">use </span>frame_support::traits::LockableCurrency;
+    <span class="kw">use </span>frame_support::PalletError;
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>sp_core::H256;
+    <span class="kw">use </span>sp_domain_digests::AsPredigest;
     <span class="kw">use </span>sp_domain_tracker::CoreDomainTracker;
     <span class="kw">use </span>sp_domains::bundle_election::ReadBundleElectionParamsError;
     <span class="kw">use </span>sp_domains::fraud_proof::{BundleEquivocationProof, FraudProof, InvalidTransactionProof};
@@ -1352,12 +1383,12 @@
 
     <span class="doccomment">/// Map of primary block number to primary block hash for tracking bounded receipts per domain.
     ///
-    /// NOTE: This storage item is extended on adding a new non-system receipt since each receipt
-    /// is validated to point to a valid primary block on the primary chain.
-    ///
     /// The oldest block hash will be pruned once the oldest receipt is pruned. However, if a
     /// core domain stalls, i.e., no receipts are included in the system domain for a long time,
     /// the corresponding entry will grow indefinitely.
+    ///
+    /// TODO: there is a pitfall that any stalled domain can lead to an ubounded runtime storage
+    /// growth.
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>BlockHash&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
@@ -1515,7 +1546,7 @@
                     <span class="comment">// Reject the entire Bundle due to the missing receipt(s) between [best_number, .., receipt.primary_number].
                     //
                     // This should never happen as pre_dispatch_submit_bundle ensures no missing receipt.
-                    </span><span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::MissingParentReceipt.into());
+                    </span><span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Receipt(ReceiptError::MissingParent).into());
                 }
             }
 
@@ -1565,6 +1596,25 @@
             </span><span class="self">Self</span>::deposit_event(Event::InvalidTransactionProofProcessed);
 
             <span class="prelude-val">Ok</span>(())
+        }
+    }
+
+    <span class="attr">#[pallet::hooks]
+    </span><span class="kw">impl</span>&lt;T: Config&gt; Hooks&lt;BlockNumberFor&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
+        <span class="kw">fn </span>on_initialize(_n: BlockNumberFor&lt;T&gt;) -&gt; Weight {
+            <span class="kw">let </span>(primary_number, primary_hash) = &lt;frame_system::Pallet&lt;T&gt;&gt;::digest()
+                .logs
+                .iter()
+                .find_map(|s| s.as_primary_block_info::&lt;T::BlockNumber, T::Hash&gt;())
+                .expect(<span class="string">&quot;Primary block info must exist otherwise the receipt verification can not work; qed&quot;</span>);
+
+            <span class="kw">let </span><span class="kw-2">mut </span>consumed_weight = Weight::zero();
+            <span class="kw">for </span>domain_id <span class="kw">in </span>Domains::&lt;T&gt;::iter_keys() {
+                BlockHash::&lt;T&gt;::insert(domain_id, primary_number, primary_hash);
+                consumed_weight += T::DbWeight::get().reads_writes(<span class="number">1</span>, <span class="number">1</span>);
+            }
+
+            consumed_weight
         }
     }
 
@@ -1630,6 +1680,16 @@
         }
     }
 
+    <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug)]
+    </span><span class="kw">pub enum </span>ReceiptError {
+        <span class="doccomment">/// A missing core domain parent receipt.
+        </span>MissingParent,
+        <span class="doccomment">/// Core domain receipt is too far in the future.
+        </span>TooFarInFuture,
+        <span class="doccomment">/// Core domain receipt points to an unknown primary block.
+        </span>UnknownBlock,
+    }
+
     <span class="attr">#[pallet::error]
     </span><span class="kw">pub enum </span>Error&lt;T&gt; {
         <span class="doccomment">/// The amount of deposit is smaller than the `T::MinDomainDeposit` bound.
@@ -1675,11 +1735,8 @@
         <span class="doccomment">/// Not a core domain bundle.
         </span>NotCoreDomainBundle,
 
-        <span class="doccomment">/// A missing core domain parent receipt.
-        </span>MissingParentReceipt,
-
-        <span class="doccomment">/// Core domain receipt is too far in the future.
-        </span>ReceiptTooFarInFuture,
+        <span class="doccomment">/// Receipt error.
+        </span>Receipt(ReceiptError),
     }
 
     <span class="attr">#[pallet::event]
@@ -1902,7 +1959,13 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
         };
 
-        <span class="kw">let </span>head_receipt_number = <span class="self">Self</span>::head_receipt_number(signed_opaque_bundle.domain_id());
+        <span class="kw">let </span>domain_id = signed_opaque_bundle.domain_id();
+
+        <span class="kw">if </span>!domain_id.is_core() {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
+        }
+
+        <span class="kw">let </span>head_receipt_number = <span class="self">Self</span>::head_receipt_number(domain_id);
         <span class="kw">let </span>max_allowed = head_receipt_number + T::MaximumReceiptDrift::get();
 
         <span class="kw">let </span><span class="kw-2">mut </span>new_best_number = head_receipt_number;
@@ -1915,18 +1978,21 @@
                 new_best_number += One::one();
             <span class="comment">// Missing receipt.
             </span>} <span class="kw">else </span>{
-                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::MissingParentReceipt);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Receipt(ReceiptError::MissingParent));
+            }
+
+            <span class="kw">if </span>BlockHash::&lt;T&gt;::get(domain_id, receipt.primary_number) != receipt.primary_hash {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Receipt(ReceiptError::UnknownBlock));
             }
 
             <span class="kw">if </span>receipt.primary_number &gt; max_allowed {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::ReceiptTooFarInFuture);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Receipt(ReceiptError::TooFarInFuture));
             }
         }
 
         <span class="comment">// The validity of vrf proof itself has been verified on the primary chain, thus only the
         // proof_of_election is necessary to be checked here.
         </span><span class="kw">let </span>ProofOfElection {
-            domain_id,
             vrf_output,
             storage_proof,
             state_root,
@@ -1934,10 +2000,6 @@
             global_challenge,
             ..
         } = <span class="kw-2">&amp;</span>proof_of_election;
-
-        <span class="kw">if </span>!domain_id.is_core() {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
-        }
 
         <span class="kw">let </span>core_block_number = T::BlockNumber::from(<span class="kw-2">*</span>core_block_number);
 
@@ -2027,7 +2089,7 @@
         <span class="kw">let </span>slot_probability = domain_config.bundle_slot_probability;
 
         verify_bundle_solution_threshold(
-            <span class="kw-2">*</span>domain_id,
+            domain_id,
             <span class="kw-2">*</span>vrf_output,
             stake_weight,
             total_stake_weight,
@@ -2161,10 +2223,6 @@
         <span class="kw">let </span>primary_hash = execution_receipt.primary_hash;
         <span class="kw">let </span>primary_number = execution_receipt.primary_number;
         <span class="kw">let </span>receipt_hash = execution_receipt.hash();
-
-        <span class="comment">// (primary_number, primary_hash) has been verified on the primary chain, thus it
-        // can be used directly.
-        </span>&lt;BlockHash&lt;T&gt;&gt;::insert(domain_id, primary_number, primary_hash);
 
         <span class="comment">// Apply the new best receipt.
         </span>&lt;Receipts&lt;T&gt;&gt;::insert(domain_id, receipt_hash, execution_receipt);
