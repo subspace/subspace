@@ -179,32 +179,10 @@
 <a href="#179" id="179">179</a>
 <a href="#180" id="180">180</a>
 <a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a>
-<a href="#199" id="199">199</a>
-<a href="#200" id="200">200</a>
-<a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a>
-<a href="#204" id="204">204</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::bundle_election_solver::BundleElectionSolver;
-<span class="kw">use </span><span class="kw">crate</span>::domain_bundle_producer::{sign_new_bundle, ReceiptInterface};
+<span class="kw">use </span><span class="kw">crate</span>::domain_bundle_producer::sign_new_bundle;
 <span class="kw">use </span><span class="kw">crate</span>::domain_bundle_proposer::DomainBundleProposer;
+<span class="kw">use </span><span class="kw">crate</span>::parent_chain::CoreDomainParentChain;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{to_number_primitive, ExecutorSlotInfo};
 <span class="kw">use </span><span class="kw">crate</span>::BundleSender;
 <span class="kw">use </span>codec::{Decode, Encode};
@@ -219,7 +197,6 @@
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>subspace_core_primitives::BlockNumber;
 <span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>CoreBundleProducer&lt;Block, SBlock, PBlock, Client, SClient, TransactionPool&gt;
@@ -231,6 +208,7 @@
     domain_id: DomainId,
     system_domain_client: Arc&lt;SClient&gt;,
     client: Arc&lt;Client&gt;,
+    parent_chain: CoreDomainParentChain&lt;SClient, SBlock, PBlock&gt;,
     bundle_sender: Arc&lt;BundleSender&lt;Block, PBlock&gt;&gt;,
     is_authority: bool,
     keystore: SyncCryptoStorePtr,
@@ -251,6 +229,7 @@
             domain_id: <span class="self">self</span>.domain_id,
             system_domain_client: <span class="self">self</span>.system_domain_client.clone(),
             client: <span class="self">self</span>.client.clone(),
+            parent_chain: <span class="self">self</span>.parent_chain.clone(),
             bundle_sender: <span class="self">self</span>.bundle_sender.clone(),
             is_authority: <span class="self">self</span>.is_authority,
             keystore: <span class="self">self</span>.keystore.clone(),
@@ -258,32 +237,6 @@
             domain_bundle_proposer: <span class="self">self</span>.domain_bundle_proposer.clone(),
             _phantom_data: <span class="self">self</span>._phantom_data,
         }
-    }
-}
-
-<span class="kw">impl</span>&lt;Block, SBlock, PBlock, Client, SClient, TransactionPool&gt; ReceiptInterface&lt;SBlock::Hash&gt;
-    <span class="kw">for </span>CoreBundleProducer&lt;Block, SBlock, PBlock, Client, SClient, TransactionPool&gt;
-<span class="kw">where
-    </span>Block: BlockT,
-    SBlock: BlockT,
-    PBlock: BlockT,
-    SClient: ProvideRuntimeApi&lt;SBlock&gt;,
-    SClient::Api: SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
-{
-    <span class="kw">fn </span>head_receipt_number(<span class="kw-2">&amp;</span><span class="self">self</span>, at: SBlock::Hash) -&gt; <span class="prelude-ty">Result</span>&lt;BlockNumber, sp_api::ApiError&gt; {
-        <span class="kw">let </span>head_receipt_number = <span class="self">self
-            </span>.system_domain_client
-            .runtime_api()
-            .head_receipt_number(<span class="kw-2">&amp;</span>BlockId::Hash(at), <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(to_number_primitive(head_receipt_number))
-    }
-
-    <span class="kw">fn </span>maximum_receipt_drift(<span class="kw-2">&amp;</span><span class="self">self</span>, at: SBlock::Hash) -&gt; <span class="prelude-ty">Result</span>&lt;BlockNumber, sp_api::ApiError&gt; {
-        <span class="kw">let </span>max_drift = <span class="self">self
-            </span>.system_domain_client
-            .runtime_api()
-            .maximum_receipt_drift(<span class="kw-2">&amp;</span>BlockId::Hash(at))<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(to_number_primitive(max_drift))
     }
 }
 
@@ -314,10 +267,15 @@
             keystore.clone(),
         );
         <span class="kw">let </span>domain_bundle_proposer = DomainBundleProposer::new(client.clone(), transaction_pool);
+        <span class="kw">let </span>parent_chain = CoreDomainParentChain::&lt;SClient, SBlock, PBlock&gt;::new(
+            system_domain_client.clone(),
+            domain_id,
+        );
         <span class="self">Self </span>{
             domain_id,
             system_domain_client,
             client,
+            parent_chain,
             bundle_sender,
             is_authority,
             keystore,
@@ -327,18 +285,14 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>produce_bundle&lt;R&gt;(
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>produce_bundle(
         <span class="self">self</span>,
         primary_info: (PBlock::Hash, NumberFor&lt;PBlock&gt;),
         slot_info: ExecutorSlotInfo,
-        receipt_interface: R,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;
         <span class="prelude-ty">Option</span>&lt;SignedOpaqueBundle&lt;NumberFor&lt;PBlock&gt;, PBlock::Hash, Block::Hash&gt;&gt;,
         sp_blockchain::Error,
-    &gt;
-    <span class="kw">where
-        </span>R: ReceiptInterface&lt;SBlock::Hash&gt;,
-    {
+    &gt; {
         <span class="kw">if </span>!<span class="self">self</span>.is_authority {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         }
@@ -364,7 +318,7 @@
 
             <span class="kw">let </span>bundle = <span class="self">self
                 </span>.domain_bundle_proposer
-                .propose_bundle_at::&lt;PBlock, <span class="kw">_</span>, <span class="kw">_</span>&gt;(slot, primary_info, receipt_interface, best_hash)
+                .propose_bundle_at::&lt;PBlock, <span class="kw">_</span>, <span class="kw">_</span>&gt;(slot, primary_info, <span class="self">self</span>.parent_chain, best_hash)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="kw">let </span>core_block_number = to_number_primitive(<span class="self">self</span>.client.info().best_number);
