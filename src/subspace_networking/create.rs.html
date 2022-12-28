@@ -336,6 +336,39 @@
 <a href="#336" id="336">336</a>
 <a href="#337" id="337">337</a>
 <a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
 </pre><pre class="rust"><code><span class="kw">pub use </span><span class="kw">crate</span>::behavior::custom_record_store::ValueGetter;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::custom_record_store::{
     CustomRecordStore, MemoryProviderStorage, NoRecordStorage,
@@ -346,7 +379,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::node_runner::{NodeRunner, NodeRunnerConfig};
 <span class="kw">use </span><span class="kw">crate</span>::request_responses::RequestHandler;
 <span class="kw">use </span><span class="kw">crate</span>::shared::Shared;
-<span class="kw">use </span><span class="kw">crate</span>::utils::convert_multiaddresses;
+<span class="kw">use </span><span class="kw">crate</span>::utils::{convert_multiaddresses, ResizableSemaphore};
 <span class="kw">use </span><span class="kw">crate</span>::BootstrappedNetworkingParameters;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>libp2p::core::muxing::StreamMuxerBox;
@@ -364,7 +397,7 @@
 <span class="kw">use </span>libp2p::tcp::tokio::Transport <span class="kw">as </span>TokioTcpTransport;
 <span class="kw">use </span>libp2p::tcp::Config <span class="kw">as </span>GenTcpConfig;
 <span class="kw">use </span>libp2p::websocket::WsConfig;
-<span class="kw">use </span>libp2p::yamux::{WindowUpdateMode, YamuxConfig};
+<span class="kw">use </span>libp2p::yamux::YamuxConfig;
 <span class="kw">use </span>libp2p::{core, identity, noise, Multiaddr, PeerId, Transport, TransportError};
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::Arc;
@@ -394,6 +427,33 @@
 <span class="comment">// Defines a replication factor for Kademlia on get_record operation.
 // &quot;Good citizen&quot; supports the network health.
 </span><span class="kw">const </span>KADEMLIA_CACHING_FACTOR_ON_GET_RECORDS: u16 = <span class="number">3</span>;
+<span class="kw">const </span>YAMUX_MAX_STREAMS: usize = <span class="number">256</span>;
+
+<span class="doccomment">/// Base limit for number of concurrent tasks initiated towards Kademlia.
+///
+/// Kademlia has 32 substream as a hardcoded constant, we leave 2 for auxiliary internal functions
+/// like periodic random walk.
+///
+/// We restrict this so we don&#39;t exceed number of incoming streams for single peer, but this value
+/// will be boosted depending on number of connected peers.
+</span><span class="kw">const </span>KADEMLIA_BASE_CONCURRENT_TASKS: NonZeroUsize = NonZeroUsize::new(<span class="number">30</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
+<span class="doccomment">/// Above base limit will be boosted by specified number for every peer connected starting with
+/// second peer, such that it scaled with network connectivity, but the exact coefficient might need
+/// to be tweaked in the future.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KADEMLIA_CONCURRENT_TASKS_BOOST_PER_PEER: usize = <span class="number">1</span>;
+<span class="doccomment">/// Base limit for number of any concurrent tasks except Kademlia.
+///
+/// We configure total number of streams per connection to 256. Here we assume half of them might be
+/// incoming and half outgoing, we also leave a small buffer of streams just in case.
+///
+/// We restrict this so we don&#39;t exceed number of streams for single peer, but this value will be
+/// boosted depending on number of connected peers.
+</span><span class="kw">const </span>REGULAR_BASE_CONCURRENT_TASKS: NonZeroUsize =
+    NonZeroUsize::new(<span class="number">120 </span>- KADEMLIA_BASE_CONCURRENT_TASKS.get()).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
+<span class="doccomment">/// Above base limit will be boosted by specified number for every peer connected starting with
+/// second peer, such that it scaled with network connectivity, but the exact coefficient might need
+/// to be tweaked in the future.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>REGULAR_CONCURRENT_TASKS_BOOST_PER_PEER: usize = <span class="number">2</span>;
 
 <span class="doccomment">/// Defines relay configuration for the Node
 </span><span class="attr">#[derive(Clone, Debug)]
@@ -487,9 +547,7 @@
             .set_replication_interval(<span class="prelude-val">None</span>);
 
         <span class="kw">let </span><span class="kw-2">mut </span>yamux_config = YamuxConfig::default();
-        <span class="comment">// Enable proper flow-control: window updates are only sent when buffered data has been
-        // consumed.
-        </span>yamux_config.set_window_update_mode(WindowUpdateMode::on_read());
+        yamux_config.set_max_num_streams(YAMUX_MAX_STREAMS);
 
         <span class="kw">let </span>gossipsub = GossipsubConfigBuilder::default()
             .protocol_id_prefix(GOSSIPSUB_PROTOCOL_PREFIX)
@@ -556,7 +614,7 @@
     config: Config&lt;RecordStore&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Node, NodeRunner&lt;RecordStore&gt;), CreationError&gt;
 <span class="kw">where
-    </span>RecordStore: Send + Sync + <span class="kw">for</span>&lt;<span class="lifetime">&#39;a</span>&gt; libp2p::kad::store::RecordStore&lt;<span class="lifetime">&#39;a</span>&gt; + <span class="lifetime">&#39;static</span>,
+    </span>RecordStore: Send + Sync + libp2p::kad::store::RecordStore + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>Config {
         keypair,
@@ -618,10 +676,18 @@
         <span class="comment">// Create final structs
         </span><span class="kw">let </span>(command_sender, command_receiver) = mpsc::channel(<span class="number">1</span>);
 
-        <span class="kw">let </span>shared = Arc::new(Shared::new(local_peer_id, command_sender));
+        <span class="kw">let </span>kademlia_tasks_semaphore = ResizableSemaphore::new(KADEMLIA_BASE_CONCURRENT_TASKS);
+        <span class="kw">let </span>regular_tasks_semaphore = ResizableSemaphore::new(REGULAR_BASE_CONCURRENT_TASKS);
+
+        <span class="kw">let </span>shared = Arc::new(Shared::new(
+            local_peer_id,
+            command_sender,
+            kademlia_tasks_semaphore.clone(),
+            regular_tasks_semaphore.clone(),
+        ));
         <span class="kw">let </span>shared_weak = Arc::downgrade(<span class="kw-2">&amp;</span>shared);
 
-        <span class="kw">let </span>node = Node::new(shared);
+        <span class="kw">let </span>node = Node::new(shared, kademlia_tasks_semaphore, regular_tasks_semaphore);
         <span class="kw">let </span>node_runner = NodeRunner::&lt;RecordStore&gt;::new(NodeRunnerConfig::&lt;RecordStore&gt; {
             allow_non_global_addresses_in_dht,
             command_receiver,

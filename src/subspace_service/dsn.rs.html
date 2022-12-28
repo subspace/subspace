@@ -257,27 +257,6 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a>
-<a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a>
-<a href="#263" id="263">263</a>
-<a href="#264" id="264">264</a>
-<a href="#265" id="265">265</a>
-<a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a>
-<a href="#270" id="270">270</a>
-<a href="#271" id="271">271</a>
-<a href="#272" id="272">272</a>
-<a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
 <span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::ExponentialBackoff;
@@ -304,11 +283,11 @@
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn, Instrument};
 
 <span class="doccomment">/// Max time allocated for putting piece from DSN before attempt is considered to fail
-</span><span class="kw">const </span>PUBLISH_PIECE_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+</span><span class="kw">const </span>PUBLISH_PIECE_TIMEOUT: Duration = Duration::from_secs(<span class="number">120</span>);
 <span class="doccomment">/// Defines initial duration between put_piece calls.
 </span><span class="kw">const </span>PUBLISH_PIECE_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 <span class="doccomment">/// Defines max duration between put_piece calls.
-</span><span class="kw">const </span>PUBLISH_PIECE_MAX_INTERVAL: Duration = Duration::from_secs(<span class="number">5</span>);
+</span><span class="kw">const </span>PUBLISH_PIECE_MAX_INTERVAL: Duration = Duration::from_secs(<span class="number">30</span>);
 
 <span class="doccomment">/// DSN configuration parameters.
 </span><span class="attr">#[derive(Clone, Debug)]
@@ -327,9 +306,6 @@
 
     <span class="doccomment">/// Determines whether we allow keeping non-global (private, shared, loopback..) addresses in Kademlia DHT.
     </span><span class="kw">pub </span>allow_non_global_addresses_in_dht: bool,
-
-    <span class="doccomment">/// Defines piece publishing batch size
-    </span><span class="kw">pub </span>piece_publisher_batch_size: usize,
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>create_dsn_instance&lt;Block, AS&gt;(
@@ -389,14 +365,12 @@
     <span class="kw-2">mut </span>archived_segment_notification_stream: <span class="kw">impl </span>Stream&lt;Item = ArchivedSegmentNotification&gt; + Unpin,
     node: Node,
     spawner: Spawner,
-    piece_publisher_batch_size: usize,
     segment_publish_concurrency: NonZeroUsize,
 ) <span class="kw">where
     </span>Spawner: SpawnNamed,
 {
     <span class="macro">trace!</span>(<span class="string">&quot;Subspace DSN archiver started.&quot;</span>);
 
-    <span class="kw">let </span>piece_publisher_semaphore = Arc::new(Semaphore::new(piece_publisher_batch_size));
     <span class="kw">let </span>segment_publish_semaphore = Arc::new(Semaphore::new(segment_publish_concurrency.get()));
 
     <span class="kw">let </span><span class="kw-2">mut </span>last_published_segment_index: <span class="prelude-ty">Option</span>&lt;u64&gt; = <span class="prelude-val">None</span>;
@@ -434,17 +408,9 @@
             <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
             Box::pin({
                 <span class="kw">let </span>node = node.clone();
-                <span class="kw">let </span>piece_publisher_semaphore = Arc::clone(<span class="kw-2">&amp;</span>piece_publisher_semaphore);
 
                 <span class="kw">async move </span>{
-                    publish_pieces(
-                        <span class="kw-2">&amp;</span>node,
-                        first_piece_index,
-                        segment_index,
-                        archived_segment,
-                        <span class="kw-2">&amp;</span>piece_publisher_semaphore,
-                    )
-                    .<span class="kw">await</span>;
+                    publish_pieces(<span class="kw-2">&amp;</span>node, first_piece_index, segment_index, archived_segment).<span class="kw">await</span>;
 
                     <span class="comment">// Release only after publishing is finished
                     </span>drop(publishing_permit);
@@ -463,21 +429,13 @@
     first_piece_index: PieceIndex,
     segment_index: u64,
     archived_segment: Arc&lt;ArchivedSegment&gt;,
-    semaphore: <span class="kw-2">&amp;</span>Semaphore,
 ) {
     <span class="kw">let </span>pieces_indexes = (first_piece_index..).take(archived_segment.pieces.count());
 
     <span class="kw">let </span><span class="kw-2">mut </span>pieces_publishing_futures = pieces_indexes
         .zip(archived_segment.pieces.as_pieces())
         .map(|(piece_index, piece)| {
-            Box::pin(<span class="kw">async move </span>{
-                <span class="kw">let </span>_permit = semaphore
-                    .acquire()
-                    .<span class="kw">await
-                    </span>.expect(<span class="string">&quot;Should be valid on non-closed semaphore&quot;</span>);
-
-                publish_single_piece_with_backoff(node, piece_index, piece.to_vec()).<span class="kw">await
-            </span>})
+            publish_single_piece_with_backoff(node, piece_index, piece.to_vec())
         })
         .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;();
 

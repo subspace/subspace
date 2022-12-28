@@ -223,17 +223,6 @@
 <a href="#223" id="223">223</a>
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
-<a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a>
-<a href="#228" id="228">228</a>
-<a href="#229" id="229">229</a>
-<a href="#230" id="230">230</a>
-<a href="#231" id="231">231</a>
-<a href="#232" id="232">232</a>
-<a href="#233" id="233">233</a>
-<a href="#234" id="234">234</a>
-<a href="#235" id="235">235</a>
-<a href="#236" id="236">236</a>
 </pre><pre class="rust"><code><span class="kw">use crate</span>::{FarmerProtocolInfo, SectorMetadata};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures::stream::FuturesOrdered;
@@ -249,7 +238,6 @@
     Piece, PieceIndex, PublicKey, Scalar, SectorId, SectorIndex, PIECE_SIZE, PLOT_SECTOR_SIZE,
 };
 <span class="kw">use </span>thiserror::Error;
-<span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tracing::{debug, info};
 
 <span class="attr">#[async_trait]
@@ -320,7 +308,6 @@
     sector_codec: <span class="kw-2">&amp;</span>SectorCodec,
     <span class="kw-2">mut </span>sector_output: S,
     <span class="kw-2">mut </span>sector_metadata_output: SM,
-    semaphore: <span class="kw-2">&amp;</span>Semaphore,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;PlottedSector, PlottingError&gt;
 <span class="kw">where
     </span>PR: PieceReceiver,
@@ -356,7 +343,6 @@
         piece_receiver,
         <span class="kw-2">&amp;</span>piece_indexes,
         cancelled,
-        semaphore,
     )
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -419,23 +405,15 @@
     piece_receiver: <span class="kw-2">&amp;</span>PR,
     piece_indexes: <span class="kw-2">&amp;</span>[PieceIndex],
     cancelled: <span class="kw-2">&amp;</span>AtomicBool,
-    semaphore: <span class="kw-2">&amp;</span>Semaphore,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>pieces_receiving_futures = piece_indexes
         .iter()
-        .map(|piece_index| {
-            Box::pin(<span class="kw">async </span>{
-                <span class="kw">let </span>_permit = semaphore
-                    .acquire()
-                    .<span class="kw">await
-                    </span>.expect(<span class="string">&quot;Should be valid on non-closed semaphore&quot;</span>);
-
-                <span class="kw">let </span>piece_result = <span class="kw">match </span>check_cancellation(cancelled, sector_index) {
-                    <span class="prelude-val">Ok</span>(()) =&gt; piece_receiver.get_piece(<span class="kw-2">*</span>piece_index).<span class="kw">await</span>,
-                    <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Err</span>(error.into()),
-                };
-                (<span class="kw-2">*</span>piece_index, piece_result)
-            })
+        .map(|piece_index| <span class="kw">async </span>{
+            <span class="kw">let </span>piece_result = <span class="kw">match </span>check_cancellation(cancelled, sector_index) {
+                <span class="prelude-val">Ok</span>(()) =&gt; piece_receiver.get_piece(<span class="kw-2">*</span>piece_index).<span class="kw">await</span>,
+                <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Err</span>(error.into()),
+            };
+            (<span class="kw-2">*</span>piece_index, piece_result)
         })
         .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;();
 
