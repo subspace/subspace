@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"trait":[["NodeClient","Abstraction of the Node Client"]],"type":[["Error","To become error type agnostic"]]};

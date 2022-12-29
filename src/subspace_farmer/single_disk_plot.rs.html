@@ -1207,14 +1207,24 @@
 <a href="#1207" id="1207">1207</a>
 <a href="#1208" id="1208">1208</a>
 <a href="#1209" id="1209">1209</a>
+<a href="#1210" id="1210">1210</a>
+<a href="#1211" id="1211">1211</a>
+<a href="#1212" id="1212">1212</a>
+<a href="#1213" id="1213">1213</a>
+<a href="#1214" id="1214">1214</a>
+<a href="#1215" id="1215">1215</a>
+<a href="#1216" id="1216">1216</a>
+<a href="#1217" id="1217">1217</a>
+<a href="#1218" id="1218">1218</a>
+<a href="#1219" id="1219">1219</a>
 </pre><pre class="rust"><code><span class="kw">pub mod </span>piece_publisher;
 <span class="kw">pub mod </span>piece_reader;
 <span class="kw">pub mod </span>piece_receiver;
 
 <span class="kw">use </span><span class="kw">crate</span>::identity::Identity;
+<span class="kw">use </span><span class="kw">crate</span>::node_client;
+<span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::reward_signing::reward_signing;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_client;
-<span class="kw">use </span><span class="kw">crate</span>::rpc_client::RpcClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::farming::audit_sector;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_publisher::PieceSectorPublisher;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_reader::{read_piece, PieceReader, ReadPieceRequest};
@@ -1226,6 +1236,7 @@
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
+<span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>memmap2::{Mmap, MmapMut, MmapOptions};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
@@ -1235,7 +1246,7 @@
 <span class="kw">use </span>std::fs::OpenOptions;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::io::{Seek, SeekFrom};
-<span class="kw">use </span>std::num::NonZeroU16;
+<span class="kw">use </span>std::num::{NonZeroU16, NonZeroUsize};
 <span class="kw">use </span>std::path::{Path, PathBuf};
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
@@ -1270,6 +1281,8 @@
 /// Only useful for initial network bootstrapping where due to initial plot size there might be too
 /// many solutions.
 </span><span class="kw">const </span>SOLUTIONS_LIMIT: usize = <span class="number">10</span>;
+
+<span class="kw">const </span>RECORDS_ROOTS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">1_000_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
 <span class="doccomment">/// Semaphore that limits disk access concurrency in strategic places to the number specified during
 /// initialization
@@ -1469,13 +1482,13 @@
 }
 
 <span class="doccomment">/// Options used to open single dis plot
-</span><span class="kw">pub struct </span>SingleDiskPlotOptions&lt;RC&gt; {
+</span><span class="kw">pub struct </span>SingleDiskPlotOptions&lt;NC&gt; {
     <span class="doccomment">/// Path to directory where plot are stored.
     </span><span class="kw">pub </span>directory: PathBuf,
     <span class="doccomment">/// How much space in bytes can plot use for plot
     </span><span class="kw">pub </span>allocated_space: u64,
     <span class="doccomment">/// RPC client connected to Subspace node
-    </span><span class="kw">pub </span>rpc_client: RC,
+    </span><span class="kw">pub </span>node_client: NC,
     <span class="doccomment">/// Address where farming rewards should go
     </span><span class="kw">pub </span>reward_address: PublicKey,
     <span class="doccomment">/// Optional DSN Node.
@@ -1556,7 +1569,7 @@
     </span><span class="attr">#[error(<span class="string">&quot;Failed to retrieve farmer info: {error}&quot;</span>)]
     </span>FailedToGetFarmerInfo {
         <span class="doccomment">/// Lower-level error
-        </span>error: rpc_client::Error,
+        </span>error: node_client::Error,
     },
     <span class="doccomment">/// Low-level plotting error
     </span><span class="attr">#[error(<span class="string">&quot;Low-level plotting error: {0}&quot;</span>)]
@@ -1570,13 +1583,13 @@
     </span><span class="attr">#[error(<span class="string">&quot;Failed to substribe to slot info notifications: {error}&quot;</span>)]
     </span>FailedToSubscribeSlotInfo {
         <span class="doccomment">/// Lower-level error
-        </span>error: rpc_client::Error,
+        </span>error: node_client::Error,
     },
     <span class="doccomment">/// Failed to retrieve farmer info
     </span><span class="attr">#[error(<span class="string">&quot;Failed to retrieve farmer info: {error}&quot;</span>)]
     </span>FailedToGetFarmerInfo {
         <span class="doccomment">/// Lower-level error
-        </span>error: rpc_client::Error,
+        </span>error: node_client::Error,
     },
     <span class="doccomment">/// Failed to create memory mapping for plot
     </span><span class="attr">#[error(<span class="string">&quot;Failed to create memory mapping for plot: {error}&quot;</span>)]
@@ -1594,7 +1607,7 @@
     </span><span class="attr">#[error(<span class="string">&quot;Failed to submit solutions response: {error}&quot;</span>)]
     </span>FailedToSubmitSolutionsResponse {
         <span class="doccomment">/// Lower-level error
-        </span>error: rpc_client::Error,
+        </span>error: node_client::Error,
     },
     <span class="doccomment">/// Low-level farming error
     </span><span class="attr">#[error(<span class="string">&quot;Low-level farming error: {0}&quot;</span>)]
@@ -1665,16 +1678,16 @@
     <span class="doccomment">/// Create new single disk plot instance
     ///
     /// NOTE: Thought this function is async, it will do some blocking I/O.
-    </span><span class="kw">pub async fn </span>new&lt;RC&gt;(options: SingleDiskPlotOptions&lt;RC&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, SingleDiskPlotError&gt;
+    </span><span class="kw">pub async fn </span>new&lt;NC&gt;(options: SingleDiskPlotOptions&lt;NC&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, SingleDiskPlotError&gt;
     <span class="kw">where
-        </span>RC: RpcClient,
+        </span>NC: NodeClient,
     {
         <span class="kw">let </span>handle = Handle::current();
 
         <span class="kw">let </span>SingleDiskPlotOptions {
             directory,
             allocated_space,
-            rpc_client,
+            node_client,
             reward_address,
             dsn_node,
             concurrent_plotting_semaphore,
@@ -1700,7 +1713,7 @@
         </span><span class="kw">let </span>identity = Identity::open_or_create(<span class="kw-2">&amp;</span>directory).unwrap();
         <span class="kw">let </span>public_key = identity.public_key().to_bytes().into();
 
-        <span class="kw">let </span>farmer_app_info = rpc_client
+        <span class="kw">let </span>farmer_app_info = node_client
             .farmer_app_info()
             .<span class="kw">await
             </span>.map_err(SingleDiskPlotError::NodeRpcError)<span class="question-mark">?</span>;
@@ -1852,7 +1865,7 @@
                 <span class="kw">let </span>metadata_header = Arc::clone(<span class="kw-2">&amp;</span>metadata_header);
                 <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
                 <span class="kw">let </span>shutting_down = Arc::clone(<span class="kw-2">&amp;</span>shutting_down);
-                <span class="kw">let </span>rpc_client = rpc_client.clone();
+                <span class="kw">let </span>node_client = node_client.clone();
                 <span class="kw">let </span>error_sender = Arc::clone(<span class="kw-2">&amp;</span>error_sender);
                 <span class="kw">let </span>piece_publisher =
                     PieceSectorPublisher::new(dsn_node.clone(), shutting_down.clone());
@@ -1886,6 +1899,17 @@
                                 (sector_offset <span class="kw">as </span>u64 + first_sector_index, sector, metadata)
                             });
 
+                        <span class="kw">let </span>records_roots_cache =
+                            Mutex::new(LruCache::new(RECORDS_ROOTS_CACHE_SIZE));
+
+                        <span class="kw">let </span>piece_receiver = MultiChannelPieceReceiver::new(
+                            <span class="kw-2">&amp;</span>dsn_node,
+                            <span class="kw-2">&amp;</span>node_client,
+                            <span class="kw-2">&amp;</span>kzg,
+                            <span class="kw-2">&amp;</span>records_roots_cache,
+                            <span class="kw-2">&amp;</span>shutting_down,
+                        );
+
                         <span class="comment">// TODO: Concurrency
                         </span><span class="kw">for </span>(sector_index, sector, sector_metadata) <span class="kw">in </span>plot_initial_sector {
                             <span class="macro">trace!</span>(%sector_index, <span class="string">&quot;Preparing to plot sector&quot;</span>);
@@ -1913,14 +1937,10 @@
 
                             <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Plotting sector&quot;</span>);
 
-                            <span class="kw">let </span>farmer_app_info = rpc_client
+                            <span class="kw">let </span>farmer_app_info = node_client
                                 .farmer_app_info()
                                 .<span class="kw">await
                                 </span>.map_err(|error| PlottingError::FailedToGetFarmerInfo { error })<span class="question-mark">?</span>;
-
-                            <span class="comment">// TODO: Remove RPC version and keep DSN version only.
-                            </span><span class="kw">let </span>piece_receiver =
-                                MultiChannelPieceReceiver::new(dsn_node.clone(), <span class="kw-2">&amp;</span>shutting_down);
 
                             <span class="kw">let </span>plot_sector_fut = plot_sector(
                                 <span class="kw-2">&amp;</span>public_key,
@@ -2014,12 +2034,12 @@
 
         tasks.push(Box::pin({
             <span class="kw">let </span>shutting_down = Arc::clone(<span class="kw-2">&amp;</span>shutting_down);
-            <span class="kw">let </span>rpc_client = rpc_client.clone();
+            <span class="kw">let </span>node_client = node_client.clone();
 
             <span class="kw">async move </span>{
                 <span class="macro">info!</span>(<span class="string">&quot;Subscribing to slot info notifications&quot;</span>);
 
-                <span class="kw">let </span><span class="kw-2">mut </span>slot_info_notifications = rpc_client
+                <span class="kw">let </span><span class="kw-2">mut </span>slot_info_notifications = node_client
                     .subscribe_slot_info()
                     .<span class="kw">await
                     </span>.map_err(|error| FarmingError::FailedToSubscribeSlotInfo { error })<span class="question-mark">?</span>;
@@ -2054,7 +2074,7 @@
                 <span class="kw">let </span><span class="kw-2">mut </span>start_receiver = start_sender.subscribe();
                 <span class="kw">let </span>shutting_down = Arc::clone(<span class="kw-2">&amp;</span>shutting_down);
                 <span class="kw">let </span>identity = identity.clone();
-                <span class="kw">let </span>rpc_client = rpc_client.clone();
+                <span class="kw">let </span>node_client = node_client.clone();
 
                 <span class="kw">move </span>|| {
                     <span class="kw">let </span>_tokio_handle_guard = handle.enter();
@@ -2175,7 +2195,7 @@
                                 solutions,
                             };
                             handlers.solution.call_simple(<span class="kw-2">&amp;</span>response);
-                            rpc_client
+                            node_client
                                 .submit_solution_response(response)
                                 .<span class="kw">await
                                 </span>.map_err(|error| FarmingError::FailedToSubmitSolutionsResponse {
@@ -2254,7 +2274,7 @@
 
         tasks.push(Box::pin(<span class="kw">async move </span>{
             <span class="comment">// TODO: Error handling here
-            </span>reward_signing(rpc_client, identity).<span class="kw">await</span>.unwrap().<span class="kw">await</span>;
+            </span>reward_signing(node_client, identity).<span class="kw">await</span>.unwrap().<span class="kw">await</span>;
 
             <span class="prelude-val">Ok</span>(())
         }));
