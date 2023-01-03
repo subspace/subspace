@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":[["new_full",""]],"struct":[["BasicPoolWrapper",""],["FullChainApiWrapper",""]],"type":[["FullPool","A transaction pool for a full node."]]};
