@@ -551,6 +551,10 @@
 <a href="#551" id="551">551</a>
 <a href="#552" id="552">552</a>
 <a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -593,24 +597,24 @@
 
 <span class="kw">fn </span>find_last_archived_block&lt;Block, Client&gt;(
     client: <span class="kw-2">&amp;</span>Client,
-    best_block_id: BlockId&lt;Block&gt;,
+    best_block_hash: Block::Hash,
 ) -&gt; <span class="prelude-ty">Option</span>&lt;(RootBlock, SignedBlock&lt;Block&gt;, BlockObjectMapping)&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt; + ObjectsApi&lt;Block&gt;,
 {
-    <span class="kw">let </span><span class="kw-2">mut </span>block_to_check = best_block_id;
+    <span class="kw">let </span><span class="kw-2">mut </span>block_to_check = best_block_hash;
     <span class="kw">let </span>last_root_block = <span class="lifetime">&#39;outer</span>: <span class="kw">loop </span>{
         <span class="kw">let </span>block = client
-            .block(<span class="kw-2">&amp;</span>block_to_check)
+            .block(block_to_check)
             .expect(<span class="string">&quot;Older blocks should always exist&quot;</span>)
             .expect(<span class="string">&quot;Older blocks should always exist&quot;</span>);
 
         <span class="kw">for </span>extrinsic <span class="kw">in </span>block.block.extrinsics() {
             <span class="kw">match </span>client
                 .runtime_api()
-                .extract_root_blocks(<span class="kw-2">&amp;</span>block_to_check, extrinsic)
+                .extract_root_blocks(<span class="kw-2">&amp;</span>BlockId::Hash(block_to_check), extrinsic)
             {
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(root_blocks)) =&gt; {
                     <span class="kw">break </span><span class="lifetime">&#39;outer </span>root_blocks.into_iter().last()<span class="question-mark">?</span>;
@@ -635,14 +639,14 @@
             </span><span class="kw">return </span><span class="prelude-val">None</span>;
         }
 
-        block_to_check = BlockId::Hash(parent_block_hash);
+        block_to_check = parent_block_hash;
     };
 
     <span class="kw">let </span>last_archived_block_number = last_root_block.last_archived_block().number;
 
     <span class="kw">let </span>last_archived_block = <span class="kw">loop </span>{
         <span class="kw">let </span>block = client
-            .block(<span class="kw-2">&amp;</span>block_to_check)
+            .block(block_to_check)
             .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>)
             .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>);
 
@@ -650,14 +654,14 @@
             <span class="kw">break </span>block;
         }
 
-        block_to_check = BlockId::Hash(<span class="kw-2">*</span>block.block.header().parent_hash());
+        block_to_check = <span class="kw-2">*</span>block.block.header().parent_hash();
     };
 
     <span class="kw">let </span>last_archived_block_hash = block_to_check;
 
     <span class="kw">let </span>block_object_mappings = client
         .runtime_api()
-        .validated_object_call_hashes(<span class="kw-2">&amp;</span>last_archived_block_hash)
+        .validated_object_call_hashes(<span class="kw-2">&amp;</span>BlockId::Hash(last_archived_block_hash))
         .and_then(|calls| {
             client.runtime_api().extract_block_object_mapping(
                 <span class="kw-2">&amp;</span>BlockId::Hash(<span class="kw-2">*</span>last_archived_block.block.header().parent_hash()),
@@ -694,8 +698,9 @@
     <span class="kw">let </span><span class="kw-2">mut </span>best_archived = <span class="prelude-val">None</span>;
 
     <span class="kw">loop </span>{
-        <span class="kw">let </span>header = client
-            .header(BlockId::Hash(block_hash_to_check))
+        <span class="comment">// TODO: `Error` here must be handled instead
+        </span><span class="kw">let </span>header = client
+            .header(block_hash_to_check)
             .expect(<span class="string">&quot;Parent block must exist; qed&quot;</span>)
             .expect(<span class="string">&quot;Parent block must exist; qed&quot;</span>);
 
@@ -742,12 +747,11 @@
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt; + AuxStore,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt; + ObjectsApi&lt;Block&gt;,
 {
-    <span class="kw">let </span>best_block_id = BlockId::Hash(best_block_hash);
     <span class="kw">let </span>confirmation_depth_k = get_chain_constants(client)
         .expect(<span class="string">&quot;Must always be able to get chain constants&quot;</span>)
         .confirmation_depth_k();
 
-    <span class="kw">let </span>maybe_last_archived_block = find_last_archived_block(client, best_block_id);
+    <span class="kw">let </span>maybe_last_archived_block = find_last_archived_block(client, best_block_hash);
     <span class="kw">let </span>have_last_root_block = maybe_last_archived_block.is_some();
     <span class="kw">let </span><span class="kw-2">mut </span>best_archived_block = <span class="prelude-val">None</span>;
 
@@ -828,16 +832,15 @@
             <span class="kw">let </span>block_hashes_to_archive = block_hashes_to_archive.block_hashes;
 
             <span class="kw">for </span>block_hash_to_archive <span class="kw">in </span>block_hashes_to_archive.into_iter().rev() {
-                <span class="kw">let </span>block_id_to_archive = BlockId::Hash(block_hash_to_archive);
                 <span class="kw">let </span>block = client
-                    .block(<span class="kw-2">&amp;</span>block_id_to_archive)
+                    .block(block_hash_to_archive)
                     .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
                     .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>);
                 <span class="kw">let </span>block_number_to_archive = <span class="kw-2">*</span>block.block.header().number();
 
                 <span class="kw">let </span>block_object_mappings = client
                     .runtime_api()
-                    .validated_object_call_hashes(<span class="kw-2">&amp;</span>block_id_to_archive)
+                    .validated_object_call_hashes(<span class="kw-2">&amp;</span>BlockId::Hash(block_hash_to_archive))
                     .and_then(|calls| {
                         client.runtime_api().extract_block_object_mapping(
                             <span class="kw-2">&amp;</span>BlockId::Hash(<span class="kw-2">*</span>block.block.header().parent_hash()),
@@ -1008,7 +1011,12 @@
                     best_archived_block_number = block_number_to_archive;
 
                     <span class="kw">let </span>block = client
-                        .block(<span class="kw-2">&amp;</span>BlockId::Number(block_number_to_archive))
+                        .block(
+                            client
+                                .hash(block_number_to_archive)
+                                .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
+                                .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>),
+                        )
                         .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
                         .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>);
 
@@ -1092,7 +1100,7 @@
     archived_segment: ArchivedSegment,
 ) {
     <span class="kw">let </span>(acknowledgement_sender, <span class="kw-2">mut </span>acknowledgement_receiver) =
-        tracing_unbounded::&lt;()&gt;(<span class="string">&quot;subspace_acknowledgement&quot;</span>);
+        tracing_unbounded::&lt;()&gt;(<span class="string">&quot;subspace_acknowledgement&quot;</span>, <span class="number">100</span>);
     <span class="kw">let </span>archived_segment_notification = ArchivedSegmentNotification {
         archived_segment: Arc::new(archived_segment),
         acknowledgement_sender,
