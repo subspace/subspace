@@ -420,9 +420,6 @@
 <a href="#420" id="420">420</a>
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
-<a href="#423" id="423">423</a>
-<a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
 </pre><pre class="rust"><code><span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
 <span class="kw">use </span>cross_domain_message_gossip::DomainTxPoolSink;
 <span class="kw">use </span>domain_client_executor::{
@@ -474,8 +471,8 @@
     NativeElseWasmExecutor&lt;ExecutorDispatch&gt;,
 &gt;;
 
-<span class="doccomment">/// Full node along with some other components.
-</span><span class="kw">pub struct </span>NewFull&lt;C, CodeExecutor, PBlock, PClient, RuntimeApi, ExecutorDispatch&gt;
+<span class="doccomment">/// System domain full node along with some other components.
+</span><span class="kw">pub struct </span>NewFullSystem&lt;C, CodeExecutor, PBlock, PClient, RuntimeApi, ExecutorDispatch&gt;
 <span class="kw">where
     </span>PBlock: BlockT,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
@@ -629,12 +626,12 @@
     <span class="prelude-val">Ok</span>(params)
 }
 
-<span class="doccomment">/// Start a node with the given parachain `Configuration` and relay chain `Configuration`.
+<span class="doccomment">/// Start a node with the given system domain `Configuration` and consensus chain `Configuration`.
 ///
 /// This is the actual implementation that is abstract over the executor and the runtime api.
 </span><span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">pub async fn </span>new_full&lt;PBlock, PClient, SC, IBNS, NSNS, RuntimeApi, ExecutorDispatch&gt;(
-    <span class="kw-2">mut </span>secondary_chain_config: DomainConfiguration,
+</span><span class="kw">pub async fn </span>new_full_system&lt;PBlock, PClient, SC, IBNS, NSNS, RuntimeApi, ExecutorDispatch&gt;(
+    <span class="kw-2">mut </span>system_domain_config: DomainConfiguration,
     primary_chain_client: Arc&lt;PClient&gt;,
     primary_backend: Arc&lt;TFullBackend&lt;PBlock&gt;&gt;,
     primary_network: Arc&lt;NetworkService&lt;PBlock, PBlock::Hash&gt;&gt;,
@@ -644,7 +641,7 @@
     block_import_throttling_buffer_size: u32,
     gossip_message_sink: GossipMessageSink,
 ) -&gt; sc_service::error::Result&lt;
-    NewFull&lt;
+    NewFullSystem&lt;
         Arc&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
         NativeElseWasmExecutor&lt;ExecutorDispatch&gt;,
         PBlock,
@@ -684,17 +681,17 @@
         + PreValidationObjectApi&lt;Block, Hash&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
 {
-    <span class="comment">// TODO: Do we even need block announcement on secondary node?
-    // secondary_chain_config.announce_block = false;
+    <span class="comment">// TODO: Do we even need block announcement on system domain node?
+    // system_domain_config.announce_block = false;
 
-    </span>secondary_chain_config
+    </span>system_domain_config
         .service_config
         .network
         .extra_sets
         .push(domain_client_executor_gossip::executor_gossip_peers_set_config());
 
     <span class="kw">let </span>params = new_partial(
-        <span class="kw-2">&amp;</span>secondary_chain_config.service_config,
+        <span class="kw-2">&amp;</span>system_domain_config.service_config,
         primary_chain_client.clone(),
         primary_backend,
     )<span class="question-mark">?</span>;
@@ -708,7 +705,7 @@
     <span class="kw">let </span><span class="kw-2">mut </span>task_manager = params.task_manager;
     <span class="kw">let </span>(network, system_rpc_tx, tx_handler_controller, network_starter) =
         sc_service::build_network(BuildNetworkParams {
-            config: <span class="kw-2">&amp;</span>secondary_chain_config.service_config,
+            config: <span class="kw-2">&amp;</span>system_domain_config.service_config,
             client: client.clone(),
             transaction_pool: transaction_pool.clone(),
             spawn_handle: task_manager.spawn_handle(),
@@ -721,10 +718,7 @@
     <span class="kw">let </span>rpc_builder = {
         <span class="kw">let </span>client = client.clone();
         <span class="kw">let </span>transaction_pool = transaction_pool.clone();
-        <span class="kw">let </span>chain_spec = secondary_chain_config
-            .service_config
-            .chain_spec
-            .cloned_box();
+        <span class="kw">let </span>chain_spec = system_domain_config.service_config.chain_spec.cloned_box();
 
         Box::new(<span class="kw">move </span>|deny_unsafe, <span class="kw">_</span>| {
             <span class="kw">let </span>deps = <span class="kw">crate</span>::rpc::FullDeps {
@@ -738,14 +732,14 @@
         })
     };
 
-    <span class="kw">let </span>is_authority = secondary_chain_config.service_config.role.is_authority();
+    <span class="kw">let </span>is_authority = system_domain_config.service_config.role.is_authority();
 
     <span class="kw">let </span>rpc_handlers = sc_service::spawn_tasks(SpawnTasksParams {
         rpc_builder,
         client: client.clone(),
         transaction_pool: transaction_pool.clone(),
         task_manager: <span class="kw-2">&amp;mut </span>task_manager,
-        config: secondary_chain_config.service_config,
+        config: system_domain_config.service_config,
         keystore: params.keystore_container.sync_keystore(),
         backend: backend.clone(),
         network: network.clone(),
@@ -799,7 +793,7 @@
         Box::pin(executor_gossip),
     );
 
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(relayer_id) = secondary_chain_config.maybe_relayer_id {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(relayer_id) = system_domain_config.maybe_relayer_id {
         <span class="macro">tracing::info!</span>(
             <span class="string">&quot;Starting system domain relayer with relayer_id[{:?}]&quot;</span>,
             relayer_id
@@ -834,7 +828,7 @@
         Box::pin(system_domain_listener),
     );
 
-    <span class="kw">let </span>new_full = NewFull {
+    <span class="kw">let </span>new_full = NewFullSystem {
         task_manager,
         client,
         backend,
