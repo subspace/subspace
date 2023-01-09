@@ -21,6 +21,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs","verification.rs"]],\
 "pallet_object_store":["",[],["lib.rs"]],\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
+"pallet_receipts":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_runtime_configs":["",[],["lib.rs"]],\
 "pallet_subspace":["",[],["default_weights.rs","equivocation.rs","lib.rs"]],\
@@ -33,8 +34,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
-"sp_domain_tracker":["",[],["lib.rs"]],\
-"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","transaction.rs"]],\
+"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","state_root_tracker.rs","transaction.rs"]],\
 "sp_executor_registry":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
