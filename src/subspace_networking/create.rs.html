@@ -341,40 +341,15 @@
 <a href="#341" id="341">341</a>
 <a href="#342" id="342">342</a>
 <a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a>
-<a href="#347" id="347">347</a>
-<a href="#348" id="348">348</a>
-<a href="#349" id="349">349</a>
-<a href="#350" id="350">350</a>
-<a href="#351" id="351">351</a>
-<a href="#352" id="352">352</a>
-<a href="#353" id="353">353</a>
-<a href="#354" id="354">354</a>
-<a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
-<a href="#360" id="360">360</a>
-<a href="#361" id="361">361</a>
-<a href="#362" id="362">362</a>
-<a href="#363" id="363">363</a>
-<a href="#364" id="364">364</a>
-<a href="#365" id="365">365</a>
-<a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a>
-<a href="#371" id="371">371</a>
-</pre><pre class="rust"><code><span class="kw">pub use </span><span class="kw">crate</span>::behavior::custom_record_store::ValueGetter;
+</pre><pre class="rust"><code><span class="kw">mod </span>transport;
+
+<span class="kw">pub use </span><span class="kw">crate</span>::behavior::custom_record_store::ValueGetter;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::custom_record_store::{
     CustomRecordStore, MemoryProviderStorage, NoRecordStorage,
 };
 <span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::{Behavior, BehaviorConfig};
+<span class="kw">use </span><span class="kw">crate</span>::create::transport::build_transport;
 <span class="kw">use </span><span class="kw">crate</span>::node::{CircuitRelayClientError, Node};
 <span class="kw">use </span><span class="kw">crate</span>::node_runner::{NodeRunner, NodeRunnerConfig};
 <span class="kw">use </span><span class="kw">crate</span>::request_responses::RequestHandler;
@@ -382,9 +357,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::utils::{convert_multiaddresses, ResizableSemaphore};
 <span class="kw">use </span><span class="kw">crate</span>::BootstrappedNetworkingParameters;
 <span class="kw">use </span>futures::channel::mpsc;
-<span class="kw">use </span>libp2p::core::muxing::StreamMuxerBox;
-<span class="kw">use </span>libp2p::core::transport::Boxed;
-<span class="kw">use </span>libp2p::dns::TokioDnsConfig;
 <span class="kw">use </span>libp2p::gossipsub::{
     GossipsubConfig, GossipsubConfigBuilder, GossipsubMessage, MessageId, ValidationMode,
 };
@@ -392,13 +364,9 @@
 <span class="kw">use </span>libp2p::kad::{KademliaBucketInserts, KademliaCaching, KademliaConfig, KademliaStoreInserts};
 <span class="kw">use </span>libp2p::metrics::Metrics;
 <span class="kw">use </span>libp2p::multiaddr::Protocol;
-<span class="kw">use </span>libp2p::noise::NoiseConfig;
 <span class="kw">use </span>libp2p::swarm::SwarmBuilder;
-<span class="kw">use </span>libp2p::tcp::tokio::Transport <span class="kw">as </span>TokioTcpTransport;
-<span class="kw">use </span>libp2p::tcp::Config <span class="kw">as </span>GenTcpConfig;
-<span class="kw">use </span>libp2p::websocket::WsConfig;
 <span class="kw">use </span>libp2p::yamux::YamuxConfig;
-<span class="kw">use </span>libp2p::{core, identity, noise, Multiaddr, PeerId, Transport, TransportError};
+<span class="kw">use </span>libp2p::{identity, Multiaddr, PeerId, TransportError};
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
@@ -637,7 +605,12 @@
     } = config;
     <span class="kw">let </span>local_peer_id = peer_id(<span class="kw-2">&amp;</span>keypair);
 
-    <span class="kw">let </span>transport = build_transport(<span class="kw-2">&amp;</span>keypair, timeout, yamux_config)<span class="question-mark">?</span>;
+    <span class="kw">let </span>transport = build_transport(
+        allow_non_global_addresses_in_dht,
+        <span class="kw-2">&amp;</span>keypair,
+        timeout,
+        yamux_config,
+    )<span class="question-mark">?</span>;
 
     <span class="comment">// libp2p uses blocking API, hence we need to create a blocking task.
     </span><span class="kw">let </span>create_swarm_fut = tokio::task::spawn_blocking(<span class="kw">move </span>|| {
@@ -710,35 +683,6 @@
         <span class="string">&quot;Blocking tasks never panics, if it does it is an implementation bug and everything \
         must crash&quot;</span>,
     )
-}
-
-<span class="comment">// Builds the transport stack that LibP2P will communicate over along with a relay client.
-</span><span class="kw">fn </span>build_transport(
-    keypair: <span class="kw-2">&amp;</span>identity::Keypair,
-    timeout: Duration,
-    yamux_config: YamuxConfig,
-) -&gt; <span class="prelude-ty">Result</span>&lt;Boxed&lt;(PeerId, StreamMuxerBox)&gt;, CreationError&gt; {
-    <span class="kw">let </span>transport = {
-        <span class="kw">let </span>dns_tcp = TokioDnsConfig::system(TokioTcpTransport::new(
-            GenTcpConfig::default().nodelay(<span class="bool-val">true</span>),
-        ))<span class="question-mark">?</span>;
-        <span class="kw">let </span>ws = WsConfig::new(TokioDnsConfig::system(TokioTcpTransport::new(
-            GenTcpConfig::default().nodelay(<span class="bool-val">true</span>),
-        ))<span class="question-mark">?</span>);
-
-        dns_tcp.or_transport(ws)
-    };
-
-    <span class="kw">let </span>noise_keys = noise::Keypair::&lt;noise::X25519Spec&gt;::new()
-        .into_authentic(keypair)
-        .expect(<span class="string">&quot;Signing libp2p-noise static DH keypair failed.&quot;</span>);
-
-    <span class="prelude-val">Ok</span>(transport
-        .upgrade(core::upgrade::Version::V1Lazy)
-        .authenticate(NoiseConfig::xx(noise_keys).into_authenticated())
-        .multiplex(yamux_config)
-        .timeout(timeout)
-        .boxed())
 }
 </code></pre></div>
 </section></div></main><div id="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="subspace_networking" data-themes="" data-resource-suffix="" data-rustdoc-version="1.67.0-nightly (a00f8ba7f 2022-11-15)" data-search-js="search-df80cc3cb87b6482.js" data-settings-js="settings-7873449fa8c00e11.js" data-settings-css="settings-af96d9e2fc13e081.css" ></div></body></html>
