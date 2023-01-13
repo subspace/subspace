@@ -1081,11 +1081,33 @@
 <a href="#1081" id="1081">1081</a>
 <a href="#1082" id="1082">1082</a>
 <a href="#1083" id="1083">1083</a>
-</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::custom_record_store::CustomRecordStore;
-<span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry;
-<span class="kw">use </span><span class="kw">crate</span>::behavior::{Behavior, Event};
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry;
+<span class="kw">use </span><span class="kw">crate</span>::behavior::{provider_storage, Behavior, Event};
 <span class="kw">use </span><span class="kw">crate</span>::create::{
-    KADEMLIA_CONCURRENT_TASKS_BOOST_PER_PEER, REGULAR_CONCURRENT_TASKS_BOOST_PER_PEER,
+    ProviderOnlyRecordStore, KADEMLIA_CONCURRENT_TASKS_BOOST_PER_PEER,
+    REGULAR_CONCURRENT_TASKS_BOOST_PER_PEER,
 };
 <span class="kw">use </span><span class="kw">crate</span>::request_responses::{Event <span class="kw">as </span>RequestResponseEvent, IfDisconnected};
 <span class="kw">use </span><span class="kw">crate</span>::shared::{Command, CreatedSubscription, Shared};
@@ -1097,10 +1119,11 @@
 <span class="kw">use </span>libp2p::core::ConnectedPoint;
 <span class="kw">use </span>libp2p::gossipsub::{GossipsubEvent, TopicHash};
 <span class="kw">use </span>libp2p::identify::Event <span class="kw">as </span>IdentifyEvent;
+<span class="kw">use </span>libp2p::kad::store::RecordStore;
 <span class="kw">use </span>libp2p::kad::{
     AddProviderError, AddProviderOk, GetClosestPeersError, GetClosestPeersOk, GetProvidersError,
     GetProvidersOk, GetRecordError, GetRecordOk, InboundRequest, Kademlia, KademliaEvent,
-    PeerRecord, ProgressStep, PutRecordOk, QueryId, QueryResult, Quorum, Record,
+    PeerRecord, ProgressStep, ProviderRecord, PutRecordOk, QueryId, QueryResult, Quorum, Record,
 };
 <span class="kw">use </span>libp2p::metrics::{Metrics, Recorder};
 <span class="kw">use </span>libp2p::swarm::dial_opts::DialOpts;
@@ -1117,6 +1140,9 @@
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>tokio::time::Sleep;
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
+
+<span class="comment">// Channel size for provider records received from Kademlia.
+</span><span class="kw">const </span>PROVIDER_RECORD_BUFFER_SIZE: usize = <span class="number">20000</span>;
 
 <span class="doccomment">/// How many peers should node be connected to before boosting turns on.
 ///
@@ -1154,14 +1180,14 @@
 
 <span class="doccomment">/// Runner for the Node.
 </span><span class="attr">#[must_use = <span class="string">&quot;Node does not function properly unless its runner is driven forward&quot;</span>]
-</span><span class="kw">pub struct </span>NodeRunner&lt;RecordStore = CustomRecordStore&gt;
+</span><span class="kw">pub struct </span>NodeRunner&lt;ProviderStorage&gt;
 <span class="kw">where
-    </span>RecordStore: Send + Sync + libp2p::kad::store::RecordStore + <span class="lifetime">&#39;static</span>,
+    </span>ProviderStorage: provider_storage::ProviderStorage + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="doccomment">/// Should non-global addresses be added to the DHT?
     </span>allow_non_global_addresses_in_dht: bool,
     command_receiver: mpsc::Receiver&lt;Command&gt;,
-    swarm: Swarm&lt;Behavior&lt;RecordStore&gt;&gt;,
+    swarm: Swarm&lt;Behavior&lt;ProviderOnlyRecordStore&lt;ProviderStorage&gt;&gt;&gt;,
     shared_weak: Weak&lt;Shared&gt;,
     <span class="doccomment">/// How frequently should random queries be done using Kademlia DHT to populate routing table.
     </span>next_random_query_interval: Duration,
@@ -1185,16 +1211,20 @@
     </span>max_established_outgoing_connections: u32,
     <span class="doccomment">/// Prometheus metrics.
     </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// ProviderRecord chanel receiver.
+    </span>provider_records_receiver: <span class="prelude-ty">Option</span>&lt;mpsc::Receiver&lt;ProviderRecord&gt;&gt;,
+    <span class="doccomment">/// ProviderRecord chanel sender.
+    </span>provider_records_sender: mpsc::Sender&lt;ProviderRecord&gt;,
 }
 
 <span class="comment">// Helper struct for NodeRunner configuration (clippy requirement).
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeRunnerConfig&lt;RecordStore = CustomRecordStore&gt;
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeRunnerConfig&lt;ProviderStorage&gt;
 <span class="kw">where
-    </span>RecordStore: Send + Sync + libp2p::kad::store::RecordStore + <span class="lifetime">&#39;static</span>,
+    </span>ProviderStorage: provider_storage::ProviderStorage + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">pub </span>allow_non_global_addresses_in_dht: bool,
     <span class="kw">pub </span>command_receiver: mpsc::Receiver&lt;Command&gt;,
-    <span class="kw">pub </span>swarm: Swarm&lt;Behavior&lt;RecordStore&gt;&gt;,
+    <span class="kw">pub </span>swarm: Swarm&lt;Behavior&lt;ProviderOnlyRecordStore&lt;ProviderStorage&gt;&gt;&gt;,
     <span class="kw">pub </span>shared_weak: Weak&lt;Shared&gt;,
     <span class="kw">pub </span>next_random_query_interval: Duration,
     <span class="kw">pub </span>networking_parameters_registry: Box&lt;<span class="kw">dyn </span>NetworkingParametersRegistry&gt;,
@@ -1204,12 +1234,12 @@
     <span class="kw">pub </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
 }
 
-<span class="kw">impl</span>&lt;RecordStore&gt; NodeRunner&lt;RecordStore&gt;
+<span class="kw">impl</span>&lt;ProviderStorage&gt; NodeRunner&lt;ProviderStorage&gt;
 <span class="kw">where
-    </span>RecordStore: Send + Sync + libp2p::kad::store::RecordStore + <span class="lifetime">&#39;static</span>,
+    </span>ProviderStorage: provider_storage::ProviderStorage + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
-        NodeRunnerConfig::&lt;RecordStore&gt; {
+        NodeRunnerConfig {
             allow_non_global_addresses_in_dht,
             command_receiver,
             swarm,
@@ -1220,8 +1250,11 @@
             max_established_incoming_connections,
             max_established_outgoing_connections,
             metrics,
-        }: NodeRunnerConfig&lt;RecordStore&gt;,
+        }: NodeRunnerConfig&lt;ProviderStorage&gt;,
     ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>(provider_records_sender, provider_records_receiver) =
+            mpsc::channel(PROVIDER_RECORD_BUFFER_SIZE);
+
         <span class="self">Self </span>{
             allow_non_global_addresses_in_dht,
             command_receiver,
@@ -1240,7 +1273,13 @@
             max_established_incoming_connections,
             max_established_outgoing_connections,
             metrics,
+            provider_records_receiver: <span class="prelude-val">Some</span>(provider_records_receiver),
+            provider_records_sender,
         }
+    }
+
+    <span class="kw">pub fn </span>take_provider_records_receiver(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;mpsc::Receiver&lt;ProviderRecord&gt;&gt; {
+        <span class="self">self</span>.provider_records_receiver.take()
     }
 
     <span class="kw">pub async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
@@ -1616,6 +1655,11 @@
                     {
                         <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">&quot;Failed to add provider record: {:?}&quot;</span>, record);
                     }
+
+                    <span class="kw">let </span>key = record.key.clone();
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.provider_records_sender.try_send(record) {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="question-mark">?</span>key, <span class="string">&quot;Failed to add provider record to the channel.&quot;</span>);
+                    }
                 }
             }
             KademliaEvent::OutboundQueryProgressed {
@@ -1855,7 +1899,7 @@
 
     <span class="comment">// Returns `true` if query was cancelled
     </span><span class="kw">fn </span>unbounded_send_and_cancel_on_error&lt;T&gt;(
-        kademlia: <span class="kw-2">&amp;mut </span>Kademlia&lt;RecordStore&gt;,
+        kademlia: <span class="kw-2">&amp;mut </span>Kademlia&lt;ProviderOnlyRecordStore&lt;ProviderStorage&gt;&gt;,
         sender: <span class="kw-2">&amp;mut </span>mpsc::UnboundedSender&lt;T&gt;,
         value: T,
         channel: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str,

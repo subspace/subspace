@@ -237,26 +237,6 @@
 <a href="#237" id="237">237</a>
 <a href="#238" id="238">238</a>
 <a href="#239" id="239">239</a>
-<a href="#240" id="240">240</a>
-<a href="#241" id="241">241</a>
-<a href="#242" id="242">242</a>
-<a href="#243" id="243">243</a>
-<a href="#244" id="244">244</a>
-<a href="#245" id="245">245</a>
-<a href="#246" id="246">246</a>
-<a href="#247" id="247">247</a>
-<a href="#248" id="248">248</a>
-<a href="#249" id="249">249</a>
-<a href="#250" id="250">250</a>
-<a href="#251" id="251">251</a>
-<a href="#252" id="252">252</a>
-<a href="#253" id="253">253</a>
-<a href="#254" id="254">254</a>
-<a href="#255" id="255">255</a>
-<a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a>
-<a href="#259" id="259">259</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
 <span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::ExponentialBackoff;
@@ -274,8 +254,8 @@
 <span class="kw">use </span>subspace_core_primitives::{PieceIndex, PieceIndexHash, PIECES_IN_SEGMENT};
 <span class="kw">use </span>subspace_networking::libp2p::{identity, Multiaddr};
 <span class="kw">use </span>subspace_networking::{
-    BootstrappedNetworkingParameters, CreationError, CustomRecordStore, MemoryProviderStorage,
-    Node, NodeRunner, PieceByHashRequestHandler, PieceByHashResponse, PieceKey, ToMultihash,
+    peer_id, BootstrappedNetworkingParameters, CreationError, MemoryProviderStorage, Node,
+    NodeRunner, PieceByHashRequestHandler, PieceByHashResponse, PieceKey, ToMultihash,
 };
 <span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tokio::time::error::Elapsed;
@@ -311,24 +291,18 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>create_dsn_instance&lt;Block, AS&gt;(
     dsn_config: DsnConfig,
     piece_cache: PieceCache&lt;AS&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;
-    (
-        Node,
-        NodeRunner&lt;CustomRecordStore&lt;PieceCache&lt;AS&gt;, MemoryProviderStorage&gt;&gt;,
-    ),
-    CreationError,
-&gt;
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Node, NodeRunner&lt;MemoryProviderStorage&gt;), CreationError&gt;
 <span class="kw">where
     </span>Block: BlockT,
     AS: AuxStore + Sync + Send + <span class="lifetime">&#39;static</span>,
 {
     <span class="macro">trace!</span>(<span class="string">&quot;Subspace networking starting.&quot;</span>);
 
-    <span class="kw">let </span>record_store =
-        CustomRecordStore::new(piece_cache.clone(), MemoryProviderStorage::default());
+    <span class="comment">// TODO: This should be a wrapper that handles locally cached pieces
+    </span><span class="kw">let </span>provider_storage = MemoryProviderStorage::new(peer_id(<span class="kw-2">&amp;</span>dsn_config.keypair));
 
     <span class="kw">let </span>networking_config = subspace_networking::Config {
-        keypair: dsn_config.keypair,
+        keypair: dsn_config.keypair.clone(),
         listen_on: dsn_config.listen_on,
         allow_non_global_addresses_in_dht: dsn_config.allow_non_global_addresses_in_dht,
         networking_parameters_registry: BootstrappedNetworkingParameters::new(
@@ -336,8 +310,8 @@
         )
         .boxed(),
         request_response_protocols: <span class="macro">vec!</span>[PieceByHashRequestHandler::create(<span class="kw">move </span>|req| {
-            <span class="kw">let </span>result = <span class="kw">if let </span>PieceKey::PieceIndex(piece_index) = req.key {
-                <span class="kw">match </span>piece_cache.get_piece(piece_index) {
+            <span class="kw">let </span>result = <span class="kw">if let </span>PieceKey::Cache(piece_index_hash) = req.key {
+                <span class="kw">match </span>piece_cache.get_piece(piece_index_hash) {
                     <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
                     <span class="prelude-val">Err</span>(error) =&gt; {
                         <span class="macro">error!</span>(key=<span class="question-mark">?</span>req.key, %error, <span class="string">&quot;Failed to get piece from cache&quot;</span>);
@@ -352,8 +326,8 @@
 
             <span class="prelude-val">Some</span>(PieceByHashResponse { piece: result })
         })],
-        record_store,
-        ..subspace_networking::Config::with_generated_keypair()
+        provider_storage,
+        ..subspace_networking::Config::default()
     };
 
     subspace_networking::create(networking_config).<span class="kw">await
@@ -433,10 +407,7 @@
     <span class="kw">let </span>pieces_indexes = (first_piece_index..).take(archived_segment.pieces.count());
 
     <span class="kw">let </span><span class="kw-2">mut </span>pieces_publishing_futures = pieces_indexes
-        .zip(archived_segment.pieces.as_pieces())
-        .map(|(piece_index, piece)| {
-            publish_single_piece_with_backoff(node, piece_index, piece.to_vec())
-        })
+        .map(|piece_index| publish_single_piece_with_backoff(node, piece_index))
         .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;();
 
     <span class="kw">while </span>pieces_publishing_futures.next().<span class="kw">await</span>.is_some() {
@@ -449,7 +420,6 @@
 <span class="kw">async fn </span>publish_single_piece_with_backoff(
     node: <span class="kw-2">&amp;</span>Node,
     piece_index: PieceIndex,
-    piece: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
     <span class="kw">let </span>backoff = ExponentialBackoff {
         initial_interval: PUBLISH_PIECE_INITIAL_INTERVAL,
@@ -462,7 +432,7 @@
     retry(backoff, || <span class="kw">async </span>{
         <span class="kw">let </span>publish_timeout_result: <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw">_</span>&gt;, Elapsed&gt; = timeout(
             PUBLISH_PIECE_TIMEOUT,
-            publish_single_piece(node, piece_index, piece.clone()),
+            publish_single_piece(node, piece_index),
         )
         .<span class="kw">await</span>;
 
@@ -484,35 +454,25 @@
 <span class="kw">async fn </span>publish_single_piece(
     node: <span class="kw-2">&amp;</span>Node,
     piece_index: PieceIndex,
-    piece: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
     <span class="kw">let </span>key = PieceIndexHash::from_index(piece_index).to_multihash();
 
-    <span class="comment">//TODO: restore announcing after https://github.com/libp2p/rust-libp2p/issues/3048
-    // trace!(?key, ?piece_index, &quot;Announcing key...&quot;);
-    //
-    // let announcing_result = node.start_announcing(key).await;
-    //
-    // trace!(?key, &quot;Announcing result: {:?}&quot;, announcing_result);
-
-    </span><span class="kw">let </span>result = node.put_value(key, piece).<span class="kw">await</span>;
-
-    <span class="kw">match </span>result {
-        <span class="prelude-val">Err</span>(error) =&gt; {
-            <span class="macro">debug!</span>(<span class="question-mark">?</span>error, %piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece publishing returned an error&quot;</span>);
-
-            <span class="prelude-val">Err</span>(<span class="string">&quot;Piece publishing failed&quot;</span>.into())
-        }
+    <span class="kw">match </span>node.start_announcing(key).<span class="kw">await </span>{
         <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>stream) =&gt; {
             <span class="kw">if </span>stream.next().<span class="kw">await</span>.is_some() {
-                <span class="macro">trace!</span>(%piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece publishing succeeded&quot;</span>);
+                <span class="macro">trace!</span>(%piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece announcing succeeded&quot;</span>);
 
                 <span class="prelude-val">Ok</span>(())
             } <span class="kw">else </span>{
-                <span class="macro">debug!</span>(%piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece publishing failed&quot;</span>);
+                <span class="macro">warn!</span>(%piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece announcing failed&quot;</span>);
 
                 <span class="prelude-val">Err</span>(<span class="string">&quot;Piece publishing was unsuccessful&quot;</span>.into())
             }
+        }
+        <span class="prelude-val">Err</span>(error) =&gt; {
+            <span class="macro">error!</span>( %piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece announcing failed with an error: {}&quot;</span>, error);
+
+            <span class="prelude-val">Err</span>(<span class="string">&quot;Piece publishing failed&quot;</span>.into())
         }
     }
 }
