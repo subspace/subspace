@@ -1216,6 +1216,34 @@
 <a href="#1216" id="1216">1216</a>
 <a href="#1217" id="1217">1217</a>
 <a href="#1218" id="1218">1218</a>
+<a href="#1219" id="1219">1219</a>
+<a href="#1220" id="1220">1220</a>
+<a href="#1221" id="1221">1221</a>
+<a href="#1222" id="1222">1222</a>
+<a href="#1223" id="1223">1223</a>
+<a href="#1224" id="1224">1224</a>
+<a href="#1225" id="1225">1225</a>
+<a href="#1226" id="1226">1226</a>
+<a href="#1227" id="1227">1227</a>
+<a href="#1228" id="1228">1228</a>
+<a href="#1229" id="1229">1229</a>
+<a href="#1230" id="1230">1230</a>
+<a href="#1231" id="1231">1231</a>
+<a href="#1232" id="1232">1232</a>
+<a href="#1233" id="1233">1233</a>
+<a href="#1234" id="1234">1234</a>
+<a href="#1235" id="1235">1235</a>
+<a href="#1236" id="1236">1236</a>
+<a href="#1237" id="1237">1237</a>
+<a href="#1238" id="1238">1238</a>
+<a href="#1239" id="1239">1239</a>
+<a href="#1240" id="1240">1240</a>
+<a href="#1241" id="1241">1241</a>
+<a href="#1242" id="1242">1242</a>
+<a href="#1243" id="1243">1243</a>
+<a href="#1244" id="1244">1244</a>
+<a href="#1245" id="1245">1245</a>
+<a href="#1246" id="1246">1246</a>
 </pre><pre class="rust"><code><span class="kw">pub mod </span>piece_publisher;
 <span class="kw">pub mod </span>piece_reader;
 <span class="kw">pub mod </span>piece_receiver;
@@ -1227,8 +1255,10 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::farming::audit_sector;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_publisher::PieceSectorPublisher;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_reader::{read_piece, PieceReader, ReadPieceRequest};
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_receiver::RecordsRootPieceValidator;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::plotting::{plot_sector, PlottedSector};
 <span class="kw">use </span><span class="kw">crate</span>::utils::JoinOnDrop;
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>bytesize::ByteSize;
 <span class="kw">use </span>derive_more::{Display, From};
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
@@ -1239,9 +1269,9 @@
 <span class="kw">use </span>memmap2::{Mmap, MmapMut, MmapOptions};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
-<span class="kw">use </span>piece_receiver::MultiChannelPieceReceiver;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>static_assertions::const_assert;
+<span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::fs::OpenOptions;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::io::{Seek, SeekFrom};
@@ -1256,11 +1286,12 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{test_public_parameters, Kzg};
 <span class="kw">use </span>subspace_core_primitives::sector_codec::SectorCodec;
 <span class="kw">use </span>subspace_core_primitives::{
-    PieceIndex, PublicKey, SectorId, SectorIndex, Solution, PIECES_IN_SECTOR, PLOT_SECTOR_SIZE,
+    Piece, PieceIndex, PublicKey, SectorId, SectorIndex, Solution, PIECES_IN_SECTOR,
+    PLOT_SECTOR_SIZE,
 };
 <span class="kw">use </span>subspace_farmer_components::file_ext::FileExt;
 <span class="kw">use </span>subspace_farmer_components::{farming, plotting, SectorMetadata};
-<span class="kw">use </span>subspace_networking::Node;
+<span class="kw">use </span>subspace_networking::{Node, PieceProvider};
 <span class="kw">use </span>subspace_rpc_primitives::{SlotInfo, SolutionResponse};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::runtime::Handle;
@@ -1638,6 +1669,26 @@
     solution: Handler&lt;SolutionResponse&gt;,
 }
 
+<span class="doccomment">/// Adapter struct for the PieceReceiver trait for subspace-networking
+/// and subspace-farmer-components crates.
+</span><span class="kw">struct </span>PieceReceiverWrapper&lt;PR&gt;(PR);
+
+<span class="kw">impl</span>&lt;PR: subspace_networking::PieceReceiver&gt; PieceReceiverWrapper&lt;PR&gt; {
+    <span class="kw">fn </span>new(piece_getter: PR) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>(piece_getter)
+    }
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl</span>&lt;PR: subspace_networking::PieceReceiver&gt; plotting::PieceReceiver <span class="kw">for </span>PieceReceiverWrapper&lt;PR&gt; {
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
+        <span class="self">self</span>.<span class="number">0</span>.get_piece(piece_index).<span class="kw">await
+    </span>}
+}
+
 <span class="doccomment">/// Single disk plot abstraction is a container for everything necessary to plot/farm with a single
 /// disk plot.
 ///
@@ -1901,13 +1952,18 @@
                         <span class="kw">let </span>records_roots_cache =
                             Mutex::new(LruCache::new(RECORDS_ROOTS_CACHE_SIZE));
 
-                        <span class="kw">let </span>piece_receiver = MultiChannelPieceReceiver::new(
+                        <span class="kw">let </span>piece_receiver = PieceProvider::new(
                             <span class="kw-2">&amp;</span>dsn_node,
-                            <span class="kw-2">&amp;</span>node_client,
-                            <span class="kw-2">&amp;</span>kzg,
-                            <span class="kw-2">&amp;</span>records_roots_cache,
+                            <span class="prelude-val">Some</span>(RecordsRootPieceValidator::new(
+                                <span class="kw-2">&amp;</span>dsn_node,
+                                <span class="kw-2">&amp;</span>node_client,
+                                <span class="kw-2">&amp;</span>kzg,
+                                <span class="kw-2">&amp;</span>records_roots_cache,
+                            )),
                             <span class="kw-2">&amp;</span>shutting_down,
                         );
+
+                        <span class="kw">let </span>piece_receiver_wrapper = PieceReceiverWrapper::new(piece_receiver);
 
                         <span class="comment">// TODO: Concurrency
                         </span><span class="kw">for </span>(sector_index, sector, sector_metadata) <span class="kw">in </span>plot_initial_sector {
@@ -1944,7 +2000,7 @@
                             <span class="kw">let </span>plot_sector_fut = plot_sector(
                                 <span class="kw-2">&amp;</span>public_key,
                                 sector_index,
-                                <span class="kw-2">&amp;</span>piece_receiver,
+                                <span class="kw-2">&amp;</span>piece_receiver_wrapper,
                                 <span class="kw-2">&amp;</span>shutting_down,
                                 <span class="kw-2">&amp;</span>farmer_app_info.protocol_info,
                                 <span class="kw-2">&amp;</span>kzg,
