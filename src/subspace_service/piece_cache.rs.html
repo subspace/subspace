@@ -306,10 +306,34 @@
 <a href="#306" id="306">306</a>
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
 </pre><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::collections::BTreeSet;
@@ -333,7 +357,7 @@
     <span class="doccomment">/// Peer ID of the current node.
     </span>local_peer_id: PeerId,
     <span class="doccomment">/// Local provided keys
-    </span>local_provided_keys: BTreeSet&lt;PieceIndex&gt;,
+    </span>local_provided_keys: Arc&lt;Mutex&lt;BTreeSet&lt;PieceIndex&gt;&gt;&gt;,
 }
 
 <span class="kw">impl</span>&lt;AS&gt; Clone <span class="kw">for </span>PieceCache&lt;AS&gt; {
@@ -373,7 +397,7 @@
             aux_store,
             max_pieces_in_cache,
             local_peer_id,
-            local_provided_keys,
+            local_provided_keys: Arc::new(Mutex::new(local_provided_keys)),
         }
     }
 
@@ -388,14 +412,17 @@
         }))
     }
 
-    <span class="kw">fn </span>write_local_provided_keys(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+    <span class="kw">fn </span>write_local_provided_keys(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        local_provided_keys: BTreeSet&lt;PieceIndex&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
         <span class="comment">// TODO: Could be a slow process. We need to optimize it ASAP!
         </span><span class="self">self</span>.aux_store
             .insert_aux(
                 <span class="kw-2">&amp;</span><span class="macro">vec!</span>[(
                     LOCAL_PROVIDED_KEYS,
                     ParityDbKeyCollection {
-                        set: <span class="self">self</span>.local_provided_keys.clone(),
+                        set: local_provided_keys,
                     }
                     .encode()
                     .as_slice(),
@@ -458,15 +485,21 @@
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
         )<span class="question-mark">?</span>;
 
-        <span class="kw">for </span>piece_index <span class="kw">in </span>delete_indexes {
-            <span class="self">self</span>.local_provided_keys.remove(<span class="kw-2">&amp;</span>piece_index);
-        }
+        <span class="kw">let </span>local_provided_keys = {
+            <span class="kw">let </span><span class="kw-2">mut </span>local_provided_keys = <span class="self">self</span>.local_provided_keys.lock();
 
-        <span class="kw">for </span>piece_index <span class="kw">in </span>insert_indexes {
-            <span class="self">self</span>.local_provided_keys.insert(piece_index);
-        }
+            <span class="kw">for </span>piece_index <span class="kw">in </span>delete_indexes {
+                local_provided_keys.remove(<span class="kw-2">&amp;</span>piece_index);
+            }
 
-        <span class="self">self</span>.write_local_provided_keys()<span class="question-mark">?</span>;
+            <span class="kw">for </span>piece_index <span class="kw">in </span>insert_indexes {
+                local_provided_keys.insert(piece_index);
+            }
+
+            local_provided_keys.clone()
+        };
+
+        <span class="self">self</span>.write_local_provided_keys(local_provided_keys)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -557,7 +590,13 @@
     }
 
     <span class="kw">fn </span>provided(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span>::ProvidedIter&lt;<span class="lifetime">&#39;_</span>&gt; {
-        <span class="kw">let </span>pieces_indexes = <span class="self">self</span>.local_provided_keys.iter();
+        <span class="kw">let </span>pieces_indexes = {
+            <span class="self">self</span>.local_provided_keys
+                .lock()
+                .iter()
+                .cloned()
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+        };
 
         AuxStoreProviderRecordIterator::new(pieces_indexes, <span class="self">self</span>.clone())
     }
@@ -572,18 +611,17 @@
 }
 
 <span class="kw">pub struct </span>AuxStoreProviderRecordIterator&lt;<span class="lifetime">&#39;a</span>, AS&gt; {
-    piece_index_iter: std::collections::btree_set::Iter&lt;<span class="lifetime">&#39;a</span>, PieceIndex&gt;,
+    piece_indexes: Vec&lt;PieceIndex&gt;,
+    piece_indexes_cursor: usize,
     piece_cache: PieceCache&lt;AS&gt;,
     marker: PhantomData&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>()&gt;,
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, AS: AuxStore&gt; AuxStoreProviderRecordIterator&lt;<span class="lifetime">&#39;a</span>, AS&gt; {
-    <span class="kw">pub fn </span>new(
-        piece_index_iter: std::collections::btree_set::Iter&lt;<span class="lifetime">&#39;a</span>, PieceIndex&gt;,
-        piece_cache: PieceCache&lt;AS&gt;,
-    ) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(piece_indexes: Vec&lt;PieceIndex&gt;, piece_cache: PieceCache&lt;AS&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            piece_index_iter,
+            piece_indexes,
+            piece_indexes_cursor: <span class="number">0</span>,
             piece_cache,
             marker: PhantomData,
         }
@@ -594,24 +632,32 @@
     <span class="kw">type </span>Item = Cow&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;;
 
     <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
+        <span class="kw">if </span><span class="self">self</span>.piece_indexes.len() == <span class="self">self</span>.piece_indexes_cursor {
+            <span class="kw">return </span><span class="prelude-val">None</span>; <span class="comment">// iterator finished
+        </span>}
+
         <span class="kw">let </span>peer_id = <span class="self">self</span>.piece_cache.local_peer_id;
+        <span class="kw">let </span>piece_index = <span class="self">self</span>.piece_indexes[<span class="self">self</span>.piece_indexes_cursor];
+        <span class="kw">let </span>piece_index_hash = PieceIndexHash::from_index(piece_index);
+        <span class="kw">let </span>key = Key::from(piece_index_hash.to_multihash());
 
-        <span class="self">self</span>.piece_index_iter.next().and_then(|piece_index| {
-            <span class="kw">let </span>piece_index_hash = PieceIndexHash::from_index(<span class="kw-2">*</span>piece_index);
-            <span class="kw">let </span>key = Key::from(piece_index_hash.to_multihash());
+        <span class="kw">let </span>result = <span class="self">self
+            </span>.piece_cache
+            .get_piece(piece_index_hash)
+            .ok()
+            .flatten()
+            .map(<span class="kw">move </span>|<span class="kw">_</span>| ProviderRecord {
+                key: key.clone(),
+                provider: peer_id,
+                expires: <span class="prelude-val">None</span>,
+                addresses: <span class="macro">vec!</span>[], <span class="comment">// TODO: add address hints
+            </span>})
+            .map(Cow::Owned);
 
-            <span class="self">self</span>.piece_cache
-                .get_piece(piece_index_hash)
-                .ok()
-                .flatten()
-                .map(<span class="kw">move </span>|<span class="kw">_</span>| ProviderRecord {
-                    key: key.clone(),
-                    provider: peer_id,
-                    expires: <span class="prelude-val">None</span>,
-                    addresses: <span class="macro">vec!</span>[], <span class="comment">// TODO: add address hints
-                </span>})
-                .map(Cow::Owned)
-        })
+        <span class="comment">// Move iterator cursor forward
+        </span><span class="self">self</span>.piece_indexes_cursor += <span class="number">1</span>;
+
+        result
     }
 }
 </code></pre></div>
