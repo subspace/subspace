@@ -121,12 +121,6 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a>
 </pre><pre class="rust"><code><span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::ExponentialBackoff;
 <span class="kw">use </span>futures::stream::FuturesUnordered;
@@ -137,12 +131,8 @@
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::{PieceIndex, PieceIndexHash};
 <span class="kw">use </span>subspace_networking::{Node, ToMultihash};
-<span class="kw">use </span>tokio::time::error::Elapsed;
-<span class="kw">use </span>tokio::time::timeout;
 <span class="kw">use </span>tracing::{debug, error, info, trace};
 
-<span class="doccomment">/// Max time allocated for putting piece from DSN before attempt is considered to fail
-</span><span class="kw">const </span>PUT_PIECE_TIMEOUT: Duration = Duration::from_secs(<span class="number">120</span>);
 <span class="doccomment">/// Defines initial duration between put_piece calls.
 </span><span class="kw">const </span>PUT_PIECE_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 <span class="doccomment">/// Defines max duration between put_piece calls.
@@ -208,16 +198,14 @@
             <span class="self">self</span>.check_cancellation()
                 .map_err(backoff::Error::Permanent)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>publish_timeout_result: <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="kw">_</span>&gt;, Elapsed&gt; =
-                timeout(PUT_PIECE_TIMEOUT, <span class="self">self</span>.publish_single_piece(piece_index)).<span class="kw">await</span>;
-
-            <span class="kw">if let </span><span class="prelude-val">Ok</span>(publish_result) = publish_timeout_result {
-                <span class="kw">if </span>publish_result.is_ok() {
+            <span class="kw">match </span><span class="self">self</span>.publish_single_piece(piece_index).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(()) =&gt; {
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                 }
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">error!</span>(%piece_index, %error, <span class="string">&quot;Couldn&#39;t publish a piece. Retrying...&quot;</span>);
+                }
             }
-
-            <span class="macro">error!</span>(%piece_index, <span class="string">&quot;Couldn&#39;t publish a piece. Retrying...&quot;</span>);
 
             <span class="prelude-val">Err</span>(backoff::Error::transient(
                 <span class="string">&quot;Couldn&#39;t publish piece to DSN&quot;</span>.into(),
