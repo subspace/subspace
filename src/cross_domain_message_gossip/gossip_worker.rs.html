@@ -183,10 +183,27 @@
 <a href="#183" id="183">183</a>
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
-</pre><pre class="rust"><code><span class="kw">use </span>futures::{Stream, StreamExt};
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+</pre><pre class="rust"><code><span class="kw">use </span>futures::{FutureExt, Stream, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
 <span class="kw">use </span>sc_network::PeerId;
+<span class="kw">use </span>sc_network_common::config::NonDefaultSetConfig;
 <span class="kw">use </span>sc_network_gossip::{
     GossipEngine, MessageIntent, ValidationResult, Validator, ValidatorContext,
 };
@@ -217,6 +234,13 @@
     gossip_engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
     gossip_validator: Arc&lt;GossipValidator&gt;,
     domain_tx_pool_sinks: BTreeMap&lt;DomainId, DomainTxPoolSink&gt;,
+}
+
+<span class="doccomment">/// Returns the network configuration for cross domain message gossip.
+</span><span class="kw">pub fn </span>cdm_gossip_peers_set_config() -&gt; NonDefaultSetConfig {
+    <span class="kw">let </span><span class="kw-2">mut </span>cfg = NonDefaultSetConfig::new(PROTOCOL_NAME.into(), <span class="number">5 </span>* <span class="number">1024 </span>* <span class="number">1024</span>);
+    cfg.allow_non_reserved(<span class="number">25</span>, <span class="number">25</span>);
+    cfg
 }
 
 <span class="doccomment">/// Cross domain message topic.
@@ -261,19 +285,27 @@
         );
 
         <span class="kw">loop </span>{
+            <span class="kw">let </span>engine = <span class="self">self</span>.gossip_engine.clone();
+            <span class="kw">let </span>gossip_engine = futures::future::poll_fn(|cx| engine.lock().poll_unpin(cx));
+
             <span class="macro">futures::select! </span>{
-                cross_domain_message = incoming_cross_domain_messages.next() =&gt; {
+                cross_domain_message = incoming_cross_domain_messages.next().fuse() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_domain_message {
                         <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross domain message for domain: {:?}&quot;</span>, msg.domain_id);
                         <span class="self">self</span>.handle_cross_domain_message(msg);
                     }
                 },
 
-                cross_domain_message = gossip_msg_stream.next() =&gt; {
+                cross_domain_message = gossip_msg_stream.next().fuse() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_domain_message {
                         <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross domain message for domain: {:?}&quot;</span>, msg.domain_id);
                         <span class="self">self</span>.handle_cross_domain_message(msg);
                     }
+                }
+
+                <span class="kw">_ </span>= gossip_engine.fuse() =&gt; {
+                    <span class="macro">tracing::error!</span>(target: LOG_TARGET, <span class="string">&quot;Gossip engine has terminated.&quot;</span>);
+                    <span class="kw">return</span>;
                 }
             }
         }
