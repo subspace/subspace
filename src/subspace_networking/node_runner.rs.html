@@ -1091,6 +1091,21 @@
 <a href="#1091" id="1091">1091</a>
 <a href="#1092" id="1092">1092</a>
 <a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::{provider_storage, Behavior, Event};
 <span class="kw">use </span><span class="kw">crate</span>::create::{
@@ -1111,7 +1126,7 @@
 <span class="kw">use </span>libp2p::kad::{
     AddProviderError, AddProviderOk, GetClosestPeersError, GetClosestPeersOk, GetProvidersError,
     GetProvidersOk, GetRecordError, GetRecordOk, InboundRequest, Kademlia, KademliaEvent,
-    PeerRecord, ProgressStep, PutRecordOk, QueryId, QueryResult, Quorum, Record,
+    PeerRecord, ProgressStep, ProviderRecord, PutRecordOk, QueryId, QueryResult, Quorum, Record,
 };
 <span class="kw">use </span>libp2p::metrics::{Metrics, Recorder};
 <span class="kw">use </span>libp2p::swarm::dial_opts::DialOpts;
@@ -1128,6 +1143,9 @@
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>tokio::time::Sleep;
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
+
+<span class="comment">// Channel size for provider records received from Kademlia.
+</span><span class="kw">const </span>PROVIDER_RECORD_BUFFER_SIZE: usize = <span class="number">20000</span>;
 
 <span class="doccomment">/// How many peers should node be connected to before boosting turns on.
 ///
@@ -1196,6 +1214,10 @@
     </span>max_established_outgoing_connections: u32,
     <span class="doccomment">/// Prometheus metrics.
     </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// ProviderRecord chanel receiver.
+    </span>provider_records_receiver: <span class="prelude-ty">Option</span>&lt;mpsc::Receiver&lt;ProviderRecord&gt;&gt;,
+    <span class="doccomment">/// ProviderRecord chanel sender.
+    </span>provider_records_sender: mpsc::Sender&lt;ProviderRecord&gt;,
 }
 
 <span class="comment">// Helper struct for NodeRunner configuration (clippy requirement).
@@ -1233,6 +1255,9 @@
             metrics,
         }: NodeRunnerConfig&lt;ProviderStorage&gt;,
     ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>(provider_records_sender, provider_records_receiver) =
+            mpsc::channel(PROVIDER_RECORD_BUFFER_SIZE);
+
         <span class="self">Self </span>{
             allow_non_global_addresses_in_dht,
             command_receiver,
@@ -1251,7 +1276,16 @@
             max_established_incoming_connections,
             max_established_outgoing_connections,
             metrics,
+            provider_records_receiver: <span class="prelude-val">Some</span>(provider_records_receiver),
+            provider_records_sender,
         }
+    }
+
+    <span class="kw">pub fn </span>take_provider_records_receiver(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;mpsc::Receiver&lt;ProviderRecord&gt;&gt; {
+        <span class="comment">// TODO: This should be handled by constructor, otherwise receiver that is not consumed will
+        //  cause message buffering and later printing of large amounts of warnings. API should be
+        //  clearer around this.
+        </span><span class="self">self</span>.provider_records_receiver.take()
     }
 
     <span class="kw">pub async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
@@ -1628,14 +1662,10 @@
                         <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">&quot;Failed to add provider record: {:?}&quot;</span>, record);
                     }
 
-                    <span class="kw">let </span>shared = <span class="kw">match </span><span class="self">self</span>.shared_weak.upgrade() {
-                        <span class="prelude-val">Some</span>(shared) =&gt; shared,
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="kw">return</span>;
-                        }
-                    };
-
-                    shared.handlers.announcement.call_simple(<span class="kw-2">&amp;</span>record);
+                    <span class="kw">let </span>key = record.key.clone();
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.provider_records_sender.try_send(record) {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="question-mark">?</span>key, <span class="string">&quot;Failed to add provider record to the channel.&quot;</span>);
+                    }
                 }
             }
             KademliaEvent::OutboundQueryProgressed {
