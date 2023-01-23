@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["PieceProvider","Piece provider with cancellation and optional piece validator."]],"trait":[["PieceReceiver","An abstraction for piece receiving."],["PieceValidator",""]]};
+window.SIDEBAR_ITEMS = {"struct":[["PieceProvider","Piece provider with cancellation and optional piece validator."]],"trait":[["PieceValidator",""]]};
