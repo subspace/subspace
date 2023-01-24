@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":[["piece_validator",""]]};
+window.SIDEBAR_ITEMS = {"mod":[["farmer_piece_cache",""],["farmer_piece_getter",""],["farmer_provider_record_processor",""],["farmer_provider_storage",""],["node_piece_getter",""],["parity_db_store",""],["piece_cache",""],["piece_validator",""],["readers_and_pieces",""]]};

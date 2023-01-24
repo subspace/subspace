@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":[["FarmerPieceCache","Piece cache with limited size where pieces closer to provided peer ID are retained."]]};
