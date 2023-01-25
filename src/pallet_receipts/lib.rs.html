@@ -421,6 +421,13 @@
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2022 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -522,7 +529,7 @@
         Twox64Concat,
         T::BlockNumber,
         T::Hash,
-        ValueQuery,
+        OptionQuery,
     &gt;;
 
     <span class="doccomment">/// A pair of (block_hash, block_number) of the latest execution receipt of a domain.
@@ -617,6 +624,8 @@
 </span><span class="kw">pub enum </span>Error {
     <span class="doccomment">/// The parent execution receipt is missing.
     </span>MissingParent,
+    <span class="doccomment">/// Can not find the block hash of given primary block number.
+    </span>UnavailablePrimaryBlockHash,
     <span class="doccomment">/// Invalid fraud proof.
     </span>FraudProof(FraudProofError),
 }
@@ -650,7 +659,9 @@
         domain_id: DomainId,
         receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
     ) -&gt; bool {
-        <span class="self">Self</span>::primary_hash(domain_id, receipt.primary_number) == receipt.primary_hash
+        <span class="self">Self</span>::primary_hash(domain_id, receipt.primary_number)
+            .map(|hash| hash == receipt.primary_hash)
+            .unwrap_or(<span class="bool-val">false</span>)
     }
 
     <span class="doccomment">/// Initialize the genesis execution receipt
@@ -699,18 +710,20 @@
     }
 
     <span class="doccomment">/// Process a verified fraud proof.
-    </span><span class="kw">pub fn </span>process_fraud_proof(fraud_proof: FraudProof) {
+    </span><span class="kw">pub fn </span>process_fraud_proof(fraud_proof: FraudProof) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="comment">// Revert the execution chain.
         </span><span class="kw">let </span>domain_id = fraud_proof.domain_id;
         <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>to_remove) = &lt;ReceiptHead&lt;T&gt;&gt;::get(domain_id);
 
         <span class="kw">let </span>new_best_number: T::BlockNumber = fraud_proof.parent_number.into();
-        <span class="kw">let </span>new_best_hash = BlockHash::&lt;T&gt;::get(domain_id, new_best_number);
+        <span class="kw">let </span>new_best_hash = BlockHash::&lt;T&gt;::get(domain_id, new_best_number)
+            .ok_or(Error::UnavailablePrimaryBlockHash)<span class="question-mark">?</span>;
 
         &lt;ReceiptHead&lt;T&gt;&gt;::insert(domain_id, (new_best_hash, new_best_number));
 
         <span class="kw">while </span>to_remove &gt; new_best_number {
-            <span class="kw">let </span>block_hash = BlockHash::&lt;T&gt;::get(domain_id, to_remove);
+            <span class="kw">let </span>block_hash = BlockHash::&lt;T&gt;::get(domain_id, to_remove)
+                .ok_or(Error::UnavailablePrimaryBlockHash)<span class="question-mark">?</span>;
             <span class="kw">for </span>(receipt_hash, <span class="kw">_</span>) <span class="kw">in </span>&lt;ReceiptVotes&lt;T&gt;&gt;::drain_prefix((domain_id, block_hash)) {
                 &lt;Receipts&lt;T&gt;&gt;::remove(domain_id, receipt_hash);
             }
@@ -722,6 +735,7 @@
             new_best_number,
             new_best_hash,
         });
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">pub fn </span>validate_fraud_proof(fraud_proof: <span class="kw-2">&amp;</span>FraudProof) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
@@ -741,7 +755,7 @@
             .map_err(|<span class="kw">_</span>| FraudProofError::WrongHashType)<span class="question-mark">?</span>;
         <span class="kw">let </span>parent_number: T::BlockNumber = fraud_proof.parent_number.into();
         <span class="macro">ensure!</span>(
-            <span class="self">Self</span>::primary_hash(fraud_proof.domain_id, parent_number) == parent_hash,
+            <span class="self">Self</span>::primary_hash(fraud_proof.domain_id, parent_number) == <span class="prelude-val">Some</span>(parent_hash),
             FraudProofError::UnknownBlock
         );
 
