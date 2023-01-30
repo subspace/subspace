@@ -152,24 +152,39 @@
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
 </pre><pre class="rust"><code><span class="kw">use </span>parity_db::{ColumnOptions, Db, Options};
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::fmt;
+<span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>subspace_core_primitives::Piece;
-<span class="kw">use </span>subspace_networking::libp2p::kad::record::Key;
 <span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="doccomment">/// Generic key value store with ParityDB backend and iteration support
 </span><span class="attr">#[derive(Clone)]
-</span><span class="kw">pub struct </span>ParityDbStore {
+</span><span class="kw">pub struct </span>ParityDbStore&lt;StoreKey, StoreValue&gt; {
     <span class="comment">// Parity DB instance
     </span>db: Arc&lt;Db&gt;,
+
+    <span class="comment">// Type marker
+    </span>marker: PhantomData&lt;(StoreKey, StoreValue)&gt;,
 }
 
-<span class="kw">impl </span>ParityDbStore {
+<span class="kw">impl</span>&lt;StoreKey, StoreValue&gt; ParityDbStore&lt;StoreKey, StoreValue&gt;
+<span class="kw">where
+    </span>StoreKey: AsRef&lt;[u8]&gt; + From&lt;Vec&lt;u8&gt;&gt; + Debug,
+    StoreValue: TryFrom&lt;Vec&lt;u8&gt;&gt;,
+    StoreValue::Error: Debug,
+{
     <span class="kw">const </span>COLUMN_ID: u8 = <span class="number">0</span>;
 
     <span class="kw">pub fn </span>new(path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, parity_db::Error&gt; {
@@ -183,10 +198,13 @@
 
         <span class="kw">let </span>db = Db::open_or_create(<span class="kw-2">&amp;</span>options)<span class="question-mark">?</span>;
 
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ db: Arc::new(db) })
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            db: Arc::new(db),
+            marker: PhantomData,
+        })
     }
 
-    <span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+    <span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>StoreKey) -&gt; <span class="prelude-ty">Option</span>&lt;StoreValue&gt; {
         <span class="kw">let </span>result = <span class="self">self</span>.db.get(<span class="self">Self</span>::COLUMN_ID, key.as_ref());
 
         <span class="kw">match </span>result {
@@ -217,7 +235,7 @@
 
     <span class="kw">pub fn </span>update&lt;<span class="lifetime">&#39;a</span>, I&gt;(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span><span class="self">self</span>, values: I) -&gt; bool
     <span class="kw">where
-        </span>I: IntoIterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Key, <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;)&gt; + fmt::Debug,
+        </span>I: IntoIterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>StoreKey, <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;)&gt; + fmt::Debug,
     {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>values, <span class="string">&quot;Updating records in DB&quot;</span>);
 
@@ -233,13 +251,9 @@
         result.is_ok()
     }
 
-    <span class="kw">pub fn </span>iter&lt;<span class="lifetime">&#39;a</span>, Value&gt;(
-        <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = (Key, Value)&gt; + <span class="lifetime">&#39;a</span>, Box&lt;<span class="kw">dyn </span>Error&gt;&gt;
-    <span class="kw">where
-        </span>Value: TryFrom&lt;Vec&lt;u8&gt;&gt; + <span class="lifetime">&#39;a</span>,
-        Value::Error: fmt::Debug,
-    {
+    <span class="kw">pub fn </span>iter(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = (StoreKey, StoreValue)&gt; + <span class="lifetime">&#39;_</span>, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
         <span class="kw">let </span>btree_iter = <span class="self">self</span>.db.iter(<span class="self">Self</span>::COLUMN_ID)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(ParityDbStoreIterator::new(btree_iter)<span class="question-mark">?</span>)
@@ -247,19 +261,19 @@
 }
 
 <span class="doccomment">/// Parity DB BTree iterator wrapper.
-</span><span class="kw">struct </span>ParityDbStoreIterator&lt;<span class="lifetime">&#39;a</span>, Value&gt; {
+</span><span class="kw">struct </span>ParityDbStoreIterator&lt;<span class="lifetime">&#39;a</span>, StoreKey, StoreValue&gt; {
     iter: parity_db::BTreeIterator&lt;<span class="lifetime">&#39;a</span>&gt;,
-    _value: PhantomData&lt;Value&gt;,
+    _value: PhantomData&lt;(StoreKey, StoreValue)&gt;,
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, Value&gt; ParityDbStoreIterator&lt;<span class="lifetime">&#39;a</span>, Value&gt; {
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, StoreKey, StoreValue&gt; ParityDbStoreIterator&lt;<span class="lifetime">&#39;a</span>, StoreKey, StoreValue&gt; {
     <span class="doccomment">/// Fallible iterator constructor. It requires inner DB BTreeIterator as a parameter.
     </span><span class="kw">fn </span>new(<span class="kw-2">mut </span>iter: parity_db::BTreeIterator&lt;<span class="lifetime">&#39;a</span>&gt;) -&gt; parity_db::Result&lt;<span class="self">Self</span>&gt; {
         iter.seek_to_first()<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             iter,
-            _value: PhantomData::default(),
+            _value: PhantomData,
         })
     }
 
@@ -279,17 +293,19 @@
     }
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, Value&gt; Iterator <span class="kw">for </span>ParityDbStoreIterator&lt;<span class="lifetime">&#39;a</span>, Value&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, StoreKey, StoreValue&gt; Iterator <span class="kw">for </span>ParityDbStoreIterator&lt;<span class="lifetime">&#39;a</span>, StoreKey, StoreValue&gt;
 <span class="kw">where
-    </span>Value: TryFrom&lt;Vec&lt;u8&gt;&gt;,
-    Value::Error: fmt::Debug,
+    </span>StoreKey: TryFrom&lt;Vec&lt;u8&gt;&gt;,
+    StoreKey::Error: Debug,
+    StoreValue: TryFrom&lt;Vec&lt;u8&gt;&gt;,
+    StoreValue::Error: Debug,
 {
-    <span class="kw">type </span>Item = (Key, Value);
+    <span class="kw">type </span>Item = (StoreKey, StoreValue);
 
     <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
         <span class="kw">let </span>(key, value) = <span class="self">self</span>.next_entry()<span class="question-mark">?</span>;
 
-        <span class="kw">match </span>Value::try_from(value) {
+        <span class="kw">match </span>StoreValue::try_from(value) {
             <span class="prelude-val">Ok</span>(piece) =&gt; <span class="kw">match </span>key.clone().try_into() {
                 <span class="prelude-val">Ok</span>(key) =&gt; <span class="prelude-val">Some</span>((key, piece)),
                 <span class="prelude-val">Err</span>(err) =&gt; {
