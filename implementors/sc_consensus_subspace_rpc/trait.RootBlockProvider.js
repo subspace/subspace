@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"subspace_service":[["impl&lt;AS:&nbsp;AuxStore&gt; RootBlockProvider for <a class=\"struct\" href=\"subspace_service/root_blocks/struct.RootBlockCache.html\" title=\"struct subspace_service::root_blocks::RootBlockCache\">RootBlockCache</a>&lt;AS&gt;"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
