@@ -858,6 +858,15 @@
 <a href="#858" id="858">858</a>
 <a href="#859" id="859">859</a>
 <a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -885,6 +894,7 @@
 <span class="kw">use </span>sp_arithmetic::Percent;
 <span class="kw">use </span>sp_domains::ExecutorPublicKey;
 <span class="kw">use </span>sp_executor_registry::ExecutorRegistry;
+<span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub};
 <span class="kw">use </span>sp_runtime::BoundedVec;
 <span class="kw">use </span>sp_std::vec::Vec;
 
@@ -1069,7 +1079,7 @@
             );
 
             <span class="kw">let </span>executor_config =
-                <span class="self">Self</span>::apply_register(<span class="kw-2">&amp;</span>who, public_key, reward_address, is_active, stake);
+                <span class="self">Self</span>::apply_register(<span class="kw-2">&amp;</span>who, public_key, reward_address, is_active, stake)<span class="question-mark">?</span>;
 
             <span class="self">Self</span>::deposit_event(Event::&lt;T&gt;::NewExecutor {
                 who,
@@ -1128,9 +1138,7 @@
                     <span class="self">Self</span>::lock_fund(<span class="kw-2">&amp;</span>who, executor_config.stake);
 
                     <span class="kw">if </span>executor_config.is_active {
-                        TotalActiveStake::&lt;T&gt;::mutate(|total| {
-                            <span class="kw-2">*</span>total += amount;
-                        });
+                        <span class="self">Self</span>::increase_total_active_stake(amount)<span class="question-mark">?</span>;
                     }
 
                     <span class="prelude-val">Ok</span>(())
@@ -1181,9 +1189,7 @@
                         .map_err(|<span class="kw">_</span>| Error::&lt;T&gt;::TooManyWithdrawals)<span class="question-mark">?</span>;
 
                     <span class="kw">if </span>executor_config.is_active {
-                        TotalActiveStake::&lt;T&gt;::mutate(|total| {
-                            <span class="kw-2">*</span>total -= amount;
-                        });
+                        <span class="self">Self</span>::decrease_total_active_stake(amount)<span class="question-mark">?</span>;
                     }
 
                     <span class="prelude-val">Ok</span>(())
@@ -1272,9 +1278,7 @@
 
                     executor_config.is_active = <span class="bool-val">false</span>;
 
-                    TotalActiveStake::&lt;T&gt;::mutate(|total| {
-                        <span class="kw-2">*</span>total -= executor_config.stake;
-                    });
+                    <span class="self">Self</span>::decrease_total_active_stake(executor_config.stake)<span class="question-mark">?</span>;
                     TotalActiveExecutors::&lt;T&gt;::mutate(|total| {
                         <span class="kw-2">*</span>total -= <span class="number">1</span>;
                     });
@@ -1301,9 +1305,7 @@
                 <span class="kw">if </span>!executor_config.is_active {
                     executor_config.is_active = <span class="bool-val">true</span>;
 
-                    TotalActiveStake::&lt;T&gt;::mutate(|total| {
-                        <span class="kw-2">*</span>total += executor_config.stake;
-                    });
+                    <span class="self">Self</span>::increase_total_active_stake(executor_config.stake)<span class="question-mark">?</span>;
                     TotalActiveExecutors::&lt;T&gt;::mutate(|total| {
                         <span class="kw-2">*</span>total += <span class="number">1</span>;
                     });
@@ -1422,7 +1424,8 @@
                     reward_address,
                     <span class="bool-val">true</span>,
                     initial_stake,
-                );
+                )
+                .expect(<span class="string">&quot;Genesis executor registration can not fail&quot;</span>);
 
                 <span class="kw">let </span>stake_weight: T::StakeWeight = initial_stake.into();
                 authorities.push((public_key, stake_weight));
@@ -1473,11 +1476,17 @@
         <span class="doccomment">/// The withdrawal entry is still undue.
         </span>PrematureWithdrawal,
 
-        <span class="doccomment">/// Foo few active executors.
+        <span class="doccomment">/// Too few active executors.
         </span>TooFewActiveExecutors,
 
         <span class="doccomment">/// Executor public key is already occupied.
         </span>DuplicatedKey,
+
+        <span class="doccomment">/// An arithmetic overflow error.
+        </span>ArithmeticOverflow,
+
+        <span class="doccomment">/// An arithmetic underflow error.
+        </span>ArithmeticUnderflow,
     }
 
     <span class="attr">#[pallet::event]
@@ -1535,8 +1544,6 @@
             </span><span class="kw">if </span>(block_number % T::EpochDuration::get()).is_zero() {
                 <span class="kw">let </span><span class="kw-2">mut </span>executor_weights = BTreeMap::new();
 
-                <span class="kw">let </span><span class="kw-2">mut </span>total_stake_weight = T::StakeWeight::zero();
-
                 <span class="comment">// TODO: currently, we are iterating the Executors map, figure out how many executors
                 // we can support with this approach and optimize it when it does not satisfy our requirement.
                 </span><span class="kw">let </span>authorities = Executors::&lt;T&gt;::iter()
@@ -1566,12 +1573,6 @@
 
                         <span class="kw">let </span>stake_weight: T::StakeWeight = executor_config.stake.into();
 
-                        total_stake_weight = total_stake_weight
-                            .checked_add(<span class="kw-2">&amp;</span>stake_weight)
-                            .unwrap_or_else(|| {
-                                <span class="macro">panic!</span>(<span class="string">&quot;Domain bundle election can not work properly due to `total_stake_weight` overflow&quot;</span>)
-                            });
-
                         executor_weights.insert(who, stake_weight);
 
                         (public_key, stake_weight)
@@ -1584,6 +1585,7 @@
                     );
                 Authorities::&lt;T&gt;::put(bounded_authorities);
 
+                <span class="kw">let </span>total_stake_weight: T::StakeWeight = TotalActiveStake::&lt;T&gt;::get().into();
                 TotalStakeWeight::&lt;T&gt;::put(total_stake_weight);
 
                 T::OnNewEpoch::on_new_epoch(executor_weights);
@@ -1692,7 +1694,7 @@
         reward_address: T::AccountId,
         is_active: bool,
         stake: BalanceOf&lt;T&gt;,
-    ) -&gt; ExecutorConfig&lt;T&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ExecutorConfig&lt;T&gt;, Error&lt;T&gt;&gt; {
         <span class="self">Self</span>::lock_fund(who, stake);
 
         KeyOwner::&lt;T&gt;::insert(<span class="kw-2">&amp;</span>public_key, who);
@@ -1707,15 +1709,31 @@
         Executors::&lt;T&gt;::insert(who, <span class="kw-2">&amp;</span>executor_config);
 
         <span class="kw">if </span>is_active {
-            TotalActiveStake::&lt;T&gt;::mutate(|total| {
-                <span class="kw-2">*</span>total += stake;
-            });
+            <span class="self">Self</span>::increase_total_active_stake(stake)<span class="question-mark">?</span>;
             TotalActiveExecutors::&lt;T&gt;::mutate(|total| {
                 <span class="kw-2">*</span>total += <span class="number">1</span>;
             });
         }
 
-        executor_config
+        <span class="prelude-val">Ok</span>(executor_config)
+    }
+
+    <span class="kw">fn </span>increase_total_active_stake(value: BalanceOf&lt;T&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;T&gt;&gt; {
+        <span class="kw">let </span>old = TotalActiveStake::&lt;T&gt;::get();
+        <span class="kw">let </span>new = old
+            .checked_add(<span class="kw-2">&amp;</span>value)
+            .ok_or(Error::&lt;T&gt;::ArithmeticOverflow)<span class="question-mark">?</span>;
+        TotalActiveStake::&lt;T&gt;::put(new);
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>decrease_total_active_stake(value: BalanceOf&lt;T&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;T&gt;&gt; {
+        <span class="kw">let </span>old = TotalActiveStake::&lt;T&gt;::get();
+        <span class="kw">let </span>new = old
+            .checked_sub(<span class="kw-2">&amp;</span>value)
+            .ok_or(Error::&lt;T&gt;::ArithmeticUnderflow)<span class="question-mark">?</span>;
+        TotalActiveStake::&lt;T&gt;::put(new);
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div>
