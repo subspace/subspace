@@ -249,6 +249,36 @@
 <a href="#249" id="249">249</a>
 <a href="#250" id="250">250</a>
 <a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
 </pre><pre class="rust"><code><span class="kw">pub mod </span>multihash;
 <span class="kw">pub mod </span>piece_provider;
 <span class="kw">pub mod </span>pieces;
@@ -263,6 +293,7 @@
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::sync::Notify;
 <span class="kw">use </span>tracing::warn;
 
@@ -353,12 +384,30 @@
         .collect()
 }
 
+<span class="doccomment">/// Errors happening during semaphore usage
+</span><span class="attr">#[derive(Debug, Error)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SemaphoreError {
+    <span class="attr">#[error(<span class="string">&quot;Invalid shrink: capacity {capacity}, delta {delta}&quot;</span>)]
+    </span>InvalidShrink {
+        <span class="doccomment">/// The current capacity
+        </span>capacity: usize,
+        <span class="doccomment">/// How much to shrink
+        </span>delta: usize,
+    },
+    <span class="attr">#[error(<span class="string">&quot;Invalid expand: capacity {capacity}, delta {delta}&quot;</span>)]
+    </span>InvalidExpand {
+        <span class="doccomment">/// The current capacity
+        </span>capacity: usize,
+        <span class="doccomment">/// How much to expand
+        </span>delta: usize,
+    },
+}
+
 <span class="doccomment">/// The state shared between the semaphore and the outstanding permits.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>SemShared {
     <span class="doccomment">/// The tuple holds (current usage, current max capacity)
     </span>state: Mutex&lt;SemState&gt;,
-
     <span class="doccomment">/// To signal waiters for permits to be available
     </span>notify: Notify,
 }
@@ -368,7 +417,6 @@
 </span><span class="kw">struct </span>SemState {
     <span class="doccomment">/// The current capacity
     </span>capacity: usize,
-
     <span class="doccomment">/// The current outstanding permits
     </span>usage: usize,
 }
@@ -392,7 +440,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(dec) = <span class="self">self</span>.usage.checked_sub(<span class="number">1</span>) {
             <span class="self">self</span>.usage = dec;
         } <span class="kw">else </span>{
-            <span class="macro">panic!</span>(<span class="string">&quot;SemState::free_one(): invalid free, state = {self:?}&quot;</span>);
+            <span class="macro">unreachable!</span>(<span class="string">&quot;Dropping semaphore twice is not possible&quot;</span>);
         }
 
         <span class="comment">// Notify if we did a full -&gt; available transition.
@@ -401,20 +449,30 @@
 
     <span class="comment">// Expands the max capacity by delta.
     // Returns true if any waiters need to be notified.
-    </span><span class="kw">fn </span>expand(<span class="kw-2">&amp;mut </span><span class="self">self</span>, delta: usize) -&gt; bool {
+    </span><span class="kw">fn </span>expand(<span class="kw-2">&amp;mut </span><span class="self">self</span>, delta: usize) -&gt; <span class="prelude-ty">Result</span>&lt;bool, SemaphoreError&gt; {
         <span class="kw">let </span>prev_is_full = <span class="self">self</span>.is_full();
-        <span class="self">self</span>.capacity += delta;
-
-        <span class="comment">// Notify if we did a full -&gt; available transition.
-        </span>prev_is_full &amp;&amp; !<span class="self">self</span>.is_full()
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(capacity) = <span class="self">self</span>.capacity.checked_add(delta) {
+            <span class="self">self</span>.capacity = capacity;
+            <span class="comment">// Notify if we did a full -&gt; available transition.
+            </span><span class="prelude-val">Ok</span>(prev_is_full &amp;&amp; !<span class="self">self</span>.is_full())
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Err</span>(SemaphoreError::InvalidExpand {
+                capacity: <span class="self">self</span>.capacity,
+                delta,
+            })
+        }
     }
 
     <span class="comment">// Shrinks the max capacity by delta.
-    </span><span class="kw">fn </span>shrink(<span class="kw-2">&amp;mut </span><span class="self">self</span>, delta: usize) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(dec) = <span class="self">self</span>.capacity.checked_sub(delta) {
-            <span class="self">self</span>.capacity = dec;
+    </span><span class="kw">fn </span>shrink(<span class="kw-2">&amp;mut </span><span class="self">self</span>, delta: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), SemaphoreError&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(capacity) = <span class="self">self</span>.capacity.checked_sub(delta) {
+            <span class="self">self</span>.capacity = capacity;
+            <span class="prelude-val">Ok</span>(())
         } <span class="kw">else </span>{
-            <span class="macro">panic!</span>(<span class="string">&quot;SemState::shrink(): invalid shrink, state = {self:?}&quot;</span>);
+            <span class="prelude-val">Err</span>(SemaphoreError::InvalidShrink {
+                capacity: <span class="self">self</span>.capacity,
+                delta,
+            })
         }
     }
 
@@ -475,15 +533,17 @@
     }
 
     <span class="comment">// Expands the capacity by the specified amount.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>expand(<span class="kw-2">&amp;</span><span class="self">self</span>, delta: usize) {
-        <span class="kw">let </span>notify_waiters = <span class="self">self</span>.<span class="number">0</span>.state.lock().expand(delta);
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>expand(<span class="kw-2">&amp;</span><span class="self">self</span>, delta: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), SemaphoreError&gt; {
+        <span class="kw">let </span>notify_waiters = <span class="self">self</span>.<span class="number">0</span>.state.lock().expand(delta)<span class="question-mark">?</span>;
         <span class="kw">if </span>notify_waiters {
             <span class="self">self</span>.<span class="number">0</span>.notify.notify_waiters();
         }
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="comment">// Shrinks the capacity by the specified amount.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>shrink(<span class="kw-2">&amp;</span><span class="self">self</span>, delta: usize) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>shrink(<span class="kw-2">&amp;</span><span class="self">self</span>, delta: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), SemaphoreError&gt; {
         <span class="self">self</span>.<span class="number">0</span>.state.lock().shrink(delta)
     }
 }
