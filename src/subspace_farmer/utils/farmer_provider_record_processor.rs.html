@@ -174,6 +174,29 @@
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
 <a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::piece_cache::PieceCache;
 <span class="kw">use </span><span class="kw">crate</span>::utils::readers_and_pieces::ReadersAndPieces;
 <span class="kw">use </span>parking_lot::Mutex;
@@ -193,7 +216,8 @@
     node: Node,
     piece_cache: Arc&lt;tokio::sync::Mutex&lt;PC&gt;&gt;,
     weak_readers_and_pieces: Weak&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;ReadersAndPieces&gt;&gt;&gt;,
-    semaphore: Arc&lt;Semaphore&gt;,
+    announcements_semaphore: Arc&lt;Semaphore&gt;,
+    re_announcements_semaphore: Arc&lt;Semaphore&gt;,
 }
 
 <span class="kw">impl</span>&lt;PC&gt; FarmerProviderRecordProcessor&lt;PC&gt;
@@ -205,13 +229,17 @@
         piece_cache: Arc&lt;tokio::sync::Mutex&lt;PC&gt;&gt;,
         weak_readers_and_pieces: Weak&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;ReadersAndPieces&gt;&gt;&gt;,
         max_concurrent_announcements: NonZeroUsize,
+        max_concurrent_re_announcements: NonZeroUsize,
     ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>semaphore = Arc::new(Semaphore::new(max_concurrent_announcements.get()));
+        <span class="kw">let </span>announcements_semaphore = Arc::new(Semaphore::new(max_concurrent_announcements.get()));
+        <span class="kw">let </span>re_announcements_semaphore =
+            Arc::new(Semaphore::new(max_concurrent_re_announcements.get()));
         <span class="self">Self </span>{
             node,
             piece_cache,
             weak_readers_and_pieces,
-            semaphore,
+            announcements_semaphore,
+            re_announcements_semaphore,
         }
     }
 
@@ -259,12 +287,13 @@
             </span><span class="kw">return</span>;
         }
 
-        <span class="kw">let </span><span class="prelude-val">Ok</span>(permit) = <span class="self">self</span>.semaphore.clone().acquire_owned().<span class="kw">await else </span>{
+        <span class="kw">let </span><span class="prelude-val">Ok</span>(permit) = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.announcements_semaphore).acquire_owned().<span class="kw">await else </span>{
             <span class="kw">return</span>;
         };
 
         <span class="kw">let </span>node = <span class="self">self</span>.node.clone();
         <span class="kw">let </span>piece_cache = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.piece_cache);
+        <span class="kw">let </span>re_announcements_semaphore = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.re_announcements_semaphore);
 
         tokio::spawn(<span class="kw">async move </span>{
             {
@@ -294,13 +323,30 @@
 
                     piece_cache.add_piece(provider_record.key.clone(), piece);
                 }
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                    announce_single_piece_index_hash_with_backoff(piece_index_hash, <span class="kw-2">&amp;</span>node).<span class="kw">await
-                </span>{
+
+                <span class="comment">// Re-announcement is the slowest part of the process, we&#39;re moving it into a
+                // separate background task with its own limit. Not re-announcing is not as bad as
+                // not storing data in the first place.
+                </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(permit) = re_announcements_semaphore.try_acquire_owned() {
+                    tokio::spawn(<span class="kw">async move </span>{
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                            announce_single_piece_index_hash_with_backoff(piece_index_hash, <span class="kw-2">&amp;</span>node)
+                                .<span class="kw">await
+                        </span>{
+                            <span class="macro">debug!</span>(
+                                <span class="question-mark">?</span>error,
+                                <span class="question-mark">?</span>piece_index_hash,
+                                <span class="string">&quot;Re-announcing cached piece index hash failed&quot;
+                            </span>);
+                        };
+
+                        drop(permit);
+                    });
+                } <span class="kw">else </span>{
                     <span class="macro">debug!</span>(
-                        <span class="question-mark">?</span>error,
                         <span class="question-mark">?</span>piece_index_hash,
-                        <span class="string">&quot;Announcing cached piece index hash failed&quot;
+                        <span class="string">&quot;Re-announcing cached piece index hash skipped due to reaching \
+                        re-announcements limit&quot;
                     </span>);
                 }
             }
