@@ -186,28 +186,53 @@
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
 </pre><pre class="rust"><code><span class="kw">pub mod </span>import_blocks;
 <span class="kw">mod </span>node_provider_storage;
 
 <span class="kw">use </span><span class="kw">crate</span>::dsn::node_provider_storage::NodeProviderStorage;
 <span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
+<span class="kw">use </span><span class="kw">crate</span>::RootBlockCache;
 <span class="kw">use </span>either::Either;
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::{Stream, StreamExt};
 <span class="kw">use </span>sc_client_api::AuxStore;
 <span class="kw">use </span>sc_consensus_subspace::ArchivedSegmentNotification;
+<span class="kw">use </span>sc_consensus_subspace_rpc::RootBlockProvider;
 <span class="kw">use </span>sp_core::traits::SpawnNamed;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_archiving::archiver::ArchivedSegment;
-<span class="kw">use </span>subspace_core_primitives::{PieceIndex, PIECES_IN_SEGMENT};
+<span class="kw">use </span>subspace_core_primitives::{PieceIndex, RootBlock, PIECES_IN_SEGMENT};
 <span class="kw">use </span>subspace_networking::libp2p::{identity, Multiaddr};
 <span class="kw">use </span>subspace_networking::utils::pieces::announce_single_piece_index_with_backoff;
 <span class="kw">use </span>subspace_networking::{
     peer_id, BootstrappedNetworkingParameters, CreationError, MemoryProviderStorage, Node,
     NodeRunner, ParityDbProviderStorage, PieceByHashRequestHandler, PieceByHashResponse,
+    RootBlockBySegmentIndexesRequestHandler, RootBlockResponse,
 };
 <span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tracing::{error, info, trace, warn, Instrument};
@@ -243,6 +268,7 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>create_dsn_instance&lt;Block, AS&gt;(
     dsn_config: DsnConfig,
     piece_cache: PieceCache&lt;AS&gt;,
+    root_block_cache: RootBlockCache&lt;AS&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Node, NodeRunner&lt;DsnProviderStorage&lt;AS&gt;&gt;), CreationError&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -273,17 +299,35 @@
             dsn_config.bootstrap_nodes,
         )
         .boxed(),
-        request_response_protocols: <span class="macro">vec!</span>[PieceByHashRequestHandler::create(<span class="kw">move </span>|req| {
-            <span class="kw">let </span>result = <span class="kw">match </span>piece_cache.get_piece(req.piece_index_hash) {
-                <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="macro">error!</span>(piece_index_hash = <span class="question-mark">?</span>req.piece_index_hash, %error, <span class="string">&quot;Failed to get piece from cache&quot;</span>);
-                    <span class="prelude-val">None
-                </span>}
-            };
+        request_response_protocols: <span class="macro">vec!</span>[
+            PieceByHashRequestHandler::create(<span class="kw">move </span>|req| {
+                <span class="kw">let </span>result = <span class="kw">match </span>piece_cache.get_piece(req.piece_index_hash) {
+                    <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="macro">error!</span>(piece_index_hash = <span class="question-mark">?</span>req.piece_index_hash, %error, <span class="string">&quot;Failed to get piece from cache&quot;</span>);
+                        <span class="prelude-val">None
+                    </span>}
+                };
 
-            <span class="prelude-val">Some</span>(PieceByHashResponse { piece: result })
-        })],
+                <span class="prelude-val">Some</span>(PieceByHashResponse { piece: result })
+            }),
+            RootBlockBySegmentIndexesRequestHandler::create(<span class="kw">move </span>|req| {
+                <span class="kw">let </span>internal_result = req
+                    .segment_indexes
+                    .iter()
+                    .map(|segment_index| root_block_cache.get_root_block(<span class="kw-2">*</span>segment_index))
+                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RootBlock&gt;&gt;, <span class="kw">_</span>&gt;&gt;();
+
+                <span class="kw">match </span>internal_result {
+                    <span class="prelude-val">Ok</span>(root_blocks) =&gt; <span class="prelude-val">Some</span>(RootBlockResponse { root_blocks }),
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to get root blocks from cache&quot;</span>);
+
+                        <span class="prelude-val">None
+                    </span>}
+                }
+            }),
+        ],
         provider_storage,
         ..subspace_networking::Config::default()
     };
