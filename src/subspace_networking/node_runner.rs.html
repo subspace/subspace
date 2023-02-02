@@ -1103,6 +1103,34 @@
 <a href="#1103" id="1103">1103</a>
 <a href="#1104" id="1104">1104</a>
 <a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::{provider_storage, Behavior, Event};
 <span class="kw">use </span><span class="kw">crate</span>::create::{
@@ -1208,6 +1236,8 @@
     </span>max_established_outgoing_connections: u32,
     <span class="doccomment">/// Prometheus metrics.
     </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// Mapping from specific peer to number of established connections
+    </span>established_connections: HashMap&lt;(PeerId, ConnectedPoint), usize&gt;,
 }
 
 <span class="comment">// Helper struct for NodeRunner configuration (clippy requirement).
@@ -1263,6 +1293,7 @@
             max_established_incoming_connections,
             max_established_outgoing_connections,
             metrics,
+            established_connections: HashMap::new(),
         }
     }
 
@@ -1432,8 +1463,8 @@
             }
             SwarmEvent::ConnectionEstablished {
                 peer_id,
-                num_established,
                 endpoint,
+                num_established,
                 ..
             } =&gt; {
                 <span class="kw">let </span>shared = <span class="kw">match </span><span class="self">self</span>.shared_weak.upgrade() {
@@ -1446,6 +1477,13 @@
                 <span class="kw">let </span>is_reserved_peer = <span class="self">self</span>.reserved_peers.contains_key(<span class="kw-2">&amp;</span>peer_id);
                 <span class="macro">debug!</span>(%peer_id, %is_reserved_peer, <span class="string">&quot;Connection established [{num_established} from peer]&quot;</span>);
 
+                <span class="comment">// TODO: Workaround for https://github.com/libp2p/rust-libp2p/discussions/3418
+                </span><span class="self">self</span>.established_connections
+                    .entry((peer_id, endpoint.clone()))
+                    .and_modify(|entry| {
+                        <span class="kw-2">*</span>entry += <span class="number">1</span>;
+                    })
+                    .or_insert(<span class="number">1</span>);
                 <span class="kw">if </span>shared.connected_peers_count.fetch_add(<span class="number">1</span>, Ordering::SeqCst)
                     &gt;= CONCURRENT_TASKS_BOOST_PEERS_THRESHOLD.get()
                 {
@@ -1511,6 +1549,7 @@
             }
             SwarmEvent::ConnectionClosed {
                 peer_id,
+                endpoint,
                 num_established,
                 ..
             } =&gt; {
@@ -1522,6 +1561,23 @@
                 };
                 <span class="macro">debug!</span>(<span class="string">&quot;Connection closed with peer {peer_id} [{num_established} from peer]&quot;</span>);
 
+                <span class="comment">// TODO: Workaround for https://github.com/libp2p/rust-libp2p/discussions/3418
+                </span>{
+                    <span class="kw">match </span><span class="self">self</span>.established_connections.entry((peer_id, endpoint)) {
+                        Entry::Vacant(<span class="kw">_</span>) =&gt; {
+                            <span class="comment">// Nothing to do here, we are not aware of the connection being closed
+                            </span><span class="kw">return</span>;
+                        }
+                        Entry::Occupied(<span class="kw-2">mut </span>entry) =&gt; {
+                            <span class="kw">let </span>value = entry.get_mut();
+                            <span class="kw">if </span><span class="kw-2">*</span>value == <span class="number">1 </span>{
+                                entry.remove_entry();
+                            } <span class="kw">else </span>{
+                                <span class="kw-2">*</span>value -= <span class="number">1</span>;
+                            }
+                        }
+                    };
+                }
                 <span class="kw">if </span>shared.connected_peers_count.fetch_sub(<span class="number">1</span>, Ordering::SeqCst)
                     &gt; CONCURRENT_TASKS_BOOST_PEERS_THRESHOLD.get()
                 {
