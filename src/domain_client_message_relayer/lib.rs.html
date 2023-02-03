@@ -507,6 +507,58 @@
 <a href="#507" id="507">507</a>
 <a href="#508" id="508">508</a>
 <a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
 </pre><pre class="rust"><code><span class="attr">#![warn(rust_2018_idioms)]
 
 </span><span class="kw">pub mod </span>worker;
@@ -526,7 +578,9 @@
 <span class="kw">use </span>sp_messenger::RelayerApi;
 <span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::scale_info::TypeInfo;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedAdd, CheckedSub, Header <span class="kw">as </span>HeaderT, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{
+    Block <span class="kw">as </span>BlockT, CheckedAdd, CheckedSub, Header <span class="kw">as </span>HeaderT, NumberFor, One, Zero,
+};
 <span class="kw">use </span>sp_runtime::ArithmeticError;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
@@ -588,6 +642,7 @@
 }
 
 <span class="kw">type </span>ProofOf&lt;Block&gt; = Proof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;;
+<span class="kw">type </span>UnProcessedBlocks&lt;Block&gt; = Vec&lt;(NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash)&gt;;
 
 <span class="kw">impl</span>&lt;Client, Block&gt; Relayer&lt;Client, Block&gt;
 <span class="kw">where
@@ -985,31 +1040,80 @@
         .map_err(Error::UnableToSubmitCrossDomainMessage)
     }
 
-    <span class="kw">fn </span>last_relayed_block_key(domain_id: DomainId) -&gt; Vec&lt;u8&gt; {
-        (<span class="string">b&quot;message_relayer_last_processed_block_of_domain&quot;</span>, domain_id).encode()
+    <span class="kw">fn </span>relayed_blocks_at_number_key(domain_id: DomainId, number: NumberFor&lt;Block&gt;) -&gt; Vec&lt;u8&gt; {
+        (
+            <span class="string">b&quot;message_relayer_processed_block_of_domain&quot;</span>,
+            domain_id,
+            number,
+        )
+            .encode()
     }
 
-    <span class="kw">fn </span>fetch_last_relayed_block(
+    <span class="doccomment">/// Takes number as tip and finds all the unprocessed blocks including the tip.
+    </span><span class="kw">fn </span>fetch_unprocessed_blocks_until(
         client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
         domain_id: DomainId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;NumberFor&lt;Block&gt;&gt; {
-        <span class="kw">let </span>encoded = client
-            .get_aux(<span class="kw-2">&amp;</span><span class="self">Self</span>::last_relayed_block_key(domain_id))
-            .ok()<span class="question-mark">??</span>;
+        best_number: NumberFor&lt;Block&gt;,
+        best_hash: Block::Hash,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;UnProcessedBlocks&lt;Block&gt;, Error&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>blocks_to_process = <span class="macro">vec!</span>[];
+        <span class="kw">let </span>(<span class="kw-2">mut </span>number_to_check, <span class="kw-2">mut </span>hash_to_check) = (best_number, best_hash);
+        <span class="kw">while </span>!<span class="self">Self</span>::fetch_blocks_relayed_at(client, domain_id, number_to_check)
+            .contains(<span class="kw-2">&amp;</span>hash_to_check)
+        {
+            blocks_to_process.push((number_to_check, hash_to_check));
+            <span class="kw">if </span>number_to_check == Zero::zero() {
+                <span class="kw">break</span>;
+            }
 
-        NumberFor::&lt;Block&gt;::decode(<span class="kw-2">&amp;mut </span>encoded.as_ref()).ok()
+            hash_to_check = <span class="kw">match </span>client.header(hash_to_check).ok().flatten() {
+                <span class="prelude-val">Some</span>(header) =&gt; <span class="kw-2">*</span>header.parent_hash(),
+                <span class="prelude-val">None </span>=&gt; {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(
+                        sp_blockchain::Error::MissingHeader(hash_to_check.to_string()).into(),
+                    );
+                }
+            };
+
+            number_to_check = number_to_check
+                .checked_sub(<span class="kw-2">&amp;</span>One::one())
+                .expect(<span class="string">&quot;block number is guaranteed to be &gt;= 1 from the above check&quot;</span>)
+        }
+
+        blocks_to_process.reverse();
+        <span class="prelude-val">Ok</span>(blocks_to_process)
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>store_last_relayed_block(
+    <span class="kw">fn </span>fetch_blocks_relayed_at(
+        client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
+        domain_id: DomainId,
+        number: NumberFor&lt;Block&gt;,
+    ) -&gt; Vec&lt;Block::Hash&gt; {
+        client
+            .get_aux(<span class="kw-2">&amp;</span><span class="self">Self</span>::relayed_blocks_at_number_key(domain_id, number))
+            .ok()
+            .flatten()
+            .and_then(|enc_val| Vec::&lt;Block::Hash&gt;::decode(<span class="kw-2">&amp;mut </span>enc_val.as_ref()).ok())
+            .unwrap_or_default()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>store_relayed_block(
         client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
         domain_id: DomainId,
         block_number: NumberFor&lt;Block&gt;,
+        block_hash: Block::Hash,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>processed_blocks = <span class="self">Self</span>::fetch_blocks_relayed_at(client, domain_id, block_number);
+        <span class="kw">if </span>processed_blocks.contains(<span class="kw-2">&amp;</span>block_hash) {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        }
+
+        processed_blocks.push(block_hash);
         client
             .insert_aux(
                 <span class="kw-2">&amp;</span>[(
-                    <span class="self">Self</span>::last_relayed_block_key(domain_id).as_ref(),
-                    block_number.encode().as_ref(),
+                    <span class="self">Self</span>::relayed_blocks_at_number_key(domain_id, block_number).as_ref(),
+                    processed_blocks.encode().as_ref(),
                 )],
                 <span class="kw-2">&amp;</span>[],
             )

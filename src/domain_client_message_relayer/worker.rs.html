@@ -223,14 +223,6 @@
 <a href="#223" id="223">223</a>
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
-<a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a>
-<a href="#228" id="228">228</a>
-<a href="#229" id="229">229</a>
-<a href="#230" id="230">230</a>
-<a href="#231" id="231">231</a>
-<a href="#232" id="232">232</a>
-<a href="#233" id="233">233</a>
 </pre><pre class="rust"><code><span class="kw">use crate</span>::{BlockT, Error, GossipMessageSink, HeaderBackend, HeaderT, Relayer, LOG_TARGET};
 <span class="kw">use </span>domain_runtime_primitives::RelayerId;
 <span class="kw">use </span>futures::StreamExt;
@@ -240,8 +232,7 @@
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_messenger::RelayerApi;
 <span class="kw">use </span>sp_runtime::scale_info::TypeInfo;
-<span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, NumberFor, One, Zero};
-<span class="kw">use </span>sp_runtime::ArithmeticError;
+<span class="kw">use </span>sp_runtime::traits::{CheckedSub, NumberFor};
 <span class="kw">use </span>std::sync::Arc;
 
 <span class="doccomment">/// Starts relaying system domain messages to other domains.
@@ -264,11 +255,11 @@
     <span class="kw">let </span>result = relay_domain_messages(
         relayer_id,
         system_domain_client,
-        |relayer_id, client, block_id| {
+        |relayer_id, client, block_hash| {
             Relayer::submit_messages_from_system_domain(
                 relayer_id,
                 client,
-                block_id,
+                block_hash,
                 <span class="kw-2">&amp;</span>gossip_message_sink,
             )
         },
@@ -319,12 +310,12 @@
     <span class="kw">let </span>result = relay_domain_messages(
         relayer_id,
         core_domain_client,
-        |relayer_id, client, block_id| {
+        |relayer_id, client, block_hash| {
             Relayer::submit_messages_from_core_domain(
                 relayer_id,
                 client,
                 <span class="kw-2">&amp;</span>system_domain_client,
-                block_id,
+                block_hash,
                 <span class="kw-2">&amp;</span>gossip_message_sink,
             )
         },
@@ -359,19 +350,10 @@
 {
     <span class="kw">let </span>domain_id = Relayer::domain_id(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
     <span class="kw">let </span>relay_confirmation_depth = Relayer::relay_confirmation_depth(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
-    <span class="kw">let </span>maybe_last_relayed_block = Relayer::fetch_last_relayed_block(<span class="kw-2">&amp;</span>domain_client, domain_id);
-    <span class="kw">let </span><span class="kw-2">mut </span>relay_block_from = <span class="kw">match </span>maybe_last_relayed_block {
-        <span class="prelude-val">None </span>=&gt; Zero::zero(),
-        <span class="prelude-val">Some</span>(last_block_number) =&gt; last_block_number
-            .checked_add(<span class="kw-2">&amp;</span>One::one())
-            .ok_or(ArithmeticError::Overflow)<span class="question-mark">?</span>,
-    };
-
     <span class="macro">tracing::info!</span>(
         target: LOG_TARGET,
-        <span class="string">&quot;Starting relayer for domain: {:?} from the block: {:?}&quot;</span>,
+        <span class="string">&quot;Starting relayer for domain: {:?}&quot;</span>,
         domain_id,
-        relay_block_from,
     );
     <span class="kw">let </span><span class="kw-2">mut </span>domain_block_import = domain_client.import_notification_stream();
 
@@ -381,15 +363,13 @@
     // construct proof of each message to be relayed
     // submit XDM as unsigned extrinsic.
     </span><span class="kw">while let </span><span class="prelude-val">Some</span>(block) = domain_block_import.next().<span class="kw">await </span>{
-        <span class="kw">let </span>block_number = block.header.number();
-
         <span class="comment">// if the client is in major sync, wait until sync is complete
         </span><span class="kw">if </span>sync_oracle.is_major_syncing() {
             <span class="macro">tracing::info!</span>(target: LOG_TARGET, <span class="string">&quot;Client is in major sync. Skipping...&quot;</span>);
             <span class="kw">continue</span>;
         }
 
-        <span class="kw">let </span>relay_block_until = <span class="kw">match </span>block_number.checked_sub(<span class="kw-2">&amp;</span>relay_confirmation_depth) {
+        <span class="kw">let </span>relay_block_until = <span class="kw">match </span>block.header.number().checked_sub(<span class="kw-2">&amp;</span>relay_confirmation_depth) {
             <span class="prelude-val">None </span>=&gt; {
                 <span class="comment">// not enough confirmed blocks.
                 </span><span class="macro">tracing::info!</span>(
@@ -402,30 +382,34 @@
             <span class="prelude-val">Some</span>(confirmed_block) =&gt; confirmed_block,
         };
 
-        <span class="kw">while </span>relay_block_from &lt;= relay_block_until {
+        <span class="kw">let </span>(number, hash) = (<span class="kw-2">*</span>block.header.number(), block.header.hash());
+        <span class="kw">let </span>blocks_to_process: Vec&lt;(NumberFor&lt;Block&gt;, Block::Hash)&gt; =
+            Relayer::fetch_unprocessed_blocks_until(<span class="kw-2">&amp;</span>domain_client, domain_id, number, hash)<span class="question-mark">?
+                </span>.into_iter()
+                .filter(|(number, <span class="kw">_</span>)| <span class="kw-2">*</span>number &lt;= relay_block_until)
+                .collect();
+
+        <span class="kw">for </span>(number, hash) <span class="kw">in </span>blocks_to_process {
             <span class="macro">tracing::info!</span>(
                 target: LOG_TARGET,
-                <span class="string">&quot;Checking messages to be submitted from domain: {:?} at block: {:?}&quot;</span>,
-                domain_id,
-                relay_block_from
+                <span class="string">&quot;Checking messages to be submitted from domain: {domain_id:?} at block: ({number:?}, {hash:?})&quot;</span>,
             );
 
-            <span class="kw">let </span>block_hash = domain_client
-                .hash(relay_block_from)<span class="question-mark">?
-                </span>.ok_or(Error::UnableToFetchBlockNumber)<span class="question-mark">?</span>;
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = message_processor(relayer_id.clone(), <span class="kw-2">&amp;</span>domain_client, block_hash) {
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = message_processor(relayer_id.clone(), <span class="kw-2">&amp;</span>domain_client, hash) {
                 <span class="macro">tracing::error!</span>(
                     target: LOG_TARGET,
                     <span class="question-mark">?</span>err,
-                    <span class="string">&quot;Failed to submit messages from the domain {domain_id:?} at the block {relay_block_from:?}&quot;
+                    <span class="string">&quot;Failed to submit messages from the domain {domain_id:?} at the block ({number:?}, {hash:?})&quot;
                 </span>);
                 <span class="kw">break</span>;
             };
 
-            Relayer::store_last_relayed_block(<span class="kw-2">&amp;</span>domain_client, domain_id, relay_block_from)<span class="question-mark">?</span>;
-            relay_block_from = relay_block_from
-                .checked_add(<span class="kw-2">&amp;</span>One::one())
-                .ok_or(ArithmeticError::Overflow)<span class="question-mark">?</span>;
+            <span class="comment">// TODO: at the moment the aux storage grows as the chain grows
+            // We can prune the the storage by doing another round of check for any undelivered messages
+            // and then prune the storage.
+            // We can use Finalize event but its not triggered yet as we dont finalize.
+            // Other option would be to use fraud proof period.
+            </span>Relayer::store_relayed_block(<span class="kw-2">&amp;</span>domain_client, domain_id, number, hash)<span class="question-mark">?</span>;
         }
     }
 
