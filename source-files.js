@@ -13,7 +13,6 @@ var sourcesIndex = JSON.parse('{\
 "domain_test_service":["",[],["chain_spec.rs","lib.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_domain_registry":["",[],["lib.rs"]],\
-"pallet_domain_tracker":["",[],["lib.rs"]],\
 "pallet_domains":["",[],["lib.rs"]],\
 "pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
@@ -34,7 +33,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
-"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","state_root_tracker.rs","transaction.rs"]],\
+"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","transaction.rs"]],\
 "sp_executor_registry":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
