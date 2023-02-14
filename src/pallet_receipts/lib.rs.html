@@ -395,26 +395,6 @@
 <a href="#395" id="395">395</a>
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2022 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -504,7 +484,7 @@
     /// growth.
     </span><span class="attr">#[pallet::storage]
     #[pallet::getter(<span class="kw">fn </span>primary_hash)]
-    </span><span class="kw">pub type </span>BlockHash&lt;T: Config&gt; = StorageDoubleMap&lt;
+    </span><span class="kw">pub type </span>PrimaryBlockHash&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
         Twox64Concat,
         DomainId,
@@ -514,11 +494,11 @@
         OptionQuery,
     &gt;;
 
-    <span class="doccomment">/// A pair of (block_hash, block_number) of the latest execution receipt of a domain.
+    <span class="doccomment">/// Stores the latest block number for which Execution receipt(s) are available for a given Domain.
     </span><span class="attr">#[pallet::storage]
     #[pallet::getter(<span class="kw">fn </span>receipt_head)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>ReceiptHead&lt;T: Config&gt; =
-        StorageMap&lt;<span class="kw">_</span>, Twox64Concat, DomainId, (T::Hash, T::BlockNumber), ValueQuery&gt;;
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>HeadReceiptNumber&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Twox64Concat, DomainId, T::BlockNumber, ValueQuery&gt;;
 
     <span class="doccomment">/// Block number of the oldest receipt stored in the state.
     </span><span class="attr">#[pallet::storage]
@@ -621,8 +601,7 @@
 <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
     <span class="doccomment">/// Returns the block number of the latest receipt.
     </span><span class="kw">pub fn </span>head_receipt_number(domain_id: DomainId) -&gt; T::BlockNumber {
-        <span class="kw">let </span>(<span class="kw">_</span>, best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get(domain_id);
-        best_number
+        &lt;HeadReceiptNumber&lt;T&gt;&gt;::get(domain_id)
     }
 
     <span class="doccomment">/// Returns the block number of the oldest receipt still being tracked in the state.
@@ -632,7 +611,7 @@
 
     <span class="doccomment">/// Returns the block number of latest _finalized_ receipt.
     </span><span class="kw">pub fn </span>finalized_receipt_number(domain_id: DomainId) -&gt; T::BlockNumber {
-        <span class="kw">let </span>(<span class="kw">_</span>, best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get(domain_id);
+        <span class="kw">let </span>best_number = &lt;HeadReceiptNumber&lt;T&gt;&gt;::get(domain_id);
         best_number.saturating_sub(T::ReceiptsPruningDepth::get())
     }
 
@@ -655,7 +634,7 @@
             trace: Vec::new(),
             trace_root: Default::default(),
         };
-        <span class="self">Self</span>::apply_new_best_receipt(domain_id, <span class="kw-2">&amp;</span>genesis_receipt);
+        <span class="self">Self</span>::import_head_receipt(domain_id, <span class="kw-2">&amp;</span>genesis_receipt);
         <span class="comment">// Explicitly initialize the oldest receipt number even not necessary as ValueQuery is used.
         </span>&lt;OldestReceiptNumber&lt;T&gt;&gt;::insert::&lt;<span class="kw">_</span>, T::BlockNumber&gt;(domain_id, Zero::zero());
     }
@@ -666,7 +645,7 @@
         receipts: <span class="kw-2">&amp;</span>[ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">let </span>oldest_receipt_number = &lt;OldestReceiptNumber&lt;T&gt;&gt;::get(domain_id);
-        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>best_number) = &lt;ReceiptHead&lt;T&gt;&gt;::get(domain_id);
+        <span class="kw">let </span><span class="kw-2">mut </span>best_number = &lt;HeadReceiptNumber&lt;T&gt;&gt;::get(domain_id);
 
         <span class="kw">for </span>receipt <span class="kw">in </span>receipts {
             <span class="kw">let </span>primary_number = receipt.primary_number;
@@ -678,9 +657,9 @@
 
             <span class="kw">if </span>primary_number &lt;= best_number {
                 <span class="comment">// Either increase the vote for a known receipt or add a fork receipt at this height.
-                </span><span class="self">Self</span>::apply_non_new_best_receipt(domain_id, receipt);
+                </span><span class="self">Self</span>::import_receipt(domain_id, receipt);
             } <span class="kw">else if </span>primary_number == best_number + One::one() {
-                <span class="self">Self</span>::apply_new_best_receipt(domain_id, receipt);
+                <span class="self">Self</span>::import_head_receipt(domain_id, receipt);
                 <span class="self">Self</span>::remove_expired_receipts(domain_id, primary_number);
                 best_number += One::one();
             } <span class="kw">else </span>{
@@ -695,19 +674,21 @@
     </span><span class="kw">pub fn </span>process_fraud_proof(fraud_proof: FraudProof) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="comment">// Revert the execution chain.
         </span><span class="kw">let </span>domain_id = fraud_proof.domain_id;
-        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>to_remove) = &lt;ReceiptHead&lt;T&gt;&gt;::get(domain_id);
+        <span class="kw">let </span><span class="kw-2">mut </span>to_remove = &lt;HeadReceiptNumber&lt;T&gt;&gt;::get(domain_id);
 
         <span class="kw">let </span>new_best_number: T::BlockNumber = fraud_proof.parent_number.into();
-        <span class="kw">let </span>new_best_hash = BlockHash::&lt;T&gt;::get(domain_id, new_best_number)
+        <span class="kw">let </span>new_best_hash = PrimaryBlockHash::&lt;T&gt;::get(domain_id, new_best_number)
             .ok_or(Error::UnavailablePrimaryBlockHash)<span class="question-mark">?</span>;
 
-        &lt;ReceiptHead&lt;T&gt;&gt;::insert(domain_id, (new_best_hash, new_best_number));
+        &lt;HeadReceiptNumber&lt;T&gt;&gt;::insert(domain_id, new_best_number);
 
         <span class="kw">while </span>to_remove &gt; new_best_number {
-            <span class="kw">let </span>block_hash = BlockHash::&lt;T&gt;::get(domain_id, to_remove)
+            <span class="kw">let </span>block_hash = PrimaryBlockHash::&lt;T&gt;::get(domain_id, to_remove)
                 .ok_or(Error::UnavailablePrimaryBlockHash)<span class="question-mark">?</span>;
             <span class="kw">for </span>(receipt_hash, <span class="kw">_</span>) <span class="kw">in </span>&lt;ReceiptVotes&lt;T&gt;&gt;::drain_prefix((domain_id, block_hash)) {
-                &lt;Receipts&lt;T&gt;&gt;::remove(domain_id, receipt_hash);
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(receipt) = &lt;Receipts&lt;T&gt;&gt;::take(domain_id, receipt_hash) {
+                    StateRoots::&lt;T&gt;::remove((domain_id, to_remove, receipt.domain_hash))
+                }
             }
             to_remove -= One::one();
         }
@@ -751,7 +732,7 @@
     <span class="doccomment">/// Remove the expired receipts once the receipts cache is full.
     </span><span class="kw">fn </span>remove_expired_receipts(domain_id: DomainId, primary_number: T::BlockNumber) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(to_prune) = primary_number.checked_sub(<span class="kw-2">&amp;</span>T::ReceiptsPruningDepth::get()) {
-            BlockHash::&lt;T&gt;::mutate_exists(domain_id, to_prune, |maybe_block_hash| {
+            PrimaryBlockHash::&lt;T&gt;::mutate_exists(domain_id, to_prune, |maybe_block_hash| {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(block_hash) = maybe_block_hash.take() {
                     <span class="kw">for </span>(receipt_hash, <span class="kw">_</span>) <span class="kw">in
                         </span>&lt;ReceiptVotes&lt;T&gt;&gt;::drain_prefix((domain_id, block_hash))
@@ -765,41 +746,20 @@
         }
     }
 
-    <span class="kw">fn </span>apply_new_best_receipt(
+    <span class="doccomment">/// Imports the receipt of the latest head of the domain.
+    /// Updates the receipt head of the domain accordingly.
+    </span><span class="kw">fn </span>import_head_receipt(
         domain_id: DomainId,
-        execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
+        receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
     ) {
-        <span class="kw">let </span>primary_hash = execution_receipt.primary_hash;
-        <span class="kw">let </span>primary_number = execution_receipt.primary_number;
-        <span class="kw">let </span>receipt_hash = execution_receipt.hash();
-
-        <span class="comment">// Apply the new best receipt.
-        </span>&lt;Receipts&lt;T&gt;&gt;::insert(domain_id, receipt_hash, execution_receipt);
-        &lt;ReceiptHead&lt;T&gt;&gt;::insert(domain_id, (primary_hash, primary_number));
-        &lt;ReceiptVotes&lt;T&gt;&gt;::mutate((domain_id, primary_hash, receipt_hash), |count| {
-            <span class="kw-2">*</span>count += <span class="number">1</span>;
-        });
-
-        <span class="kw">if </span>!primary_number.is_zero() {
-            <span class="kw">let </span>state_root = execution_receipt
-                .trace
-                .last()
-                .expect(<span class="string">&quot;There are at least 2 elements in trace after the genesis block; qed&quot;</span>);
-
-            &lt;StateRoots&lt;T&gt;&gt;::insert(
-                (domain_id, primary_number, execution_receipt.domain_hash),
-                state_root,
-            );
-        }
-
-        <span class="self">Self</span>::deposit_event(Event::NewDomainReceipt {
-            domain_id,
-            primary_number,
-            primary_hash,
-        });
+        <span class="self">Self</span>::import_receipt(domain_id, receipt);
+        HeadReceiptNumber::&lt;T&gt;::insert(domain_id, receipt.primary_number)
     }
 
-    <span class="kw">fn </span>apply_non_new_best_receipt(
+    <span class="doccomment">/// Imports a receipt of domain.
+    /// Increments the receipt votes.
+    /// Assumes the receipt number is not pruned yet and inserts the a new receipt if not present.
+    </span><span class="kw">fn </span>import_receipt(
         domain_id: DomainId,
         execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
     ) {
