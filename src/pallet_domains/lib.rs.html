@@ -707,6 +707,16 @@
 <a href="#707" id="707">707</a>
 <a href="#708" id="708">708</a>
 <a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -739,7 +749,7 @@
 <span class="kw">use </span>sp_domains::fraud_proof::{BundleEquivocationProof, FraudProof, InvalidTransactionProof};
 <span class="kw">use </span>sp_domains::transaction::InvalidTransactionCode;
 <span class="kw">use </span>sp_domains::{DomainId, ExecutionReceipt, ProofOfElection, SignedOpaqueBundle};
-<span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, One, Zero};
+<span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Zero};
 <span class="kw">use </span>sp_runtime::transaction_validity::TransactionValidityError;
 <span class="kw">use </span>sp_runtime::RuntimeAppPublic;
 
@@ -769,7 +779,7 @@
     #[pallet::without_storage_info]
     </span><span class="kw">pub struct </span>Pallet&lt;T&gt;(<span class="kw">_</span>);
 
-    <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug)]
+    <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
     </span><span class="kw">pub enum </span>BundleError {
         <span class="doccomment">/// The signer of bundle is unexpected.
         </span>UnexpectedSigner,
@@ -787,6 +797,8 @@
         </span>BadElectionSolution,
         <span class="doccomment">/// An invalid execution receipt found in the bundle.
         </span>Receipt(ExecutionReceiptError),
+        <span class="doccomment">/// The Bundle is created too long ago.
+        </span>StaleBundle,
     }
 
     <span class="kw">impl</span>&lt;T&gt; From&lt;BundleError&gt; <span class="kw">for </span>Error&lt;T&gt; {
@@ -795,7 +807,7 @@
         }
     }
 
-    <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug)]
+    <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
     </span><span class="kw">pub enum </span>ExecutionReceiptError {
         <span class="doccomment">/// The parent execution receipt is unknown.
         </span>MissingParent,
@@ -904,7 +916,7 @@
         #[pallet::weight((<span class="number">10_000</span>, Pays::No))]
         </span><span class="kw">pub fn </span>submit_bundle_equivocation_proof(
             origin: OriginFor&lt;T&gt;,
-            bundle_equivocation_proof: BundleEquivocationProof&lt;T::Hash&gt;,
+            bundle_equivocation_proof: BundleEquivocationProof&lt;T::BlockNumber, T::Hash&gt;,
         ) -&gt; DispatchResult {
             ensure_none(origin)<span class="question-mark">?</span>;
 
@@ -1253,6 +1265,16 @@
             signature,
         }: <span class="kw-2">&amp;</span>SignedOpaqueBundle&lt;T::BlockNumber, T::Hash, T::DomainHash&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BundleError&gt; {
+        <span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;T&gt;::current_block_number();
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(last_finalized) =
+            current_block_number.checked_sub(<span class="kw-2">&amp;</span>T::ConfirmationDepthK::get())
+        {
+            <span class="kw">if </span>bundle.header.primary_number &lt;= last_finalized {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::StaleBundle);
+            }
+        }
+
         <span class="kw">let </span>proof_of_election = bundle_solution.proof_of_election();
 
         <span class="kw">if </span>!proof_of_election
@@ -1274,8 +1296,6 @@
 
         <span class="kw">if </span>proof_of_election.domain_id.is_system() {
             <span class="self">Self</span>::validate_system_bundle_solution(<span class="kw-2">&amp;</span>bundle.receipts, proof_of_election)<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;T&gt;::current_block_number();
 
             <span class="kw">let </span>best_number = <span class="self">Self</span>::head_receipt_number();
             <span class="kw">let </span>max_allowed = best_number + T::MaximumReceiptDrift::get();
@@ -1331,7 +1351,7 @@
 
     <span class="comment">// TODO: Checks if the bundle equivocation proof is valid.
     </span><span class="kw">fn </span>validate_bundle_equivocation_proof(
-        _bundle_equivocation_proof: <span class="kw-2">&amp;</span>BundleEquivocationProof&lt;T::Hash&gt;,
+        _bundle_equivocation_proof: <span class="kw-2">&amp;</span>BundleEquivocationProof&lt;T::BlockNumber, T::Hash&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;T&gt;&gt; {
         <span class="prelude-val">Ok</span>(())
     }
@@ -1382,7 +1402,7 @@
 
     <span class="doccomment">/// Submits an unsigned extrinsic [`Call::submit_bundle_equivocation_proof`].
     </span><span class="kw">pub fn </span>submit_bundle_equivocation_proof_unsigned(
-        bundle_equivocation_proof: BundleEquivocationProof&lt;T::Hash&gt;,
+        bundle_equivocation_proof: BundleEquivocationProof&lt;T::BlockNumber, T::Hash&gt;,
     ) {
         <span class="kw">let </span>call = Call::submit_bundle_equivocation_proof {
             bundle_equivocation_proof,
