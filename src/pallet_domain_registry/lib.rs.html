@@ -1030,6 +1030,33 @@
 <a href="#1030" id="1030">1030</a>
 <a href="#1031" id="1031">1031</a>
 <a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1164,6 +1191,11 @@
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>Domains&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Twox64Concat, DomainId, DomainConfig&lt;T&gt;, OptionQuery&gt;;
+
+    <span class="doccomment">/// At which block the domain was created.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>CreatedAt&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Twox64Concat, DomainId, T::BlockNumber, OptionQuery&gt;;
 
     <span class="doccomment">/// (executor, domain_id, allocated_stake_proportion)
     </span><span class="attr">#[pallet::storage]
@@ -1485,6 +1517,8 @@
         </span>TooFarInFuture,
         <span class="doccomment">/// Core domain receipt points to an unknown primary block.
         </span>UnknownBlock,
+        <span class="doccomment">/// Valid receipts start after the domain creation.
+        </span>BeforeDomainCreation,
     }
 
     <span class="kw">impl</span>&lt;T&gt; From&lt;PalletReceiptError&gt; <span class="kw">for </span>Error&lt;T&gt; {
@@ -1543,6 +1577,9 @@
 
         <span class="doccomment">/// Not a core domain bundle.
         </span>NotCoreDomainBundle,
+
+        <span class="doccomment">/// Can not find the number of block the domain was created at.
+        </span>DomainNotCreated,
 
         <span class="doccomment">/// Can not find the block hash of given primary block number.
         </span>UnavailablePrimaryBlockHash,
@@ -1784,6 +1821,7 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
         }
 
+        <span class="kw">let </span>created_at = CreatedAt::&lt;T&gt;::get(domain_id).ok_or(Error::&lt;T&gt;::DomainNotCreated)<span class="question-mark">?</span>;
         <span class="kw">let </span>head_receipt_number = <span class="self">Self</span>::head_receipt_number(domain_id);
         <span class="kw">let </span>max_allowed = head_receipt_number + T::MaximumReceiptDrift::get();
 
@@ -1809,6 +1847,15 @@
             }
 
             <span class="kw">let </span>primary_number = receipt.primary_number;
+
+            <span class="kw">if </span>primary_number &lt;= created_at {
+                <span class="macro">log::error!</span>(
+                    target: <span class="string">&quot;runtime::domain-registry&quot;</span>,
+                    <span class="string">&quot;Domain was created at #{created_at:?}, but this receipt points to an earlier block #{:?}&quot;</span>, receipt.primary_number,
+                );
+                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::Receipt(ReceiptError::BeforeDomainCreation));
+            }
+
             <span class="kw">if </span>!pallet_receipts::Pallet::&lt;T&gt;::point_to_valid_primary_block(domain_id, receipt) {
                 <span class="macro">log::error!</span>(
                     target: <span class="string">&quot;runtime::domain-registry&quot;</span>,
@@ -1989,6 +2036,13 @@
         Domains::&lt;T&gt;::insert(domain_id, domain_config);
         DomainCreators::&lt;T&gt;::insert(domain_id, who, deposit);
         NextDomainId::&lt;T&gt;::put(domain_id + <span class="number">1</span>);
+
+        <span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;T&gt;::block_number();
+        CreatedAt::&lt;T&gt;::insert(domain_id, current_block_number);
+        pallet_receipts::Pallet::&lt;T&gt;::initialize_head_receipt_number(
+            domain_id,
+            current_block_number,
+        );
 
         domain_id
     }

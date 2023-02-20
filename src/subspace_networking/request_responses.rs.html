@@ -1033,27 +1033,6 @@
 <a href="#1033" id="1033">1033</a>
 <a href="#1034" id="1034">1034</a>
 <a href="#1035" id="1035">1035</a>
-<a href="#1036" id="1036">1036</a>
-<a href="#1037" id="1037">1037</a>
-<a href="#1038" id="1038">1038</a>
-<a href="#1039" id="1039">1039</a>
-<a href="#1040" id="1040">1040</a>
-<a href="#1041" id="1041">1041</a>
-<a href="#1042" id="1042">1042</a>
-<a href="#1043" id="1043">1043</a>
-<a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
-<a href="#1047" id="1047">1047</a>
-<a href="#1048" id="1048">1048</a>
-<a href="#1049" id="1049">1049</a>
-<a href="#1050" id="1050">1050</a>
-<a href="#1051" id="1051">1051</a>
-<a href="#1052" id="1052">1052</a>
-<a href="#1053" id="1053">1053</a>
-<a href="#1054" id="1054">1054</a>
-<a href="#1055" id="1055">1055</a>
-<a href="#1056" id="1056">1056</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2022 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -1096,7 +1075,6 @@
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>libp2p::core::connection::ConnectionId;
 <span class="kw">use </span>libp2p::core::{Multiaddr, PeerId};
 <span class="kw">use </span>libp2p::request_response::{
     Behaviour <span class="kw">as </span>RequestResponse, Codec <span class="kw">as </span>RequestResponseCodec, Config <span class="kw">as </span>RequestResponseConfig,
@@ -1106,7 +1084,10 @@
 <span class="kw">pub use </span>libp2p::request_response::{InboundFailure, OutboundFailure, RequestId};
 <span class="kw">use </span>libp2p::swarm::behaviour::{ConnectionClosed, DialFailure, FromSwarm, ListenFailure};
 <span class="kw">use </span>libp2p::swarm::handler::multi::MultiHandler;
-<span class="kw">use </span>libp2p::swarm::{ConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters};
+<span class="kw">use </span>libp2p::swarm::{
+    ConnectionHandler, ConnectionId, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    THandlerInEvent,
+};
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::collections::hash_map::Entry;
 <span class="kw">use </span>std::collections::HashMap;
@@ -1523,24 +1504,21 @@
                 }
             }
             FromSwarm::DialFailure(inner) =&gt; {
-                <span class="kw">for </span>((protocol, <span class="kw">_</span>), (<span class="kw">_</span>, handler)) <span class="kw">in
-                    </span><span class="self">self</span>.protocols.values_mut().zip(inner.handler.into_iter())
-                {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
                     protocol.on_swarm_event(FromSwarm::DialFailure(DialFailure {
                         peer_id: inner.peer_id,
-                        handler,
                         error: inner.error,
+                        connection_id: inner.connection_id,
                     }));
                 }
             }
             FromSwarm::ListenFailure(inner) =&gt; {
-                <span class="kw">for </span>((protocol, <span class="kw">_</span>), (<span class="kw">_</span>, handler)) <span class="kw">in
-                    </span><span class="self">self</span>.protocols.values_mut().zip(inner.handler.into_iter())
-                {
+                <span class="kw">for </span>(protocol, <span class="kw">_</span>) <span class="kw">in </span><span class="self">self</span>.protocols.values_mut() {
                     protocol.on_swarm_event(FromSwarm::ListenFailure(ListenFailure {
                         local_addr: inner.local_addr,
                         send_back_addr: inner.send_back_addr,
-                        handler,
+                        error: inner.error,
+                        connection_id: inner.connection_id,
                     }));
                 }
             }
@@ -1606,7 +1584,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         params: <span class="kw-2">&amp;mut </span><span class="kw">impl </span>PollParameters,
-    ) -&gt; Poll&lt;NetworkBehaviourAction&lt;<span class="self">Self</span>::OutEvent, <span class="self">Self</span>::ConnectionHandler&gt;&gt; {
+    ) -&gt; Poll&lt;NetworkBehaviourAction&lt;<span class="self">Self</span>::OutEvent, THandlerInEvent&lt;<span class="self">Self</span>&gt;&gt;&gt; {
         <span class="lifetime">&#39;poll_all</span>: <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(message_request) = <span class="self">self</span>.message_request.take() {
                 <span class="kw">let </span>MessageRequest {
@@ -1710,34 +1688,14 @@
 
                         <span class="comment">// Other events generated by the underlying behaviour are transparently
                         // passed through.
-                        </span>NetworkBehaviourAction::Dial { opts, handler } =&gt; {
+                        </span>NetworkBehaviourAction::Dial { opts } =&gt; {
                             <span class="kw">if </span>opts.get_peer_id().is_none() {
                                 <span class="macro">error!</span>(
                                     <span class="string">&quot;The request-response isn&#39;t supposed to start dialing \
                                     addresses&quot;
                                 </span>);
                             }
-                            <span class="kw">let </span>protocol = protocol.to_string();
-                            <span class="kw">let </span>handler = {
-                                <span class="kw">let </span><span class="kw-2">mut </span>handlers: HashMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt; = <span class="self">self
-                                    </span>.protocols
-                                    .iter_mut()
-                                    .map(|(p, (r, <span class="kw">_</span>))| {
-                                        (p.to_string(), NetworkBehaviour::new_handler(r))
-                                    })
-                                    .collect();
-
-                                <span class="kw">if let </span><span class="prelude-val">Some</span>(h) = handlers.get_mut(<span class="kw-2">&amp;</span>protocol) {
-                                    <span class="kw-2">*</span>h = handler
-                                }
-
-                                MultiHandler::try_from_iter(handlers).expect(
-                                    <span class="string">&quot;Protocols are in a HashMap and there can be at most one \
-                                    handler per protocol name, which is the only possible error; \
-                                    qed&quot;</span>,
-                                )
-                            };
-                            <span class="kw">return </span>Poll::Ready(NetworkBehaviourAction::Dial { opts, handler });
+                            <span class="kw">return </span>Poll::Ready(NetworkBehaviourAction::Dial { opts });
                         }
                         NetworkBehaviourAction::NotifyHandler {
                             peer_id,
