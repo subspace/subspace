@@ -483,16 +483,8 @@
 <a href="#483" id="483">483</a>
 <a href="#484" id="484">484</a>
 <a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-</pre><pre class="rust"><code><span class="kw">use </span>futures::channel::oneshot;
+</pre><pre class="rust"><code><span class="kw">use </span>bundle_validator::ValidateBundle;
+<span class="kw">use </span>futures::channel::oneshot;
 <span class="kw">use </span>futures::future::{Future, FutureExt, Ready};
 <span class="kw">use </span>jsonrpsee::core::async_trait;
 <span class="kw">use </span>sc_client_api::blockchain::HeaderBackend;
@@ -514,7 +506,6 @@
 <span class="kw">use </span>sp_domains::transaction::{
     InvalidTransactionCode, PreValidationObject, PreValidationObjectApi,
 };
-<span class="kw">use </span>sp_domains::ExecutionReceipt;
 <span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, BlockIdTo, NumberFor, SaturatedConversion};
 <span class="kw">use </span>sp_runtime::transaction_validity::{
@@ -527,6 +518,8 @@
 <span class="kw">use </span>subspace_fraud_proof::VerifyFraudProof;
 <span class="kw">use </span>substrate_prometheus_endpoint::Registry <span class="kw">as </span>PrometheusRegistry;
 
+<span class="kw">pub mod </span>bundle_validator;
+
 <span class="doccomment">/// Block hash type for a pool.
 </span><span class="kw">type </span>BlockHash&lt;A&gt; = &lt;&lt;A <span class="kw">as </span>ChainApi&gt;::Block <span class="kw">as </span>BlockT&gt;::Hash;
 
@@ -537,8 +530,8 @@
 </span><span class="kw">type </span>ExtrinsicFor&lt;A&gt; = &lt;&lt;A <span class="kw">as </span>ChainApi&gt;::Block <span class="kw">as </span>BlockT&gt;::Extrinsic;
 
 <span class="doccomment">/// A transaction pool for a full node.
-</span><span class="kw">pub type </span>FullPool&lt;Block, Client, Verifier&gt; =
-    BasicPoolWrapper&lt;Block, FullChainApiWrapper&lt;Block, Client, Verifier&gt;&gt;;
+</span><span class="kw">pub type </span>FullPool&lt;Block, Client, BundleValidator, Verifier&gt; =
+    BasicPoolWrapper&lt;Block, FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt;&gt;;
 
 <span class="kw">type </span>BoxedReadyIterator&lt;Hash, Data&gt; =
     Box&lt;<span class="kw">dyn </span>ReadyTransactions&lt;Item = Arc&lt;Transaction&lt;Hash, Data&gt;&gt;&gt; + Send&gt;;
@@ -547,14 +540,16 @@
 
 <span class="kw">type </span>PolledIterator&lt;PoolApi&gt; = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = ReadyIteratorFor&lt;PoolApi&gt;&gt; + Send&gt;&gt;;
 
-<span class="kw">pub struct </span>FullChainApiWrapper&lt;Block, Client, Verifier&gt; {
+<span class="kw">pub struct </span>FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt; {
     inner: Arc&lt;FullChainApi&lt;Client, Block&gt;&gt;,
     client: Arc&lt;Client&gt;,
+    bundle_validator: BundleValidator,
     verifier: Verifier,
     spawner: Box&lt;<span class="kw">dyn </span>SpawnNamed&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, Client, Verifier&gt; FullChainApiWrapper&lt;Block, Client, Verifier&gt;
+<span class="kw">impl</span>&lt;Block, Client, BundleValidator, Verifier&gt;
+    FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt;
@@ -567,6 +562,8 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: TaggedTransactionQueue&lt;Block&gt;
         + PreValidationObjectApi&lt;Block, domain_runtime_primitives::Hash&gt;,
+    BundleValidator:
+        ValidateBundle&lt;Block, domain_runtime_primitives::Hash&gt; + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
     Verifier: VerifyFraudProof + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>new(
@@ -574,6 +571,7 @@
         prometheus: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PrometheusRegistry&gt;,
         task_manager: <span class="kw-2">&amp;</span>TaskManager,
         verifier: Verifier,
+        bundle_validator: BundleValidator,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner: Arc::new(FullChainApi::new(
@@ -582,6 +580,7 @@
                 <span class="kw-2">&amp;</span>task_manager.spawn_essential_handle(),
             )),
             client,
+            bundle_validator,
             verifier,
             spawner: Box::new(task_manager.spawn_handle()),
         }
@@ -595,35 +594,10 @@
     ) -&gt; TxPoolResult&lt;TransactionValidity&gt; {
         <span class="self">self</span>.inner.validate_transaction_blocking(at, source, uxt)
     }
-
-    <span class="kw">fn </span>validate_receipts_at(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        receipts: Vec&lt;
-            ExecutionReceipt&lt;NumberFor&lt;Block&gt;, Block::Hash, domain_runtime_primitives::Hash&gt;,
-        &gt;,
-        at: BlockId&lt;Block&gt;,
-    ) -&gt; sp_blockchain::Result&lt;()&gt; {
-        <span class="kw">let </span>block_number =
-            <span class="self">self</span>.client
-                .block_number_from_id(<span class="kw-2">&amp;</span>at)<span class="question-mark">?
-                </span>.ok_or(sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                    <span class="string">&quot;Can not convert BlockId {at:?} to block number&quot;
-                </span>)))<span class="question-mark">?</span>;
-
-        <span class="kw">for </span>receipt <span class="kw">in </span>receipts {
-            <span class="kw">if </span>receipt.primary_number &gt; block_number {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::UnknownBlock(<span class="macro">format!</span>(
-                    <span class="string">&quot;Receipt points to a future block {:?}, current block number: {block_number:?}&quot;</span>,
-                    receipt.primary_number
-                )));
-            }
-        }
-
-        <span class="prelude-val">Ok</span>(())
-    }
 }
 
-<span class="kw">impl</span>&lt;Block, Client, Verifier&gt; ChainApi <span class="kw">for </span>FullChainApiWrapper&lt;Block, Client, Verifier&gt;
+<span class="kw">impl</span>&lt;Block, Client, BundleValidator, Verifier&gt; ChainApi
+    <span class="kw">for </span>FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt;
@@ -636,6 +610,8 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: TaggedTransactionQueue&lt;Block&gt;
         + PreValidationObjectApi&lt;Block, domain_runtime_primitives::Hash&gt;,
+    BundleValidator:
+        ValidateBundle&lt;Block, domain_runtime_primitives::Hash&gt; + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
     Verifier: VerifyFraudProof + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">type </span>Block = Block;
@@ -663,8 +639,8 @@
                     PreValidationObject::Null =&gt; {
                         <span class="comment">// No pre-validation is required.
                     </span>}
-                    PreValidationObject::Receipts(receipts) =&gt; {
-                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.validate_receipts_at(receipts, <span class="kw-2">*</span>at) {
+                    PreValidationObject::Bundle(bundle) =&gt; {
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.bundle_validator.validate_bundle(<span class="kw-2">*</span>at, <span class="kw-2">&amp;</span>bundle) {
                             <span class="macro">tracing::trace!</span>(target: <span class="string">&quot;txpool&quot;</span>, error = <span class="question-mark">?</span>err, <span class="string">&quot;Dropped `submit_bundle` extrinsic&quot;</span>);
                             <span class="kw">return async move </span>{ <span class="prelude-val">Err</span>(TxPoolError::ImmediatelyDropped.into()) }
                                 .boxed();
@@ -807,8 +783,8 @@
     }
 }
 
-<span class="kw">impl</span>&lt;Block, Client, Verifier&gt; sc_transaction_pool_api::LocalTransactionPool
-    <span class="kw">for </span>BasicPoolWrapper&lt;Block, FullChainApiWrapper&lt;Block, Client, Verifier&gt;&gt;
+<span class="kw">impl</span>&lt;Block, Client, BundleValidator, Verifier&gt; sc_transaction_pool_api::LocalTransactionPool
+    <span class="kw">for </span>BasicPoolWrapper&lt;Block, FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt;&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt;
@@ -821,11 +797,13 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: TaggedTransactionQueue&lt;Block&gt;
         + PreValidationObjectApi&lt;Block, domain_runtime_primitives::Hash&gt;,
+    BundleValidator:
+        ValidateBundle&lt;Block, domain_runtime_primitives::Hash&gt; + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
     Verifier: VerifyFraudProof + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">type </span>Block = Block;
-    <span class="kw">type </span>Hash = ExtrinsicHash&lt;FullChainApiWrapper&lt;Block, Client, Verifier&gt;&gt;;
-    <span class="kw">type </span>Error = &lt;FullChainApiWrapper&lt;Block, Client, Verifier&gt; <span class="kw">as </span>ChainApi&gt;::Error;
+    <span class="kw">type </span>Hash = ExtrinsicHash&lt;FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt;&gt;;
+    <span class="kw">type </span>Error = &lt;FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt; <span class="kw">as </span>ChainApi&gt;::Error;
 
     <span class="kw">fn </span>submit_local(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -942,12 +920,13 @@
     </span>}
 }
 
-<span class="kw">pub fn </span>new_full&lt;Block, Client, Verifier&gt;(
+<span class="kw">pub fn </span>new_full&lt;Block, Client, BundleValidator, Verifier&gt;(
     config: <span class="kw-2">&amp;</span>Configuration,
     task_manager: <span class="kw-2">&amp;</span>TaskManager,
     client: Arc&lt;Client&gt;,
     verifier: Verifier,
-) -&gt; Arc&lt;BasicPoolWrapper&lt;Block, FullChainApiWrapper&lt;Block, Client, Verifier&gt;&gt;&gt;
+    bundle_validator: BundleValidator,
+) -&gt; Arc&lt;BasicPoolWrapper&lt;Block, FullChainApiWrapper&lt;Block, Client, BundleValidator, Verifier&gt;&gt;&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt;
@@ -962,6 +941,8 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: TaggedTransactionQueue&lt;Block&gt;
         + PreValidationObjectApi&lt;Block, domain_runtime_primitives::Hash&gt;,
+    BundleValidator:
+        ValidateBundle&lt;Block, domain_runtime_primitives::Hash&gt; + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
     Verifier: VerifyFraudProof + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>prometheus = config.prometheus_registry();
@@ -970,6 +951,7 @@
         prometheus,
         task_manager,
         verifier,
+        bundle_validator,
     ));
     <span class="kw">let </span>pool = Arc::new(BasicPoolWrapper::with_revalidation_type(
         config,
