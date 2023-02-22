@@ -163,6 +163,15 @@
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2022 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -185,33 +194,42 @@
 <span class="kw">use </span>futures::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>libp2p::PeerId;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
+<span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>tracing::{debug, trace};
 
-<span class="comment">// Could be changed after the production feedback.
+<span class="doccomment">/// Could be changed after the production feedback.
 </span><span class="kw">const </span>REQUESTS_BUFFER_SIZE: usize = <span class="number">50</span>;
 
 <span class="doccomment">/// Generic request with associated response
-</span><span class="kw">pub trait </span>GenericRequest: Encode + Decode + <span class="lifetime">&#39;static </span>{
+</span><span class="kw">pub trait </span>GenericRequest: Encode + Decode + Send + Sync + <span class="lifetime">&#39;static </span>{
     <span class="kw">const </span>PROTOCOL_NAME: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str;
     <span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str;
     <span class="doccomment">/// Response type that corresponds to this request
-    </span><span class="kw">type </span>Response: Encode + Decode + <span class="lifetime">&#39;static</span>;
+    </span><span class="kw">type </span>Response: Encode + Decode + Send + Sync + <span class="lifetime">&#39;static</span>;
 }
+
+<span class="kw">pub type </span>RequestHandlerFn&lt;Request&gt; = Arc&lt;
+    <span class="kw">dyn </span>(Fn(
+            <span class="kw-2">&amp;</span>Request,
+        )
+            -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;&lt;Request <span class="kw">as </span>GenericRequest&gt;::Response&gt;&gt; + Send&gt;&gt;)
+        + Send
+        + Sync
+        + <span class="lifetime">&#39;static</span>,
+&gt;;
 
 <span class="kw">pub struct </span>GenericRequestHandler&lt;Request: GenericRequest&gt; {
     request_receiver: mpsc::Receiver&lt;IncomingRequest&gt;,
-    <span class="attr">#[allow(clippy::type_complexity)]
-    </span>request_handler: Arc&lt;
-        <span class="kw">dyn </span>(Fn(<span class="kw-2">&amp;</span>Request) -&gt; <span class="prelude-ty">Option</span>&lt;&lt;Request <span class="kw">as </span>GenericRequest&gt;::Response&gt;) + Send + Sync + <span class="lifetime">&#39;static</span>,
-    &gt;,
+    request_handler: RequestHandlerFn&lt;Request&gt;,
     protocol_config: ProtocolConfig,
 }
 
 <span class="kw">impl</span>&lt;Request: GenericRequest&gt; GenericRequestHandler&lt;Request&gt; {
-    <span class="kw">pub fn </span>create&lt;F&gt;(request_handler: F) -&gt; Box&lt;<span class="kw">dyn </span>RequestHandler&gt;
+    <span class="kw">pub fn </span>create&lt;RH, Fut&gt;(request_handler: RH) -&gt; Box&lt;<span class="kw">dyn </span>RequestHandler&gt;
     <span class="kw">where
-        </span>F: (Fn(<span class="kw-2">&amp;</span>Request) -&gt; <span class="prelude-ty">Option</span>&lt;Request::Response&gt;) + Send + Sync + <span class="lifetime">&#39;static</span>,
+        </span>RH: (Fn(<span class="kw-2">&amp;</span>Request) -&gt; Fut) + Send + Sync + <span class="lifetime">&#39;static</span>,
+        Fut: Future&lt;Output = <span class="prelude-ty">Option</span>&lt;Request::Response&gt;&gt; + Send + <span class="lifetime">&#39;static</span>,
     {
         <span class="kw">let </span>(request_sender, request_receiver) = mpsc::channel(REQUESTS_BUFFER_SIZE);
 
@@ -220,13 +238,13 @@
 
         Box::new(<span class="self">Self </span>{
             request_receiver,
-            request_handler: Arc::new(request_handler),
+            request_handler: Arc::new(<span class="kw">move </span>|request| Box::pin(request_handler(request))),
             protocol_config,
         })
     }
 
-    <span class="comment">// Invokes external protocol handler.
-    </span><span class="kw">fn </span>handle_request(
+    <span class="doccomment">/// Invokes external protocol handler.
+    </span><span class="kw">async fn </span>handle_request(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         peer: PeerId,
         payload: Vec&lt;u8&gt;,
@@ -234,7 +252,7 @@
         <span class="macro">trace!</span>(%peer, protocol=Request::LOG_TARGET, <span class="string">&quot;Handling request...&quot;</span>);
         <span class="kw">let </span>request = Request::decode(<span class="kw-2">&amp;mut </span>payload.as_slice())
             .map_err(|<span class="kw">_</span>| RequestHandlerError::InvalidRequestFormat)<span class="question-mark">?</span>;
-        <span class="kw">let </span>response = (<span class="self">self</span>.request_handler)(<span class="kw-2">&amp;</span>request);
+        <span class="kw">let </span>response = (<span class="self">self</span>.request_handler)(<span class="kw-2">&amp;</span>request).<span class="kw">await</span>;
 
         <span class="prelude-val">Ok</span>(response.ok_or(RequestHandlerError::NoResponse)<span class="question-mark">?</span>.encode())
     }
@@ -251,7 +269,7 @@
                 pending_response,
             } = request;
 
-            <span class="kw">match </span><span class="self">self</span>.handle_request(peer, payload) {
+            <span class="kw">match </span><span class="self">self</span>.handle_request(peer, payload).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(response_data) =&gt; {
                     <span class="kw">let </span>response = OutgoingResponse {
                         result: <span class="prelude-val">Ok</span>(response_data),
