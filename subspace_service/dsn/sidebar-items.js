@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":[["import_blocks",""]],"struct":[["DsnConfig","DSN configuration parameters."]]};
+window.SIDEBAR_ITEMS = {"mod":[["import_blocks",""],["node_provider_storage",""]],"struct":[["DsnConfig","DSN configuration parameters."]]};
