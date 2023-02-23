@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":[["authorities_merkle_tree","Constructs a merkle tree from given authorities."]],"struct":[["Blake2b256Algorithm",""],["Witness","Merke proof based Witness."]],"type":[["MerkleProof","Merkle proof using [`Blake2b256Algorithm`]."],["MerkleTree","Merkle tree using [`Blake2b256Algorithm`]."]]};

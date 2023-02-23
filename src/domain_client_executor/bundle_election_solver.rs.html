@@ -160,6 +160,38 @@
 <a href="#160" id="160">160</a>
 <a href="#161" id="161">161</a>
 <a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::{to_number_primitive, translate_block_hash_type};
 <span class="kw">use </span>sc_client_api::ProofProvider;
 <span class="kw">use </span>sp_api::{NumberFor, ProvideRuntimeApi};
@@ -167,8 +199,9 @@
 <span class="kw">use </span>sp_domains::bundle_election::{
     calculate_bundle_election_threshold, derive_bundle_election_solution,
     is_election_solution_within_threshold, make_local_randomness_transcript_data, well_known_keys,
-    BundleElectionParams,
+    BundleElectionSolverParams,
 };
+<span class="kw">use </span>sp_domains::merkle_tree::{authorities_merkle_tree, Witness};
 <span class="kw">use </span>sp_domains::{DomainId, ExecutorPublicKey, ProofOfElection, StakeWeight};
 <span class="kw">use </span>sp_keystore::{SyncCryptoStore, SyncCryptoStorePtr};
 <span class="kw">use </span>sp_runtime::generic::BlockId;
@@ -195,6 +228,15 @@
     }
 }
 
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>PreliminaryBundleSolution&lt;DomainHash&gt; {
+    System {
+        authority_stake_weight: StakeWeight,
+        authority_witness: Witness,
+        proof_of_election: ProofOfElection&lt;DomainHash&gt;,
+    },
+    Core(ProofOfElection&lt;DomainHash&gt;),
+}
+
 <span class="kw">impl</span>&lt;SBlock, PBlock, SClient&gt; BundleElectionSolver&lt;SBlock, PBlock, SClient&gt;
 <span class="kw">where
     </span>SBlock: BlockT,
@@ -216,17 +258,17 @@
         best_number: NumberFor&lt;SBlock&gt;,
         domain_id: DomainId,
         global_challenge: Blake2b256Hash,
-    ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;ProofOfElection&lt;Block::Hash&gt;&gt;&gt; {
+    ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;PreliminaryBundleSolution&lt;Block::Hash&gt;&gt;&gt; {
         <span class="kw">let </span>best_block_id = BlockId::Hash(best_hash);
 
-        <span class="kw">let </span>BundleElectionParams {
+        <span class="kw">let </span>BundleElectionSolverParams {
             authorities,
             total_stake_weight,
             slot_probability,
         } = <span class="self">self
             </span>.system_domain_client
             .runtime_api()
-            .bundle_elections_params(<span class="kw-2">&amp;</span>best_block_id, domain_id)<span class="question-mark">?</span>;
+            .bundle_election_solver_params(<span class="kw-2">&amp;</span>best_block_id, domain_id)<span class="question-mark">?</span>;
 
         <span class="macro">assert!</span>(
             total_stake_weight
@@ -239,7 +281,7 @@
 
         <span class="kw">let </span>transcript_data = make_local_randomness_transcript_data(<span class="kw-2">&amp;</span>global_challenge);
 
-        <span class="kw">for </span>(authority_id, stake_weight) <span class="kw">in </span>authorities {
+        <span class="kw">for </span>(index, (authority_id, stake_weight)) <span class="kw">in </span>authorities.iter().enumerate() {
             <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(vrf_signature)) = SyncCryptoStore::sr25519_vrf_sign(
                 <span class="kw-2">&amp;*</span><span class="self">self</span>.keystore,
                 ExecutorPublicKey::ID,
@@ -249,7 +291,7 @@
                 <span class="kw">let </span>election_solution = derive_bundle_election_solution(
                     domain_id,
                     vrf_signature.output.to_bytes(),
-                    <span class="kw-2">&amp;</span>authority_id,
+                    authority_id,
                     <span class="kw-2">&amp;</span>global_challenge,
                 )
                 .map_err(|err| {
@@ -259,7 +301,7 @@
                 })<span class="question-mark">?</span>;
 
                 <span class="kw">let </span>threshold = calculate_bundle_election_threshold(
-                    stake_weight,
+                    <span class="kw-2">*</span>stake_weight,
                     total_stake_weight,
                     slot_probability,
                 );
@@ -268,7 +310,7 @@
                     <span class="comment">// TODO: bench how large the storage proof we can afford and try proving a single
                     // electioned executor storage instead of the whole authority set.
                     </span><span class="kw">let </span>storage_proof = <span class="kw">if </span>domain_id.is_system() {
-                        <span class="kw">let </span>storage_keys = well_known_keys::bundle_election_storage_keys(domain_id);
+                        <span class="kw">let </span>storage_keys = well_known_keys::system_bundle_election_storage_keys();
                         <span class="self">self</span>.system_domain_client
                             .read_proof(best_hash, <span class="kw-2">&amp;mut </span>storage_keys.iter().map(|s| s.as_slice()))<span class="question-mark">?
                     </span>} <span class="kw">else if </span>domain_id.is_core() {
@@ -306,7 +348,7 @@
                         domain_id,
                         vrf_output: vrf_signature.output.to_bytes(),
                         vrf_proof: vrf_signature.proof.to_bytes(),
-                        executor_public_key: authority_id,
+                        executor_public_key: authority_id.clone(),
                         global_challenge,
                         state_root,
                         storage_proof,
@@ -314,7 +356,29 @@
                         block_hash,
                     };
 
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(proof_of_election));
+                    <span class="kw">let </span>preliminary_bundle_solution = <span class="kw">if </span>domain_id.is_system() {
+                        <span class="kw">let </span>merkle_tree = authorities_merkle_tree(<span class="kw-2">&amp;</span>authorities);
+                        <span class="kw">let </span>authority_witness = Witness {
+                            leaf_index: index.try_into().expect(<span class="string">&quot;Leaf index must fit into u32&quot;</span>),
+                            number_of_leaves: authorities
+                                .len()
+                                .try_into()
+                                .expect(<span class="string">&quot;Authorities size must fit into u32&quot;</span>),
+                            proof: merkle_tree.proof(<span class="kw-2">&amp;</span>[index]).to_bytes(),
+                        };
+
+                        PreliminaryBundleSolution::System {
+                            authority_stake_weight: <span class="kw-2">*</span>stake_weight,
+                            authority_witness,
+                            proof_of_election,
+                        }
+                    } <span class="kw">else if </span>domain_id.is_core() {
+                        PreliminaryBundleSolution::Core(proof_of_election)
+                    } <span class="kw">else </span>{
+                        <span class="macro">unreachable!</span>(<span class="string">&quot;Open domain has been handled above&quot;</span>)
+                    };
+
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(preliminary_bundle_solution));
                 }
             }
         }

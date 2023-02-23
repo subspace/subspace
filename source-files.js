@@ -3,7 +3,7 @@ var sourcesIndex = JSON.parse('{\
 "cross_domain_message_gossip":["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
-"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","merkle_tree.rs","parent_chain.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs"]],\
+"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","parent_chain.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
@@ -33,7 +33,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
-"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","transaction.rs"]],\
+"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","transaction.rs"]],\
 "sp_executor_registry":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
