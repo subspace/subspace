@@ -400,19 +400,57 @@
 <a href="#400" id="400">400</a>
 <a href="#401" id="401">401</a>
 <a href="#402" id="402">402</a>
-</pre><pre class="rust"><code><span class="kw">mod </span>transport;
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+</pre><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
+<span class="kw">mod </span>transport;
 
 <span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::{
     BootstrappedNetworkingParameters, NetworkingParametersRegistry,
 };
 <span class="kw">use </span><span class="kw">crate</span>::behavior::provider_storage::MemoryProviderStorage;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::{provider_storage, Behavior, BehaviorConfig};
+<span class="kw">use </span><span class="kw">crate</span>::create::temporary_bans::TemporaryBans;
 <span class="kw">use </span><span class="kw">crate</span>::create::transport::build_transport;
 <span class="kw">use </span><span class="kw">crate</span>::node::{CircuitRelayClientError, Node};
 <span class="kw">use </span><span class="kw">crate</span>::node_runner::{NodeRunner, NodeRunnerConfig};
 <span class="kw">use </span><span class="kw">crate</span>::request_responses::RequestHandler;
 <span class="kw">use </span><span class="kw">crate</span>::shared::Shared;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{convert_multiaddresses, ResizableSemaphore};
+<span class="kw">use </span>backoff::{ExponentialBackoff, SystemClock};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>libp2p::gossipsub::{
     Config <span class="kw">as </span>GossipsubConfig, ConfigBuilder <span class="kw">as </span>GossipsubConfigBuilder,
@@ -429,11 +467,12 @@
 <span class="kw">use </span>libp2p::swarm::SwarmBuilder;
 <span class="kw">use </span>libp2p::yamux::YamuxConfig;
 <span class="kw">use </span>libp2p::{identity, Multiaddr, PeerId, TransportError};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::iter::Empty;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>std::{fmt, io, iter};
 <span class="kw">use </span>subspace_core_primitives::{crypto, PIECE_SIZE};
 <span class="kw">use </span>thiserror::Error;
@@ -479,6 +518,12 @@
 /// second peer, such that it scaled with network connectivity, but the exact coefficient might need
 /// to be tweaked in the future.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>REGULAR_CONCURRENT_TASKS_BOOST_PER_PEER: usize = <span class="number">50</span>;
+
+<span class="kw">const </span>TEMPORARY_BANS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">10_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
+<span class="kw">const </span>TEMPORARY_BANS_DEFAULT_BACKOFF_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">5</span>);
+<span class="kw">const </span>TEMPORARY_BANS_DEFAULT_BACKOFF_RANDOMIZATION_FACTOR: f64 = <span class="number">0.1</span>;
+<span class="kw">const </span>TEMPORARY_BANS_DEFAULT_BACKOFF_MULTIPLIER: f64 = <span class="number">1.5</span>;
+<span class="kw">const </span>TEMPORARY_BANS_DEFAULT_MAX_INTERVAL: Duration = Duration::from_secs(<span class="number">30 </span>* <span class="number">60</span>);
 
 <span class="doccomment">/// Record store that can&#39;t be created, only
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ProviderOnlyRecordStore&lt;ProviderStorage&gt; {
@@ -590,6 +635,10 @@
     </span><span class="kw">pub </span>max_established_incoming_connections: u32,
     <span class="doccomment">/// Outgoing swarm connection limit.
     </span><span class="kw">pub </span>max_established_outgoing_connections: u32,
+    <span class="doccomment">/// How many temporarily banned unreachable peers to keep in memory.
+    </span><span class="kw">pub </span>temporary_bans_cache_size: NonZeroUsize,
+    <span class="doccomment">/// Backoff policy for temporary banning of unreachable peers.
+    </span><span class="kw">pub </span>temporary_ban_backoff: ExponentialBackoff,
     <span class="doccomment">/// Optional external prometheus metrics. None will disable metrics gathering.
     </span><span class="kw">pub </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
 }
@@ -647,6 +696,17 @@
         <span class="kw">let </span>keypair = identity::Keypair::Ed25519(keypair);
         <span class="kw">let </span>identify = IdentifyConfig::new(<span class="string">&quot;ipfs/0.1.0&quot;</span>.to_string(), keypair.public());
 
+        <span class="kw">let </span>temporary_ban_backoff = ExponentialBackoff {
+            current_interval: TEMPORARY_BANS_DEFAULT_BACKOFF_INITIAL_INTERVAL,
+            initial_interval: TEMPORARY_BANS_DEFAULT_BACKOFF_INITIAL_INTERVAL,
+            randomization_factor: TEMPORARY_BANS_DEFAULT_BACKOFF_RANDOMIZATION_FACTOR,
+            multiplier: TEMPORARY_BANS_DEFAULT_BACKOFF_MULTIPLIER,
+            max_interval: TEMPORARY_BANS_DEFAULT_MAX_INTERVAL,
+            start_time: Instant::now(),
+            max_elapsed_time: <span class="prelude-val">None</span>,
+            clock: SystemClock::default(),
+        };
+
         <span class="self">Self </span>{
             keypair,
             listen_on: <span class="macro">vec!</span>[],
@@ -664,6 +724,8 @@
             reserved_peers: Vec::new(),
             max_established_incoming_connections: SWARM_MAX_ESTABLISHED_INCOMING_CONNECTIONS,
             max_established_outgoing_connections: SWARM_MAX_ESTABLISHED_OUTGOING_CONNECTIONS,
+            temporary_bans_cache_size: TEMPORARY_BANS_CACHE_SIZE,
+            temporary_ban_backoff,
             metrics: <span class="prelude-val">None</span>,
         }
     }
@@ -719,13 +781,20 @@
         reserved_peers,
         max_established_incoming_connections,
         max_established_outgoing_connections,
+        temporary_bans_cache_size,
+        temporary_ban_backoff,
         metrics,
     } = config;
     <span class="kw">let </span>local_peer_id = peer_id(<span class="kw-2">&amp;</span>keypair);
 
+    <span class="kw">let </span>temporary_bans = Arc::new(Mutex::new(TemporaryBans::new(
+        temporary_bans_cache_size,
+        temporary_ban_backoff,
+    )));
     <span class="kw">let </span>transport = build_transport(
         allow_non_global_addresses_in_dht,
         <span class="kw-2">&amp;</span>keypair,
+        Arc::clone(<span class="kw-2">&amp;</span>temporary_bans),
         timeout,
         yamux_config,
     )<span class="question-mark">?</span>;
@@ -789,6 +858,7 @@
             reserved_peers: convert_multiaddresses(reserved_peers).into_iter().collect(),
             max_established_incoming_connections,
             max_established_outgoing_connections,
+            temporary_bans,
             metrics,
         });
 

@@ -121,7 +121,41 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
-</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::CreationError;
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::create::temporary_bans::TemporaryBans;
+<span class="kw">use </span><span class="kw">crate</span>::CreationError;
 <span class="kw">use </span>libp2p::core::multiaddr::{Multiaddr, Protocol};
 <span class="kw">use </span>libp2p::core::muxing::StreamMuxerBox;
 <span class="kw">use </span>libp2p::core::transport::{Boxed, ListenerId, TransportError, TransportEvent};
@@ -133,7 +167,10 @@
 <span class="kw">use </span>libp2p::websocket::WsConfig;
 <span class="kw">use </span>libp2p::yamux::YamuxConfig;
 <span class="kw">use </span>libp2p::{core, identity, noise, PeerId};
+<span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>std::io;
 <span class="kw">use </span>std::pin::Pin;
+<span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::task::{Context, Poll};
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>tracing::debug;
@@ -142,6 +179,7 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>build_transport(
     allow_non_global_addresses_in_dht: bool,
     keypair: <span class="kw-2">&amp;</span>identity::Keypair,
+    temporary_bans: Arc&lt;Mutex&lt;TemporaryBans&gt;&gt;,
     timeout: Duration,
     yamux_config: YamuxConfig,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Boxed&lt;(PeerId, StreamMuxerBox)&gt;, CreationError&gt; {
@@ -155,11 +193,12 @@
 
         <span class="kw">let </span>dns_tcp_or_ws_transport = dns_tcp.or_transport(ws).boxed();
 
-        <span class="kw">if </span>allow_non_global_addresses_in_dht {
-            dns_tcp_or_ws_transport
-        } <span class="kw">else </span>{
-            GlobalIpOnlyTransport::new(dns_tcp_or_ws_transport).boxed()
-        }
+        CustomTransportWrapper::new(
+            dns_tcp_or_ws_transport,
+            allow_non_global_addresses_in_dht,
+            temporary_bans,
+        )
+        .boxed()
     };
 
     <span class="kw">let </span>noise_keys = noise::Keypair::&lt;noise::X25519Spec&gt;::new()
@@ -174,74 +213,101 @@
         .boxed())
 }
 
-<span class="comment">// Wrapper around a libp2p `Transport` dropping all dial requests to non-global
-// IP addresses.
-</span><span class="attr">#[derive(Debug, Clone, Default)]
-</span><span class="kw">pub struct </span>GlobalIpOnlyTransport&lt;T&gt; {
-    inner: T,
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">struct </span>CustomTransportWrapper&lt;T&gt; {
+    base_transport: T,
+    allow_non_global_addresses: bool,
+    temporary_bans: Arc&lt;Mutex&lt;TemporaryBans&gt;&gt;,
 }
 
-<span class="kw">impl</span>&lt;T&gt; GlobalIpOnlyTransport&lt;T&gt; {
-    <span class="kw">pub fn </span>new(transport: T) -&gt; <span class="self">Self </span>{
-        GlobalIpOnlyTransport { inner: transport }
+<span class="kw">impl</span>&lt;T&gt; CustomTransportWrapper&lt;T&gt; {
+    <span class="kw">fn </span>new(
+        base_transport: T,
+        allow_non_global_addresses: bool,
+        temporary_bans: Arc&lt;Mutex&lt;TemporaryBans&gt;&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        CustomTransportWrapper {
+            base_transport,
+            allow_non_global_addresses,
+            temporary_bans,
+        }
     }
 }
 
-<span class="kw">impl</span>&lt;T: Transport + Unpin&gt; Transport <span class="kw">for </span>GlobalIpOnlyTransport&lt;T&gt; {
-    <span class="kw">type </span>Output = &lt;T <span class="kw">as </span>Transport&gt;::Output;
-    <span class="kw">type </span>Error = &lt;T <span class="kw">as </span>Transport&gt;::Error;
-    <span class="kw">type </span>ListenerUpgrade = &lt;T <span class="kw">as </span>Transport&gt;::ListenerUpgrade;
-    <span class="kw">type </span>Dial = &lt;T <span class="kw">as </span>Transport&gt;::Dial;
+<span class="kw">impl</span>&lt;T&gt; Transport <span class="kw">for </span>CustomTransportWrapper&lt;T&gt;
+<span class="kw">where
+    </span>T: Transport + Unpin,
+    T::Error: From&lt;io::Error&gt;,
+{
+    <span class="kw">type </span>Output = T::Output;
+    <span class="kw">type </span>Error = T::Error;
+    <span class="kw">type </span>ListenerUpgrade = T::ListenerUpgrade;
+    <span class="kw">type </span>Dial = T::Dial;
 
     <span class="kw">fn </span>listen_on(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: Multiaddr) -&gt; <span class="prelude-ty">Result</span>&lt;ListenerId, TransportError&lt;<span class="self">Self</span>::Error&gt;&gt; {
-        <span class="self">self</span>.inner.listen_on(addr)
+        <span class="self">self</span>.base_transport.listen_on(addr)
     }
 
     <span class="kw">fn </span>remove_listener(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: ListenerId) -&gt; bool {
-        <span class="self">self</span>.inner.remove_listener(id)
+        <span class="self">self</span>.base_transport.remove_listener(id)
     }
 
     <span class="kw">fn </span>dial(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: Multiaddr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Dial, TransportError&lt;<span class="self">Self</span>::Error&gt;&gt; {
-        <span class="kw">match </span>addr.iter().next() {
+        <span class="kw">let </span><span class="kw-2">mut </span>addr_iter = addr.iter();
+
+        <span class="kw">match </span>addr_iter.next() {
             <span class="prelude-val">Some</span>(Protocol::Ip4(a)) =&gt; {
-                <span class="kw">if </span>a.is_global() {
-                    <span class="self">self</span>.inner.dial(addr)
-                } <span class="kw">else </span>{
+                <span class="kw">if </span>!(<span class="self">self</span>.allow_non_global_addresses || a.is_global()) {
                     <span class="macro">debug!</span>(<span class="question-mark">?</span>a, <span class="string">&quot;Not dialing non global IP address.&quot;</span>,);
-                    <span class="prelude-val">Err</span>(TransportError::MultiaddrNotSupported(addr))
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(TransportError::MultiaddrNotSupported(addr));
                 }
             }
             <span class="prelude-val">Some</span>(Protocol::Ip6(a)) =&gt; {
-                <span class="kw">if </span>a.is_global() {
-                    <span class="self">self</span>.inner.dial(addr)
-                } <span class="kw">else </span>{
+                <span class="kw">if </span>!(<span class="self">self</span>.allow_non_global_addresses || a.is_global()) {
                     <span class="macro">debug!</span>(<span class="question-mark">?</span>a, <span class="string">&quot;Not dialing non global IP address.&quot;</span>);
-                    <span class="prelude-val">Err</span>(TransportError::MultiaddrNotSupported(addr))
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(TransportError::MultiaddrNotSupported(addr));
                 }
             }
             <span class="kw">_ </span>=&gt; {
                 <span class="macro">debug!</span>(<span class="question-mark">?</span>addr, <span class="string">&quot;Not dialing unsupported Multiaddress.&quot;</span>);
-                <span class="prelude-val">Err</span>(TransportError::MultiaddrNotSupported(addr))
+                <span class="kw">return </span><span class="prelude-val">Err</span>(TransportError::MultiaddrNotSupported(addr));
             }
         }
+
+        {
+            <span class="kw">let </span>temporary_bans = <span class="self">self</span>.temporary_bans.lock();
+            <span class="kw">for </span>protocol <span class="kw">in </span>addr_iter {
+                <span class="kw">if let </span>Protocol::P2p(multihash) = protocol {
+                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(peer_id) = PeerId::try_from(multihash) {
+                        <span class="kw">if </span>temporary_bans.is_banned(<span class="kw-2">&amp;</span>peer_id) {
+                            <span class="kw">let </span>error =
+                                io::Error::new(io::ErrorKind::Other, <span class="string">&quot;Peer is temporarily banned&quot;</span>);
+                            <span class="kw">return </span><span class="prelude-val">Err</span>(TransportError::Other(error.into()));
+                        }
+                    }
+                }
+            }
+        }
+
+        <span class="self">self</span>.base_transport.dial(addr)
     }
 
     <span class="kw">fn </span>dial_as_listener(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         addr: Multiaddr,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Dial, TransportError&lt;<span class="self">Self</span>::Error&gt;&gt; {
-        <span class="self">self</span>.inner.dial_as_listener(addr)
+        <span class="self">self</span>.base_transport.dial_as_listener(addr)
     }
 
     <span class="kw">fn </span>address_translation(<span class="kw-2">&amp;</span><span class="self">self</span>, listen: <span class="kw-2">&amp;</span>Multiaddr, observed: <span class="kw-2">&amp;</span>Multiaddr) -&gt; <span class="prelude-ty">Option</span>&lt;Multiaddr&gt; {
-        <span class="self">self</span>.inner.address_translation(listen, observed)
+        <span class="self">self</span>.base_transport.address_translation(listen, observed)
     }
 
     <span class="kw">fn </span>poll(
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">&#39;_</span>&gt;,
     ) -&gt; Poll&lt;TransportEvent&lt;<span class="self">Self</span>::ListenerUpgrade, <span class="self">Self</span>::Error&gt;&gt; {
-        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx)
+        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.base_transport).poll(cx)
     }
 }
 </code></pre></div>
