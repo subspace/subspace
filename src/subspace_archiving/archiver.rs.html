@@ -848,6 +848,37 @@
 <a href="#848" id="848">848</a>
 <a href="#849" id="849">849</a>
 <a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -863,10 +894,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-</span><span class="kw">mod </span>record_shards;
+</span><span class="kw">mod </span>incremental_record_commitments;
+<span class="kw">mod </span>record_shards;
 
 <span class="kw">extern crate </span>alloc;
 
+<span class="kw">use </span><span class="kw">crate</span>::archiver::incremental_record_commitments::{
+    update_record_commitments, IncrementalRecordCommitmentsState,
+};
 <span class="kw">use </span><span class="kw">crate</span>::archiver::record_shards::RecordShards;
 <span class="kw">use </span><span class="kw">crate</span>::utils::GF_16_ELEMENT_BYTES;
 <span class="kw">use </span>alloc::collections::VecDeque;
@@ -1092,6 +1127,8 @@
     <span class="doccomment">/// Buffer containing blocks and other buffered items that are pending to be included into the
     /// next segment
     </span>buffer: VecDeque&lt;SegmentItem&gt;,
+    <span class="doccomment">/// Intermediate record commitments that are built incrementally as above buffer fills up.
+    </span>incremental_record_commitments: IncrementalRecordCommitmentsState,
     <span class="doccomment">/// Configuration parameter defining the size of one record (data in one piece excluding witness
     /// size)
     </span>record_size: u32,
@@ -1155,6 +1192,9 @@
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             buffer: VecDeque::default(),
+            incremental_record_commitments: IncrementalRecordCommitmentsState::with_capacity(
+                data_shards <span class="kw">as </span>usize,
+            ),
             record_size,
             data_shards,
             parity_shards,
@@ -1277,6 +1317,13 @@
             <span class="kw">let </span>segment_item = <span class="kw">match </span><span class="self">self</span>.buffer.pop_front() {
                 <span class="prelude-val">Some</span>(segment_item) =&gt; segment_item,
                 <span class="prelude-val">None </span>=&gt; {
+                    update_record_commitments(
+                        <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
+                        <span class="kw-2">&amp;</span>segment,
+                        <span class="bool-val">false</span>,
+                        <span class="self">self</span>.record_size <span class="kw">as </span>usize,
+                    );
+
                     <span class="kw">let </span>Segment::V0 { items } = segment;
                     <span class="comment">// Push all of the items back into the buffer, we don&#39;t have enough data yet
                     </span><span class="kw">for </span>segment_item <span class="kw">in </span>items.into_iter().rev() {
@@ -1490,6 +1537,13 @@
 
         <span class="self">self</span>.last_archived_block = last_archived_block;
 
+        update_record_commitments(
+            <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
+            <span class="kw-2">&amp;</span>segment,
+            <span class="bool-val">true</span>,
+            <span class="self">self</span>.record_size <span class="kw">as </span>usize,
+        );
+
         <span class="prelude-val">Some</span>(segment)
     }
 
@@ -1574,20 +1628,28 @@
         <span class="kw">let </span><span class="kw-2">mut </span>pieces = FlatPieces::new(record_shards_slices.len());
         drop(record_shards_slices);
 
-        <span class="kw">let </span>record_shards_hashes = record_shards
-            .as_bytes()
-            .as_ref()
-            .chunks_exact(<span class="self">self</span>.record_size <span class="kw">as </span>usize)
-            .map(blake2b_256_254_hash)
+        <span class="comment">// We take hashes of source records computed incrementally
+        </span><span class="kw">let </span>record_commitments = <span class="self">self
+            </span>.incremental_record_commitments
+            .drain()
+            .chain(
+                <span class="comment">// TODO: Parity hashes will be erasure coded instead in the future
+                </span>record_shards
+                    .as_bytes()
+                    .as_ref()
+                    .chunks_exact(<span class="self">self</span>.record_size <span class="kw">as </span>usize)
+                    .skip(<span class="self">self</span>.data_shards <span class="kw">as </span>usize)
+                    .map(blake2b_256_254_hash),
+            )
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+
         <span class="kw">let </span>data = {
             <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(
                 (<span class="self">self</span>.data_shards + <span class="self">self</span>.parity_shards) <span class="kw">as </span>usize * BLAKE2B_256_HASH_SIZE,
             );
 
-            <span class="kw">for </span>shard <span class="kw">in </span><span class="kw-2">&amp;</span>record_shards_hashes {
-                <span class="comment">// TODO: Eventually we need to commit to data itself, not hashes
-                </span>data.extend_from_slice(shard);
+            <span class="kw">for </span>shard_commitment <span class="kw">in </span>record_commitments {
+                data.extend_from_slice(<span class="kw-2">&amp;</span>shard_commitment);
             }
 
             data
