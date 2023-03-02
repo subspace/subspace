@@ -1175,9 +1175,31 @@
 <a href="#1175" id="1175">1175</a>
 <a href="#1176" id="1176">1176</a>
 <a href="#1177" id="1177">1177</a>
+<a href="#1178" id="1178">1178</a>
+<a href="#1179" id="1179">1179</a>
+<a href="#1180" id="1180">1180</a>
+<a href="#1181" id="1181">1181</a>
+<a href="#1182" id="1182">1182</a>
+<a href="#1183" id="1183">1183</a>
+<a href="#1184" id="1184">1184</a>
+<a href="#1185" id="1185">1185</a>
+<a href="#1186" id="1186">1186</a>
+<a href="#1187" id="1187">1187</a>
+<a href="#1188" id="1188">1188</a>
+<a href="#1189" id="1189">1189</a>
+<a href="#1190" id="1190">1190</a>
+<a href="#1191" id="1191">1191</a>
+<a href="#1192" id="1192">1192</a>
+<a href="#1193" id="1193">1193</a>
+<a href="#1194" id="1194">1194</a>
+<a href="#1195" id="1195">1195</a>
+<a href="#1196" id="1196">1196</a>
+<a href="#1197" id="1197">1197</a>
+<a href="#1198" id="1198">1198</a>
+<a href="#1199" id="1199">1199</a>
 </pre><pre class="rust"><code><span class="comment">// This file is part of Substrate.
 
-// Copyright (C) 2017-2022 Parity Technologies (UK) Ltd.
+// Copyright (C) Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
 // This program is free software: you can redistribute it and/or modify
@@ -1208,7 +1230,7 @@
 	time::Duration,
 };
 
-<span class="kw">use </span>futures::{future::BoxFuture, prelude::<span class="kw-2">*</span>};
+<span class="kw">use </span>futures::{channel::oneshot, future::BoxFuture, pin_mut, prelude::<span class="kw-2">*</span>};
 <span class="kw">use </span>libp2p::{build_multiaddr, PeerId};
 <span class="kw">use </span>log::trace;
 <span class="kw">use </span>parking_lot::Mutex;
@@ -1233,7 +1255,9 @@
 	},
 	protocol::{role::Roles, ProtocolName},
 	service::{NetworkBlock, NetworkStateInfo, NetworkSyncForkRequest},
-	sync::warp::{AuthorityList, EncodedProof, SetId, VerificationResult, WarpSyncProvider},
+	sync::warp::{
+		AuthorityList, EncodedProof, SetId, VerificationResult, WarpSyncParams, WarpSyncProvider,
+	},
 };
 <span class="kw">use </span>sc_network_light::light_client_requests::handler::LightClientRequestHandler;
 <span class="kw">use </span>sc_network_sync::{
@@ -1258,7 +1282,7 @@
 };
 <span class="kw">use </span>substrate_test_runtime_client::AccountKeyring;
 <span class="kw">pub use </span>substrate_test_runtime_client::{
-	runtime::{Block, Extrinsic, Hash, Transfer},
+	runtime::{Block, Extrinsic, Hash, Header, Transfer},
 	TestClient, TestClientBuilder, TestClientBuilderExt,
 };
 <span class="kw">use </span>tokio::time::timeout;
@@ -1551,8 +1575,7 @@
 		<span class="kw">let </span>full_client = <span class="self">self</span>.client.as_client();
 		<span class="kw">let </span><span class="kw-2">mut </span>at = full_client.block_hash_from_id(<span class="kw-2">&amp;</span>at).unwrap().unwrap();
 		<span class="kw">for _ in </span><span class="number">0</span>..count {
-			<span class="kw">let </span>builder =
-				full_client.new_block_at(<span class="kw-2">&amp;</span>BlockId::Hash(at), Default::default(), <span class="bool-val">false</span>).unwrap();
+			<span class="kw">let </span>builder = full_client.new_block_at(at, Default::default(), <span class="bool-val">false</span>).unwrap();
 			<span class="kw">let </span>block = edit_block(builder);
 			<span class="kw">let </span>hash = block.header.hash();
 			<span class="macro">trace!</span>(
@@ -1888,6 +1911,8 @@ BlockImport&lt;
 	</span><span class="kw">pub </span>extra_storage: <span class="prelude-ty">Option</span>&lt;sp_core::storage::Storage&gt;,
 	<span class="doccomment">/// Enable transaction indexing.
 	</span><span class="kw">pub </span>storage_chain: bool,
+	<span class="doccomment">/// Optional target block header to sync to
+	</span><span class="kw">pub </span>target_block: <span class="prelude-ty">Option</span>&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Header&gt;,
 }
 
 <span class="attr">#[async_trait::async_trait]
@@ -2033,6 +2058,15 @@ BlockImport&lt;
 
 		<span class="kw">let </span>warp_sync = Arc::new(TestWarpSyncProvider(client.clone()));
 
+		<span class="kw">let </span>warp_sync_params = <span class="kw">match </span>config.target_block {
+			<span class="prelude-val">Some</span>(target_block) =&gt; {
+				<span class="kw">let </span>(sender, receiver) = oneshot::channel::&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Header&gt;();
+				<span class="kw">let _ </span>= sender.send(target_block);
+				WarpSyncParams::WaitForTarget(receiver)
+			},
+			<span class="kw">_ </span>=&gt; WarpSyncParams::WithProvider(warp_sync.clone()),
+		};
+
 		<span class="kw">let </span>warp_protocol_config = {
 			<span class="kw">let </span>(handler, protocol_config) = warp_request_handler::RequestHandler::new(
 				protocol_id.clone(),
@@ -2042,7 +2076,7 @@ BlockImport&lt;
 					.flatten()
 					.expect(<span class="string">&quot;Genesis block exists; qed&quot;</span>),
 				<span class="prelude-val">None</span>,
-				warp_sync.clone(),
+				warp_sync,
 			);
 			<span class="self">self</span>.spawn_task(handler.run().boxed());
 			protocol_config
@@ -2053,6 +2087,7 @@ BlockImport&lt;
 			.unwrap_or_else(|| Box::new(DefaultBlockAnnounceValidator));
 		<span class="kw">let </span>(chain_sync_network_provider, chain_sync_network_handle) =
 			NetworkServiceProvider::new();
+
 		<span class="kw">let </span>(chain_sync, chain_sync_service, block_announce_config) = ChainSync::new(
 			<span class="kw">match </span>network_config.sync_mode {
 				SyncMode::Full =&gt; sc_network_common::sync::SyncMode::Full,
@@ -2069,7 +2104,7 @@ BlockImport&lt;
 			Roles::from(<span class="kw">if </span>config.is_authority { <span class="kw-2">&amp;</span>Role::Authority } <span class="kw">else </span>{ <span class="kw-2">&amp;</span>Role::Full }),
 			block_announce_validator,
 			network_config.max_parallel_downloads,
-			<span class="prelude-val">Some</span>(warp_sync),
+			<span class="prelude-val">Some</span>(warp_sync_params),
 			<span class="prelude-val">None</span>,
 			chain_sync_network_handle,
 			import_queue.service(),
@@ -2231,8 +2266,17 @@ BlockImport&lt;
 		<span class="self">self</span>.mut_peers(|peers| {
 			<span class="kw">for </span>(i, peer) <span class="kw">in </span>peers.iter_mut().enumerate() {
 				<span class="macro">trace!</span>(target: <span class="string">&quot;sync&quot;</span>, <span class="string">&quot;-- Polling {}: {}&quot;</span>, i, peer.id());
-				<span class="kw">if let </span>Poll::Ready(()) = peer.network.poll_unpin(cx) {
-					<span class="macro">panic!</span>(<span class="string">&quot;NetworkWorker has terminated unexpectedly.&quot;</span>)
+				<span class="kw">loop </span>{
+					<span class="comment">// The code below is not quite correct, because we are polling a different
+					// instance of the future every time. But as long as
+					// `NetworkWorker::next_action()` contains just streams polling not interleaved
+					// with other `.await`s, dropping the future and recreating it works the same as
+					// polling a single instance.
+					</span><span class="kw">let </span>net_poll_future = peer.network.next_action();
+					<span class="macro">pin_mut!</span>(net_poll_future);
+					<span class="kw">if </span>net_poll_future.poll(cx).is_pending() {
+						<span class="kw">break
+					</span>}
 				}
 				<span class="macro">trace!</span>(target: <span class="string">&quot;sync&quot;</span>, <span class="string">&quot;-- Polling complete {}: {}&quot;</span>, i, peer.id());
 

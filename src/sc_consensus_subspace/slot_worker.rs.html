@@ -506,8 +506,6 @@
 <a href="#506" id="506">506</a>
 <a href="#507" id="507">507</a>
 <a href="#508" id="508">508</a>
-<a href="#509" id="509">509</a>
-<a href="#510" id="510">510</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -544,7 +542,6 @@
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, FarmerSignature, SignedVote, SubspaceApi, Vote};
 <span class="kw">use </span>sp_core::crypto::ByteArray;
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header, One, Saturating, Zero};
 <span class="kw">use </span>sp_runtime::DigestItem;
 <span class="kw">use </span>std::future::Future;
@@ -657,19 +654,19 @@
     ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Claim&gt; {
         <span class="macro">debug!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Attempting to claim slot {}&quot;</span>, slot);
 
-        <span class="kw">let </span>parent_block_id = BlockId::Hash(parent_header.hash());
+        <span class="kw">let </span>parent_hash = parent_header.hash();
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
 
         <span class="kw">let </span>global_randomness =
-            extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), <span class="kw-2">&amp;</span>parent_block_id).ok()<span class="question-mark">?</span>;
+            extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
         <span class="kw">let </span>(solution_range, voting_solution_range) =
-            extract_solution_ranges_for_block(<span class="self">self</span>.client.as_ref(), <span class="kw-2">&amp;</span>parent_block_id).ok()<span class="question-mark">?</span>;
+            extract_solution_ranges_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
         <span class="kw">let </span>global_challenge = derive_global_challenge(<span class="kw-2">&amp;</span>global_randomness, slot.into());
 
         <span class="kw">let </span>maybe_root_plot_public_key = <span class="self">self
             </span>.client
             .runtime_api()
-            .root_plot_public_key(<span class="kw-2">&amp;</span>parent_block_id)
+            .root_plot_public_key(parent_hash)
             .ok()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>new_slot_info = NewSlotInfo {
@@ -702,7 +699,7 @@
             <span class="comment">// TODO: We need also need to check for equivocation of farmers connected to *this node*
             //  during block import, currently farmers connected to this node are considered trusted
             </span><span class="kw">if </span>runtime_api
-                .is_in_block_list(<span class="kw-2">&amp;</span>parent_block_id, <span class="kw-2">&amp;</span>solution.public_key)
+                .is_in_block_list(parent_hash, <span class="kw-2">&amp;</span>solution.public_key)
                 .ok()<span class="question-mark">?
             </span>{
                 <span class="macro">warn!</span>(
@@ -720,11 +717,10 @@
             <span class="kw">let </span>piece_index =
                 sector_id.derive_piece_index(solution.piece_offset, solution.total_pieces);
             <span class="kw">let </span>segment_index: SegmentIndex = piece_index / SegmentIndex::from(PIECES_IN_SEGMENT);
-            <span class="kw">let </span><span class="kw-2">mut </span>maybe_records_root = runtime_api
-                .records_root(<span class="kw-2">&amp;</span>parent_block_id, segment_index)
-                .ok()<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>maybe_records_root =
+                runtime_api.records_root(parent_hash, segment_index).ok()<span class="question-mark">?</span>;
             <span class="comment">// TODO: This will be necessary for verifying sector expiration in the future
-            </span><span class="kw">let </span>_total_pieces = runtime_api.total_pieces(<span class="kw-2">&amp;</span>parent_block_id).ok()<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>_total_pieces = runtime_api.total_pieces(parent_hash).ok()<span class="question-mark">?</span>;
 
             <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced
             // extrinsics with root blocks are not yet in runtime.
@@ -783,7 +779,7 @@
                     // verification wouldn&#39;t be possible due to empty records root
                     </span><span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;🗳️ Claimed vote at slot {slot}&quot;</span>);
 
-                    <span class="self">self</span>.create_vote(solution, slot, parent_header, <span class="kw-2">&amp;</span>parent_block_id)
+                    <span class="self">self</span>.create_vote(solution, slot, parent_header, parent_hash)
                         .<span class="kw">await</span>;
                 }
             }
@@ -899,7 +895,7 @@
         solution: Solution&lt;FarmerPublicKey, FarmerPublicKey&gt;,
         slot: Slot,
         parent_header: <span class="kw-2">&amp;</span>Block::Header,
-        parent_block_id: <span class="kw-2">&amp;</span>BlockId&lt;Block&gt;,
+        parent_hash: Block::Hash,
     ) {
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
 
@@ -928,7 +924,7 @@
 
         <span class="kw">let </span>signed_vote = SignedVote { vote, signature };
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = runtime_api.submit_vote_extrinsic(parent_block_id, signed_vote) {
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = runtime_api.submit_vote_extrinsic(parent_hash, signed_vote) {
             <span class="macro">error!</span>(
                 target: <span class="string">&quot;subspace&quot;</span>,
                 <span class="string">&quot;Failed to submit vote at slot {slot}: {error:?}&quot;</span>,
@@ -982,7 +978,7 @@
 </span><span class="doccomment">/// Extract global randomness for block, given ID of the parent block.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>extract_global_randomness_for_block&lt;Block, Client&gt;(
     client: <span class="kw-2">&amp;</span>Client,
-    parent_block_id: <span class="kw-2">&amp;</span>BlockId&lt;Block&gt;,
+    parent_hash: Block::Hash,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Randomness, ApiError&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -991,7 +987,7 @@
 {
     client
         .runtime_api()
-        .global_randomnesses(parent_block_id)
+        .global_randomnesses(parent_hash)
         .map(|randomnesses| randomnesses.next.unwrap_or(randomnesses.current))
 }
 
@@ -999,7 +995,7 @@
 </span><span class="doccomment">/// Extract solution ranges for block and votes, given ID of the parent block.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>extract_solution_ranges_for_block&lt;Block, Client&gt;(
     client: <span class="kw-2">&amp;</span>Client,
-    parent_block_id: <span class="kw-2">&amp;</span>BlockId&lt;Block&gt;,
+    parent_hash: Block::Hash,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(u64, u64), ApiError&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -1008,7 +1004,7 @@
 {
     client
         .runtime_api()
-        .solution_ranges(parent_block_id)
+        .solution_ranges(parent_hash)
         .map(|solution_ranges| {
             (
                 solution_ranges.next.unwrap_or(solution_ranges.current),

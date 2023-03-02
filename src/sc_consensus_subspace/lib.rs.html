@@ -1335,13 +1335,6 @@
 <a href="#1335" id="1335">1335</a>
 <a href="#1336" id="1336">1336</a>
 <a href="#1337" id="1337">1337</a>
-<a href="#1338" id="1338">1338</a>
-<a href="#1339" id="1339">1339</a>
-<a href="#1340" id="1340">1340</a>
-<a href="#1341" id="1341">1341</a>
-<a href="#1342" id="1342">1342</a>
-<a href="#1343" id="1343">1343</a>
-<a href="#1344" id="1344">1344</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1413,7 +1406,6 @@
 };
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_inherents::{CreateInherentDataProviders, InherentDataProvider};
-<span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::traits::One;
 <span class="kw">use </span>std::cmp::Ordering;
 <span class="kw">use </span>std::collections::HashMap;
@@ -1622,17 +1614,17 @@
     Client: AuxStore + ProvideRuntimeApi&lt;Block&gt; + UsageProvider&lt;Block&gt;,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
 {
-    <span class="kw">let </span>block_id = <span class="kw">if </span>client.usage_info().chain.finalized_state.is_some() {
-        BlockId::Hash(client.usage_info().chain.best_hash)
+    <span class="kw">let </span>block_hash = <span class="kw">if </span>client.usage_info().chain.finalized_state.is_some() {
+        client.usage_info().chain.best_hash
     } <span class="kw">else </span>{
         <span class="macro">debug!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;No finalized state is available. Reading config from genesis&quot;</span>);
-        BlockId::Hash(client.usage_info().chain.genesis_hash)
+        client.usage_info().chain.genesis_hash
     };
 
     <span class="prelude-val">Ok</span>(SlotDuration::from_millis(
         client
             .runtime_api()
-            .slot_duration(<span class="kw-2">&amp;</span>block_id)<span class="question-mark">?
+            .slot_duration(block_hash)<span class="question-mark">?
             </span>.as_millis()
             .try_into()
             .expect(<span class="string">&quot;Slot duration in ms never exceeds u64; qed&quot;</span>),
@@ -1911,17 +1903,17 @@
 
         <span class="kw">if </span><span class="self">self</span>.is_authoring_blocks {
             <span class="comment">// get the best block on which we will build and send the equivocation report.
-            </span><span class="kw">let </span>best_id = <span class="self">self
+            </span><span class="kw">let </span>best_hash = <span class="self">self
                 </span>.select_chain
                 .best_chain()
                 .<span class="kw">await
-                </span>.map(|h| BlockId::Hash(h.hash()))
+                </span>.map(|h| h.hash())
                 .map_err(|e| Error::Client(e.into()))<span class="question-mark">?</span>;
 
             <span class="comment">// submit equivocation report at best block.
             </span><span class="self">self</span>.client
                 .runtime_api()
-                .submit_report_equivocation_extrinsic(<span class="kw-2">&amp;</span>best_id, equivocation_proof)
+                .submit_report_equivocation_extrinsic(best_hash, equivocation_proof)
                 .map_err(Error::RuntimeApi)<span class="question-mark">?</span>;
 
             <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Submitted equivocation report for author {:?}&quot;</span>, author);
@@ -1983,10 +1975,7 @@
         </span><span class="kw">if </span><span class="self">self
             </span>.client
             .runtime_api()
-            .is_in_block_list(
-                <span class="kw-2">&amp;</span>BlockId::Hash(<span class="kw-2">*</span>block.header.parent_hash()),
-                <span class="kw-2">&amp;</span>pre_digest.solution.public_key,
-            )
+            .is_in_block_list(<span class="kw-2">*</span>block.header.parent_hash(), <span class="kw-2">&amp;</span>pre_digest.solution.public_key)
             .or_else(|error| {
                 <span class="kw">if </span>block.state_action.skip_execution_checks() {
                     <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
@@ -2164,7 +2153,6 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;Block::Header&gt;&gt; {
         <span class="kw">let </span>block_number = <span class="kw-2">*</span>header.number();
         <span class="kw">let </span>parent_hash = <span class="kw-2">*</span>header.parent_hash();
-        <span class="kw">let </span>parent_block_id = BlockId::Hash(parent_hash);
 
         <span class="kw">let </span>pre_digest = <span class="kw-2">&amp;</span>subspace_digest_items.pre_digest;
 
@@ -2180,7 +2168,7 @@
         </span><span class="kw">if </span><span class="self">self
             </span>.client
             .runtime_api()
-            .is_in_block_list(<span class="kw-2">&amp;</span>parent_block_id, <span class="kw-2">&amp;</span>pre_digest.solution.public_key)
+            .is_in_block_list(parent_hash, <span class="kw-2">&amp;</span>pre_digest.solution.public_key)
             .or_else(|error| {
                 <span class="kw">if </span>skip_runtime_access {
                     <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
@@ -2210,12 +2198,10 @@
             // instead
             </span><span class="kw">let </span>correct_global_randomness = slot_worker::extract_global_randomness_for_block(
                 <span class="self">self</span>.client.as_ref(),
-                <span class="kw-2">&amp;</span>parent_block_id,
+                parent_hash,
             )<span class="question-mark">?</span>;
-            <span class="kw">let </span>(correct_solution_range, <span class="kw">_</span>) = slot_worker::extract_solution_ranges_for_block(
-                <span class="self">self</span>.client.as_ref(),
-                <span class="kw-2">&amp;</span>parent_block_id,
-            )<span class="question-mark">?</span>;
+            <span class="kw">let </span>(correct_solution_range, <span class="kw">_</span>) =
+                slot_worker::extract_solution_ranges_for_block(<span class="self">self</span>.client.as_ref(), parent_hash)<span class="question-mark">?</span>;
 
             (correct_global_randomness, correct_solution_range)
         } <span class="kw">else </span>{
@@ -2328,7 +2314,7 @@
                     </span>.map_err(Error::CreateInherents)<span class="question-mark">?</span>;
 
                 <span class="kw">let </span>inherent_res = <span class="self">self</span>.client.runtime_api().check_inherents_with_context(
-                    <span class="kw-2">&amp;</span>parent_block_id,
+                    parent_hash,
                     origin.into(),
                     Block::new(header, extrinsics),
                     inherent_data,
@@ -2402,7 +2388,7 @@
         <span class="kw">let </span>root_plot_public_key = <span class="self">self
             </span>.client
             .runtime_api()
-            .root_plot_public_key(<span class="kw-2">&amp;</span>BlockId::Hash(<span class="kw-2">*</span>block.header.parent_hash()))
+            .root_plot_public_key(<span class="kw-2">*</span>block.header.parent_hash())
             .map_err(Error::&lt;Block::Header&gt;::RuntimeApi)
             .map_err(|e| ConsensusError::ClientImport(e.to_string()))<span class="question-mark">?</span>;
 
@@ -2554,7 +2540,7 @@
             // storage access
             </span><span class="kw">let </span>chain_constants = client
                 .runtime_api()
-                .chain_constants(<span class="kw-2">&amp;</span>BlockId::Hash(client.info().best_hash))
+                .chain_constants(client.info().best_hash)
                 .map_err(Error::&lt;Block::Header&gt;::RuntimeApi)<span class="question-mark">?</span>;
 
             aux_schema::write_chain_constants(<span class="kw-2">&amp;</span>chain_constants, |values| {

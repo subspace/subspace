@@ -385,7 +385,6 @@
 <a href="#385" id="385">385</a>
 <a href="#386" id="386">386</a>
 <a href="#387" id="387">387</a>
-<a href="#388" id="388">388</a>
 </pre><pre class="rust"><code><span class="comment">// This file is part of Substrate.
 
 // Copyright (C) 2017-2021 Parity Technologies (UK) Ltd.
@@ -524,7 +523,6 @@
 </span><span class="kw">pub struct </span>BlockBuilder&lt;<span class="lifetime">&#39;a</span>, Block: BlockT, A: ProvideRuntimeApi&lt;Block&gt;, B&gt; {
     extrinsics: Vec&lt;Block::Extrinsic&gt;,
     api: ApiRef&lt;<span class="lifetime">&#39;a</span>, A::Api&gt;,
-    block_id: BlockId&lt;Block&gt;,
     parent_hash: Block::Hash,
     backend: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>B,
     <span class="doccomment">/// The estimated size of the block header.
@@ -569,15 +567,16 @@
             api.record_proof();
         }
 
-        <span class="kw">let </span>block_id = BlockId::Hash(parent_hash);
-
-        api.initialize_block_with_context(<span class="kw-2">&amp;</span>block_id, ExecutionContext::BlockConstruction, <span class="kw-2">&amp;</span>header)<span class="question-mark">?</span>;
+        api.initialize_block_with_context(
+            parent_hash,
+            ExecutionContext::BlockConstruction,
+            <span class="kw-2">&amp;</span>header,
+        )<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             parent_hash,
             extrinsics,
             api,
-            block_id,
             backend,
             estimated_header_size,
         })
@@ -585,12 +584,12 @@
 
     <span class="doccomment">/// Execute the block&#39;s list of extrinsics.
     </span><span class="kw">fn </span>execute_extrinsics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="kw">let </span>block_id = <span class="kw-2">&amp;</span><span class="self">self</span>.block_id;
+        <span class="kw">let </span>parent_hash = <span class="self">self</span>.parent_hash;
 
         <span class="kw">for </span>(index, xt) <span class="kw">in </span><span class="self">self</span>.extrinsics.iter().enumerate() {
             <span class="kw">let </span>res = <span class="self">self</span>.api.execute_in_transaction(|api| {
                 <span class="kw">match </span>api.apply_extrinsic_with_context(
-                    block_id,
+                    parent_hash,
                     ExecutionContext::BlockConstruction,
                     xt.clone(),
                 ) {
@@ -612,19 +611,19 @@
 
     <span class="kw">fn </span>collect_storage_changes(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;sp_api::StorageChanges&lt;backend::StateBackendFor&lt;B, Block&gt;, Block&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;StorageChanges&lt;backend::StateBackendFor&lt;B, Block&gt;, Block&gt;, Error&gt; {
         <span class="kw">let </span>state = <span class="self">self</span>.backend.state_at(<span class="self">self</span>.parent_hash)<span class="question-mark">?</span>;
         <span class="kw">let </span>parent_hash = <span class="self">self</span>.parent_hash;
         <span class="self">self</span>.api
             .into_storage_changes(<span class="kw-2">&amp;</span>state, parent_hash)
-            .map_err(sp_blockchain::Error::StorageChanges)
+            .map_err(Error::StorageChanges)
     }
 
     <span class="doccomment">/// Returns the state before executing the extrinsic at given extrinsic index.
     </span><span class="kw">pub fn </span>prepare_storage_changes_before(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         extrinsic_index: usize,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;sp_api::StorageChanges&lt;backend::StateBackendFor&lt;B, Block&gt;, Block&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;StorageChanges&lt;backend::StateBackendFor&lt;B, Block&gt;, Block&gt;, Error&gt; {
         <span class="kw">for </span>(index, xt) <span class="kw">in </span><span class="self">self</span>.extrinsics.iter().enumerate() {
             <span class="kw">if </span>index == extrinsic_index {
                 <span class="kw">return </span><span class="self">self</span>.collect_storage_changes();
@@ -633,7 +632,7 @@
             <span class="comment">// TODO: rethink what to do if an error occurs when executing the transaction.
             </span><span class="self">self</span>.api.execute_in_transaction(|api| {
                 <span class="kw">let </span>res = api.apply_extrinsic_with_context(
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.block_id,
+                    <span class="self">self</span>.parent_hash,
                     ExecutionContext::BlockConstruction,
                     xt.clone(),
                 );
@@ -657,7 +656,7 @@
     <span class="doccomment">/// Returns the state before finalizing the block.
     </span><span class="kw">pub fn </span>prepare_storage_changes_before_finalize_block(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;sp_api::StorageChanges&lt;backend::StateBackendFor&lt;B, Block&gt;, Block&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;StorageChanges&lt;backend::StateBackendFor&lt;B, Block&gt;, Block&gt;, Error&gt; {
         <span class="self">self</span>.execute_extrinsics()<span class="question-mark">?</span>;
         <span class="self">self</span>.collect_storage_changes()
     }
@@ -672,7 +671,7 @@
 
         <span class="kw">let </span>header = <span class="self">self
             </span>.api
-            .finalize_block_with_context(<span class="kw-2">&amp;</span><span class="self">self</span>.block_id, ExecutionContext::BlockConstruction)<span class="question-mark">?</span>;
+            .finalize_block_with_context(<span class="self">self</span>.parent_hash, ExecutionContext::BlockConstruction)<span class="question-mark">?</span>;
 
         <span class="macro">debug_assert_eq!</span>(
             header.extrinsics_root().clone(),
@@ -700,13 +699,13 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         inherent_data: sp_inherents::InherentData,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;Block::Extrinsic&gt;, Error&gt; {
-        <span class="kw">let </span>block_id = <span class="self">self</span>.block_id;
+        <span class="kw">let </span>parent_hash = <span class="self">self</span>.parent_hash;
         <span class="self">self</span>.api
             .execute_in_transaction(<span class="kw">move </span>|api| {
                 <span class="comment">// `create_inherents` should not change any state, to ensure this we always rollback
                 // the transaction.
                 </span>TransactionOutcome::Rollback(api.inherent_extrinsics_with_context(
-                    <span class="kw-2">&amp;</span>block_id,
+                    parent_hash,
                     ExecutionContext::BlockConstruction,
                     inherent_data,
                 ))
@@ -743,9 +742,8 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>block_building_storage_proof_does_not_include_runtime_by_default() {
-        <span class="kw">let </span>builder = substrate_test_runtime_client::TestClientBuilder::new();
-        <span class="kw">let </span>backend = builder.backend();
-        <span class="kw">let </span>client = builder.build();
+        <span class="kw">let </span>(client, backend) =
+            substrate_test_runtime_client::TestClientBuilder::new().build_with_backend();
 
         <span class="kw">let </span>block = BlockBuilder::new(
             <span class="kw-2">&amp;</span>client,

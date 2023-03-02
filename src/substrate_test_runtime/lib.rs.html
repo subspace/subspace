@@ -1381,8 +1381,6 @@
 <a href="#1381" id="1381">1381</a>
 <a href="#1382" id="1382">1382</a>
 <a href="#1383" id="1383">1383</a>
-<a href="#1384" id="1384">1384</a>
-<a href="#1385" id="1385">1385</a>
 </pre><pre class="rust"><code><span class="comment">// This file is part of Substrate.
 
 // Copyright (C) 2017-2022 Parity Technologies (UK) Ltd.
@@ -2685,12 +2683,11 @@
     <span class="kw">use </span>sc_block_builder::BlockBuilderProvider;
     <span class="kw">use </span>sp_api::ProvideRuntimeApi;
     <span class="kw">use </span>sp_consensus::BlockOrigin;
-    <span class="kw">use </span>sp_core::storage::well_known_keys::HEAP_PAGES;
-    <span class="kw">use </span>sp_runtime::generic::BlockId;
+    <span class="kw">use </span>sp_core::{storage::well_known_keys::HEAP_PAGES, ExecutionContext};
     <span class="kw">use </span>sp_state_machine::ExecutionStrategy;
-    <span class="kw">use </span>substrate_test_runtime_client::prelude::<span class="kw-2">*</span>;
-    <span class="kw">use </span>substrate_test_runtime_client::runtime::TestAPI;
-    <span class="kw">use </span>substrate_test_runtime_client::{DefaultTestClientBuilderExt, TestClientBuilder};
+    <span class="kw">use </span>substrate_test_runtime_client::{
+        prelude::<span class="kw-2">*</span>, runtime::TestAPI, DefaultTestClientBuilderExt, TestClientBuilder,
+    };
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>heap_pages_is_respected() {
@@ -2701,43 +2698,43 @@
             .set_execution_strategy(ExecutionStrategy::AlwaysWasm)
             .set_heap_pages(<span class="number">8</span>)
             .build();
-        <span class="kw">let </span>block_id = BlockId::Hash(client.chain_info().best_hash);
+        <span class="kw">let </span>best_hash = client.chain_info().best_hash;
 
         <span class="comment">// Try to allocate 1024k of memory on heap. This is going to fail since it is twice larger
         // than the heap.
-        </span><span class="kw">let </span>ret = client.runtime_api().vec_with_capacity(<span class="kw-2">&amp;</span>block_id, <span class="number">1048576</span>);
+        </span><span class="kw">let </span>ret = client.runtime_api().vec_with_capacity_with_context(
+            best_hash,
+            <span class="comment">// Use `BlockImport` to ensure we use the on chain heap pages as configured above.
+            </span>ExecutionContext::Importing,
+            <span class="number">1048576</span>,
+        );
         <span class="macro">assert!</span>(ret.is_err());
 
         <span class="comment">// Create a block that sets the `:heap_pages` to 32 pages of memory which corresponds to
         // ~2048k of heap memory.
-        </span><span class="kw">let </span>(new_block_id, block) = {
+        </span><span class="kw">let </span>(new_at_hash, block) = {
             <span class="kw">let </span><span class="kw-2">mut </span>builder = client.new_block(Default::default()).unwrap();
-            builder
-                .push_storage_change(HEAP_PAGES.to_vec(), <span class="prelude-val">Some</span>(<span class="number">32u64</span>.encode()))
-                .unwrap();
+            builder.push_storage_change(HEAP_PAGES.to_vec(), <span class="prelude-val">Some</span>(<span class="number">32u64</span>.encode())).unwrap();
             <span class="kw">let </span>block = builder.build().unwrap().block;
             <span class="kw">let </span>hash = block.header.hash();
-            (BlockId::Hash(hash), block)
+            (hash, block)
         };
 
         futures::executor::block_on(client.import(BlockOrigin::Own, block)).unwrap();
 
         <span class="comment">// Allocation of 1024k while having ~2048k should succeed.
-        </span><span class="kw">let </span>ret = client
-            .runtime_api()
-            .vec_with_capacity(<span class="kw-2">&amp;</span>new_block_id, <span class="number">1048576</span>);
+        </span><span class="kw">let </span>ret = client.runtime_api().vec_with_capacity(new_at_hash, <span class="number">1048576</span>);
         <span class="macro">assert!</span>(ret.is_ok());
     }
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_storage() {
-        <span class="kw">let </span>client = TestClientBuilder::new()
-            .set_execution_strategy(ExecutionStrategy::Both)
-            .build();
+        <span class="kw">let </span>client =
+            TestClientBuilder::new().set_execution_strategy(ExecutionStrategy::Both).build();
         <span class="kw">let </span>runtime_api = client.runtime_api();
-        <span class="kw">let </span>block_id = BlockId::Hash(client.chain_info().best_hash);
+        <span class="kw">let </span>best_hash = client.chain_info().best_hash;
 
-        runtime_api.test_storage(<span class="kw-2">&amp;</span>block_id).unwrap();
+        runtime_api.test_storage(best_hash).unwrap();
     }
 
     <span class="kw">fn </span>witness_backend() -&gt; (sp_trie::MemoryDB&lt;<span class="kw">crate</span>::Hashing&gt;, <span class="kw">crate</span>::Hash) {
@@ -2759,13 +2756,12 @@
         <span class="kw">let </span>backend =
             sp_state_machine::TrieBackendBuilder::&lt;<span class="kw">_</span>, <span class="kw">crate</span>::Hashing&gt;::new(db, root).build();
         <span class="kw">let </span>proof = sp_state_machine::prove_read(backend, <span class="macro">vec!</span>[<span class="string">b&quot;value3&quot;</span>]).unwrap();
-        <span class="kw">let </span>client = TestClientBuilder::new()
-            .set_execution_strategy(ExecutionStrategy::Both)
-            .build();
+        <span class="kw">let </span>client =
+            TestClientBuilder::new().set_execution_strategy(ExecutionStrategy::Both).build();
         <span class="kw">let </span>runtime_api = client.runtime_api();
-        <span class="kw">let </span>block_id = BlockId::Hash(client.chain_info().best_hash);
+        <span class="kw">let </span>best_hash = client.chain_info().best_hash;
 
-        runtime_api.test_witness(<span class="kw-2">&amp;</span>block_id, proof, root).unwrap();
+        runtime_api.test_witness(best_hash, proof, root).unwrap();
     }
 }
 </code></pre></div>
