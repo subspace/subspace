@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"sp_messenger":[],
+"system_domain_runtime":[["impl <a class=\"trait\" href=\"sp_messenger/endpoint/trait.DomainInfo.html\" title=\"trait sp_messenger::endpoint::DomainInfo\">DomainInfo</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u32.html\">u32</a>, H256, H256&gt; for <a class=\"struct\" href=\"system_domain_runtime/struct.DomainInfo.html\" title=\"struct system_domain_runtime::DomainInfo\">DomainInfo</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

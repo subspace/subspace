@@ -283,15 +283,6 @@
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
 <a href="#285" id="285">285</a>
-<a href="#286" id="286">286</a>
-<a href="#287" id="287">287</a>
-<a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a>
-<a href="#290" id="290">290</a>
-<a href="#291" id="291">291</a>
-<a href="#292" id="292">292</a>
-<a href="#293" id="293">293</a>
-<a href="#294" id="294">294</a>
 </pre><pre class="rust"><code><span class="kw">use </span>futures::FutureExt;
 <span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sc_transaction_pool::{ChainApi, FullChainApi};
@@ -302,7 +293,7 @@
 <span class="kw">use </span>sp_domains::ExecutorApi;
 <span class="kw">use </span>sp_messenger::MessengerApi;
 <span class="kw">use </span>sp_runtime::generic::BlockId;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, BlockIdTo, Header, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, BlockIdTo, CheckedSub, Header, NumberFor};
 <span class="kw">use </span>sp_runtime::transaction_validity::TransactionSource;
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>std::marker::PhantomData;
@@ -311,9 +302,8 @@
 <span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 
 <span class="doccomment">/// Verifies if the xdm has the correct proof generated from known parent block.
-/// This is used by Core domain nodes and also System domain nodes
+/// This is used by Core domain nodes.
 /// Core domains nodes use this to verify an XDM coming from other domains.
-/// System domain node use this to verify the XDM while validating fraud proof.
 /// Returns either true if the XDM is valid else false.
 /// Returns Error when required calls to fetch header info fails.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>verify_xdm_with_system_domain_client&lt;Client, Block, SBlock, PBlock&gt;(
@@ -347,10 +337,19 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
         }
 
-        <span class="comment">// verify core domain state root if there is one
+        <span class="comment">// verify core domain state root and the if the number is K-deep.
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, core_domain_info, core_domain_state_root)) =
             state_roots.core_domain_info
         {
+            <span class="kw">let </span>best_number = api.head_receipt_number(best_hash, domain_id)<span class="question-mark">?</span>;
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(confirmed_number) =
+                best_number.checked_sub(<span class="kw-2">&amp;</span>api.confirmation_depth(best_hash)<span class="question-mark">?</span>)
+            {
+                <span class="kw">if </span>confirmed_number &lt; core_domain_info.block_number {
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
+                }
+            }
+
             <span class="kw">if let </span><span class="prelude-val">Some</span>(expected_core_domain_state_root) = api.core_domain_state_root_at(
                 best_hash,
                 domain_id,
@@ -380,8 +379,7 @@
     </span>PClient: HeaderBackend&lt;PBlock&gt; + ProvideRuntimeApi&lt;PBlock&gt; + <span class="lifetime">&#39;static</span>,
     PClient::Api: ExecutorApi&lt;PBlock, SBlock::Hash&gt;,
     SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
-    SClient::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
-        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
+    SClient::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;,
     SBlock: BlockT,
     PBlock: BlockT,
     NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;SBlock&gt;&gt;,
@@ -403,22 +401,6 @@
         )<span class="question-mark">? </span>{
             <span class="kw">if </span>system_domain_state_root != state_roots.system_domain_state_root.into() {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
-            }
-        }
-
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, info, state_root)) = state_roots.core_domain_info {
-            <span class="comment">// TODO: Can&#39;t above variable be reused here?
-            // verify core domain state root if there is one
-            </span><span class="kw">let </span>best_hash = system_domain_client.info().best_hash;
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(core_domain_state_root) = system_domain_runtime.core_domain_state_root_at(
-                best_hash,
-                domain_id,
-                info.block_number,
-                info.block_hash,
-            )<span class="question-mark">? </span>{
-                <span class="kw">if </span>state_root != core_domain_state_root {
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
-                }
             }
         }
     }

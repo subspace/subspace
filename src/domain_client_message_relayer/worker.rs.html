@@ -223,6 +223,18 @@
 <a href="#223" id="223">223</a>
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
 </pre><pre class="rust"><code><span class="kw">use crate</span>::{BlockT, Error, GossipMessageSink, HeaderBackend, HeaderT, Relayer, LOG_TARGET};
 <span class="kw">use </span>domain_runtime_primitives::RelayerId;
 <span class="kw">use </span>futures::StreamExt;
@@ -232,7 +244,7 @@
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_messenger::RelayerApi;
 <span class="kw">use </span>sp_runtime::scale_info::TypeInfo;
-<span class="kw">use </span>sp_runtime::traits::{CheckedSub, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{CheckedSub, NumberFor, Zero};
 <span class="kw">use </span>std::sync::Arc;
 
 <span class="doccomment">/// Starts relaying system domain messages to other domains.
@@ -252,8 +264,11 @@
     Client::Api: RelayerApi&lt;Block, RelayerId, NumberFor&lt;Block&gt;&gt;,
     SO: SyncOracle,
 {
-    <span class="kw">let </span>result = relay_domain_messages(
+    <span class="comment">// there is not confirmation depth for relayer on system domain
+    // since all the relayers will haven embed client to known the canonical chain.
+    </span><span class="kw">let </span>result = relay_domain_messages(
         relayer_id,
+        NumberFor::&lt;Block&gt;::zero(),
         system_domain_client,
         |relayer_id, client, block_hash| {
             Relayer::submit_messages_from_system_domain(
@@ -292,7 +307,7 @@
     Block::Hash: FullCodec,
     NumberFor&lt;Block&gt;: FullCodec + TypeInfo,
     NumberFor&lt;SBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt; + Into&lt;NumberFor&lt;Block&gt;&gt;,
-    SBlock::Hash: Into&lt;Block::Hash&gt;,
+    SBlock::Hash: Into&lt;Block::Hash&gt; + From&lt;Block::Hash&gt;,
     CDC: BlockchainEvents&lt;Block&gt;
         + HeaderBackend&lt;Block&gt;
         + AuxStore
@@ -307,8 +322,17 @@
     <span class="kw">let </span>combined_sync_oracle =
         CombinedSyncOracle::new(system_domain_sync_oracle, core_domain_sync_oracle);
 
+    <span class="kw">let </span>relay_confirmation_depth = <span class="kw">match </span>Relayer::relay_confirmation_depth(<span class="kw-2">&amp;</span>core_domain_client) {
+        <span class="prelude-val">Ok</span>(depth) =&gt; depth,
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="macro">tracing::error!</span>(target: LOG_TARGET, <span class="question-mark">?</span>err, <span class="string">&quot;Failed to get confirmation depth&quot;</span>);
+            <span class="kw">return</span>;
+        }
+    };
+
     <span class="kw">let </span>result = relay_domain_messages(
         relayer_id,
+        relay_confirmation_depth,
         core_domain_client,
         |relayer_id, client, block_hash| {
             Relayer::submit_messages_from_core_domain(
@@ -333,6 +357,7 @@
 
 <span class="kw">async fn </span>relay_domain_messages&lt;Client, Block, MP, SO&gt;(
     relayer_id: RelayerId,
+    relay_confirmation_depth: NumberFor&lt;Block&gt;,
     domain_client: Arc&lt;Client&gt;,
     message_processor: MP,
     sync_oracle: SO,
@@ -349,7 +374,6 @@
     SO: SyncOracle,
 {
     <span class="kw">let </span>domain_id = Relayer::domain_id(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
-    <span class="kw">let </span>relay_confirmation_depth = Relayer::relay_confirmation_depth(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
     <span class="macro">tracing::info!</span>(
         target: LOG_TARGET,
         <span class="string">&quot;Starting relayer for domain: {:?}&quot;</span>,

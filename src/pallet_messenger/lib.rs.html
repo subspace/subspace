@@ -948,6 +948,39 @@
 <a href="#948" id="948">948</a>
 <a href="#949" id="949">949</a>
 <a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1053,12 +1086,13 @@
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>sp_core::storage::StorageKey;
     <span class="kw">use </span>sp_domains::DomainId;
-    <span class="kw">use </span>sp_messenger::endpoint::{Endpoint, EndpointHandler, EndpointRequest, Sender};
+    <span class="kw">use </span>sp_messenger::endpoint::{DomainInfo, Endpoint, EndpointHandler, EndpointRequest, Sender};
     <span class="kw">use </span>sp_messenger::messages::{
         CoreDomainStateRootStorage, CrossDomainMessage, ExtractedStateRootsFromProof,
         InitiateChannelParams, Message, MessageId, Payload, ProtocolMessageRequest,
         RequestResponse, VersionedPayload,
     };
+    <span class="kw">use </span>sp_runtime::traits::CheckedSub;
     <span class="kw">use </span>sp_runtime::ArithmeticError;
     <span class="kw">use </span>sp_std::boxed::Box;
 
@@ -1077,6 +1111,10 @@
         </span><span class="kw">type </span>MaximumRelayers: Get&lt;u32&gt;;
         <span class="doccomment">/// Relayer deposit to become a relayer for this Domain.
         </span><span class="kw">type </span>RelayerDeposit: Get&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
+        <span class="doccomment">/// Domain info to verify domain state roots at a confirmation depth.
+        </span><span class="kw">type </span>DomainInfo: DomainInfo&lt;<span class="self">Self</span>::BlockNumber, <span class="self">Self</span>::Hash, StateRootOf&lt;<span class="self">Self</span>&gt;&gt;;
+        <span class="doccomment">/// Confirmation depth for XDM coming from core domains.
+        </span><span class="kw">type </span>ConfirmationDepth: Get&lt;<span class="self">Self</span>::BlockNumber&gt;;
     }
 
     <span class="doccomment">/// Pallet messenger used to communicate between domains and other blockchains.
@@ -1831,6 +1869,34 @@
             </span><span class="macro">ensure!</span>(xdm.nonce &gt;= next_nonce, InvalidTransaction::Call);
 
             <span class="kw">let </span>extracted_state_roots = <span class="self">Self</span>::extract_state_roots_from_proof(xdm)<span class="question-mark">?</span>;
+
+            <span class="comment">// on system domain, ensure the core domain info is at K-depth and state root matches
+            </span><span class="kw">if </span>T::SelfDomainId::get().is_system() {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, block_info, state_root)) =
+                    extracted_state_roots.core_domain_info.clone()
+                {
+                    <span class="comment">// ensure the block is at-least k-deep
+                    </span><span class="kw">let </span>confirmed = T::DomainInfo::domain_best_number(domain_id)
+                        .and_then(|best_number| {
+                            best_number
+                                .checked_sub(<span class="kw-2">&amp;</span>T::ConfirmationDepth::get())
+                                .map(|confirmed_number| confirmed_number &gt;= block_info.block_number)
+                        })
+                        .unwrap_or(<span class="bool-val">false</span>);
+                    <span class="macro">ensure!</span>(confirmed, InvalidTransaction::BadMandatory);
+
+                    <span class="comment">// verify state root of the block
+                    </span><span class="kw">let </span>valid_state_root = T::DomainInfo::domain_state_root(
+                        domain_id,
+                        block_info.block_number,
+                        block_info.block_hash,
+                    )
+                    .map(|got_state_root| got_state_root == state_root)
+                    .unwrap_or(<span class="bool-val">false</span>);
+                    <span class="macro">ensure!</span>(valid_state_root, InvalidTransaction::BadMandatory)
+                }
+            }
+
             <span class="kw">let </span>state_root = extracted_state_roots
                 .core_domain_info
                 .map(|(_domain_id, _info, state_root)| state_root)
