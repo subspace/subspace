@@ -1057,6 +1057,25 @@
 <a href="#1057" id="1057">1057</a>
 <a href="#1058" id="1058">1058</a>
 <a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1124,6 +1143,7 @@
     <span class="kw">use </span>sp_runtime::traits::{AtLeast32BitUnsigned, MaybeSerializeDeserialize};
     <span class="kw">use </span>sp_runtime::{FixedPointOperand, Percent};
     <span class="kw">use </span>sp_std::fmt::Debug;
+    <span class="kw">use </span>sp_std::vec::Vec;
 
     <span class="attr">#[pallet::config]
     </span><span class="kw">pub trait </span>Config: frame_system::Config + pallet_receipts::Config {
@@ -1427,20 +1447,22 @@
     <span class="attr">#[pallet::hooks]
     </span><span class="kw">impl</span>&lt;T: Config&gt; Hooks&lt;BlockNumberFor&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
         <span class="kw">fn </span>on_initialize(_n: BlockNumberFor&lt;T&gt;) -&gt; Weight {
-            <span class="kw">let </span>(primary_number, primary_hash) = &lt;frame_system::Pallet&lt;T&gt;&gt;::digest()
+            <span class="kw">let </span>primary_block_info = &lt;frame_system::Pallet&lt;T&gt;&gt;::digest()
                 .logs
                 .iter()
-                .find_map(|s| s.as_primary_block_info::&lt;T::BlockNumber, T::Hash&gt;())
-                .expect(<span class="string">&quot;Primary block info must exist otherwise the receipt verification can not work; qed&quot;</span>);
+                .filter_map(|s| s.as_primary_block_info::&lt;T::BlockNumber, T::Hash&gt;())
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
             <span class="kw">let </span><span class="kw-2">mut </span>consumed_weight = Weight::zero();
             <span class="kw">for </span>domain_id <span class="kw">in </span>Domains::&lt;T&gt;::iter_keys() {
-                pallet_receipts::PrimaryBlockHash::&lt;T&gt;::insert(
-                    domain_id,
-                    primary_number,
-                    primary_hash,
-                );
-                consumed_weight += T::DbWeight::get().reads_writes(<span class="number">1</span>, <span class="number">1</span>);
+                <span class="kw">for </span>(primary_number, primary_hash) <span class="kw">in </span><span class="kw-2">&amp;</span>primary_block_info {
+                    pallet_receipts::PrimaryBlockHash::&lt;T&gt;::insert(
+                        domain_id,
+                        primary_number,
+                        primary_hash,
+                    );
+                    consumed_weight += T::DbWeight::get().reads_writes(<span class="number">1</span>, <span class="number">1</span>);
+                }
             }
 
             consumed_weight
@@ -1583,6 +1605,9 @@
 
         <span class="doccomment">/// Can not find the block hash of given primary block number.
         </span>UnavailablePrimaryBlockHash,
+
+        <span class="doccomment">/// Bundle was created on an unknown primary block (probably a fork block).
+        </span>BundleCreatedOnUnknownBlock,
 
         <span class="doccomment">/// Receipt error.
         </span>Receipt(ReceiptError),
@@ -1821,12 +1846,30 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::NotCoreDomainBundle);
         }
 
+        <span class="kw">let </span>bundle = <span class="kw-2">&amp;</span>signed_opaque_bundle.bundle;
+
+        <span class="kw">let </span>bundle_created_on_valid_primary_block =
+            pallet_receipts::PrimaryBlockHash::&lt;T&gt;::get(domain_id, bundle.header.primary_number)
+                .map(|block_hash| block_hash == bundle.header.primary_hash)
+                .unwrap_or(<span class="bool-val">false</span>);
+
+        <span class="kw">if </span>!bundle_created_on_valid_primary_block {
+            <span class="macro">log::error!</span>(
+                target: <span class="string">&quot;runtime::domain-registry&quot;</span>,
+                <span class="string">&quot;Bundle of {domain_id:?} is probably created on a primary fork #{:?}, expected: {:?}, got: {:?}&quot;</span>,
+                bundle.header.primary_number,
+                pallet_receipts::PrimaryBlockHash::&lt;T&gt;::get(domain_id, bundle.header.primary_number),
+                bundle.header.primary_hash,
+            );
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::BundleCreatedOnUnknownBlock);
+        }
+
         <span class="kw">let </span>created_at = CreatedAt::&lt;T&gt;::get(domain_id).ok_or(Error::&lt;T&gt;::DomainNotCreated)<span class="question-mark">?</span>;
         <span class="kw">let </span>head_receipt_number = <span class="self">Self</span>::head_receipt_number(domain_id);
         <span class="kw">let </span>max_allowed = head_receipt_number + T::MaximumReceiptDrift::get();
 
         <span class="kw">let </span><span class="kw-2">mut </span>new_best_number = head_receipt_number;
-        <span class="kw">let </span>receipts = <span class="kw-2">&amp;</span>signed_opaque_bundle.bundle.receipts;
+        <span class="kw">let </span>receipts = <span class="kw-2">&amp;</span>bundle.receipts;
         <span class="kw">for </span>receipt <span class="kw">in </span>receipts {
             <span class="comment">// Non-best receipt
             </span><span class="kw">if </span>receipt.primary_number &lt;= new_best_number {
@@ -1904,22 +1947,17 @@
         </span><span class="kw">let </span>state_root_verifiable = core_block_number &lt;= new_best_number;
 
         <span class="kw">if </span>!core_block_number.is_zero() &amp;&amp; state_root_verifiable {
-            <span class="kw">let </span>maybe_state_root =
-                signed_opaque_bundle
-                    .bundle
-                    .receipts
-                    .iter()
-                    .find_map(|receipt| {
-                        receipt.trace.last().and_then(|state_root| {
-                            <span class="kw">if </span>(receipt.primary_number, receipt.domain_hash)
-                                == (core_block_number, <span class="kw-2">*</span>core_block_hash)
-                            {
-                                <span class="prelude-val">Some</span>(<span class="kw-2">*</span>state_root)
-                            } <span class="kw">else </span>{
-                                <span class="prelude-val">None
-                            </span>}
-                        })
-                    });
+            <span class="kw">let </span>maybe_state_root = bundle.receipts.iter().find_map(|receipt| {
+                receipt.trace.last().and_then(|state_root| {
+                    <span class="kw">if </span>(receipt.primary_number, receipt.domain_hash)
+                        == (core_block_number, <span class="kw-2">*</span>core_block_hash)
+                    {
+                        <span class="prelude-val">Some</span>(<span class="kw-2">*</span>state_root)
+                    } <span class="kw">else </span>{
+                        <span class="prelude-val">None
+                    </span>}
+                })
+            });
 
             <span class="kw">let </span>expected_state_root = <span class="kw">match </span>maybe_state_root {
                 <span class="prelude-val">Some</span>(v) =&gt; v,

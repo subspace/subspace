@@ -758,6 +758,36 @@
 <a href="#758" id="758">758</a>
 <a href="#759" id="759">759</a>
 <a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -841,6 +871,8 @@
         </span>Receipt(ExecutionReceiptError),
         <span class="doccomment">/// The Bundle is created too long ago.
         </span>StaleBundle,
+        <span class="doccomment">/// Bundle was created on an unknown primary block (probably a fork block).
+        </span>UnknownBlock,
     }
 
     <span class="kw">impl</span>&lt;T&gt; From&lt;BundleError&gt; <span class="kw">for </span>Error&lt;T&gt; {
@@ -1179,7 +1211,7 @@
                             InvalidTransactionCode::ExecutionReceipt.into(),
                         ));
                     }
-                    <span class="comment">// New nest receipt.
+                    <span class="comment">// New best receipt.
                 </span>} <span class="kw">else if </span>primary_number == best_number + One::one() {
                     <span class="kw">if </span>!pallet_receipts::Pallet::&lt;T&gt;::point_to_valid_primary_block(
                         DomainId::SYSTEM,
@@ -1371,6 +1403,34 @@
             } = bundle_solution <span class="kw">else </span>{
                 <span class="macro">unreachable!</span>(<span class="string">&quot;Must be system domain bundle solution as we just checked; qed &quot;</span>)
             };
+
+            <span class="comment">// TODO: currently, only the system bundles created on the primary fork can be
+            // prevented beforehand, the core bundles will be rejected by the system domain but
+            // they are still included on the primary chain as it&#39;s not feasible to check core bundles
+            // within this pallet, which may be solved if the `submit_bundle` extrinsic is no longer
+            // free in the future.
+            </span><span class="kw">let </span>bundle_created_on_valid_primary_block =
+                <span class="kw">match </span>pallet_receipts::PrimaryBlockHash::&lt;T&gt;::get(
+                    DomainId::SYSTEM,
+                    bundle.header.primary_number,
+                ) {
+                    <span class="prelude-val">Some</span>(block_hash) =&gt; block_hash == bundle.header.primary_hash,
+                    <span class="comment">// The `initialize_block` of non-system pallets is skipped in the `validate_transaction`,
+                    // thus the hash of best block, which is recorded in the this pallet&#39;s `on_initialize` hook,
+                    // is unavailable in pallet-receipts at this point.
+                    </span><span class="prelude-val">None </span>=&gt; frame_system::Pallet::&lt;T&gt;::parent_hash() == bundle.header.primary_hash,
+                };
+
+            <span class="kw">if </span>!bundle_created_on_valid_primary_block {
+                <span class="macro">log::error!</span>(
+                    target: <span class="string">&quot;runtime::domains&quot;</span>,
+                    <span class="string">&quot;Bundle is probably created on a primary fork #{:?}, expected: {:?}, got: {:?}&quot;</span>,
+                    bundle.header.primary_number,
+                    pallet_receipts::PrimaryBlockHash::&lt;T&gt;::get(DomainId::SYSTEM, bundle.header.primary_number),
+                    bundle.header.primary_hash,
+                );
+                <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::UnknownBlock);
+            }
 
             <span class="self">Self</span>::validate_system_bundle_solution(
                 <span class="kw-2">&amp;</span>bundle.receipts,
