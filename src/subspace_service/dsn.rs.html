@@ -211,6 +211,32 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
 </pre><pre class="rust"><code><span class="kw">pub mod </span>import_blocks;
 <span class="kw">pub mod </span>node_provider_storage;
 
@@ -235,15 +261,17 @@
 <span class="kw">use </span>subspace_networking::{
     peer_id, BootstrappedNetworkingParameters, CreationError, MemoryProviderStorage, Node,
     NodeRunner, ParityDbProviderStorage, PieceByHashRequestHandler, PieceByHashResponse,
-    RootBlockBySegmentIndexesRequestHandler, RootBlockResponse,
+    RootBlockBySegmentIndexesRequestHandler, RootBlockRequest, RootBlockResponse,
 };
 <span class="kw">use </span>tokio::sync::Semaphore;
-<span class="kw">use </span>tracing::{error, info, trace, warn, Instrument};
+<span class="kw">use </span>tracing::{debug, error, info, trace, warn, Instrument};
 
 <span class="doccomment">/// Provider records cache size
 </span><span class="kw">const </span>MAX_PROVIDER_RECORDS_LIMIT: usize = <span class="number">100000</span>; <span class="comment">// ~ 10 MB
 
-</span><span class="doccomment">/// DSN configuration parameters.
+</span><span class="kw">const </span>ROOT_BLOCK_NUMBER_LIMIT: u64 = <span class="number">100</span>;
+
+<span class="doccomment">/// DSN configuration parameters.
 </span><span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub struct </span>DsnConfig {
     <span class="doccomment">/// Where local DSN node will listen for incoming connections.
@@ -316,14 +344,38 @@
                 <span class="kw">async </span>{ <span class="prelude-val">Some</span>(PieceByHashResponse { piece: result }) }
             }),
             RootBlockBySegmentIndexesRequestHandler::create(<span class="kw">move </span>|req| {
-                <span class="kw">let </span>internal_result = req
-                    .segment_indexes
+                <span class="kw">let </span>segment_indexes = <span class="kw">match </span>req {
+                    RootBlockRequest::SegmentIndexes { segment_indexes } =&gt; segment_indexes.clone(),
+                    RootBlockRequest::LastRootBlocks { root_block_number } =&gt; {
+                        <span class="kw">let </span><span class="kw-2">mut </span>block_limit = <span class="kw-2">*</span>root_block_number;
+                        <span class="kw">if </span><span class="kw-2">*</span>root_block_number &gt; ROOT_BLOCK_NUMBER_LIMIT {
+                            <span class="macro">debug!</span>(%root_block_number, <span class="string">&quot;Root block number exceeded the limit.&quot;</span>);
+
+                            block_limit = ROOT_BLOCK_NUMBER_LIMIT;
+                        }
+
+                        <span class="kw">let </span>max_segment_index = root_block_cache.max_segment_index();
+
+                        <span class="comment">// several last segment indexes
+                        </span>(<span class="number">0</span>..=max_segment_index)
+                            .rev()
+                            .take(block_limit <span class="kw">as </span>usize)
+                            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+                    }
+                };
+
+                <span class="kw">let </span>internal_result = segment_indexes
                     .iter()
                     .map(|segment_index| root_block_cache.get_root_block(<span class="kw-2">*</span>segment_index))
-                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RootBlock&gt;&gt;, <span class="kw">_</span>&gt;&gt;();
+                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;RootBlock&gt;&gt;, <span class="kw">_</span>&gt;&gt;();
 
                 <span class="kw">let </span>result = <span class="kw">match </span>internal_result {
-                    <span class="prelude-val">Ok</span>(root_blocks) =&gt; <span class="prelude-val">Some</span>(RootBlockResponse { root_blocks }),
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(root_blocks)) =&gt; <span class="prelude-val">Some</span>(RootBlockResponse { root_blocks }),
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+                        <span class="macro">error!</span>(<span class="string">&quot;Root block collection contained empty root blocks.&quot;</span>);
+
+                        <span class="prelude-val">None
+                    </span>}
                     <span class="prelude-val">Err</span>(error) =&gt; {
                         <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to get root blocks from cache&quot;</span>);
 
