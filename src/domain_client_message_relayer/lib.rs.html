@@ -543,6 +543,11 @@
 <a href="#543" id="543">543</a>
 <a href="#544" id="544">544</a>
 <a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
 </pre><pre class="rust"><code><span class="attr">#![warn(rust_2018_idioms)]
 
 </span><span class="kw">pub mod </span>worker;
@@ -845,6 +850,7 @@
         system_domain_client: <span class="kw-2">&amp;</span>Arc&lt;SDC&gt;,
         confirmed_block_hash: Block::Hash,
         gossip_message_sink: <span class="kw-2">&amp;</span>GossipMessageSink,
+        relay_confirmation_depth: NumberFor&lt;SBlock&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
     <span class="kw">where
         </span>SBlock: BlockT,
@@ -861,17 +867,18 @@
         <span class="kw">let </span>best_system_domain_block_hash = system_domain_client.info().best_hash;
         <span class="kw">let </span>best_system_domain_block_header =
             system_domain_client.expect_header(best_system_domain_block_hash)<span class="question-mark">?</span>;
-        <span class="kw">let </span>k_depth = system_domain_api.relay_confirmation_depth(best_system_domain_block_hash)<span class="question-mark">?</span>;
 
         <span class="comment">// verify if the core domain number is K-deep on System domain client
         </span><span class="kw">if </span>!system_domain_api
             .domain_best_number(best_system_domain_block_hash, core_domain_id)<span class="question-mark">?
-            </span>.map(|best_number| <span class="kw">match </span>best_number.checked_sub(<span class="kw-2">&amp;</span>k_depth) {
-                <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
-                <span class="prelude-val">Some</span>(best_confirmed) =&gt; {
-                    best_confirmed &gt;= (<span class="kw-2">*</span>core_domain_block_header.number()).into()
-                }
-            })
+            </span>.map(
+                |best_number| <span class="kw">match </span>best_number.checked_sub(<span class="kw-2">&amp;</span>relay_confirmation_depth) {
+                    <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
+                    <span class="prelude-val">Some</span>(best_confirmed) =&gt; {
+                        best_confirmed &gt;= (<span class="kw-2">*</span>core_domain_block_header.number()).into()
+                    }
+                },
+            )
             .unwrap_or(<span class="bool-val">false</span>)
         {
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::CoreDomainNonConfirmedOnSystemDomain);
@@ -887,11 +894,14 @@
                 confirmed_block_hash.into(),
             )<span class="question-mark">?
             </span>.map(|state_root| state_root == (<span class="kw-2">*</span>core_domain_block_header.state_root()).into())
-            .unwrap_or(<span class="bool-val">false</span>)
+            .unwrap_or_else(|| {
+                <span class="comment">// if this is genesis block, ignore as state root of genesis for core domain is not tracked on runtime
+                </span>core_domain_number.is_zero()
+            })
         {
             <span class="macro">tracing::error!</span>(
                 target: LOG_TARGET,
-                <span class="string">&quot;Core domain state root mismatch at: Number{:?}, Hash{:?}&quot;</span>,
+                <span class="string">&quot;Core domain state root mismatch at: Number: {:?}, Hash: {:?}&quot;</span>,
                 core_domain_number,
                 confirmed_block_hash
             );
