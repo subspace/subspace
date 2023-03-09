@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["NoPieceValidator","Stub implementation for piece validation."],["PieceProvider","Piece provider with cancellation and optional piece validator."]],"trait":[["PieceValidator",""]]};
+window.SIDEBAR_ITEMS = {"enum":[["RetryPolicy","Defines retry policy on error during piece acquiring."]],"struct":[["NoPieceValidator","Stub implementation for piece validation."],["PieceProvider","Piece provider with cancellation and optional piece validator."]],"trait":[["PieceValidator",""]]};

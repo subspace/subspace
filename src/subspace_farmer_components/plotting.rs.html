@@ -222,7 +222,53 @@
 <a href="#222" id="222">222</a>
 <a href="#223" id="223">223</a>
 <a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_caching::PieceMemoryCache;
+<span class="kw">use </span><span class="kw">crate</span>::segment_reconstruction::recover_missing_piece;
 <span class="kw">use crate</span>::{FarmerProtocolInfo, SectorMetadata};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures::stream::FuturesOrdered;
@@ -241,6 +287,21 @@
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::info;
 
+<span class="doccomment">/// Defines retry policy on error during piece acquiring.
+</span><span class="attr">#[derive(PartialEq, Eq, Clone, Debug, Copy)]
+</span><span class="kw">pub enum </span>PieceGetterRetryPolicy {
+    <span class="doccomment">/// Retry N times (including zero)
+    </span>Limited(u16),
+    <span class="doccomment">/// No restrictions on retries
+    </span>Unlimited,
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>PieceGetterRetryPolicy {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::Limited(<span class="number">0</span>)
+    }
+}
+
 <span class="doccomment">/// Duplicate trait for the subspace_networking::PieceReceiver. The goal of this trait is
 /// simplifying dependency graph.
 </span><span class="attr">#[async_trait]
@@ -248,6 +309,7 @@
     <span class="kw">async fn </span>get_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
+        retry_policy: PieceGetterRetryPolicy,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt;;
 }
 
@@ -259,8 +321,9 @@
     <span class="kw">async fn </span>get_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
+        retry_policy: PieceGetterRetryPolicy,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
-        <span class="self">self</span>.as_ref().get_piece(piece_index).<span class="kw">await
+        <span class="self">self</span>.as_ref().get_piece(piece_index, retry_policy).<span class="kw">await
     </span>}
 }
 
@@ -283,6 +346,12 @@
     <span class="doccomment">/// Piece not found, can&#39;t create sector, this should never happen
     </span><span class="attr">#[error(<span class="string">&quot;Piece {piece_index} not found, can&#39;t create sector, this should never happen&quot;</span>)]
     </span>PieceNotFound {
+        <span class="doccomment">/// Piece index
+        </span>piece_index: PieceIndex,
+    },
+    <span class="doccomment">/// Can&#39;t recover missing piece
+    </span><span class="attr">#[error(<span class="string">&quot;Can&#39;t recover missing piece&quot;</span>)]
+    </span>PieceRecoveryFailed {
         <span class="doccomment">/// Piece index
         </span>piece_index: PieceIndex,
     },
@@ -315,6 +384,7 @@
     public_key: <span class="kw-2">&amp;</span>PublicKey,
     sector_index: u64,
     piece_getter: <span class="kw-2">&amp;</span>PG,
+    piece_getter_retry_policy: PieceGetterRetryPolicy,
     farmer_protocol_info: <span class="kw-2">&amp;</span>FarmerProtocolInfo,
     kzg: <span class="kw-2">&amp;</span>Kzg,
     sector_codec: <span class="kw-2">&amp;</span>SectorCodec,
@@ -354,6 +424,8 @@
         <span class="kw-2">&amp;mut </span>in_memory_sector_scalars,
         sector_index,
         piece_getter,
+        piece_getter_retry_policy,
+        kzg,
         <span class="kw-2">&amp;</span>piece_indexes,
         piece_memory_cache,
     )
@@ -416,13 +488,31 @@
     in_memory_sector_scalars: <span class="kw-2">&amp;mut </span>Vec&lt;Scalar&gt;,
     sector_index: u64,
     piece_getter: <span class="kw-2">&amp;</span>PG,
+    piece_getter_retry_policy: PieceGetterRetryPolicy,
+    kzg: <span class="kw-2">&amp;</span>Kzg,
     piece_indexes: <span class="kw-2">&amp;</span>[PieceIndex],
     piece_memory_cache: PieceMemoryCache,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>pieces_receiving_futures = piece_indexes
         .iter()
         .map(|piece_index| <span class="kw">async </span>{
-            <span class="kw">let </span>piece_result = piece_getter.get_piece(<span class="kw-2">*</span>piece_index).<span class="kw">await</span>;
+            <span class="kw">let </span>piece_result = piece_getter
+                .get_piece(<span class="kw-2">*</span>piece_index, piece_getter_retry_policy)
+                .<span class="kw">await</span>;
+
+            <span class="kw">let </span>failed = piece_result
+                .as_ref()
+                .map(|piece| piece.is_none())
+                .unwrap_or(<span class="bool-val">true</span>);
+
+            <span class="comment">// all retries failed
+            </span><span class="kw">if </span>failed {
+                <span class="kw">let </span>recovered_piece =
+                    recover_missing_piece(piece_getter, kzg.clone(), <span class="kw-2">*</span>piece_index).<span class="kw">await</span>;
+
+                <span class="kw">return </span>(<span class="kw-2">*</span>piece_index, recovered_piece.map(<span class="prelude-val">Some</span>).map_err(Into::into));
+            }
+
             (<span class="kw-2">*</span>piece_index, piece_result)
         })
         .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;();

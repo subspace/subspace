@@ -133,6 +133,41 @@
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::multihash::ToMultihash;
 <span class="kw">use crate</span>::{Node, PieceByHashRequest, PieceByHashResponse};
 <span class="kw">use </span>async_trait::async_trait;
@@ -141,9 +176,10 @@
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>libp2p::PeerId;
 <span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, PieceIndexHash};
-<span class="kw">use </span>tracing::{debug, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, trace, warn};
 
 <span class="doccomment">/// Defines initial duration between get_piece calls.
 </span><span class="kw">const </span>GET_PIECE_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
@@ -163,6 +199,21 @@
 <span class="doccomment">/// Stub implementation for piece validation.
 </span><span class="kw">pub struct </span>NoPieceValidator;
 
+<span class="doccomment">/// Defines retry policy on error during piece acquiring.
+</span><span class="attr">#[derive(PartialEq, Eq, Clone, Debug, Copy)]
+</span><span class="kw">pub enum </span>RetryPolicy {
+    <span class="doccomment">/// Retry N times (including zero)
+    </span>Limited(u16),
+    <span class="doccomment">/// No restrictions on retries
+    </span>Unlimited,
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>RetryPolicy {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::Limited(<span class="number">0</span>)
+    }
+}
+
 <span class="attr">#[async_trait]
 </span><span class="kw">impl </span>PieceValidator <span class="kw">for </span>NoPieceValidator {
     <span class="kw">async fn </span>validate_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw">_</span>: PeerId, <span class="kw">_</span>: PieceIndex, piece: Piece) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
@@ -174,18 +225,16 @@
 </span><span class="kw">pub struct </span>PieceProvider&lt;PV&gt; {
     node: Node,
     piece_validator: <span class="prelude-ty">Option</span>&lt;PV&gt;,
-    retry: bool,
 }
 
 <span class="kw">impl</span>&lt;PV&gt; PieceProvider&lt;PV&gt;
 <span class="kw">where
     </span>PV: PieceValidator,
 {
-    <span class="kw">pub fn </span>new(node: Node, piece_validator: <span class="prelude-ty">Option</span>&lt;PV&gt;, retry: bool) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(node: Node, piece_validator: <span class="prelude-ty">Option</span>&lt;PV&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             node,
             piece_validator,
-            retry,
         }
     }
 
@@ -238,6 +287,7 @@
     <span class="kw">pub async fn </span>get_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
+        retry_policy: RetryPolicy,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;&gt; {
         <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece request.&quot;</span>);
 
@@ -249,17 +299,37 @@
             ..ExponentialBackoff::default()
         };
 
+        <span class="kw">let </span>retries = AtomicU64::default();
+
         retry(backoff, || <span class="kw">async </span>{
+            <span class="kw">let </span>current_attempt = retries.load(Ordering::Relaxed);
+
             <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_from_storage(piece_index).<span class="kw">await </span>{
-                <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Got piece&quot;</span>);
+                <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">&quot;Got piece&quot;</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
             }
 
-            <span class="kw">if </span>!<span class="self">self</span>.retry {
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-            }
+            <span class="kw">match </span>retry_policy {
+                RetryPolicy::Limited(max_retries) =&gt; {
+                    <span class="kw">if </span>current_attempt &gt;= max_retries.into() {
+                        <span class="kw">if </span>max_retries &gt; <span class="number">0 </span>{
+                            <span class="macro">error!</span>(
+                                %piece_index,
+                                current_attempt,
+                                max_retries,
+                                <span class="string">&quot;Couldn&#39;t get a piece from DSN. No retries left.&quot;
+                            </span>);
+                        }
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+                    }
+                }
+                RetryPolicy::Unlimited =&gt; {
+                    <span class="comment">// no action
+                </span>}
+            };
 
-            <span class="macro">warn!</span>(%piece_index, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
+            <span class="macro">warn!</span>(%piece_index, current_attempt, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
+            retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
 
             <span class="prelude-val">Err</span>(backoff::Error::transient(
                 <span class="string">&quot;Couldn&#39;t get piece from DSN&quot;</span>.into(),
