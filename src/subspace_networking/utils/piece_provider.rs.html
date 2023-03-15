@@ -168,6 +168,14 @@
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
 <a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::multihash::ToMultihash;
 <span class="kw">use crate</span>::{Node, PieceByHashRequest, PieceByHashResponse};
 <span class="kw">use </span>async_trait::async_trait;
@@ -185,6 +193,8 @@
 </span><span class="kw">const </span>GET_PIECE_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 <span class="doccomment">/// Defines max duration between get_piece calls.
 </span><span class="kw">const </span>GET_PIECE_MAX_INTERVAL: Duration = Duration::from_secs(<span class="number">5</span>);
+<span class="doccomment">/// Start generating warnings after N failed attempts.
+</span><span class="kw">const </span>START_WARN_AFTER_ATTEMPTS_NUMBER: u64 = <span class="number">3</span>;
 
 <span class="attr">#[async_trait]
 </span><span class="kw">pub trait </span>PieceValidator: Sync + Send {
@@ -302,14 +312,14 @@
         <span class="kw">let </span>retries = AtomicU64::default();
 
         retry(backoff, || <span class="kw">async </span>{
-            <span class="kw">let </span>current_attempt = retries.load(Ordering::Relaxed);
+            <span class="kw">let </span>current_attempt = retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
 
             <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_from_storage(piece_index).<span class="kw">await </span>{
                 <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">&quot;Got piece&quot;</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
             }
 
-            <span class="kw">match </span>retry_policy {
+            <span class="kw">let </span>retry_limit = <span class="kw">match </span>retry_policy {
                 RetryPolicy::Limited(max_retries) =&gt; {
                     <span class="kw">if </span>current_attempt &gt;= max_retries.into() {
                         <span class="kw">if </span>max_retries &gt; <span class="number">0 </span>{
@@ -322,14 +332,20 @@
                         }
                         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
                     }
+
+                    max_retries <span class="kw">as </span>u64
                 }
-                RetryPolicy::Unlimited =&gt; {
-                    <span class="comment">// no action
-                </span>}
+                RetryPolicy::Unlimited =&gt; u64::MAX,
             };
 
-            <span class="macro">warn!</span>(%piece_index, current_attempt, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
-            retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+            <span class="comment">// Warn if there were several attempts or retry limit is low.
+            </span><span class="kw">if </span>current_attempt &gt;= START_WARN_AFTER_ATTEMPTS_NUMBER
+                || (retry_limit &lt; START_WARN_AFTER_ATTEMPTS_NUMBER)
+            {
+                <span class="macro">warn!</span>(%piece_index, current_attempt, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
+            } <span class="kw">else </span>{
+                <span class="macro">debug!</span>(%piece_index, current_attempt, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
+            }
 
             <span class="prelude-val">Err</span>(backoff::Error::transient(
                 <span class="string">&quot;Couldn&#39;t get piece from DSN&quot;</span>.into(),
