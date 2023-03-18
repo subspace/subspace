@@ -45,6 +45,7 @@ var sourcesIndex = JSON.parse('{\
 "subspace_fraud_proof":["",[],["invalid_state_transition_proof.rs","lib.rs"]],\
 "subspace_networking":["",[["behavior",[["provider_storage",[],["providers.rs"]]],["persistent_parameters.rs","provider_storage.rs"]],["create",[],["temporary_bans.rs","transport.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","peer_info.rs","piece_by_key.rs","pieces_by_range.rs","root_block.rs"]],["utils",[],["multihash.rs","piece_provider.rs","pieces.rs","prometheus.rs","unique_record_binary_heap.rs"]]],["behavior.rs","create.rs","lib.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["core_domain",[],["cli.rs","core_payments_chain_spec.rs"]],["system_domain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","core_domain.rs","import_blocks_from_dsn.rs","lib.rs","system_domain.rs"]],\
+"subspace_proof_of_space":["",[],["lib.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[["weights",[],["subspace.rs"]]],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs","weights.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
