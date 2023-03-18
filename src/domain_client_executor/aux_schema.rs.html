@@ -721,20 +721,6 @@
 <a href="#721" id="721">721</a>
 <a href="#722" id="722">722</a>
 <a href="#723" id="723">723</a>
-<a href="#724" id="724">724</a>
-<a href="#725" id="725">725</a>
-<a href="#726" id="726">726</a>
-<a href="#727" id="727">727</a>
-<a href="#728" id="728">728</a>
-<a href="#729" id="729">729</a>
-<a href="#730" id="730">730</a>
-<a href="#731" id="731">731</a>
-<a href="#732" id="732">732</a>
-<a href="#733" id="733">733</a>
-<a href="#734" id="734">734</a>
-<a href="#735" id="735">735</a>
-<a href="#736" id="736">736</a>
-<a href="#737" id="737">737</a>
 </pre><pre class="rust"><code><span class="doccomment">//! Schema for executor in the aux-db.
 
 </span><span class="kw">use </span>codec::{Decode, Encode};
@@ -750,10 +736,10 @@
 <span class="kw">const </span>EXECUTION_RECEIPT_START: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;execution_receipt_start&quot;</span>;
 <span class="kw">const </span>EXECUTION_RECEIPT_BLOCK_NUMBER: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;execution_receipt_block_number&quot;</span>;
 
-<span class="doccomment">/// bad_receipt_block_number =&gt; all_bad_signed_bundle_hashes_at_this_block
-</span><span class="kw">const </span>BAD_SIGNED_BUNDLE_HASHES: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;bad_signed_bundle_hashes&quot;</span>;
+<span class="doccomment">/// bad_receipt_block_number =&gt; all_bad_receipt_hashes_at_this_block
+</span><span class="kw">const </span>BAD_RECEIPT_HASHES: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;bad_receipt_hashes&quot;</span>;
 
-<span class="doccomment">/// bad_signed_bundle_hash =&gt; (trace_mismatch_index, associated_local_block_hash)
+<span class="doccomment">/// bad_receipt_hash =&gt; (trace_mismatch_index, associated_local_block_hash)
 </span><span class="kw">const </span>BAD_RECEIPT_MISMATCH_INFO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;bad_receipt_mismatch_info&quot;</span>;
 
 <span class="doccomment">/// Set of block numbers at which there is at least one bad receipt detected.
@@ -768,8 +754,8 @@
     (EXECUTION_RECEIPT, block_hash).encode()
 }
 
-<span class="kw">fn </span>bad_receipt_mismatch_info_key(signed_bundle_hash: <span class="kw">impl </span>Encode) -&gt; Vec&lt;u8&gt; {
-    (BAD_RECEIPT_MISMATCH_INFO, signed_bundle_hash).encode()
+<span class="kw">fn </span>bad_receipt_mismatch_info_key(bad_receipt_hash: <span class="kw">impl </span>Encode) -&gt; Vec&lt;u8&gt; {
+    (BAD_RECEIPT_MISMATCH_INFO, bad_receipt_hash).encode()
 }
 
 <span class="kw">fn </span>load_decode&lt;Backend: AuxStore, T: Decode&gt;(
@@ -873,14 +859,10 @@
 }
 
 <span class="doccomment">/// Writes a bad execution receipt to aux storage.
-///
-/// Use `bad_signed_bundle_hash` instead of the hash of execution receipt as key to
-/// avoid the potential collision that two dishonest executors produced an identical
-/// invalid receipt even it&#39;s less likely.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_bad_receipt&lt;Backend, PBlock, Hash&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
     bad_receipt_number: NumberFor&lt;PBlock&gt;,
-    bad_signed_bundle_hash: H256,
+    bad_receipt_hash: H256,
     trace_mismatch_info: (u32, Hash),
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt;
 <span class="kw">where
@@ -888,18 +870,15 @@
     PBlock: BlockT,
     Hash: Encode,
 {
-    <span class="kw">let </span>bad_signed_bundle_hashes_key = (BAD_SIGNED_BUNDLE_HASHES, bad_receipt_number).encode();
-    <span class="kw">let </span><span class="kw-2">mut </span>bad_signed_bundle_hashes: Vec&lt;H256&gt; =
-        load_decode(backend, bad_signed_bundle_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
-    bad_signed_bundle_hashes.push(bad_signed_bundle_hash);
+    <span class="kw">let </span>bad_receipt_hashes_key = (BAD_RECEIPT_HASHES, bad_receipt_number).encode();
+    <span class="kw">let </span><span class="kw-2">mut </span>bad_receipt_hashes: Vec&lt;H256&gt; =
+        load_decode(backend, bad_receipt_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
+    bad_receipt_hashes.push(bad_receipt_hash);
 
     <span class="kw">let </span><span class="kw-2">mut </span>to_insert = <span class="macro">vec!</span>[
+        (bad_receipt_hashes_key, bad_receipt_hashes.encode()),
         (
-            bad_signed_bundle_hashes_key,
-            bad_signed_bundle_hashes.encode(),
-        ),
-        (
-            bad_receipt_mismatch_info_key(bad_signed_bundle_hash),
+            bad_receipt_mismatch_info_key(bad_receipt_hash),
             trace_mismatch_info.encode(),
         ),
     ];
@@ -926,27 +905,27 @@
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>delete_bad_receipt&lt;Backend: AuxStore&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
     block_number: BlockNumber,
-    signed_bundle_hash: H256,
+    bad_receipt_hash: H256,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
-    <span class="kw">let </span>bad_signed_bundle_hashes_key = (BAD_SIGNED_BUNDLE_HASHES, block_number).encode();
+    <span class="kw">let </span>bad_receipt_hashes_key = (BAD_RECEIPT_HASHES, block_number).encode();
     <span class="kw">let </span><span class="kw-2">mut </span>hashes_at_block_number: Vec&lt;H256&gt; =
-        load_decode(backend, bad_signed_bundle_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
+        load_decode(backend, bad_receipt_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
 
     <span class="kw">if let </span><span class="prelude-val">Some</span>(index) = hashes_at_block_number
         .iter()
-        .position(|<span class="kw-2">&amp;</span>x| x == signed_bundle_hash)
+        .position(|<span class="kw-2">&amp;</span>x| x == bad_receipt_hash)
     {
         hashes_at_block_number.swap_remove(index);
     } <span class="kw">else </span>{
         <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Backend(<span class="macro">format!</span>(
-            <span class="string">&quot;Deleting an inexistent bad receipt {signed_bundle_hash:?}, available: {hashes_at_block_number:?}&quot;</span>,
+            <span class="string">&quot;Deleting an inexistent bad receipt {bad_receipt_hash:?}, available: {hashes_at_block_number:?}&quot;</span>,
         )));
     }
 
-    <span class="kw">let </span><span class="kw-2">mut </span>keys_to_delete = <span class="macro">vec!</span>[bad_receipt_mismatch_info_key(signed_bundle_hash)];
+    <span class="kw">let </span><span class="kw-2">mut </span>keys_to_delete = <span class="macro">vec!</span>[bad_receipt_mismatch_info_key(bad_receipt_hash)];
 
     <span class="kw">let </span>to_insert = <span class="kw">if </span>hashes_at_block_number.is_empty() {
-        keys_to_delete.push(bad_signed_bundle_hashes_key);
+        keys_to_delete.push(bad_receipt_hashes_key);
 
         <span class="kw">let </span><span class="kw-2">mut </span>bad_receipt_numbers: Vec&lt;BlockNumber&gt; =
             load_decode(backend, BAD_RECEIPT_NUMBERS.encode().as_slice())<span class="question-mark">?</span>.ok_or_else(|| {
@@ -962,10 +941,7 @@
             <span class="macro">vec!</span>[(BAD_RECEIPT_NUMBERS.encode(), bad_receipt_numbers.encode())]
         }
     } <span class="kw">else </span>{
-        <span class="macro">vec!</span>[(
-            bad_signed_bundle_hashes_key,
-            hashes_at_block_number.encode(),
-        )]
+        <span class="macro">vec!</span>[(bad_receipt_hashes_key, hashes_at_block_number.encode())]
     };
 
     backend.insert_aux(
@@ -981,15 +957,15 @@
     backend: <span class="kw-2">&amp;</span>Backend,
     block_number: Number,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt; {
-    <span class="kw">let </span>bad_signed_bundle_hashes_key = (BAD_SIGNED_BUNDLE_HASHES, block_number).encode();
+    <span class="kw">let </span>bad_receipt_hashes_key = (BAD_RECEIPT_HASHES, block_number).encode();
 
     <span class="kw">let </span>bad_receipt_hashes: Vec&lt;H256&gt; =
-        load_decode(backend, bad_signed_bundle_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
+        load_decode(backend, bad_receipt_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
 
     <span class="kw">let </span>keys_to_delete = bad_receipt_hashes
         .into_iter()
         .map(bad_receipt_mismatch_info_key)
-        .chain(std::iter::once(bad_signed_bundle_hashes_key))
+        .chain(std::iter::once(bad_receipt_hashes_key))
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
     backend.insert_aux(
@@ -1057,19 +1033,19 @@
         load_decode(backend, BAD_RECEIPT_NUMBERS.encode().as_slice())<span class="question-mark">?</span>.unwrap_or_default();
 
     <span class="kw">for </span>bad_receipt_number <span class="kw">in </span>bad_receipt_numbers {
-        <span class="kw">let </span>bad_signed_bundle_hashes_key = (BAD_SIGNED_BUNDLE_HASHES, bad_receipt_number).encode();
-        <span class="kw">let </span>bad_signed_bundle_hashes: Vec&lt;H256&gt; =
-            load_decode(backend, bad_signed_bundle_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
+        <span class="kw">let </span>bad_receipt_hashes_key = (BAD_RECEIPT_HASHES, bad_receipt_number).encode();
+        <span class="kw">let </span>bad_receipt_hashes: Vec&lt;H256&gt; =
+            load_decode(backend, bad_receipt_hashes_key.as_slice())<span class="question-mark">?</span>.unwrap_or_default();
 
         <span class="kw">let </span><span class="kw-2">mut </span>fork_receipt_hashes = <span class="macro">vec!</span>[];
-        <span class="kw">for </span>bad_signed_bundle_hash <span class="kw">in </span>bad_signed_bundle_hashes.iter() {
+        <span class="kw">for </span>bad_receipt_hash <span class="kw">in </span>bad_receipt_hashes.iter() {
             <span class="kw">let </span>(trace_mismatch_index, block_hash): (u32, Block::Hash) = load_decode(
                 backend,
-                bad_receipt_mismatch_info_key(bad_signed_bundle_hash).as_slice(),
+                bad_receipt_mismatch_info_key(bad_receipt_hash).as_slice(),
             )<span class="question-mark">?
             </span>.ok_or_else(|| {
                 ClientError::Backend(<span class="macro">format!</span>(
-                        <span class="string">&quot;Trace mismatch info not found for `bad_signed_bundle_hash`: {bad_signed_bundle_hash:?}&quot;
+                    <span class="string">&quot;Trace mismatch info not found for `bad_receipt_hash`: {bad_receipt_hash:?}&quot;
                 </span>))
             })<span class="question-mark">?</span>;
 
@@ -1084,13 +1060,9 @@
                         <span class="string">&quot;Bad receipts are not on the canonical chain&quot;
                     </span>);
                 }
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((
-                    <span class="kw-2">*</span>bad_signed_bundle_hash,
-                    trace_mismatch_index,
-                    block_hash,
-                )));
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((<span class="kw-2">*</span>bad_receipt_hash, trace_mismatch_index, block_hash)));
             } <span class="kw">else </span>{
-                fork_receipt_hashes.push(bad_signed_bundle_hash);
+                fork_receipt_hashes.push(bad_receipt_hash);
             }
         }
 
@@ -1354,8 +1326,8 @@
             substrate_test_runtime_client::TestClientBuilder::new().build_with_backend();
 
         <span class="kw">let </span>bad_receipts_at = |number: BlockNumber| -&gt; <span class="prelude-ty">Option</span>&lt;HashSet&lt;Hash&gt;&gt; {
-            <span class="kw">let </span>bad_signed_bundle_hashes_key = (BAD_SIGNED_BUNDLE_HASHES, number).encode();
-            load_decode(<span class="kw-2">&amp;</span>client, bad_signed_bundle_hashes_key.as_slice())
+            <span class="kw">let </span>bad_receipt_hashes_key = (BAD_RECEIPT_HASHES, number).encode();
+            load_decode(<span class="kw-2">&amp;</span>client, bad_receipt_hashes_key.as_slice())
                 .unwrap()
                 .map(|v: Vec&lt;Hash&gt;| v.into_iter().collect())
         };
