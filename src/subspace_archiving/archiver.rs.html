@@ -874,11 +874,6 @@
 <a href="#874" id="874">874</a>
 <a href="#875" id="875">875</a>
 <a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
-<a href="#881" id="881">881</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -916,8 +911,8 @@
     BlockObject, BlockObjectMapping, PieceObject, PieceObjectMapping,
 };
 <span class="kw">use </span>subspace_core_primitives::{
-    crypto, ArchivedBlockProgress, Blake2b256Hash, BlockNumber, FlatPieces, LastArchivedBlock,
-    RecordsRoot, RootBlock, BLAKE2B_256_HASH_SIZE, RECORDED_HISTORY_SEGMENT_SIZE, WITNESS_SIZE,
+    ArchivedBlockProgress, Blake2b256Hash, BlockNumber, FlatPieces, LastArchivedBlock, PieceRef,
+    RecordsRoot, RootBlock, BLAKE2B_256_HASH_SIZE, RECORDED_HISTORY_SEGMENT_SIZE,
 };
 
 <span class="kw">const </span>INITIAL_LAST_ARCHIVED_BLOCK: LastArchivedBlock = LastArchivedBlock {
@@ -1674,12 +1669,12 @@
                     .as_ref()
                     .chunks_exact(<span class="self">self</span>.record_size <span class="kw">as </span>usize),
             )
-            .for_each(|((position, piece), shard_chunk)| {
-                <span class="kw">let </span>(record_part, witness_part) = piece.split_at_mut(<span class="self">self</span>.record_size <span class="kw">as </span>usize);
+            .for_each(|((position, <span class="kw-2">mut </span>piece), shard_chunk)| {
+                <span class="kw">let </span>(<span class="kw-2">mut </span>record, <span class="kw-2">mut </span>witness) = piece.split_mut();
 
-                record_part.copy_from_slice(shard_chunk);
+                record.as_mut().copy_from_slice(shard_chunk);
                 <span class="comment">// TODO: Consider batch witness creation for improved performance
-                </span>witness_part.copy_from_slice(
+                </span>witness.as_mut().copy_from_slice(
                     <span class="kw-2">&amp;</span><span class="self">self
                         </span>.kzg
                         .create_witness(<span class="kw-2">&amp;</span>polynomial, position <span class="kw">as </span>u32)
@@ -1716,23 +1711,18 @@
 </span><span class="kw">pub fn </span>is_piece_valid(
     kzg: <span class="kw-2">&amp;</span>Kzg,
     num_pieces_in_segment: u32,
-    piece: <span class="kw-2">&amp;</span>[u8],
+    piece: PieceRef&lt;<span class="lifetime">&#39;_</span>&gt;,
     commitment: RecordsRoot,
     position: u32,
-    record_size: u32,
 ) -&gt; bool {
-    <span class="kw">if </span>piece.len() != (record_size + WITNESS_SIZE) <span class="kw">as </span>usize {
-        <span class="kw">return </span><span class="bool-val">false</span>;
-    }
-
-    <span class="kw">let </span>(record, witness) = piece.split_at(record_size <span class="kw">as </span>usize);
-    <span class="kw">let </span>witness = <span class="kw">match </span>witness.try_into().map(Witness::try_from_bytes) {
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(witness)) =&gt; witness,
+    <span class="kw">let </span>(record, witness) = piece.split();
+    <span class="kw">let </span>witness = <span class="kw">match </span>Witness::try_from_bytes(<span class="kw-2">&amp;</span>witness) {
+        <span class="prelude-val">Ok</span>(witness) =&gt; witness,
         <span class="kw">_ </span>=&gt; {
             <span class="kw">return </span><span class="bool-val">false</span>;
         }
     };
-    <span class="kw">let </span>leaf_hash = crypto::blake2b_256_254_hash(record);
+    <span class="kw">let </span>leaf_hash = blake2b_256_254_hash(<span class="kw-2">&amp;</span>record);
 
     kzg.verify(
         <span class="kw-2">&amp;</span>commitment,

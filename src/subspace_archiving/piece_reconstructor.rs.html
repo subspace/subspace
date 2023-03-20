@@ -188,11 +188,6 @@
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
 <a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
 </pre><pre class="rust"><code><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::utils;
@@ -244,9 +239,6 @@
     </span>data_shards: u32,
     <span class="doccomment">/// Number of parity shards
     </span>parity_shards: u32,
-    <span class="doccomment">/// Configuration parameter defining the size of one record (data in one piece excluding witness
-    /// size)
-    </span>record_size: u32,
     <span class="doccomment">/// Erasure coding data structure
     </span>reed_solomon: ReedSolomon,
     <span class="doccomment">/// KZG instance
@@ -274,7 +266,6 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             data_shards,
             parity_shards,
-            record_size,
             reed_solomon,
             kzg,
         })
@@ -293,7 +284,7 @@
             .map(|maybe_piece| {
                 maybe_piece
                     .as_ref()
-                    .map(|piece| utils::slice_to_arrays(<span class="kw-2">&amp;</span>piece[..<span class="self">self</span>.record_size <span class="kw">as </span>usize]))
+                    .map(|piece| utils::slice_to_arrays(<span class="kw-2">&amp;</span>piece.record()))
             })
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
@@ -311,11 +302,11 @@
             .as_pieces_mut()
             .zip(polynomial_data.chunks_exact_mut(BLAKE2B_256_HASH_SIZE))
             .zip(shards)
-            .for_each(|((piece, polynomial_data), record)| {
+            .for_each(|((<span class="kw-2">mut </span>piece, polynomial_data), record)| {
                 <span class="kw">let </span>record =
                     record.expect(<span class="string">&quot;Reconstruction just happened and all records are present; qed&quot;</span>);
                 <span class="kw">let </span>record = record.flatten();
-                piece[..<span class="self">self</span>.record_size <span class="kw">as </span>usize].copy_from_slice(record);
+                piece.record_mut().as_mut().copy_from_slice(record);
                 polynomial_data.copy_from_slice(<span class="kw-2">&amp;</span>blake2b_256_254_hash(record));
             });
 
@@ -339,8 +330,8 @@
         pieces
             .as_pieces_mut()
             .enumerate()
-            .for_each(|(position, piece)| {
-                piece[<span class="self">self</span>.record_size <span class="kw">as </span>usize..].copy_from_slice(
+            .for_each(|(position, <span class="kw-2">mut </span>piece)| {
+                piece.witness_mut().as_mut().copy_from_slice(
                     <span class="kw-2">&amp;</span><span class="self">self
                         </span>.kzg
                         .create_witness(<span class="kw-2">&amp;</span>polynomial, position <span class="kw">as </span>u32)
@@ -367,17 +358,16 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(ReconstructorError::IncorrectPiecePosition);
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::try_from(
+        <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::from(
             reconstructed_records
                 .as_pieces()
                 .nth(piece_position)
                 .expect(
                 <span class="string">&quot;Piece exists at the position within segment after successful reconstruction; qed&quot;</span>,
             ),
-        )
-        .expect(<span class="string">&quot;Piece in `FlatPieces` always has correct length; qed&quot;</span>);
+        );
 
-        piece[<span class="self">self</span>.record_size <span class="kw">as </span>usize..].copy_from_slice(
+        piece.witness_mut().as_mut().copy_from_slice(
             <span class="kw-2">&amp;</span><span class="self">self
                 </span>.kzg
                 .create_witness(<span class="kw-2">&amp;</span>polynomial, piece_position <span class="kw">as </span>u32)
