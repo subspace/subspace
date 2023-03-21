@@ -8,5 +8,6 @@
 "pallet_messenger":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_messenger/enum.Error.html\" title=\"enum pallet_messenger::Error\">Error</a>&lt;T&gt;"]],
 "pallet_receipts":[["impl PalletError for <a class=\"enum\" href=\"pallet_receipts/enum.FraudProofError.html\" title=\"enum pallet_receipts::FraudProofError\">FraudProofError</a>"]],
 "pallet_subspace":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_subspace/enum.Error.html\" title=\"enum pallet_subspace::Error\">Error</a>&lt;T&gt;"]],
-"pallet_transporter":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_transporter/enum.Error.html\" title=\"enum pallet_transporter::Error\">Error</a>&lt;T&gt;"]]
+"pallet_transporter":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_transporter/enum.Error.html\" title=\"enum pallet_transporter::Error\">Error</a>&lt;T&gt;"]],
+"sp_messenger":[["impl PalletError for <a class=\"enum\" href=\"sp_messenger/verification/enum.VerificationError.html\" title=\"enum sp_messenger::verification::VerificationError\">VerificationError</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

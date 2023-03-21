@@ -281,9 +281,8 @@
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
 <a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a>
-</pre><pre class="rust"><code><span class="kw">use </span>futures::FutureExt;
+</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::state_root_extractor::StateRootExtractor;
+<span class="kw">use </span>futures::FutureExt;
 <span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sc_transaction_pool::{ChainApi, FullChainApi};
 <span class="kw">use </span>sc_transaction_pool_api::error::Error <span class="kw">as </span>TxPoolError;
@@ -370,28 +369,23 @@
 /// This is used by the System domain to validate Extrinsics.
 /// Returns either true if the XDM is valid else false.
 /// Returns Error when required calls to fetch header info fails.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>verify_xdm_with_primary_chain_client&lt;PClient, SClient, PBlock, SBlock&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>verify_xdm_with_primary_chain_client&lt;PClient, PBlock, SBlock, SRE&gt;(
     primary_chain_client: <span class="kw-2">&amp;</span>Arc&lt;PClient&gt;,
-    system_domain_client: <span class="kw-2">&amp;</span>Arc&lt;SClient&gt;,
+    state_root_extractor: <span class="kw-2">&amp;</span>SRE,
     extrinsic: <span class="kw-2">&amp;</span>SBlock::Extrinsic,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;bool, Error&gt;
 <span class="kw">where
     </span>PClient: HeaderBackend&lt;PBlock&gt; + ProvideRuntimeApi&lt;PBlock&gt; + <span class="lifetime">&#39;static</span>,
     PClient::Api: ExecutorApi&lt;PBlock, SBlock::Hash&gt;,
-    SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
-    SClient::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;,
     SBlock: BlockT,
     PBlock: BlockT,
     NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;SBlock&gt;&gt;,
     PBlock::Hash: From&lt;SBlock::Hash&gt;,
+    SRE: StateRootExtractor&lt;SBlock&gt;,
 {
-    <span class="kw">let </span>system_domain_runtime = system_domain_client.runtime_api();
-    <span class="kw">let </span>best_hash = system_domain_client.info().best_hash;
-    <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(state_roots)) =
-        system_domain_runtime.extract_xdm_proof_state_roots(best_hash, extrinsic)
-    {
-        <span class="comment">// TODO: Can&#39;t above variable be reused here?
-        // verify system domain state root
+    <span class="kw">let </span>at = state_root_extractor.block_hash();
+    <span class="kw">if let </span><span class="prelude-val">Ok</span>(state_roots) = state_root_extractor.extract_state_roots(at, extrinsic) {
+        <span class="comment">// verify system domain state root
         </span><span class="kw">let </span>best_hash = primary_chain_client.info().best_hash;
         <span class="kw">let </span>primary_runtime = primary_chain_client.runtime_api();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(system_domain_state_root) = primary_runtime.system_domain_state_root_at(
@@ -409,48 +403,49 @@
 }
 
 <span class="doccomment">/// A verifier for XDM messages on System domain.
-</span><span class="kw">pub struct </span>SystemDomainXDMVerifier&lt;PClient, SClient, PBlock, SBlock, Verifier&gt; {
+</span><span class="kw">pub struct </span>SystemDomainXDMVerifier&lt;PClient, PBlock, SBlock, Verifier, SRE&gt; {
     _data: PhantomData&lt;(PBlock, SBlock)&gt;,
     primary_chain_client: Arc&lt;PClient&gt;,
-    system_domain_client: Arc&lt;SClient&gt;,
+    state_root_extractor: SRE,
     inner_verifier: Verifier,
 }
 
-<span class="kw">impl</span>&lt;PClient, SClient, PBlock, SBlock, Verifier&gt;
-    SystemDomainXDMVerifier&lt;PClient, SClient, PBlock, SBlock, Verifier&gt;
+<span class="kw">impl</span>&lt;PClient, PBlock, SBlock, Verifier, SRE&gt;
+    SystemDomainXDMVerifier&lt;PClient, PBlock, SBlock, Verifier, SRE&gt;
 {
     <span class="kw">pub fn </span>new(
         primary_chain_client: Arc&lt;PClient&gt;,
-        system_domain_client: Arc&lt;SClient&gt;,
+        state_root_extractor: SRE,
         inner_verifier: Verifier,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             _data: Default::default(),
             primary_chain_client,
-            system_domain_client,
+            state_root_extractor,
             inner_verifier,
         }
     }
 }
 
-<span class="kw">impl</span>&lt;PClient, SClient, PBlock, SBlock, Verifier&gt; Clone
-    <span class="kw">for </span>SystemDomainXDMVerifier&lt;PClient, SClient, PBlock, SBlock, Verifier&gt;
+<span class="kw">impl</span>&lt;PClient, PBlock, SBlock, Verifier, SRE&gt; Clone
+    <span class="kw">for </span>SystemDomainXDMVerifier&lt;PClient, PBlock, SBlock, Verifier, SRE&gt;
 <span class="kw">where
     </span>Verifier: Clone,
+    SRE: Clone,
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             _data: Default::default(),
             primary_chain_client: <span class="self">self</span>.primary_chain_client.clone(),
-            system_domain_client: <span class="self">self</span>.system_domain_client.clone(),
+            state_root_extractor: <span class="self">self</span>.state_root_extractor.clone(),
             inner_verifier: <span class="self">self</span>.inner_verifier.clone(),
         }
     }
 }
 
-<span class="kw">impl</span>&lt;PClient, SClient, PBlock, SBlock, Verifier&gt;
+<span class="kw">impl</span>&lt;PClient, SClient, PBlock, SBlock, Verifier, SRE&gt;
     VerifyExtrinsic&lt;SBlock, SClient, FullChainApi&lt;SClient, SBlock&gt;&gt;
-    <span class="kw">for </span>SystemDomainXDMVerifier&lt;PClient, SClient, PBlock, SBlock, Verifier&gt;
+    <span class="kw">for </span>SystemDomainXDMVerifier&lt;PClient, PBlock, SBlock, Verifier, SRE&gt;
 <span class="kw">where
     </span>PClient: HeaderBackend&lt;PBlock&gt; + ProvideRuntimeApi&lt;PBlock&gt; + <span class="lifetime">&#39;static</span>,
     PClient::Api: ExecutorApi&lt;PBlock, SBlock::Hash&gt;,
@@ -462,6 +457,7 @@
     NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;SBlock&gt;&gt;,
     PBlock::Hash: From&lt;SBlock::Hash&gt;,
     Verifier: VerifyExtrinsic&lt;SBlock, SClient, FullChainApi&lt;SClient, SBlock&gt;&gt;,
+    SRE: StateRootExtractor&lt;SBlock&gt;,
 {
     <span class="kw">fn </span>verify_extrinsic(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -473,7 +469,7 @@
     ) -&gt; ValidationFuture {
         <span class="kw">let </span>result = verify_xdm_with_primary_chain_client::&lt;<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             <span class="kw-2">&amp;</span><span class="self">self</span>.primary_chain_client,
-            <span class="kw-2">&amp;</span><span class="self">self</span>.system_domain_client,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.state_root_extractor,
             <span class="kw-2">&amp;</span>uxt,
         );
 
@@ -534,7 +530,7 @@
         + BlockBackend&lt;Block&gt;
         + BlockIdTo&lt;Block&gt;
         + HeaderBackend&lt;Block&gt;
-        + HeaderMetadata&lt;Block, Error = sp_blockchain::Error&gt;
+        + HeaderMetadata&lt;Block, Error = Error&gt;
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,

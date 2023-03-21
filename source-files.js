@@ -3,7 +3,7 @@ var sourcesIndex = JSON.parse('{\
 "cross_domain_message_gossip":["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
-"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","parent_chain.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs","xdm_verifier.rs"]],\
+"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","parent_chain.rs","state_root_extractor.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs","xdm_verifier.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
@@ -17,7 +17,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
-"pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs","verification.rs"]],\
+"pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs"]],\
 "pallet_object_store":["",[],["lib.rs"]],\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
 "pallet_receipts":["",[],["lib.rs"]],\
@@ -36,7 +36,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","transaction.rs"]],\
 "sp_executor_registry":["",[],["lib.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
-"sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
+"sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs","verification.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
 "sp_receipts":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["incremental_record_commitments.rs","record_shards.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs","utils.rs"]],\
