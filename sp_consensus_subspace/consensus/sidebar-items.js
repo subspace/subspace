@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":[["verify_solution","Verify whether solution is valid."]],"struct":[["HostFunctions","Provides implementations for the extern host functions."]]};
