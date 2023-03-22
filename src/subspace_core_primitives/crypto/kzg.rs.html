@@ -413,14 +413,6 @@
 <a href="#413" id="413">413</a>
 <a href="#414" id="414">414</a>
 <a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
-<a href="#422" id="422">422</a>
-<a href="#423" id="423">423</a>
 </pre><pre class="rust"><code><span class="doccomment">//! Tools for KZG commitment scheme
 
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;serde&quot;</span>)]
@@ -430,86 +422,116 @@
 
 <span class="kw">extern crate </span>alloc;
 
+<span class="kw">use </span><span class="kw">crate</span>::Scalar;
+<span class="kw">use </span>alloc::collections::btree_map::Entry;
+<span class="kw">use </span>alloc::collections::BTreeMap;
+<span class="kw">use </span>alloc::format;
+<span class="kw">use </span>alloc::string::{String, ToString};
+<span class="kw">use </span>alloc::sync::Arc;
 <span class="kw">use </span>alloc::vec::Vec;
+<span class="kw">use </span>blst_from_scratch::eip_4844::{bytes_from_g1_rust, bytes_to_g1_rust, bytes_to_g2_rust};
+<span class="kw">use </span>blst_from_scratch::types::fft_settings::FsFFTSettings;
+<span class="kw">use </span>blst_from_scratch::types::fr::FsFr;
+<span class="kw">use </span>blst_from_scratch::types::g1::FsG1;
+<span class="kw">use </span>blst_from_scratch::types::kzg_settings::FsKZGSettings;
+<span class="kw">use </span>blst_from_scratch::types::poly::FsPoly;
 <span class="kw">use </span>core::hash::{Hash, Hasher};
-<span class="kw">use </span>dusk_bls12_381::{G1Affine, G2Affine, G2Prepared};
-<span class="kw">pub use </span>dusk_bytes;
-<span class="kw">use </span>dusk_bytes::{DeserializableSlice, Serializable};
-<span class="kw">pub use </span>dusk_plonk::commitment_scheme::kzg10::key::{CommitKey, OpeningKey};
-<span class="kw">pub use </span>dusk_plonk::commitment_scheme::PublicParameters;
-<span class="kw">pub use </span>dusk_plonk::error::Error;
-<span class="kw">use </span>dusk_plonk::fft::domain::EvaluationDomain;
-<span class="kw">use </span>dusk_plonk::fft::evaluations::Evaluations;
-<span class="kw">use </span>dusk_plonk::fft::polynomial::Polynomial <span class="kw">as </span>PlonkPolynomial;
-<span class="kw">use </span>dusk_plonk::prelude::BlsScalar;
+<span class="kw">use </span>kzg::{FFTFr, FFTSettings, KZGSettings};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, EncodeLike, Input, MaxEncodedLen};
+<span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
+</span><span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>scale_info::{Type, TypeInfo};
+<span class="attr">#[cfg(not(feature = <span class="string">&quot;std&quot;</span>))]
+</span><span class="kw">use </span>spin::Mutex;
+<span class="kw">use </span>tracing::debug;
 
-<span class="kw">const </span>TEST_PUBLIC_PARAMETERS: <span class="kw-2">&amp;</span>[u8] = <span class="macro">include_bytes!</span>(<span class="string">&quot;kzg/test-public-parameters.bin&quot;</span>);
+<span class="doccomment">/// Embedded KZG settings as bytes, too big for `no_std` in most cases
+</span><span class="attr">#[cfg(feature = <span class="string">&quot;embedded-kzg-settings&quot;</span>)]
+</span><span class="kw">pub const </span>EMBEDDED_KZG_SETTINGS_BYTES: <span class="kw-2">&amp;</span>[u8] = <span class="macro">include_bytes!</span>(<span class="string">&quot;kzg/test-public-parameters.bin&quot;</span>);
+
+<span class="comment">// Symmetric function is present in tests
+</span><span class="doccomment">/// Function turns bytes into `FsKZGSettings`, it is up to the user to ensure that bytes make sense,
+/// otherwise result can be very wrong (but will not panic).
+</span><span class="kw">pub fn </span>bytes_to_kzg_settings(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;FsKZGSettings, String&gt; {
+    <span class="comment">// 48 bytes per G1 and 96 bytes per G2;
+    </span><span class="kw">if </span>bytes.is_empty() || bytes.len() % (<span class="number">48 </span>+ <span class="number">96</span>) != <span class="number">0 </span>{
+        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">&quot;Bad bytes&quot;</span>.to_string());
+    }
+    <span class="kw">let </span>secret_len = bytes.len() / (<span class="number">48 </span>+ <span class="number">96</span>);
+
+    <span class="kw">let </span>(secret_g1_bytes, secret_g2_bytes) = bytes.split_at(secret_len * <span class="number">48</span>);
+    <span class="kw">let </span>secret_g1 = secret_g1_bytes
+        .chunks_exact(<span class="number">48</span>)
+        .map(|bytes| {
+            bytes_to_g1_rust(
+                bytes
+                    .try_into()
+                    .expect(<span class="string">&quot;Chunked into correct number of bytes above; qed&quot;</span>),
+            )
+        })
+        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+    <span class="kw">let </span>secret_g2 = secret_g2_bytes
+        .chunks_exact(<span class="number">96</span>)
+        .map(|bytes| {
+            bytes_to_g2_rust(
+                bytes
+                    .try_into()
+                    .expect(<span class="string">&quot;Chunked into correct number of bytes above; qed&quot;</span>),
+            )
+        })
+        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>fft_settings = FsFFTSettings::new(
+        secret_len
+            .checked_sub(<span class="number">1</span>)
+            .expect(<span class="string">&quot;Checked to be not empty above; qed&quot;</span>)
+            .ilog2() <span class="kw">as </span>usize,
+    )
+    .expect(<span class="string">&quot;Scale is within allowed bounds; qed&quot;</span>);
+
+    <span class="comment">// Below is the same as `FsKZGSettings::new(&amp;s1, &amp;s2, secret_len, &amp;fft_settings)`, but without
+    // extra checks (parameters are static anyway) and without unnecessary allocations
+    </span><span class="prelude-val">Ok</span>(FsKZGSettings {
+        fs: fft_settings,
+        secret_g1,
+        secret_g2,
+    })
+}
 
 <span class="doccomment">/// TODO: Test public parameters, must be replaced with proper public parameters later
-</span><span class="kw">pub fn </span>test_public_parameters() -&gt; PublicParameters {
-    <span class="comment">// SAFETY: Bytes were produced with below `test_public_parameters_generate()` and are guaranteed
-    // to be correct
-    </span><span class="kw">unsafe </span>{ PublicParameters::from_slice_unchecked(TEST_PUBLIC_PARAMETERS) }
-}
-
-<span class="attr">#[cfg(test)]
-</span><span class="kw">fn </span>test_public_parameters_generate() -&gt; PublicParameters {
-    <span class="kw">use </span>rand_core::SeedableRng;
-
-    <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaChaRng::seed_from_u64(<span class="number">1969897683899915189</span>);
-    PublicParameters::setup(<span class="number">1024</span>, <span class="kw-2">&amp;mut </span>rng).expect(<span class="string">&quot;Static value, doesn&#39;t error&quot;</span>)
-}
-
-<span class="attr">#[test]
-</span><span class="kw">fn </span>test_public_parameters_correct() {
-    <span class="macro">assert_eq!</span>(
-        test_public_parameters_generate().to_raw_var_bytes(),
-        test_public_parameters().to_raw_var_bytes()
-    );
+/// Embedded KZG settings
+</span><span class="attr">#[cfg(feature = <span class="string">&quot;embedded-kzg-settings&quot;</span>)]
+</span><span class="kw">pub fn </span>embedded_kzg_settings() -&gt; FsKZGSettings {
+    bytes_to_kzg_settings(EMBEDDED_KZG_SETTINGS_BYTES)
+        .expect(<span class="string">&quot;Static bytes are correct, there is a test for this; qed&quot;</span>)
 }
 
 <span class="doccomment">/// Commitment to polynomial
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>Polynomial(PlonkPolynomial);
-
-<span class="kw">impl </span>From&lt;Polynomial&gt; <span class="kw">for </span>Vec&lt;u8&gt; {
-    <span class="kw">fn </span>from(polynomial: Polynomial) -&gt; Vec&lt;u8&gt; {
-        polynomial.<span class="number">0</span>.to_var_bytes()
-    }
-}
-
-<span class="kw">impl </span>TryFrom&lt;<span class="kw-2">&amp;</span>[u8]&gt; <span class="kw">for </span>Polynomial {
-    <span class="kw">type </span>Error = Error;
-
-    <span class="kw">fn </span>try_from(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(PlonkPolynomial::from_slice(bytes)<span class="question-mark">?</span>))
-    }
-}
+</span><span class="kw">pub struct </span>Polynomial(FsPoly);
 
 <span class="doccomment">/// Commitment size in bytes.
 </span><span class="kw">pub const </span>COMMITMENT_SIZE: usize = <span class="number">48</span>;
 
 <span class="doccomment">/// Commitment to polynomial
 </span><span class="attr">#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-</span><span class="kw">pub struct </span>Commitment(G1Affine);
+</span><span class="kw">pub struct </span>Commitment(FsG1);
 
 <span class="kw">impl </span>Commitment {
     <span class="doccomment">/// Convert commitment to raw bytes
     </span><span class="kw">pub fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u8; COMMITMENT_SIZE] {
-        <span class="self">self</span>.<span class="number">0</span>.to_bytes()
+        bytes_from_g1_rust(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>)
     }
 
     <span class="doccomment">/// Try to deserialize commitment from raw bytes
-    </span><span class="kw">pub fn </span>try_from_bytes(bytes: <span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, dusk_bytes::Error&gt; {
-        <span class="prelude-val">Ok</span>(Commitment(G1Affine::from_bytes(bytes)<span class="question-mark">?</span>))
+    </span><span class="kw">pub fn </span>try_from_bytes(bytes: <span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, String&gt; {
+        <span class="prelude-val">Ok</span>(Commitment(bytes_to_g1_rust(bytes)<span class="question-mark">?</span>))
     }
 }
 
 <span class="kw">impl </span>Hash <span class="kw">for </span>Commitment {
     <span class="kw">fn </span>hash&lt;H: Hasher&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, state: <span class="kw-2">&amp;mut </span>H) {
-        <span class="self">self</span>.<span class="number">0</span>.to_bytes().hash(state);
+        <span class="self">self</span>.to_bytes().hash(state);
     }
 }
 
@@ -526,7 +548,7 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;<span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]&gt; <span class="kw">for </span>Commitment {
-    <span class="kw">type </span>Error = dusk_bytes::Error;
+    <span class="kw">type </span>Error = String;
 
     <span class="kw">fn </span>try_from(bytes: <span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="self">Self</span>::try_from_bytes(bytes)
@@ -534,7 +556,7 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;[u8; COMMITMENT_SIZE]&gt; <span class="kw">for </span>Commitment {
-    <span class="kw">type </span>Error = dusk_bytes::Error;
+    <span class="kw">type </span>Error = String;
 
     <span class="kw">fn </span>try_from(bytes: [u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="self">Self</span>::try_from(<span class="kw-2">&amp;</span>bytes)
@@ -596,17 +618,17 @@
 
 <span class="doccomment">/// Witness for polynomial evaluation
 </span><span class="attr">#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-</span><span class="kw">pub struct </span>Witness(G1Affine);
+</span><span class="kw">pub struct </span>Witness(FsG1);
 
 <span class="kw">impl </span>Witness {
     <span class="doccomment">/// Convert witness to raw bytes
     </span><span class="kw">pub fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u8; COMMITMENT_SIZE] {
-        <span class="self">self</span>.<span class="number">0</span>.to_bytes()
+        bytes_from_g1_rust(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>)
     }
 
     <span class="doccomment">/// Try to deserialize witness from raw bytes
-    </span><span class="kw">pub fn </span>try_from_bytes(bytes: <span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, dusk_bytes::Error&gt; {
-        <span class="prelude-val">Ok</span>(Witness(G1Affine::from_bytes(bytes)<span class="question-mark">?</span>))
+    </span><span class="kw">pub fn </span>try_from_bytes(bytes: <span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, String&gt; {
+        <span class="prelude-val">Ok</span>(Witness(bytes_to_g1_rust(bytes)<span class="question-mark">?</span>))
     }
 }
 
@@ -623,7 +645,7 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;<span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]&gt; <span class="kw">for </span>Witness {
-    <span class="kw">type </span>Error = dusk_bytes::Error;
+    <span class="kw">type </span>Error = String;
 
     <span class="kw">fn </span>try_from(bytes: <span class="kw-2">&amp;</span>[u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="self">Self</span>::try_from_bytes(bytes)
@@ -631,7 +653,7 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;[u8; COMMITMENT_SIZE]&gt; <span class="kw">for </span>Witness {
-    <span class="kw">type </span>Error = dusk_bytes::Error;
+    <span class="kw">type </span>Error = String;
 
     <span class="kw">fn </span>try_from(bytes: [u8; COMMITMENT_SIZE]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="self">Self</span>::try_from(<span class="kw-2">&amp;</span>bytes)
@@ -691,94 +713,61 @@
 <span class="doccomment">/// Wrapper data structure for working with KZG commitment scheme
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Kzg {
-    public_parameters: PublicParameters,
+    kzg_settings: FsKZGSettings,
+    fft_settings_cache: Arc&lt;Mutex&lt;BTreeMap&lt;usize, Arc&lt;FsFFTSettings&gt;&gt;&gt;&gt;,
 }
 
-<span class="comment">// Most of below implementation and comments are basically taken following code samples (and
-// adapted):
-// https://github.com/subspace/plonk/blob/65db5f0da6edef54048ddbf4495c6c5b4a664dff/src/commitment_scheme/kzg10/key.rs
-// https://github.com/maticnetwork/avail/blob/76e2b45d13975ba87b632f62f29497f279986cbc/kate/src/com.rs
-// https://github.com/maticnetwork/avail/blob/76e2b45d13975ba87b632f62f29497f279986cbc/kate/proof/src/lib.rs
-</span><span class="kw">impl </span>Kzg {
-    <span class="doccomment">/// Create new instance with given public parameters
-    </span><span class="kw">pub fn </span>new(public_parameters: PublicParameters) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ public_parameters }
+<span class="kw">impl </span>Kzg {
+    <span class="doccomment">/// Create new instance with given KZG settings.
+    ///
+    /// Canonical KZG settings can be obtained using `embedded_kzg_settings()` function that becomes
+    /// available with `embedded-kzg-settings` feature (enabled by default).
+    </span><span class="kw">pub fn </span>new(kzg_settings: FsKZGSettings) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            kzg_settings,
+            fft_settings_cache: Arc::default(),
+        }
     }
 
-    <span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
-    </span><span class="doccomment">/// For testing purposes only.
-    ///
-    /// Returns an error if the configured degree is less than one.
-    </span><span class="kw">pub fn </span>random(max_degree: u32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
-        <span class="kw">let </span>public_parameters =
-            PublicParameters::setup(max_degree <span class="kw">as </span>usize, <span class="kw-2">&amp;mut </span>rand::thread_rng())<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ public_parameters })
-    }
-
-    <span class="comment">// /// Runs a one-time trusted setup of the universal reference values `KZG_PARAMETERS`. The
-    // /// initial `seed` for value generation can be provided by a multi-party computation at genesis.
-    // fn setup(seed: &amp;[u8]) -&gt; PublicParameters {
-    //     todo!()
-    // }
-
-    </span><span class="doccomment">/// Represents data as a `polynomial` needed for the rest of the scheme. The degree of the
-    /// polynomial $d$ is equal to the length of data.
-    ///
-    /// An ordered data set is treated as a set of values as `(x,y) = (w^i, data[i])`, where
-    /// `data[i]` are `DATA_CHUNK_SIZE`-byte (currently 31 bytes) chunks, and `w` is a root of unity
-    /// of degree $d$, of from which a polynomial that satisfies $p(x)=y$  for all these points is
-    /// interpolated. This may be done every time needed using a saved root of unity (one field
-    /// element).
+    <span class="doccomment">/// Create polynomial from data. Data must be multiple of 32 bytes, each containing up to 254
+    /// bits of information.
     ///
     /// The resulting polynomial is in coefficient form.
-    </span><span class="kw">pub fn </span>poly(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Polynomial, Error&gt; {
+    </span><span class="kw">pub fn </span>poly(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Polynomial, String&gt; {
         <span class="kw">let </span>evals = data
-            .chunks(BlsScalar::SIZE)
-            .map(BlsScalar::from_slice)
-            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;BlsScalar&gt;, dusk_bytes::Error&gt;&gt;()<span class="question-mark">?</span>;
-        <span class="kw">let </span>domain = EvaluationDomain::new(evals.len())<span class="question-mark">?</span>;
-        <span class="kw">let </span>evaluations = Evaluations::from_vec_and_domain(evals, domain);
-        <span class="prelude-val">Ok</span>(Polynomial(evaluations.interpolate()))
+            .chunks(Scalar::FULL_BYTES)
+            .map(|scalar| {
+                FsFr::from_scalar(
+                    scalar
+                        .try_into()
+                        .map_err(|<span class="kw">_</span>| <span class="string">&quot;Failed to convert value to scalar&quot;</span>.to_string())<span class="question-mark">?</span>,
+                )
+                .map_err(|error_code| {
+                    <span class="macro">format!</span>(<span class="string">&quot;Failed to create scalar from bytes with code: {error_code}&quot;</span>)
+                })
+            })
+            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, String&gt;&gt;()<span class="question-mark">?</span>;
+        <span class="kw">let </span>poly = FsPoly {
+            coeffs: <span class="self">self</span>.get_fft_settings(evals.len())<span class="question-mark">?</span>.fft_fr(<span class="kw-2">&amp;</span>evals, <span class="bool-val">true</span>)<span class="question-mark">?</span>,
+        };
+        <span class="prelude-val">Ok</span>(Polynomial(poly))
     }
 
     <span class="doccomment">/// Computes a `Commitment` to `polynomial`
-    </span><span class="kw">pub fn </span>commit(<span class="kw-2">&amp;</span><span class="self">self</span>, polynomial: <span class="kw-2">&amp;</span>Polynomial) -&gt; <span class="prelude-ty">Result</span>&lt;Commitment, Error&gt; {
-        <span class="self">self</span>.public_parameters
-            .commit_key
-            .commit(<span class="kw-2">&amp;</span>polynomial.<span class="number">0</span>)
-            .map(|commitment| Commitment(commitment.<span class="number">0</span>))
+    </span><span class="kw">pub fn </span>commit(<span class="kw-2">&amp;</span><span class="self">self</span>, polynomial: <span class="kw-2">&amp;</span>Polynomial) -&gt; <span class="prelude-ty">Result</span>&lt;Commitment, String&gt; {
+        <span class="self">self</span>.kzg_settings
+            .commit_to_poly(<span class="kw-2">&amp;</span>polynomial.<span class="number">0</span>)
+            .map(Commitment)
     }
 
     <span class="doccomment">/// Computes a `Witness` of evaluation of `polynomial` at `index`
-    </span><span class="kw">pub fn </span>create_witness(<span class="kw-2">&amp;</span><span class="self">self</span>, polynomial: <span class="kw-2">&amp;</span>Polynomial, index: u32) -&gt; <span class="prelude-ty">Result</span>&lt;Witness, Error&gt; {
-        <span class="kw">let </span>polynomial_degree = polynomial.<span class="number">0</span>.degree();
-        <span class="macro">assert!</span>((index <span class="kw">as </span>usize) &lt;= polynomial_degree);
-        <span class="comment">// For a given polynomial `p` and a point `z`, compute the witness
-        // for p(z) using Ruffini&#39;s method for simplicity.
-        // The Witness is the quotient of f(x) - f(z) / x-z.
-        // However we note that the quotient polynomial is invariant under the value
-        // f(z) ie. only the remainder changes. We can therefore compute the
-        // witness as f(x) / x - z and only use the remainder term f(z) during
-        // verification.
-
-        // Generate all the x-axis points of the domain on which all the row polynomials reside
-        </span><span class="kw">let </span>eval_domain = EvaluationDomain::new(polynomial_degree)<span class="question-mark">?</span>;
-        <span class="kw">let </span>point = eval_domain
-            .elements()
-            .nth(
-                index
-                    .try_into()
-                    .expect(<span class="string">&quot;Always fits into usize on 32-bit+ platforms; qed&quot;</span>),
-            )
-            .ok_or(Error::MismatchedPolyLen)<span class="question-mark">?</span>;
-
-        <span class="comment">// Computes `f(x) / x-z`, returning it as the witness poly
-        </span><span class="kw">let </span>witness_poly = polynomial.<span class="number">0</span>.ruffini(point);
-
-        <span class="self">self</span>.public_parameters
-            .commit_key
-            .commit(<span class="kw-2">&amp;</span>witness_poly)
-            .map(|commitment| Witness(commitment.<span class="number">0</span>))
+    </span><span class="kw">pub fn </span>create_witness(<span class="kw-2">&amp;</span><span class="self">self</span>, polynomial: <span class="kw-2">&amp;</span>Polynomial, index: u32) -&gt; <span class="prelude-ty">Result</span>&lt;Witness, String&gt; {
+        <span class="kw">let </span>x = <span class="self">self
+            </span>.get_fft_settings(polynomial.<span class="number">0</span>.coeffs.len())<span class="question-mark">?
+            </span>.get_expanded_roots_of_unity_at(index <span class="kw">as </span>usize);
+        <span class="self">self</span>.kzg_settings
+            .compute_proof_single(<span class="kw-2">&amp;</span>polynomial.<span class="number">0</span>, <span class="kw-2">&amp;</span>x)
+            .map(Witness)
     }
 
     <span class="doccomment">/// Verifies that `value` is the evaluation at `index` of the polynomial created from
@@ -786,62 +775,57 @@
     </span><span class="kw">pub fn </span>verify(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         commitment: <span class="kw-2">&amp;</span>Commitment,
-        num_values: u32,
+        num_values: usize,
         index: u32,
         value: <span class="kw-2">&amp;</span>[u8],
         witness: <span class="kw-2">&amp;</span>Witness,
     ) -&gt; bool {
-        <span class="kw">let </span>degree_of_polynomial = <span class="kw">match </span>num_values.checked_sub(<span class="number">1</span>) {
-            <span class="prelude-val">Some</span>(degree_of_polynomial) =&gt; degree_of_polynomial,
-            <span class="prelude-val">None </span>=&gt; {
+        <span class="kw">let </span>fft_settings = <span class="kw">match </span><span class="self">self</span>.get_fft_settings(num_values) {
+            <span class="prelude-val">Ok</span>(fft_settings) =&gt; fft_settings,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="macro">debug!</span>(error, <span class="string">&quot;Failed to derive fft settings&quot;</span>);
                 <span class="kw">return </span><span class="bool-val">false</span>;
             }
         };
-
-        <span class="comment">// Generate all the x-axis points of the domain on which all the row polynomials reside
-        </span><span class="kw">let </span>eval_domain = <span class="kw">match </span>EvaluationDomain::new(
-            degree_of_polynomial
-                .try_into()
-                .expect(<span class="string">&quot;Always fits into usize on 32-bit+ platforms; qed&quot;</span>),
-        ) {
-            <span class="prelude-val">Ok</span>(eval_domain) =&gt; eval_domain,
-            <span class="prelude-val">Err</span>(_error) =&gt; {
-                <span class="kw">return </span><span class="bool-val">false</span>;
-            }
-        };
-        <span class="kw">let </span>point = eval_domain
-            .elements()
-            .nth(
-                index
-                    .try_into()
-                    .expect(<span class="string">&quot;Always fits into usize on 32-bit+ platforms; qed&quot;</span>),
-            )
-            <span class="comment">// TODO: Remove unwrap
-            </span>.unwrap();
-        <span class="kw">let </span>value = <span class="kw">match </span>BlsScalar::from_slice(value) {
+        <span class="kw">let </span>x = fft_settings.get_expanded_roots_of_unity_at(index <span class="kw">as </span>usize);
+        <span class="kw">let </span>value = <span class="kw">match </span>value.try_into() {
             <span class="prelude-val">Ok</span>(value) =&gt; value,
-            <span class="prelude-val">Err</span>(_error) =&gt; {
+            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">&quot;Failed to convert value to scalar&quot;</span>);
+                <span class="kw">return </span><span class="bool-val">false</span>;
+            }
+        };
+        <span class="kw">let </span>value = <span class="kw">match </span>FsFr::from_scalar(value) {
+            <span class="prelude-val">Ok</span>(value) =&gt; value,
+            <span class="prelude-val">Err</span>(error_code) =&gt; {
+                <span class="macro">debug!</span>(error_code, <span class="string">&quot;Failed to create scalar from bytes with code&quot;</span>);
                 <span class="kw">return </span><span class="bool-val">false</span>;
             }
         };
 
-        <span class="comment">// Checks that a polynomial `p` was evaluated at a point `z` and returned
-        // the value specified `v`. ie. v = p(z).
-        </span><span class="kw">let </span>inner_a: G1Affine =
-            (commitment.<span class="number">0 </span>- (<span class="self">self</span>.public_parameters.opening_key.g * value)).into();
+        <span class="kw">match </span><span class="self">self
+            </span>.kzg_settings
+            .check_proof_single(<span class="kw-2">&amp;</span>commitment.<span class="number">0</span>, <span class="kw-2">&amp;</span>witness.<span class="number">0</span>, <span class="kw-2">&amp;</span>x, <span class="kw-2">&amp;</span>value)
+        {
+            <span class="prelude-val">Ok</span>(result) =&gt; result,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="macro">debug!</span>(error, <span class="string">&quot;Failed to check proof&quot;</span>);
+                <span class="bool-val">false
+            </span>}
+        }
+    }
 
-        <span class="kw">let </span>inner_b: G2Affine = (<span class="self">self</span>.public_parameters.opening_key.beta_h
-            - (<span class="self">self</span>.public_parameters.opening_key.h * point))
-            .into();
-        <span class="kw">let </span>prepared_inner_b = G2Prepared::from(-inner_b);
-
-        <span class="kw">let </span>pairing = dusk_bls12_381::multi_miller_loop(<span class="kw-2">&amp;</span>[
-            (<span class="kw-2">&amp;</span>inner_a, <span class="kw-2">&amp;</span><span class="self">self</span>.public_parameters.opening_key.prepared_h),
-            (<span class="kw-2">&amp;</span>witness.<span class="number">0</span>, <span class="kw-2">&amp;</span>prepared_inner_b),
-        ])
-        .final_exponentiation();
-
-        pairing == dusk_bls12_381::Gt::identity()
+    <span class="doccomment">/// Get FFT settings for specified number of values, uses internal cache to avoid derivation
+    /// every time.
+    </span><span class="kw">pub fn </span>get_fft_settings(<span class="kw-2">&amp;</span><span class="self">self</span>, num_values: usize) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;FsFFTSettings&gt;, String&gt; {
+        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="self">self</span>.fft_settings_cache.lock().entry(num_values) {
+            Entry::Vacant(entry) =&gt; {
+                <span class="kw">let </span>fft_settings = Arc::new(FsFFTSettings::new(num_values.ilog2() <span class="kw">as </span>usize)<span class="question-mark">?</span>);
+                entry.insert(Arc::clone(<span class="kw-2">&amp;</span>fft_settings));
+                fft_settings
+            }
+            Entry::Occupied(entry) =&gt; Arc::clone(entry.get()),
+        })
     }
 }
 </code></pre></div>
