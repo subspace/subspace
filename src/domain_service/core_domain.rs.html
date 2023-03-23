@@ -508,6 +508,7 @@
 <span class="kw">use </span>domain_client_executor::xdm_verifier::CoreDomainXDMVerifier;
 <span class="kw">use </span>domain_client_executor::{
     CoreDomainParentChain, CoreExecutor, CoreGossipMessageValidator, EssentialExecutorParams,
+    ExecutorStreams,
 };
 <span class="kw">use </span>domain_client_executor_gossip::ExecutorGossipParams;
 <span class="kw">use </span>domain_client_message_relayer::GossipMessageSink;
@@ -517,7 +518,9 @@
 <span class="kw">use </span>futures::{Stream, StreamExt};
 <span class="kw">use </span>jsonrpsee::tracing;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
-<span class="kw">use </span>sc_client_api::{BlockBackend, BlockchainEvents, ProofProvider, StateBackendFor};
+<span class="kw">use </span>sc_client_api::{
+    BlockBackend, BlockImportNotification, BlockchainEvents, ProofProvider, StateBackendFor,
+};
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_network::NetworkService;
 <span class="kw">use </span>sc_service::{
@@ -719,9 +722,10 @@
     <span class="prelude-val">Ok</span>(params)
 }
 
-<span class="kw">pub struct </span>CoreDomainParams&lt;SBlock, SClient, PClient, SC, IBNS, NSNS&gt;
+<span class="kw">pub struct </span>CoreDomainParams&lt;SBlock, PBlock, SClient, PClient, SC, IBNS, CIBNS, NSNS&gt;
 <span class="kw">where
     </span>SBlock: BlockT,
+    PBlock: BlockT,
 {
     <span class="kw">pub </span>domain_id: DomainId,
     <span class="kw">pub </span>core_domain_config: DomainConfiguration,
@@ -730,9 +734,7 @@
     <span class="kw">pub </span>primary_chain_client: Arc&lt;PClient&gt;,
     <span class="kw">pub </span>primary_network_sync_oracle: Arc&lt;<span class="kw">dyn </span>SyncOracle + Send + Sync&gt;,
     <span class="kw">pub </span>select_chain: SC,
-    <span class="kw">pub </span>imported_block_notification_stream: IBNS,
-    <span class="kw">pub </span>new_slot_notification_stream: NSNS,
-    <span class="kw">pub </span>block_import_throttling_buffer_size: u32,
+    <span class="kw">pub </span>executor_streams: ExecutorStreams&lt;PBlock, IBNS, CIBNS, NSNS&gt;,
     <span class="kw">pub </span>gossip_message_sink: GossipMessageSink,
 }
 
@@ -747,11 +749,12 @@
     PClient,
     SC,
     IBNS,
+    CIBNS,
     NSNS,
     RuntimeApi,
     ExecutorDispatch,
 &gt;(
-    core_domain_params: CoreDomainParams&lt;SBlock, SClient, PClient, SC, IBNS, NSNS&gt;,
+    core_domain_params: CoreDomainParams&lt;SBlock, PBlock, SClient, PClient, SC, IBNS, CIBNS, NSNS&gt;,
 ) -&gt; sc_service::error::Result&lt;
     NewFullCore&lt;
         Arc&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
@@ -786,6 +789,7 @@
     PClient::Api: ExecutorApi&lt;PBlock, Hash&gt;,
     SC: SelectChain&lt;PBlock&gt;,
     IBNS: Stream&lt;Item = (NumberFor&lt;PBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Send + <span class="lifetime">&#39;static</span>,
+    CIBNS: Stream&lt;Item = BlockImportNotification&lt;PBlock&gt;&gt; + Send + <span class="lifetime">&#39;static</span>,
     NSNS: Stream&lt;Item = (Slot, Blake2b256Hash)&gt; + Send + <span class="lifetime">&#39;static</span>,
     RuntimeApi: ConstructRuntimeApi&lt;Block, FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;
         + Send
@@ -811,9 +815,7 @@
         primary_chain_client,
         primary_network_sync_oracle,
         select_chain,
-        imported_block_notification_stream,
-        new_slot_notification_stream,
-        block_import_throttling_buffer_size,
+        executor_streams,
         gossip_message_sink,
     } = core_domain_params;
 
@@ -904,9 +906,7 @@
             keystore: params.keystore_container.sync_keystore(),
             spawner: Box::new(task_manager.spawn_handle()),
             bundle_sender: Arc::new(bundle_sender),
-            block_import_throttling_buffer_size,
-            imported_block_notification_stream,
-            new_slot_notification_stream,
+            executor_streams,
         },
     )
     .<span class="kw">await</span><span class="question-mark">?</span>;

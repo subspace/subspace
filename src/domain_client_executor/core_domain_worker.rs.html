@@ -178,6 +178,17 @@
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
 <a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2020 Parity Technologies (UK) Ltd.
 // This file is part of Polkadot.
 
@@ -199,11 +210,14 @@
 <span class="kw">use </span><span class="kw">crate</span>::domain_worker::{handle_block_import_notifications, handle_slot_notifications};
 <span class="kw">use </span><span class="kw">crate</span>::parent_chain::CoreDomainParentChain;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{BlockInfo, ExecutorSlotInfo};
-<span class="kw">use </span><span class="kw">crate</span>::TransactionFor;
+<span class="kw">use crate</span>::{ExecutorStreams, TransactionFor};
 <span class="kw">use </span>domain_runtime_primitives::{AccountId, DomainCoreApi};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{future, FutureExt, Stream, StreamExt, TryFutureExt};
-<span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, BlockchainEvents, ProofProvider, StateBackendFor};
+<span class="kw">use </span>sc_client_api::{
+    AuxStore, BlockBackend, BlockImportNotification, BlockchainEvents, ProofProvider,
+    StateBackendFor,
+};
 <span class="kw">use </span>sc_consensus::BlockImport;
 <span class="kw">use </span>sp_api::{BlockT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
@@ -218,8 +232,7 @@
 <span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 <span class="kw">use </span>tracing::Instrument;
 
-<span class="attr">#[allow(clippy::too_many_arguments)]
-#[allow(clippy::type_complexity)]
+<span class="attr">#[allow(clippy::type_complexity)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>start_worker&lt;
     Block,
     SBlock,
@@ -230,6 +243,7 @@
     TransactionPool,
     Backend,
     IBNS,
+    CIBNS,
     NSNS,
     E,
 &gt;(
@@ -256,10 +270,8 @@
         Backend,
         E,
     &gt;,
-    imported_block_notification_stream: IBNS,
-    new_slot_notification_stream: NSNS,
+    executor_streams: ExecutorStreams&lt;PBlock, IBNS, CIBNS, NSNS&gt;,
     active_leaves: Vec&lt;BlockInfo&lt;PBlock&gt;&gt;,
-    block_import_throttling_buffer_size: u32,
 ) <span class="kw">where
     </span>Block: BlockT,
     SBlock: BlockT,
@@ -293,14 +305,23 @@
     TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
     Backend: sc_client_api::Backend&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     IBNS: Stream&lt;Item = (NumberFor&lt;PBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Send + <span class="lifetime">&#39;static</span>,
+    CIBNS: Stream&lt;Item = BlockImportNotification&lt;PBlock&gt;&gt; + Send + <span class="lifetime">&#39;static</span>,
     NSNS: Stream&lt;Item = (Slot, Blake2b256Hash)&gt; + Send + <span class="lifetime">&#39;static</span>,
     TransactionFor&lt;Backend, Block&gt;: sp_trie::HashDBT&lt;HashFor&lt;Block&gt;, sp_trie::DBValue&gt;,
     E: CodeExecutor,
 {
     <span class="kw">let </span>span = tracing::Span::current();
 
+    <span class="kw">let </span>ExecutorStreams {
+        primary_block_import_throttling_buffer_size,
+        subspace_imported_block_notification_stream,
+        client_imported_block_notification_stream,
+        new_slot_notification_stream,
+        _phantom,
+    } = executor_streams;
+
     <span class="kw">let </span>handle_block_import_notifications_fut =
-        handle_block_import_notifications::&lt;Block, PBlock, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+        handle_block_import_notifications::&lt;Block, PBlock, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             primary_chain_client.as_ref(),
             client.info().best_number,
             {
@@ -324,8 +345,9 @@
                      }| (hash, number),
                 )
                 .collect(),
-            Box::pin(imported_block_notification_stream),
-            block_import_throttling_buffer_size,
+            Box::pin(subspace_imported_block_notification_stream),
+            Box::pin(client_imported_block_notification_stream),
+            primary_block_import_throttling_buffer_size,
         );
     <span class="kw">let </span>handle_slot_notifications_fut = handle_slot_notifications::&lt;Block, PBlock, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
         primary_chain_client.as_ref(),

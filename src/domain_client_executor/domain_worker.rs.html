@@ -236,11 +236,12 @@
 <a href="#236" id="236">236</a>
 <a href="#237" id="237">237</a>
 <a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::{to_number_primitive, BlockInfo, ExecutorSlotInfo};
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{SinkExt, Stream, StreamExt};
-<span class="kw">use </span>sc_client_api::{BlockBackend, BlockchainEvents};
+<span class="kw">use </span>sc_client_api::{BlockBackend, BlockImportNotification, BlockchainEvents};
 <span class="kw">use </span>sp_api::{ApiError, BlockT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_domains::{ExecutorApi, SignedOpaqueBundle};
@@ -289,14 +290,16 @@
     PBlock,
     PClient,
     ProcessorFn,
-    BlockImports,
+    SubspaceBlockImports,
+    ClientBlockImports,
 &gt;(
     primary_chain_client: <span class="kw-2">&amp;</span>PClient,
     best_domain_number: NumberFor&lt;Block&gt;,
     processor: ProcessorFn,
     <span class="kw-2">mut </span>leaves: Vec&lt;(PBlock::Hash, NumberFor&lt;PBlock&gt;)&gt;,
-    <span class="kw-2">mut </span>block_imports: BlockImports,
-    block_import_throttling_buffer_size: u32,
+    <span class="kw-2">mut </span>subspace_block_imports: SubspaceBlockImports,
+    <span class="kw-2">mut </span>client_block_imports: ClientBlockImports,
+    primary_block_import_throttling_buffer_size: u32,
 ) <span class="kw">where
     </span>Block: BlockT,
     PBlock: BlockT,
@@ -310,7 +313,8 @@
         ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt;&gt; + Send&gt;&gt;
         + Send
         + Sync,
-    BlockImports: Stream&lt;Item = (NumberFor&lt;PBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Unpin,
+    SubspaceBlockImports: Stream&lt;Item = (NumberFor&lt;PBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Unpin,
+    ClientBlockImports: Stream&lt;Item = BlockImportNotification&lt;PBlock&gt;&gt; + Unpin,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>active_leaves = HashMap::with_capacity(leaves.len());
 
@@ -335,13 +339,11 @@
     // consumed by the domain processor, the other from `sc-consensus-subspace` is used to discontinue
     // the primary block import in case the primary chain runs much faster than the domain.).
     </span><span class="kw">let </span>(<span class="kw-2">mut </span>block_info_sender, <span class="kw-2">mut </span>block_info_receiver) =
-        mpsc::channel(block_import_throttling_buffer_size <span class="kw">as </span>usize);
-
-    <span class="kw">let </span><span class="kw-2">mut </span>client_block_import = primary_chain_client.every_import_notification_stream();
+        mpsc::channel(primary_block_import_throttling_buffer_size <span class="kw">as </span>usize);
 
     <span class="kw">loop </span>{
         <span class="macro">tokio::select! </span>{
-            maybe_client_block_import = client_block_import.next() =&gt; {
+            maybe_client_block_import = client_block_imports.next() =&gt; {
                 <span class="kw">let </span>notification = <span class="kw">match </span>maybe_client_block_import {
                     <span class="prelude-val">Some</span>(block_import) =&gt; block_import,
                     <span class="prelude-val">None </span>=&gt; {
@@ -367,7 +369,7 @@
                 };
                 <span class="kw">let _ </span>= block_info_sender.feed(<span class="prelude-val">Some</span>(block_info)).<span class="kw">await</span>;
             }
-            maybe_subspace_block_import = block_imports.next() =&gt; {
+            maybe_subspace_block_import = subspace_block_imports.next() =&gt; {
                 <span class="kw">let </span>(_block_number, <span class="kw-2">mut </span>block_import_acknowledgement_sender) =
                     <span class="kw">match </span>maybe_subspace_block_import {
                         <span class="prelude-val">Some</span>(block_import) =&gt; block_import,
