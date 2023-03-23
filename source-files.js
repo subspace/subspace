@@ -40,7 +40,7 @@ var sourcesIndex = JSON.parse('{\
 "sp_objects":["",[],["lib.rs"]],\
 "sp_receipts":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["incremental_record_commitments.rs","record_shards.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs","utils.rs"]],\
-"subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]]],["crypto.rs","lib.rs","objects.rs","pieces.rs","sector_codec.rs"]],\
+"subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]],["pieces",[],["serde.rs"]]],["crypto.rs","lib.rs","objects.rs","pieces.rs","sector_codec.rs"]],\
 "subspace_erasure_coding":["",[],["lib.rs"]],\
 "subspace_farmer":["",[["node_client",[],["node_rpc_client.rs"]],["single_disk_plot",[],["piece_reader.rs"]],["utils",[],["farmer_piece_cache.rs","farmer_piece_getter.rs","farmer_provider_record_processor.rs","farmer_provider_storage.rs","node_piece_getter.rs","parity_db_store.rs","piece_cache.rs","piece_validator.rs","readers_and_pieces.rs"]]],["identity.rs","lib.rs","node_client.rs","object_mappings.rs","reward_signing.rs","single_disk_plot.rs","utils.rs","ws_rpc_server.rs"]],\
 "subspace_farmer_components":["",[],["farming.rs","file_ext.rs","lib.rs","piece_caching.rs","plotting.rs","segment_reconstruction.rs"]],\
