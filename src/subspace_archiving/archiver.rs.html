@@ -838,42 +838,6 @@
 <a href="#838" id="838">838</a>
 <a href="#839" id="839">839</a>
 <a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a>
-<a href="#869" id="869">869</a>
-<a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a>
-<a href="#872" id="872">872</a>
-<a href="#873" id="873">873</a>
-<a href="#874" id="874">874</a>
-<a href="#875" id="875">875</a>
-<a href="#876" id="876">876</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -905,14 +869,14 @@
 <span class="kw">use </span>core::cmp::Ordering;
 <span class="kw">use </span>parity_scale_codec::{Compact, CompactLen, Decode, Encode, Input, Output};
 <span class="kw">use </span>reed_solomon_erasure::galois_16::ReedSolomon;
-<span class="kw">use </span>subspace_core_primitives::crypto::blake2b_256_254_hash;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Kzg, Witness};
+<span class="kw">use </span>subspace_core_primitives::crypto::{blake2b_256_254_hash_to_scalar, Scalar};
 <span class="kw">use </span>subspace_core_primitives::objects::{
     BlockObject, BlockObjectMapping, PieceObject, PieceObjectMapping,
 };
 <span class="kw">use </span>subspace_core_primitives::{
     ArchivedBlockProgress, Blake2b256Hash, BlockNumber, FlatPieces, LastArchivedBlock, PieceRef,
-    RecordsRoot, RootBlock, BLAKE2B_256_HASH_SIZE, RECORDED_HISTORY_SEGMENT_SIZE,
+    RecordsRoot, RootBlock, RECORDED_HISTORY_SEGMENT_SIZE, RECORD_SIZE,
 };
 
 <span class="kw">const </span>INITIAL_LAST_ARCHIVED_BLOCK: LastArchivedBlock = LastArchivedBlock {
@@ -1066,12 +1030,6 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, derive(thiserror::Error))]
 </span><span class="kw">pub enum </span>ArchiverInstantiationError {
-    <span class="doccomment">/// Record size it smaller that needed to hold any information
-    </span><span class="attr">#[cfg_attr(
-        feature = <span class="string">&quot;thiserror&quot;</span>,
-        error(<span class="string">&quot;Record size it smaller that needed to hold any information&quot;</span>)
-    )]
-    </span>RecordSizeTooSmall,
     <span class="doccomment">/// Segment size is not bigger than record size
     </span><span class="attr">#[cfg_attr(
         feature = <span class="string">&quot;thiserror&quot;</span>,
@@ -1124,15 +1082,12 @@
     </span>buffer: VecDeque&lt;SegmentItem&gt;,
     <span class="doccomment">/// Intermediate record commitments that are built incrementally as above buffer fills up.
     </span>incremental_record_commitments: IncrementalRecordCommitmentsState,
-    <span class="doccomment">/// Configuration parameter defining the size of one record (data in one piece excluding witness
-    /// size)
-    </span>record_size: u32,
     <span class="doccomment">/// Number of data shards
-    </span>data_shards: u32,
+    </span>source_shards: u32,
     <span class="doccomment">/// Number of parity shards
     </span>parity_shards: u32,
     <span class="doccomment">/// Configuration parameter defining the size of one recorded history segment
-    </span>segment_size: u32,
+    </span>recorded_history_segment_size: u32,
     <span class="doccomment">/// Erasure coding data structure
     </span>reed_solomon: ReedSolomon,
     <span class="doccomment">/// KZG instance
@@ -1157,43 +1112,32 @@
     /// * segment size is not a multiple of record size
     /// * segment size and record size do not make sense together
     </span><span class="kw">pub fn </span>new(
-        record_size: u32,
-        segment_size: u32,
+        recorded_history_segment_size: u32,
         kzg: Kzg,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ArchiverInstantiationError&gt; {
-        <span class="kw">let </span>tiny_segment = Segment::V0 {
-            items: <span class="macro">vec!</span>[SegmentItem::Block {
-                bytes: <span class="macro">vec!</span>[<span class="number">0u8</span>],
-                object_mapping: BlockObjectMapping::default(),
-            }],
-        };
-        <span class="kw">if </span>record_size &lt;= tiny_segment.encoded_size() <span class="kw">as </span>u32 {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(ArchiverInstantiationError::RecordSizeTooSmall);
-        }
-        <span class="kw">if </span>segment_size &lt;= record_size {
+        <span class="kw">if </span>recorded_history_segment_size &lt;= RECORD_SIZE {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ArchiverInstantiationError::SegmentSizeTooSmall);
         }
-        <span class="kw">if </span>segment_size <span class="kw">as </span>usize % GF_16_ELEMENT_BYTES != <span class="number">0 </span>{
+        <span class="kw">if </span>recorded_history_segment_size <span class="kw">as </span>usize % GF_16_ELEMENT_BYTES != <span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(ArchiverInstantiationError::SegmentSizeNotMultipleOfTwo);
         }
-        <span class="kw">if </span>segment_size % record_size != <span class="number">0 </span>{
+        <span class="kw">if </span>recorded_history_segment_size % RECORD_SIZE != <span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(ArchiverInstantiationError::SegmentSizesNotMultipleOfRecordSize);
         }
 
-        <span class="kw">let </span>data_shards = segment_size / record_size;
-        <span class="kw">let </span>parity_shards = data_shards;
-        <span class="kw">let </span>reed_solomon = ReedSolomon::new(data_shards <span class="kw">as </span>usize, parity_shards <span class="kw">as </span>usize)
+        <span class="kw">let </span>source_shards = recorded_history_segment_size / RECORD_SIZE;
+        <span class="kw">let </span>parity_shards = source_shards;
+        <span class="kw">let </span>reed_solomon = ReedSolomon::new(source_shards <span class="kw">as </span>usize, parity_shards <span class="kw">as </span>usize)
             .expect(<span class="string">&quot;ReedSolomon must always be correctly instantiated&quot;</span>);
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             buffer: VecDeque::default(),
             incremental_record_commitments: IncrementalRecordCommitmentsState::with_capacity(
-                data_shards <span class="kw">as </span>usize,
+                source_shards <span class="kw">as </span>usize,
             ),
-            record_size,
-            data_shards,
+            source_shards,
             parity_shards,
-            segment_size,
+            recorded_history_segment_size,
             reed_solomon,
             <span class="comment">// TODO: Probably should check degree from public parameters against erasure coding
             //  setup
@@ -1208,14 +1152,13 @@
     ///
     /// `block` corresponds to `last_archived_block` and will be processed accordingly to its state.
     </span><span class="kw">pub fn </span>with_initial_state(
-        record_size: u32,
-        segment_size: u32,
+        recorded_history_segment_size: u32,
         kzg: Kzg,
         root_block: RootBlock,
         encoded_block: <span class="kw-2">&amp;</span>[u8],
         <span class="kw-2">mut </span>object_mapping: BlockObjectMapping,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ArchiverInstantiationError&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>archiver = <span class="self">Self</span>::new(record_size, segment_size, kzg)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>archiver = <span class="self">Self</span>::new(recorded_history_segment_size, kzg)<span class="question-mark">?</span>;
 
         archiver.segment_index = root_block.segment_index() + <span class="number">1</span>;
         archiver.prev_root_block_hash = root_block.hash();
@@ -1308,7 +1251,7 @@
 
         <span class="comment">// `-2` because even the smallest segment item will take 2 bytes to encode, so it makes
         // sense to stop earlier here
-        </span><span class="kw">while </span>segment.encoded_size() &lt; (<span class="self">self</span>.segment_size <span class="kw">as </span>usize - <span class="number">2</span>) {
+        </span><span class="kw">while </span>segment.encoded_size() &lt; (<span class="self">self</span>.recorded_history_segment_size <span class="kw">as </span>usize - <span class="number">2</span>) {
             <span class="kw">let </span>segment_item = <span class="kw">match </span><span class="self">self</span>.buffer.pop_front() {
                 <span class="prelude-val">Some</span>(segment_item) =&gt; segment_item,
                 <span class="prelude-val">None </span>=&gt; {
@@ -1316,7 +1259,6 @@
                         <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
                         <span class="kw-2">&amp;</span>segment,
                         <span class="bool-val">false</span>,
-                        <span class="self">self</span>.record_size <span class="kw">as </span>usize,
                     );
 
                     <span class="kw">let </span>Segment::V0 { items } = segment;
@@ -1337,10 +1279,11 @@
             </span><span class="kw">let </span>segment_item = segment.pop_item().unwrap();
 
             <span class="comment">// Check if there would be enough data collected with above segment item inserted
-            </span><span class="kw">if </span>encoded_segment_length &gt;= <span class="self">self</span>.segment_size <span class="kw">as </span>usize {
+            </span><span class="kw">if </span>encoded_segment_length &gt;= <span class="self">self</span>.recorded_history_segment_size <span class="kw">as </span>usize {
                 <span class="comment">// Check if there is an excess of data that should be spilled over into the next
                 // segment
-                </span><span class="kw">let </span>spill_over = encoded_segment_length - <span class="self">self</span>.segment_size <span class="kw">as </span>usize;
+                </span><span class="kw">let </span>spill_over =
+                    encoded_segment_length - <span class="self">self</span>.recorded_history_segment_size <span class="kw">as </span>usize;
 
                 <span class="comment">// Due to compact vector length encoding in scale codec, spill over might happen to
                 // be the same or even bigger than the inserted segment item bytes, in which case
@@ -1410,7 +1353,7 @@
         <span class="comment">// Check if there is an excess of data that should be spilled over into the next segment
         </span><span class="kw">let </span>segment_encoded_length = segment.encoded_size();
         <span class="kw">let </span>spill_over = segment_encoded_length
-            .checked_sub(<span class="self">self</span>.segment_size <span class="kw">as </span>usize)
+            .checked_sub(<span class="self">self</span>.recorded_history_segment_size <span class="kw">as </span>usize)
             .unwrap_or_default();
 
         <span class="kw">if </span>spill_over &gt; <span class="number">0 </span>{
@@ -1532,12 +1475,7 @@
 
         <span class="self">self</span>.last_archived_block = last_archived_block;
 
-        update_record_commitments(
-            <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
-            <span class="kw-2">&amp;</span>segment,
-            <span class="bool-val">true</span>,
-            <span class="self">self</span>.record_size <span class="kw">as </span>usize,
-        );
+        update_record_commitments(<span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments, <span class="kw-2">&amp;</span>segment, <span class="bool-val">true</span>);
 
         <span class="prelude-val">Some</span>(segment)
     }
@@ -1548,7 +1486,8 @@
         </span><span class="kw">let </span>object_mapping = {
             <span class="kw">let </span><span class="kw-2">mut </span>corrected_object_mapping = <span class="macro">vec!</span>[
                 PieceObjectMapping::default();
-                (<span class="self">self</span>.segment_size / <span class="self">self</span>.record_size) <span class="kw">as </span>usize
+                (<span class="self">self</span>.recorded_history_segment_size / RECORD_SIZE)
+                    <span class="kw">as </span>usize
             ];
             <span class="kw">let </span>Segment::V0 { items } = <span class="kw-2">&amp;</span>segment;
             <span class="comment">// `+1` corresponds to enum variant encoding
@@ -1578,14 +1517,14 @@
                                 + <span class="number">1
                                 </span>+ Compact::compact_len(<span class="kw-2">&amp;</span>(bytes.len() <span class="kw">as </span>u32))
                                 + block_object.offset() <span class="kw">as </span>usize;
-                            <span class="kw">let </span>offset = (offset_in_segment % <span class="self">self</span>.record_size <span class="kw">as </span>usize)
+                            <span class="kw">let </span>offset = (offset_in_segment % RECORD_SIZE <span class="kw">as </span>usize)
                                 .try_into()
                                 .expect(
                                     <span class="string">&quot;Offset within piece should always fit in 16-bit integer; qed&quot;</span>,
                                 );
 
                             <span class="kw">if let </span><span class="prelude-val">Some</span>(piece_object_mapping) = corrected_object_mapping
-                                .get_mut(offset_in_segment / <span class="self">self</span>.record_size <span class="kw">as </span>usize)
+                                .get_mut(offset_in_segment / RECORD_SIZE <span class="kw">as </span>usize)
                             {
                                 piece_object_mapping.objects.push(PieceObject::V0 {
                                     hash: block_object.hash(),
@@ -1605,9 +1544,9 @@
         };
 
         <span class="kw">let </span><span class="kw-2">mut </span>record_shards = RecordShards::new(
-            <span class="self">self</span>.data_shards,
+            <span class="self">self</span>.source_shards,
             <span class="self">self</span>.parity_shards,
-            <span class="self">self</span>.record_size,
+            RECORD_SIZE,
             <span class="kw-2">&amp;</span>segment,
         );
 
@@ -1632,26 +1571,15 @@
                 </span>record_shards
                     .as_bytes()
                     .as_ref()
-                    .chunks_exact(<span class="self">self</span>.record_size <span class="kw">as </span>usize)
-                    .skip(<span class="self">self</span>.data_shards <span class="kw">as </span>usize)
-                    .map(blake2b_256_254_hash),
+                    .chunks_exact(RECORD_SIZE <span class="kw">as </span>usize)
+                    .skip(<span class="self">self</span>.source_shards <span class="kw">as </span>usize)
+                    .map(blake2b_256_254_hash_to_scalar),
             )
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-        <span class="kw">let </span>data = {
-            <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(
-                (<span class="self">self</span>.data_shards + <span class="self">self</span>.parity_shards) <span class="kw">as </span>usize * BLAKE2B_256_HASH_SIZE,
-            );
-
-            <span class="kw">for </span>shard_commitment <span class="kw">in </span>record_commitments {
-                data.extend_from_slice(<span class="kw-2">&amp;</span>shard_commitment);
-            }
-
-            data
-        };
         <span class="kw">let </span>polynomial = <span class="self">self
             </span>.kzg
-            .poly(<span class="kw-2">&amp;</span>data)
+            .poly(<span class="kw-2">&amp;</span>record_commitments)
             .expect(<span class="string">&quot;Internally produced values must never fail; qed&quot;</span>);
         <span class="kw">let </span>commitment = <span class="self">self
             </span>.kzg
@@ -1667,7 +1595,7 @@
                 record_shards
                     .as_bytes()
                     .as_ref()
-                    .chunks_exact(<span class="self">self</span>.record_size <span class="kw">as </span>usize),
+                    .chunks_exact(RECORD_SIZE <span class="kw">as </span>usize),
             )
             .for_each(|((position, <span class="kw-2">mut </span>piece), shard_chunk)| {
                 <span class="kw">let </span>(<span class="kw-2">mut </span>record, <span class="kw-2">mut </span>witness) = piece.split_mut();
@@ -1722,7 +1650,7 @@
             <span class="kw">return </span><span class="bool-val">false</span>;
         }
     };
-    <span class="kw">let </span>leaf_hash = blake2b_256_254_hash(<span class="kw-2">&amp;</span>record);
+    <span class="kw">let </span>leaf_hash = blake2b_256_254_hash_to_scalar(<span class="kw-2">&amp;</span>record);
 
     kzg.verify(
         <span class="kw-2">&amp;</span>commitment,
@@ -1737,7 +1665,7 @@
 </span><span class="kw">pub fn </span>is_piece_record_hash_valid(
     kzg: <span class="kw-2">&amp;</span>Kzg,
     num_pieces_in_segment: usize,
-    piece_record_hash: <span class="kw-2">&amp;</span>Blake2b256Hash,
+    piece_record_hash: <span class="kw-2">&amp;</span>Scalar,
     commitment: <span class="kw-2">&amp;</span>RecordsRoot,
     witness: <span class="kw-2">&amp;</span>Witness,
     position: u32,

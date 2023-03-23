@@ -184,19 +184,15 @@
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
 </pre><pre class="rust"><code><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::utils;
 <span class="kw">use </span>alloc::vec;
 <span class="kw">use </span>alloc::vec::Vec;
 <span class="kw">use </span>reed_solomon_erasure::galois_16::ReedSolomon;
-<span class="kw">use </span>subspace_core_primitives::crypto::blake2b_256_254_hash;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Kzg, Polynomial};
-<span class="kw">use </span>subspace_core_primitives::{FlatPieces, Piece, BLAKE2B_256_HASH_SIZE, PIECES_IN_SEGMENT};
+<span class="kw">use </span>subspace_core_primitives::crypto::{blake2b_256_254_hash_to_scalar, Scalar};
+<span class="kw">use </span>subspace_core_primitives::{FlatPieces, Piece, PIECES_IN_SEGMENT, RECORD_SIZE};
 
 <span class="doccomment">/// Reconstructor-related instantiation error.
 </span><span class="attr">#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -236,7 +232,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>PiecesReconstructor {
     <span class="doccomment">/// Number of data shards
-    </span>data_shards: u32,
+    </span>source_shards: u32,
     <span class="doccomment">/// Number of parity shards
     </span>parity_shards: u32,
     <span class="doccomment">/// Erasure coding data structure
@@ -246,25 +242,21 @@
 }
 
 <span class="kw">impl </span>PiecesReconstructor {
-    <span class="kw">pub fn </span>new(
-        record_size: u32,
-        segment_size: u32,
-        kzg: Kzg,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ReconstructorInstantiationError&gt; {
-        <span class="kw">if </span>segment_size &lt;= record_size {
+    <span class="kw">pub fn </span>new(segment_size: u32, kzg: Kzg) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ReconstructorInstantiationError&gt; {
+        <span class="kw">if </span>segment_size &lt;= RECORD_SIZE {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ReconstructorInstantiationError::SegmentSizeTooSmall);
         }
-        <span class="kw">if </span>segment_size % record_size != <span class="number">0 </span>{
+        <span class="kw">if </span>segment_size % RECORD_SIZE != <span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(ReconstructorInstantiationError::SegmentSizesNotMultipleOfRecordSize);
         }
 
-        <span class="kw">let </span>data_shards = segment_size / record_size;
-        <span class="kw">let </span>parity_shards = data_shards;
-        <span class="kw">let </span>reed_solomon = ReedSolomon::new(data_shards <span class="kw">as </span>usize, parity_shards <span class="kw">as </span>usize)
+        <span class="kw">let </span>source_shards = segment_size / RECORD_SIZE;
+        <span class="kw">let </span>parity_shards = source_shards;
+        <span class="kw">let </span>reed_solomon = ReedSolomon::new(source_shards <span class="kw">as </span>usize, parity_shards <span class="kw">as </span>usize)
             .expect(<span class="string">&quot;ReedSolomon must always be correctly instantiated&quot;</span>);
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            data_shards,
+            source_shards,
             parity_shards,
             reed_solomon,
             kzg,
@@ -293,26 +285,26 @@
             .map_err(ReconstructorError::DataShardsReconstruction)<span class="question-mark">?</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>reconstructed_record_shards = FlatPieces::new(shards.len());
-        <span class="kw">let </span><span class="kw-2">mut </span>polynomial_data =
-            <span class="macro">vec!</span>[<span class="number">0u8</span>; (<span class="self">self</span>.data_shards + <span class="self">self</span>.parity_shards) <span class="kw">as </span>usize * BLAKE2B_256_HASH_SIZE];
+        <span class="kw">let </span><span class="kw-2">mut </span>record_commitments =
+            <span class="macro">vec!</span>[Scalar::default(); (<span class="self">self</span>.source_shards + <span class="self">self</span>.parity_shards) <span class="kw">as </span>usize];
         <span class="comment">//TODO: Parity hashes will be erasure coded instead in the future
         //TODO: reuse already present commitments from segment_pieces, so we don&#39;t re-derive what
         // we already have
         </span>reconstructed_record_shards
             .as_pieces_mut()
-            .zip(polynomial_data.chunks_exact_mut(BLAKE2B_256_HASH_SIZE))
+            .zip(record_commitments.iter_mut())
             .zip(shards)
             .for_each(|((<span class="kw-2">mut </span>piece, polynomial_data), record)| {
                 <span class="kw">let </span>record =
                     record.expect(<span class="string">&quot;Reconstruction just happened and all records are present; qed&quot;</span>);
                 <span class="kw">let </span>record = record.flatten();
                 piece.record_mut().as_mut().copy_from_slice(record);
-                polynomial_data.copy_from_slice(<span class="kw-2">&amp;</span>blake2b_256_254_hash(record));
+                <span class="kw-2">*</span>polynomial_data = blake2b_256_254_hash_to_scalar(record);
             });
 
         <span class="kw">let </span>polynomial = <span class="self">self
             </span>.kzg
-            .poly(<span class="kw-2">&amp;</span>polynomial_data)
+            .poly(<span class="kw-2">&amp;</span>record_commitments)
             .expect(<span class="string">&quot;Internally produced values must never fail; qed&quot;</span>);
 
         <span class="prelude-val">Ok</span>((reconstructed_record_shards, polynomial))

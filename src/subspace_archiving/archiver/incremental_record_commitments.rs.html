@@ -164,8 +164,6 @@
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
-<a href="#167" id="167">167</a>
-<a href="#168" id="168">168</a>
 </pre><pre class="rust"><code><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::archiver::Segment;
@@ -175,7 +173,8 @@
 <span class="kw">use </span>blake2::Blake2b;
 <span class="kw">use </span>core::mem;
 <span class="kw">use </span>parity_scale_codec::{Encode, Output};
-<span class="kw">use </span>subspace_core_primitives::Blake2b256Hash;
+<span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
+<span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, RECORD_SIZE};
 
 <span class="doccomment">/// State of incremental record commitments, encapsulated to hide implementation details and
 /// encapsulate tricky logic
@@ -185,7 +184,7 @@
     ///
     /// NOTE: Until full segment is processed, this will not contain commitment to the first record
     /// since it is not ready yet. This in turn means all commitments will be at `-1` offset.
-    </span>state: VecDeque&lt;Blake2b256Hash&gt;,
+    </span>state: VecDeque&lt;Scalar&gt;,
 }
 
 <span class="kw">impl </span>IncrementalRecordCommitmentsState {
@@ -196,7 +195,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>drain(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = Blake2b256Hash&gt; + <span class="lifetime">&#39;_ </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>drain(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = Scalar&gt; + <span class="lifetime">&#39;_ </span>{
         <span class="self">self</span>.state.drain(..)
     }
 }
@@ -206,11 +205,9 @@
     incremental_record_commitments: <span class="kw-2">&amp;mut </span>IncrementalRecordCommitmentsState,
     segment: <span class="kw-2">&amp;</span>Segment,
     full: bool,
-    record_size: usize,
 ) {
     segment.encode_to(<span class="kw-2">&amp;mut </span>IncrementalRecordCommitmentsProcessor::new(
         incremental_record_commitments,
-        record_size,
         full,
     ));
 }
@@ -222,24 +219,22 @@
     </span>processed_bytes: usize,
     <span class="doccomment">/// Record commitments already created
     </span>incremental_record_commitments: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>IncrementalRecordCommitmentsState,
-    <span class="doccomment">/// Record size
-    </span>record_size: usize,
     <span class="doccomment">/// Whether segment is full or partial
     </span>full: bool,
     <span class="doccomment">/// Intermediate hashing state that computes Blake2-256-254.
     ///
-    /// See [`subspace_core_primitives::crypto::blake2b_256_254_hash`] for details.
+    /// See [`subspace_core_primitives::crypto::blake2b_256_254_hash_to_scalar`] for details.
     </span>hashing_state: Blake2b&lt;U32&gt;,
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; Drop <span class="kw">for </span>IncrementalRecordCommitmentsProcessor&lt;<span class="lifetime">&#39;a</span>&gt; {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.full {
-            <span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % <span class="self">self</span>.record_size;
+            <span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % RECORD_SIZE <span class="kw">as </span>usize;
             <span class="kw">if </span>record_offset &gt; <span class="number">0 </span>{
                 <span class="comment">// This is fine since we&#39;ll have at most a few iterations and allocation is less
                 // desirable than a loop here
-                </span><span class="kw">for _ in </span><span class="number">0</span>..(<span class="self">self</span>.record_size - record_offset) {
+                </span><span class="kw">for _ in </span><span class="number">0</span>..(RECORD_SIZE <span class="kw">as </span>usize - record_offset) {
                     <span class="self">self</span>.update_commitment_state(<span class="kw-2">&amp;</span>[<span class="number">0</span>]);
                 }
                 <span class="self">self</span>.create_commitment();
@@ -252,8 +247,8 @@
     <span class="kw">fn </span>write(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw-2">mut </span>bytes: <span class="kw-2">&amp;</span>[u8]) {
         <span class="comment">// Try to finish last partial record if possible
 
-        </span><span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % <span class="self">self</span>.record_size;
-        <span class="kw">let </span>bytes_left_in_record = <span class="self">self</span>.record_size - record_offset;
+        </span><span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % RECORD_SIZE <span class="kw">as </span>usize;
+        <span class="kw">let </span>bytes_left_in_record = RECORD_SIZE <span class="kw">as </span>usize - record_offset;
         <span class="kw">if </span>bytes_left_in_record &gt; <span class="number">0 </span>{
             <span class="kw">let </span>remaining_record_bytes;
             (remaining_record_bytes, bytes) =
@@ -273,11 +268,11 @@
         <span class="comment">// Continue processing records (full and partial) from remaining data, at this point we have
         // processed some number of full records, so can simply chunk the remaining bytes into
         // record sizes
-        </span>bytes.chunks(<span class="self">self</span>.record_size).for_each(|record| {
+        </span>bytes.chunks(RECORD_SIZE <span class="kw">as </span>usize).for_each(|record| {
             <span class="self">self</span>.update_commitment_state(record);
 
             <span class="comment">// Store hashes of full records
-            </span><span class="kw">if </span>record.len() == <span class="self">self</span>.record_size {
+            </span><span class="kw">if </span>record.len() == RECORD_SIZE <span class="kw">as </span>usize {
                 <span class="self">self</span>.create_commitment();
             }
         });
@@ -287,13 +282,11 @@
 <span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; IncrementalRecordCommitmentsProcessor&lt;<span class="lifetime">&#39;a</span>&gt; {
     <span class="kw">fn </span>new(
         incremental_record_commitments: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>IncrementalRecordCommitmentsState,
-        record_size: usize,
         full: bool,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             processed_bytes: <span class="number">0</span>,
             incremental_record_commitments,
-            record_size,
             full,
             hashing_state: Blake2b::&lt;U32&gt;::default(),
         }
@@ -313,7 +306,7 @@
     /// NOTE: This method is called with bytes that either cover part of the record or stop at the
     /// edge of the record.
     </span><span class="kw">fn </span>update_commitment_state(<span class="kw-2">&amp;mut </span><span class="self">self</span>, bytes: <span class="kw-2">&amp;</span>[u8]) {
-        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / <span class="self">self</span>.record_size) {
+        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / RECORD_SIZE <span class="kw">as </span>usize) {
             <span class="self">self</span>.hashing_state.update(bytes);
         }
         <span class="self">self</span>.processed_bytes += bytes.len();
@@ -322,7 +315,7 @@
     <span class="doccomment">/// In case commitment is necessary for currently processed record, internal hashing state will
     /// be finalized and commitment will be stored in shared state.
     </span><span class="kw">fn </span>create_commitment(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / <span class="self">self</span>.record_size - <span class="number">1</span>) {
+        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / RECORD_SIZE <span class="kw">as </span>usize - <span class="number">1</span>) {
             <span class="kw">let </span>hashing_state = mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.hashing_state);
 
             <span class="kw">let </span><span class="kw-2">mut </span>hash = Blake2b256Hash::from(hashing_state.finalize_fixed());
@@ -330,7 +323,10 @@
             // little-endian)
             </span>hash[<span class="number">31</span>] &amp;= <span class="number">0b00111111</span>;
 
-            <span class="self">self</span>.incremental_record_commitments.state.push_back(hash);
+            <span class="self">self</span>.incremental_record_commitments.state.push_back(
+                Scalar::try_from(hash)
+                    .expect(<span class="string">&quot;Last bit erased, thus hash is guaranteed to fit into scalar; qed&quot;</span>),
+            );
         }
     }
 }

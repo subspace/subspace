@@ -398,21 +398,6 @@
 <a href="#398" id="398">398</a>
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
 </pre><pre class="rust"><code><span class="doccomment">//! Tools for KZG commitment scheme
 
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;serde&quot;</span>)]
@@ -422,16 +407,14 @@
 
 <span class="kw">extern crate </span>alloc;
 
-<span class="kw">use </span><span class="kw">crate</span>::Scalar;
+<span class="kw">use </span><span class="kw">crate</span>::crypto::Scalar;
 <span class="kw">use </span>alloc::collections::btree_map::Entry;
 <span class="kw">use </span>alloc::collections::BTreeMap;
-<span class="kw">use </span>alloc::format;
 <span class="kw">use </span>alloc::string::{String, ToString};
 <span class="kw">use </span>alloc::sync::Arc;
 <span class="kw">use </span>alloc::vec::Vec;
 <span class="kw">use </span>blst_from_scratch::eip_4844::{bytes_from_g1_rust, bytes_to_g1_rust, bytes_to_g2_rust};
 <span class="kw">use </span>blst_from_scratch::types::fft_settings::FsFFTSettings;
-<span class="kw">use </span>blst_from_scratch::types::fr::FsFr;
 <span class="kw">use </span>blst_from_scratch::types::g1::FsG1;
 <span class="kw">use </span>blst_from_scratch::types::kzg_settings::FsKZGSettings;
 <span class="kw">use </span>blst_from_scratch::types::poly::FsPoly;
@@ -710,11 +693,16 @@
     }
 }
 
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>Inner {
+    kzg_settings: FsKZGSettings,
+    fft_settings_cache: Mutex&lt;BTreeMap&lt;usize, Arc&lt;FsFFTSettings&gt;&gt;&gt;,
+}
+
 <span class="doccomment">/// Wrapper data structure for working with KZG commitment scheme
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Kzg {
-    kzg_settings: FsKZGSettings,
-    fft_settings_cache: Arc&lt;Mutex&lt;BTreeMap&lt;usize, Arc&lt;FsFFTSettings&gt;&gt;&gt;&gt;,
+    inner: Arc&lt;Inner&gt;,
 }
 
 <span class="kw">impl </span>Kzg {
@@ -723,39 +711,31 @@
     /// Canonical KZG settings can be obtained using `embedded_kzg_settings()` function that becomes
     /// available with `embedded-kzg-settings` feature (enabled by default).
     </span><span class="kw">pub fn </span>new(kzg_settings: FsKZGSettings) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
+        <span class="kw">let </span>inner = Arc::new(Inner {
             kzg_settings,
-            fft_settings_cache: Arc::default(),
-        }
+            fft_settings_cache: Mutex::default(),
+        });
+
+        <span class="self">Self </span>{ inner }
     }
 
     <span class="doccomment">/// Create polynomial from data. Data must be multiple of 32 bytes, each containing up to 254
     /// bits of information.
     ///
     /// The resulting polynomial is in coefficient form.
-    </span><span class="kw">pub fn </span>poly(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Polynomial, String&gt; {
-        <span class="kw">let </span>evals = data
-            .chunks(Scalar::FULL_BYTES)
-            .map(|scalar| {
-                FsFr::from_scalar(
-                    scalar
-                        .try_into()
-                        .map_err(|<span class="kw">_</span>| <span class="string">&quot;Failed to convert value to scalar&quot;</span>.to_string())<span class="question-mark">?</span>,
-                )
-                .map_err(|error_code| {
-                    <span class="macro">format!</span>(<span class="string">&quot;Failed to create scalar from bytes with code: {error_code}&quot;</span>)
-                })
-            })
-            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, String&gt;&gt;()<span class="question-mark">?</span>;
+    </span><span class="kw">pub fn </span>poly(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>[Scalar]) -&gt; <span class="prelude-ty">Result</span>&lt;Polynomial, String&gt; {
         <span class="kw">let </span>poly = FsPoly {
-            coeffs: <span class="self">self</span>.get_fft_settings(evals.len())<span class="question-mark">?</span>.fft_fr(<span class="kw-2">&amp;</span>evals, <span class="bool-val">true</span>)<span class="question-mark">?</span>,
+            coeffs: <span class="self">self
+                </span>.get_fft_settings(data.len())<span class="question-mark">?
+                </span>.fft_fr(Scalar::slice_to_repr(data), <span class="bool-val">true</span>)<span class="question-mark">?</span>,
         };
         <span class="prelude-val">Ok</span>(Polynomial(poly))
     }
 
     <span class="doccomment">/// Computes a `Commitment` to `polynomial`
     </span><span class="kw">pub fn </span>commit(<span class="kw-2">&amp;</span><span class="self">self</span>, polynomial: <span class="kw-2">&amp;</span>Polynomial) -&gt; <span class="prelude-ty">Result</span>&lt;Commitment, String&gt; {
-        <span class="self">self</span>.kzg_settings
+        <span class="self">self</span>.inner
+            .kzg_settings
             .commit_to_poly(<span class="kw-2">&amp;</span>polynomial.<span class="number">0</span>)
             .map(Commitment)
     }
@@ -765,7 +745,8 @@
         <span class="kw">let </span>x = <span class="self">self
             </span>.get_fft_settings(polynomial.<span class="number">0</span>.coeffs.len())<span class="question-mark">?
             </span>.get_expanded_roots_of_unity_at(index <span class="kw">as </span>usize);
-        <span class="self">self</span>.kzg_settings
+        <span class="self">self</span>.inner
+            .kzg_settings
             .compute_proof_single(<span class="kw-2">&amp;</span>polynomial.<span class="number">0</span>, <span class="kw-2">&amp;</span>x)
             .map(Witness)
     }
@@ -777,7 +758,7 @@
         commitment: <span class="kw-2">&amp;</span>Commitment,
         num_values: usize,
         index: u32,
-        value: <span class="kw-2">&amp;</span>[u8],
+        value: <span class="kw-2">&amp;</span>Scalar,
         witness: <span class="kw-2">&amp;</span>Witness,
     ) -&gt; bool {
         <span class="kw">let </span>fft_settings = <span class="kw">match </span><span class="self">self</span>.get_fft_settings(num_values) {
@@ -788,24 +769,11 @@
             }
         };
         <span class="kw">let </span>x = fft_settings.get_expanded_roots_of_unity_at(index <span class="kw">as </span>usize);
-        <span class="kw">let </span>value = <span class="kw">match </span>value.try_into() {
-            <span class="prelude-val">Ok</span>(value) =&gt; value,
-            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                <span class="macro">debug!</span>(<span class="string">&quot;Failed to convert value to scalar&quot;</span>);
-                <span class="kw">return </span><span class="bool-val">false</span>;
-            }
-        };
-        <span class="kw">let </span>value = <span class="kw">match </span>FsFr::from_scalar(value) {
-            <span class="prelude-val">Ok</span>(value) =&gt; value,
-            <span class="prelude-val">Err</span>(error_code) =&gt; {
-                <span class="macro">debug!</span>(error_code, <span class="string">&quot;Failed to create scalar from bytes with code&quot;</span>);
-                <span class="kw">return </span><span class="bool-val">false</span>;
-            }
-        };
 
         <span class="kw">match </span><span class="self">self
-            </span>.kzg_settings
-            .check_proof_single(<span class="kw-2">&amp;</span>commitment.<span class="number">0</span>, <span class="kw-2">&amp;</span>witness.<span class="number">0</span>, <span class="kw-2">&amp;</span>x, <span class="kw-2">&amp;</span>value)
+            </span>.inner
+            .kzg_settings
+            .check_proof_single(<span class="kw-2">&amp;</span>commitment.<span class="number">0</span>, <span class="kw-2">&amp;</span>witness.<span class="number">0</span>, <span class="kw-2">&amp;</span>x, value)
         {
             <span class="prelude-val">Ok</span>(result) =&gt; result,
             <span class="prelude-val">Err</span>(error) =&gt; {
@@ -818,14 +786,16 @@
     <span class="doccomment">/// Get FFT settings for specified number of values, uses internal cache to avoid derivation
     /// every time.
     </span><span class="kw">pub fn </span>get_fft_settings(<span class="kw-2">&amp;</span><span class="self">self</span>, num_values: usize) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;FsFFTSettings&gt;, String&gt; {
-        <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="self">self</span>.fft_settings_cache.lock().entry(num_values) {
-            Entry::Vacant(entry) =&gt; {
-                <span class="kw">let </span>fft_settings = Arc::new(FsFFTSettings::new(num_values.ilog2() <span class="kw">as </span>usize)<span class="question-mark">?</span>);
-                entry.insert(Arc::clone(<span class="kw-2">&amp;</span>fft_settings));
-                fft_settings
-            }
-            Entry::Occupied(entry) =&gt; Arc::clone(entry.get()),
-        })
+        <span class="prelude-val">Ok</span>(
+            <span class="kw">match </span><span class="self">self</span>.inner.fft_settings_cache.lock().entry(num_values) {
+                Entry::Vacant(entry) =&gt; {
+                    <span class="kw">let </span>fft_settings = Arc::new(FsFFTSettings::new(num_values.ilog2() <span class="kw">as </span>usize)<span class="question-mark">?</span>);
+                    entry.insert(Arc::clone(<span class="kw-2">&amp;</span>fft_settings));
+                    fft_settings
+                }
+                Entry::Occupied(entry) =&gt; Arc::clone(entry.get()),
+            },
+        )
     }
 }
 </code></pre></div>
