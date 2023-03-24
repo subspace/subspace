@@ -56,7 +56,7 @@ var sourcesIndex = JSON.parse('{\
 "subspace_solving":["",[],["lib.rs"]],\
 "subspace_test_client":["",[],["chain_spec.rs","lib.rs"]],\
 "subspace_test_runtime":["",[],["lib.rs"]],\
-"subspace_test_service":["",[],["lib.rs"]],\
+"subspace_test_service":["",[],["lib.rs","mock.rs"]],\
 "subspace_transaction_pool":["",[],["bundle_validator.rs","lib.rs"]],\
 "subspace_verification":["",[],["lib.rs"]],\
 "subspace_wasm_tools":["",[],["lib.rs"]],\
