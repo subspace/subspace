@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_eth_relay_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"core_eth_relay_runtime/enum.OriginCaller.html\" title=\"enum core_eth_relay_runtime::OriginCaller\">OriginCaller</a>"]],
 "core_payments_domain_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"core_payments_domain_runtime/enum.OriginCaller.html\" title=\"enum core_payments_domain_runtime::OriginCaller\">OriginCaller</a>"]],
 "domain_test_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"domain_test_runtime/enum.OriginCaller.html\" title=\"enum domain_test_runtime::OriginCaller\">OriginCaller</a>"]],
 "orml_vesting":[["impl&lt;BlockNumber, Balance&gt; MaxEncodedLen for <a class=\"struct\" href=\"orml_vesting/struct.VestingSchedule.html\" title=\"struct orml_vesting::VestingSchedule\">VestingSchedule</a>&lt;BlockNumber, Balance&gt;<span class=\"where fmt-newline\">where<br>&nbsp;&nbsp;&nbsp;&nbsp;BlockNumber: MaxEncodedLen,<br>&nbsp;&nbsp;&nbsp;&nbsp;Balance: HasCompact + MaxEncodedLen + HasCompact,</span>"]],
