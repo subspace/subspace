@@ -588,7 +588,7 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_archiving::archiver::ArchivedSegment;
-<span class="kw">use </span>subspace_core_primitives::{RecordsRoot, RootBlock, SegmentIndex, Solution};
+<span class="kw">use </span>subspace_core_primitives::{SegmentCommitment, SegmentHeader, SegmentIndex, Solution};
 <span class="kw">use </span>subspace_farmer_components::FarmerProtocolInfo;
 <span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
 <span class="kw">use </span>subspace_rpc_primitives::{
@@ -638,16 +638,16 @@
     </span><span class="kw">fn </span>subscribe_archived_segment(<span class="kw-2">&amp;</span><span class="self">self</span>);
 
     <span class="attr">#[method(name = <span class="string">&quot;subspace_recordsRoots&quot;</span>)]
-    </span><span class="kw">async fn </span>records_roots(
+    </span><span class="kw">async fn </span>segment_commitments(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
-    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RecordsRoot&gt;&gt;&gt;;
+    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentCommitment&gt;&gt;&gt;;
 
-    <span class="attr">#[method(name = <span class="string">&quot;subspace_rootBlocks&quot;</span>)]
-    </span><span class="kw">async fn </span>root_blocks(
+    <span class="attr">#[method(name = <span class="string">&quot;subspace_SegmentHeaders&quot;</span>)]
+    </span><span class="kw">async fn </span>segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
-    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RootBlock&gt;&gt;&gt;;
+    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;&gt;;
 }
 
 <span class="attr">#[derive(Default)]
@@ -662,15 +662,15 @@
     senders: Vec&lt;async_oneshot::Sender&lt;RewardSignatureResponse&gt;&gt;,
 }
 
-<span class="kw">pub trait </span>RootBlockProvider {
-    <span class="kw">fn </span>get_root_block(
+<span class="kw">pub trait </span>SegmentHeaderProvider {
+    <span class="kw">fn </span>get_segment_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_index: SegmentIndex,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;RootBlock&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt;;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt;;
 }
 
 <span class="doccomment">/// Implements the [`SubspaceRpcApiServer`] trait for interacting with Subspace.
-</span><span class="kw">pub struct </span>SubspaceRpc&lt;Block: BlockT, Client, RBP: RootBlockProvider&gt; {
+</span><span class="kw">pub struct </span>SubspaceRpc&lt;Block: BlockT, Client, RBP: SegmentHeaderProvider&gt; {
     client: Arc&lt;Client&gt;,
     executor: SubscriptionTaskExecutor,
     new_slot_notification_stream: SubspaceNotificationStream&lt;NewSlotNotification&gt;,
@@ -680,7 +680,7 @@
     reward_signature_senders: Arc&lt;Mutex&lt;BlockSignatureSenders&gt;&gt;,
     dsn_bootstrap_nodes: Vec&lt;Multiaddr&gt;,
     subspace_link: SubspaceLink&lt;Block&gt;,
-    root_block_provider: RBP,
+    segment_header_provider: RBP,
 }
 
 <span class="doccomment">/// [`SubspaceRpc`] is used for notifying subscribers about arrival of new slots and for
@@ -690,7 +690,7 @@
 /// every subscriber, after which RPC server waits for the same number of
 /// `subspace_submitSolutionResponse` requests with `SolutionResponse` in them or until
 /// timeout is exceeded. The first valid solution for a particular slot wins, others are ignored.
-</span><span class="kw">impl</span>&lt;Block: BlockT, Client, RBP: RootBlockProvider&gt; SubspaceRpc&lt;Block, Client, RBP&gt; {
+</span><span class="kw">impl</span>&lt;Block: BlockT, Client, RBP: SegmentHeaderProvider&gt; SubspaceRpc&lt;Block, Client, RBP&gt; {
     <span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="doccomment">/// Creates a new instance of the `SubspaceRpc` handler.
     </span><span class="kw">pub fn </span>new(
@@ -703,7 +703,7 @@
         &gt;,
         dsn_bootstrap_nodes: Vec&lt;Multiaddr&gt;,
         subspace_link: SubspaceLink&lt;Block&gt;,
-        root_block_provider: RBP,
+        segment_header_provider: RBP,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             client,
@@ -715,7 +715,7 @@
             reward_signature_senders: Arc::default(),
             dsn_bootstrap_nodes,
             subspace_link,
-            root_block_provider,
+            segment_header_provider,
         }
     }
 }
@@ -731,7 +731,7 @@
         + Sync
         + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceRuntimeApi&lt;Block, FarmerPublicKey&gt;,
-    RBP: RootBlockProvider + Send + Sync + <span class="lifetime">&#39;static</span>,
+    RBP: SegmentHeaderProvider + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt; {
         <span class="kw">let </span>best_hash = <span class="self">self</span>.client.info().best_hash;
@@ -997,10 +997,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>records_roots(
+    <span class="kw">async fn </span>segment_commitments(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
-    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RecordsRoot&gt;&gt;&gt; {
+    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentCommitment&gt;&gt;&gt; {
         <span class="kw">if </span>segment_indexes.len() &gt; MAX_SEGMENT_INDEXES_PER_REQUEST {
             <span class="macro">error!</span>(
                 <span class="string">&quot;segment_indexes length exceed the limit: {} &quot;</span>,
@@ -1016,44 +1016,44 @@
         <span class="kw">let </span>best_hash = <span class="self">self</span>.client.info().best_hash;
         <span class="kw">let </span>best_block_number = <span class="self">self</span>.client.info().best_number;
 
-        <span class="kw">let </span>records_root_result: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, JsonRpseeError&gt; = segment_indexes
+        <span class="kw">let </span>segment_commitment_result: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, JsonRpseeError&gt; = segment_indexes
             .into_iter()
             .map(|segment_index| {
                 <span class="kw">let </span>api_result = runtime_api
-                    .records_root(best_hash, segment_index)
+                    .segment_commitment(best_hash, segment_index)
                     .map_err(|<span class="kw">_</span>| {
                         JsonRpseeError::Custom(
-                            <span class="string">&quot;Internal error during `records_root` call&quot;</span>.to_string(),
+                            <span class="string">&quot;Internal error during `segment_commitment` call&quot;</span>.to_string(),
                         )
                     });
 
-                api_result.map(|maybe_records_root| {
-                    <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced
-                    // extrinsics with root blocks are not yet in runtime.
-                    </span><span class="kw">if </span>maybe_records_root.is_none() &amp;&amp; best_block_number.is_zero() {
+                api_result.map(|maybe_segment_commitment| {
+                    <span class="comment">// This is not a very nice hack due to the fact that at the time first block is
+                    //  producedextrinsics with segment headers are not yet in runtime.
+                    </span><span class="kw">if </span>maybe_segment_commitment.is_none() &amp;&amp; best_block_number.is_zero() {
                         <span class="self">self</span>.subspace_link
-                            .records_root_by_segment_index(segment_index)
+                            .segment_commitment_by_segment_index(segment_index)
                     } <span class="kw">else </span>{
-                        maybe_records_root
+                        maybe_segment_commitment
                     }
                 })
             })
             .collect();
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err) = records_root_result {
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err) = segment_commitment_result {
             <span class="macro">error!</span>(
-                <span class="string">&quot;Failed to get data from runtime API (records_root): {}&quot;</span>,
+                <span class="string">&quot;Failed to get data from runtime API (segment_commitment): {}&quot;</span>,
                 err
             );
         }
 
-        records_root_result
+        segment_commitment_result
     }
 
-    <span class="kw">async fn </span>root_blocks(
+    <span class="kw">async fn </span>segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
-    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;RootBlock&gt;&gt;&gt; {
+    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;&gt; {
         <span class="kw">if </span>segment_indexes.len() &gt; MAX_SEGMENT_INDEXES_PER_REQUEST {
             <span class="macro">error!</span>(
                 <span class="string">&quot;segment_indexes length exceed the limit: {} &quot;</span>,
@@ -1065,15 +1065,15 @@
             </span>)));
         };
 
-        <span class="kw">let </span>records_root_result: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, JsonRpseeError&gt; = segment_indexes
+        <span class="kw">let </span>segment_commitment_result: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, JsonRpseeError&gt; = segment_indexes
             .into_iter()
             .map(|segment_index| {
                 <span class="kw">let </span>api_result = <span class="self">self
-                    </span>.root_block_provider
-                    .get_root_block(segment_index)
+                    </span>.segment_header_provider
+                    .get_segment_header(segment_index)
                     .map_err(|<span class="kw">_</span>| {
                         JsonRpseeError::Custom(
-                            <span class="string">&quot;Internal error during `root_blocks` call&quot;</span>.to_string(),
+                            <span class="string">&quot;Internal error during `segment_headers` call&quot;</span>.to_string(),
                         )
                     });
 
@@ -1081,11 +1081,11 @@
             })
             .collect();
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="kw-2">&amp;</span>records_root_result {
-            <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">&quot;Failed to get root blocks.&quot;</span>);
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="kw-2">&amp;</span>segment_commitment_result {
+            <span class="macro">error!</span>(<span class="question-mark">?</span>err, <span class="string">&quot;Failed to get segment headers.&quot;</span>);
         }
 
-        records_root_result
+        segment_commitment_result
     }
 }
 </code></pre></div>

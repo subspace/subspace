@@ -1332,6 +1332,8 @@
 <a href="#1332" id="1332">1332</a>
 <a href="#1333" id="1333">1333</a>
 <a href="#1334" id="1334">1334</a>
+<a href="#1335" id="1335">1335</a>
+<a href="#1336" id="1336">1336</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1416,8 +1418,8 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
 <span class="kw">use </span>subspace_core_primitives::{
-    Blake2b256Hash, BlockWeight, RecordsRoot, RootBlock, SectorId, SegmentIndex, Solution,
-    SolutionRange, PIECES_IN_SEGMENT,
+    Blake2b256Hash, BlockWeight, SectorId, SegmentCommitment, SegmentHeader, SegmentIndex,
+    Solution, SolutionRange, PIECES_IN_SEGMENT,
 };
 <span class="kw">use </span>subspace_solving::{derive_global_challenge, REWARD_SIGNING_CONTEXT};
 <span class="kw">use </span>subspace_verification::{
@@ -1469,7 +1471,7 @@
 }
 
 <span class="doccomment">/// Notification with imported block header hash that needs to be archived and sender for
-/// root blocks.
+/// segment headers.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>ImportedBlockNotification&lt;Block&gt;
 <span class="kw">where
@@ -1530,24 +1532,24 @@
     <span class="doccomment">/// Block has invalid associated solution range
     </span><span class="attr">#[error(<span class="string">&quot;Invalid solution range for block {0}&quot;</span>)]
     </span>InvalidSolutionRange(Header::Hash),
-    <span class="doccomment">/// Invalid set of root blocks
-    </span><span class="attr">#[error(<span class="string">&quot;Invalid set of root blocks&quot;</span>)]
-    </span>InvalidSetOfRootBlocks,
-    <span class="doccomment">/// Stored root block extrinsic was not found
-    </span><span class="attr">#[error(<span class="string">&quot;Stored root block extrinsic was not found: {0:?}&quot;</span>)]
-    </span>RootBlocksExtrinsicNotFound(Vec&lt;RootBlock&gt;),
-    <span class="doccomment">/// Duplicated records root
+    <span class="doccomment">/// Invalid set of segment headers
+    </span><span class="attr">#[error(<span class="string">&quot;Invalid set of segment headers&quot;</span>)]
+    </span>InvalidSetOfSegmentHeaders,
+    <span class="doccomment">/// Stored segment header extrinsic was not found
+    </span><span class="attr">#[error(<span class="string">&quot;Stored segment header extrinsic was not found: {0:?}&quot;</span>)]
+    </span>SegmentHeadersExtrinsicNotFound(Vec&lt;SegmentHeader&gt;),
+    <span class="doccomment">/// Duplicated segment commitment
     </span><span class="attr">#[error(
-        <span class="string">&quot;Different records root for segment index {0} was found in storage, likely fork below \
-        archiving point&quot;
+        <span class="string">&quot;Different segment commitment for segment index {0} was found in storage, likely fork \
+        below archiving point&quot;
     </span>)]
-    </span>DifferentRecordsRoot(u64),
+    </span>DifferentSegmentCommitment(u64),
     <span class="doccomment">/// Farmer in block list
     </span><span class="attr">#[error(<span class="string">&quot;Farmer {0} is in block list&quot;</span>)]
     </span>FarmerInBlockList(FarmerPublicKey),
     <span class="doccomment">/// Merkle Root not found
-    </span><span class="attr">#[error(<span class="string">&quot;Records Root for segment index {0} not found&quot;</span>)]
-    </span>RecordsRootNotFound(u64),
+    </span><span class="attr">#[error(<span class="string">&quot;Segment commitment for segment index {0} not found&quot;</span>)]
+    </span>SegmentCommitmentNotFound(u64),
     <span class="doccomment">/// Only root plot public key is allowed
     </span><span class="attr">#[error(<span class="string">&quot;Only root plot public key is allowed&quot;</span>)]
     </span>OnlyRootPlotPublicKeyAllowed,
@@ -1782,9 +1784,9 @@
     archived_segment_notification_stream: SubspaceNotificationStream&lt;ArchivedSegmentNotification&gt;,
     imported_block_notification_stream:
         SubspaceNotificationStream&lt;ImportedBlockNotification&lt;Block&gt;&gt;,
-    <span class="doccomment">/// Root blocks that are expected to appear in the corresponding blocks, used for block
+    <span class="doccomment">/// Segment headers that are expected to appear in the corresponding blocks, used for block
     /// validation
-    </span>root_blocks: Arc&lt;Mutex&lt;LruCache&lt;NumberFor&lt;Block&gt;, Vec&lt;RootBlock&gt;&gt;&gt;&gt;,
+    </span>segment_headers: Arc&lt;Mutex&lt;LruCache&lt;NumberFor&lt;Block&gt;, Vec&lt;SegmentHeader&gt;&gt;&gt;&gt;,
     kzg: Kzg,
 }
 
@@ -1822,26 +1824,26 @@
     }
 
     <span class="doccomment">/// Get blocks that are expected to be included at specified block number.
-    </span><span class="kw">pub fn </span>root_blocks_for_block(<span class="kw-2">&amp;</span><span class="self">self</span>, block_number: NumberFor&lt;Block&gt;) -&gt; Vec&lt;RootBlock&gt; {
-        <span class="self">self</span>.root_blocks
+    </span><span class="kw">pub fn </span>segment_headers_for_block(<span class="kw-2">&amp;</span><span class="self">self</span>, block_number: NumberFor&lt;Block&gt;) -&gt; Vec&lt;SegmentHeader&gt; {
+        <span class="self">self</span>.segment_headers
             .lock()
             .peek(<span class="kw-2">&amp;</span>block_number)
             .cloned()
             .unwrap_or_default()
     }
 
-    <span class="doccomment">/// Get the first found records root by segment index.
-    </span><span class="kw">pub fn </span>records_root_by_segment_index(
+    <span class="doccomment">/// Get the first found segment commitment by segment index.
+    </span><span class="kw">pub fn </span>segment_commitment_by_segment_index(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_index: SegmentIndex,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;RecordsRoot&gt; {
-        <span class="self">self</span>.root_blocks
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;SegmentCommitment&gt; {
+        <span class="self">self</span>.segment_headers
             .lock()
             .iter()
-            .find_map(|(_block_number, root_blocks)| {
-                root_blocks.iter().find_map(|root_block| {
-                    <span class="kw">if </span>root_block.segment_index() == segment_index {
-                        <span class="prelude-val">Some</span>(root_block.records_root())
+            .find_map(|(_block_number, segment_headers)| {
+                segment_headers.iter().find_map(|segment_header| {
+                    <span class="kw">if </span>segment_header.segment_index() == segment_index {
+                        <span class="prelude-val">Some</span>(segment_header.segment_commitment())
                     } <span class="kw">else </span>{
                         <span class="prelude-val">None
                     </span>}
@@ -2249,8 +2251,8 @@
         <span class="kw">let </span>segment_index: SegmentIndex = piece_index / SegmentIndex::from(PIECES_IN_SEGMENT);
 
         <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced
-        // extrinsics with root blocks are not yet in runtime.
-        </span><span class="kw">let </span>maybe_records_root = <span class="kw">if </span>block_number.is_one() {
+        // extrinsics with segment headers are not yet in runtime.
+        </span><span class="kw">let </span>maybe_segment_commitment = <span class="kw">if </span>block_number.is_one() {
             <span class="kw">let </span>genesis_block_hash = <span class="self">self</span>.client.info().genesis_hash;
             <span class="kw">let </span>archived_segments = Archiver::new(<span class="self">self</span>.subspace_link.kzg.clone())
                 .expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
@@ -2262,24 +2264,25 @@
                     BlockObjectMapping::default(),
                 );
             archived_segments.into_iter().find_map(|archived_segment| {
-                <span class="kw">if </span>archived_segment.root_block.segment_index() == segment_index {
-                    <span class="prelude-val">Some</span>(archived_segment.root_block.records_root())
+                <span class="kw">if </span>archived_segment.segment_header.segment_index() == segment_index {
+                    <span class="prelude-val">Some</span>(archived_segment.segment_header.segment_commitment())
                 } <span class="kw">else </span>{
                     <span class="prelude-val">None
                 </span>}
             })
         } <span class="kw">else </span>{
-            aux_schema::load_records_root(<span class="self">self</span>.client.as_ref(), segment_index)<span class="question-mark">?
+            aux_schema::load_segment_commitment(<span class="self">self</span>.client.as_ref(), segment_index)<span class="question-mark">?
         </span>};
 
-        <span class="kw">let </span>records_root = maybe_records_root.ok_or(Error::RecordsRootNotFound(segment_index))<span class="question-mark">?</span>;
+        <span class="kw">let </span>segment_commitment =
+            maybe_segment_commitment.ok_or(Error::SegmentCommitmentNotFound(segment_index))<span class="question-mark">?</span>;
 
         <span class="comment">// Piece is not checked during initial block verification because it requires access to
-        // root block, check it now.
+        // segment header, check it now.
         </span>subspace_verification::check_piece(
             <span class="kw-2">&amp;</span><span class="self">self</span>.subspace_link.kzg,
             PIECES_IN_SEGMENT <span class="kw">as </span>usize,
-            <span class="kw-2">&amp;</span>records_root,
+            <span class="kw-2">&amp;</span>segment_commitment,
             position,
             <span class="kw-2">&amp;</span>pre_digest.solution,
         )
@@ -2295,7 +2298,7 @@
         <span class="kw">if </span>!skip_runtime_access {
             <span class="comment">// If the body is passed through, we need to use the runtime to check that the
             // internally-set timestamp in the inherents actually matches the slot set in the seal
-            // and root blocks in the inherents are set correctly.
+            // and segment headers in the inherents are set correctly.
             </span><span class="kw">if let </span><span class="prelude-val">Some</span>(extrinsics) = extrinsics {
                 <span class="kw">let </span>create_inherent_data_providers = <span class="self">self
                     </span>.create_inherent_data_providers
@@ -2447,19 +2450,20 @@
                 .extend(values.iter().map(|(k, v)| (k.to_vec(), <span class="prelude-val">Some</span>(v.to_vec()))))
         });
 
-        <span class="kw">for </span>(<span class="kw-2">&amp;</span>segment_index, records_root) <span class="kw">in </span><span class="kw-2">&amp;</span>subspace_digest_items.records_roots {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(found_records_root) =
-                aux_schema::load_records_root(<span class="self">self</span>.client.as_ref(), segment_index)
+        <span class="kw">for </span>(<span class="kw-2">&amp;</span>segment_index, segment_commitment) <span class="kw">in </span><span class="kw-2">&amp;</span>subspace_digest_items.segment_commitments {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(found_segment_commitment) =
+                aux_schema::load_segment_commitment(<span class="self">self</span>.client.as_ref(), segment_index)
                     .map_err(|e| ConsensusError::ClientImport(e.to_string()))<span class="question-mark">?
             </span>{
-                <span class="kw">if </span><span class="kw-2">&amp;</span>found_records_root != records_root {
+                <span class="kw">if </span><span class="kw-2">&amp;</span>found_segment_commitment != segment_commitment {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ConsensusError::ClientImport(
-                        Error::&lt;Block::Header&gt;::DifferentRecordsRoot(segment_index).to_string(),
+                        Error::&lt;Block::Header&gt;::DifferentSegmentCommitment(segment_index)
+                            .to_string(),
                     ));
                 }
             }
 
-            aux_schema::write_records_root(segment_index, records_root, |values| {
+            aux_schema::write_segment_commitment(segment_index, segment_commitment, |values| {
                 block
                     .auxiliary
                     .extend(values.iter().map(|(k, v)| (k.to_vec(), <span class="prelude-val">Some</span>(v.to_vec()))))
@@ -2598,7 +2602,7 @@
         archived_segment_notification_stream,
         imported_block_notification_stream,
         <span class="comment">// TODO: Consider making `confirmation_depth_k` non-zero
-        </span>root_blocks: Arc::new(Mutex::new(LruCache::new(
+        </span>segment_headers: Arc::new(Mutex::new(LruCache::new(
             NonZeroUsize::new(confirmation_depth_k <span class="kw">as </span>usize)
                 .expect(<span class="string">&quot;Confirmation depth of zero is not supported&quot;</span>),
         ))),

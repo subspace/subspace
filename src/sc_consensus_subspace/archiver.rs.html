@@ -550,6 +550,11 @@
 <a href="#550" id="550">550</a>
 <a href="#551" id="551">551</a>
 <a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -586,19 +591,19 @@
 <span class="kw">use </span>subspace_archiving::archiver::{ArchivedSegment, Archiver};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
-<span class="kw">use </span>subspace_core_primitives::{BlockNumber, RootBlock};
+<span class="kw">use </span>subspace_core_primitives::{BlockNumber, SegmentHeader};
 
 <span class="kw">fn </span>find_last_archived_block&lt;Block, Client&gt;(
     client: <span class="kw-2">&amp;</span>Client,
     best_block_hash: Block::Hash,
-) -&gt; <span class="prelude-ty">Option</span>&lt;(RootBlock, SignedBlock&lt;Block&gt;, BlockObjectMapping)&gt;
+) -&gt; <span class="prelude-ty">Option</span>&lt;(SegmentHeader, SignedBlock&lt;Block&gt;, BlockObjectMapping)&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt; + ObjectsApi&lt;Block&gt;,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>block_to_check = best_block_hash;
-    <span class="kw">let </span>last_root_block = <span class="lifetime">&#39;outer</span>: <span class="kw">loop </span>{
+    <span class="kw">let </span>last_segment_header = <span class="lifetime">&#39;outer</span>: <span class="kw">loop </span>{
         <span class="kw">let </span>block = client
             .block(block_to_check)
             .expect(<span class="string">&quot;Older blocks should always exist&quot;</span>)
@@ -607,10 +612,10 @@
         <span class="kw">for </span>extrinsic <span class="kw">in </span>block.block.extrinsics() {
             <span class="kw">match </span>client
                 .runtime_api()
-                .extract_root_blocks(block_to_check, extrinsic)
+                .extract_segment_headers(block_to_check, extrinsic)
             {
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(root_blocks)) =&gt; {
-                    <span class="kw">break </span><span class="lifetime">&#39;outer </span>root_blocks.into_iter().last()<span class="question-mark">?</span>;
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(segment_headers)) =&gt; {
+                    <span class="kw">break </span><span class="lifetime">&#39;outer </span>segment_headers.into_iter().last()<span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                     <span class="comment">// Some other extrinsic, ignore
@@ -635,7 +640,7 @@
         block_to_check = parent_block_hash;
     };
 
-    <span class="kw">let </span>last_archived_block_number = last_root_block.last_archived_block().number;
+    <span class="kw">let </span>last_archived_block_number = last_segment_header.last_archived_block().number;
 
     <span class="kw">let </span>last_archived_block = <span class="kw">loop </span>{
         <span class="kw">let </span>block = client
@@ -664,7 +669,11 @@
         })
         .unwrap_or_default();
 
-    <span class="prelude-val">Some</span>((last_root_block, last_archived_block, block_object_mappings))
+    <span class="prelude-val">Some</span>((
+        last_segment_header,
+        last_archived_block,
+        block_object_mappings,
+    ))
 }
 
 <span class="kw">struct </span>BlockHashesToArchive&lt;Block&gt;
@@ -745,39 +754,40 @@
         .confirmation_depth_k();
 
     <span class="kw">let </span>maybe_last_archived_block = find_last_archived_block(client, best_block_hash);
-    <span class="kw">let </span>have_last_root_block = maybe_last_archived_block.is_some();
+    <span class="kw">let </span>have_last_segment_header = maybe_last_archived_block.is_some();
     <span class="kw">let </span><span class="kw-2">mut </span>best_archived_block = <span class="prelude-val">None</span>;
 
-    <span class="kw">let </span><span class="kw-2">mut </span>archiver = <span class="kw">if let </span><span class="prelude-val">Some</span>((last_root_block, last_archived_block, block_object_mappings)) =
-        maybe_last_archived_block
-    {
-        <span class="comment">// Continuing from existing initial state
-        </span><span class="kw">let </span>last_archived_block_number = last_root_block.last_archived_block().number;
-        <span class="macro">info!</span>(
-            target: <span class="string">&quot;subspace&quot;</span>,
-            <span class="string">&quot;Last archived block {}&quot;</span>,
-            last_archived_block_number,
-        );
+    <span class="kw">let </span><span class="kw-2">mut </span>archiver =
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((last_segment_header, last_archived_block, block_object_mappings)) =
+            maybe_last_archived_block
+        {
+            <span class="comment">// Continuing from existing initial state
+            </span><span class="kw">let </span>last_archived_block_number = last_segment_header.last_archived_block().number;
+            <span class="macro">info!</span>(
+                target: <span class="string">&quot;subspace&quot;</span>,
+                <span class="string">&quot;Last archived block {}&quot;</span>,
+                last_archived_block_number,
+            );
 
-        <span class="comment">// Set initial value, this is needed in case only genesis block was archived and there is
-        // nothing else available
-        </span>best_archived_block.replace((
-            last_archived_block.block.hash(),
-            <span class="kw-2">*</span>last_archived_block.block.header().number(),
-        ));
+            <span class="comment">// Set initial value, this is needed in case only genesis block was archived and there
+            // is nothing else available
+            </span>best_archived_block.replace((
+                last_archived_block.block.hash(),
+                <span class="kw-2">*</span>last_archived_block.block.header().number(),
+            ));
 
-        Archiver::with_initial_state(
-            kzg,
-            last_root_block,
-            <span class="kw-2">&amp;</span>last_archived_block.encode(),
-            block_object_mappings,
-        )
-        .expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
-    } <span class="kw">else </span>{
-        <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Starting archiving from genesis&quot;</span>);
+            Archiver::with_initial_state(
+                kzg,
+                last_segment_header,
+                <span class="kw-2">&amp;</span>last_archived_block.encode(),
+                block_object_mappings,
+            )
+            .expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
+        } <span class="kw">else </span>{
+            <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Starting archiving from genesis&quot;</span>);
 
-        Archiver::new(kzg).expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
-    };
+            Archiver::new(kzg).expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
+        };
 
     <span class="kw">let </span><span class="kw-2">mut </span>older_archived_segments = Vec::new();
 
@@ -796,7 +806,7 @@
                 })
                 .checked_sub(confirmation_depth_k)
                 .or({
-                    <span class="kw">if </span>have_last_root_block {
+                    <span class="kw">if </span>have_last_segment_header {
                         <span class="prelude-val">None
                     </span>} <span class="kw">else </span>{
                         <span class="comment">// If not continuation, archive genesis block
@@ -849,25 +859,25 @@
                 </span>);
 
                 <span class="kw">let </span>archived_segments = archiver.add_block(encoded_block, block_object_mappings);
-                <span class="kw">let </span>new_root_blocks: Vec&lt;RootBlock&gt; = archived_segments
+                <span class="kw">let </span>new_segment_headers: Vec&lt;SegmentHeader&gt; = archived_segments
                     .iter()
-                    .map(|archived_segment| archived_segment.root_block)
+                    .map(|archived_segment| archived_segment.segment_header)
                     .collect();
 
                 older_archived_segments.extend(archived_segments);
 
-                <span class="kw">if </span>!new_root_blocks.is_empty() {
-                    <span class="comment">// Set list of expected root blocks for the block where we expect root block
-                    // extrinsic to be included
-                    </span>subspace_link.root_blocks.lock().put(
+                <span class="kw">if </span>!new_segment_headers.is_empty() {
+                    <span class="comment">// Set list of expected segment headers for the block where we expect segment
+                    // header extrinsic to be included
+                    </span>subspace_link.segment_headers.lock().put(
                         <span class="kw">if </span>block_number_to_archive.is_zero() {
-                            <span class="comment">// Special case for genesis block whose root block should be included in
+                            <span class="comment">// Special case for genesis block whose segment header should be included in
                             // the first block in order for further validation to work properly.
                             </span>One::one()
                         } <span class="kw">else </span>{
                             block_number_to_archive + confirmation_depth_k.into() + One::one()
                         },
-                        new_root_blocks,
+                        new_segment_headers,
                     );
                 }
             }
@@ -919,8 +929,8 @@
 }
 
 <span class="doccomment">/// Start an archiver that will listen for imported blocks and archive blocks at `K` depth,
-/// producing pieces and root blocks (root blocks are then added back to the blockchain as
-/// `store_root_block` extrinsic).
+/// producing pieces and segment headers (segment headers are then added back to the blockchain as
+/// `store_segment_header` extrinsic).
 </span><span class="kw">pub fn </span>start_subspace_archiver&lt;Block, Backend, Client&gt;(
     subspace_link: <span class="kw-2">&amp;</span>SubspaceLink&lt;Block&gt;,
     client: Arc&lt;Client&gt;,
@@ -965,7 +975,7 @@
                 subspace_link.imported_block_notification_stream.subscribe();
             <span class="kw">let </span>archived_segment_notification_sender =
                 subspace_link.archived_segment_notification_sender.clone();
-            <span class="kw">let </span>root_blocks = Arc::clone(<span class="kw-2">&amp;</span>subspace_link.root_blocks);
+            <span class="kw">let </span>segment_headers = Arc::clone(<span class="kw-2">&amp;</span>subspace_link.segment_headers);
 
             <span class="kw">async move </span>{
                 <span class="comment">// Farmers may have not received all previous segments, send them now.
@@ -1053,10 +1063,10 @@
                         encoded_block.len() <span class="kw">as </span>f32 / <span class="number">1024.0
                     </span>);
 
-                    <span class="kw">let </span><span class="kw-2">mut </span>new_root_blocks = Vec::new();
+                    <span class="kw">let </span><span class="kw-2">mut </span>new_segment_headers = Vec::new();
                     <span class="kw">for </span>archived_segment <span class="kw">in </span>archiver.add_block(encoded_block, block_object_mappings)
                     {
-                        <span class="kw">let </span>root_block = archived_segment.root_block;
+                        <span class="kw">let </span>segment_header = archived_segment.segment_header;
 
                         send_archived_segment_notification(
                             <span class="kw-2">&amp;</span>archived_segment_notification_sender,
@@ -1064,13 +1074,13 @@
                         )
                         .<span class="kw">await</span>;
 
-                        new_root_blocks.push(root_block);
+                        new_segment_headers.push(segment_header);
                     }
 
-                    <span class="kw">if </span>!new_root_blocks.is_empty() {
-                        root_blocks
+                    <span class="kw">if </span>!new_segment_headers.is_empty() {
+                        segment_headers
                             .lock()
-                            .put(block_number + One::one(), new_root_blocks);
+                            .put(block_number + One::one(), new_segment_headers);
                     }
 
                     finalize_block(

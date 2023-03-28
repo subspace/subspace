@@ -869,6 +869,7 @@
 <a href="#869" id="869">869</a>
 <a href="#870" id="870">870</a>
 <a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -905,7 +906,7 @@
 };
 <span class="kw">use </span>subspace_core_primitives::{
     ArchivedBlockProgress, Blake2b256Hash, BlockNumber, FlatPieces, LastArchivedBlock, PieceArray,
-    RawRecord, RecordedHistorySegment, RecordsRoot, RootBlock, PIECES_IN_SEGMENT,
+    RawRecord, RecordedHistorySegment, SegmentCommitment, SegmentHeader, PIECES_IN_SEGMENT,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 
@@ -914,7 +915,7 @@
     <span class="comment">// Special case for the genesis block.
     //
     // When we start archiving process with pre-genesis objects, we do not yet have any blocks
-    // archived, but `LastArchivedBlock` is required for `RootBlock`s to be produced, so
+    // archived, but `LastArchivedBlock` is required for `SegmentHeader`s to be produced, so
     // `ArchivedBlockProgress::Partial(0)` indicates that we have archived 0 bytes of block `0` (see
     // field above), meaning we did not in fact archive actual blocks yet.
     </span>archived_progress: ArchivedBlockProgress::Partial(<span class="number">0</span>),
@@ -1036,18 +1037,18 @@
         #[codec(skip)]
         </span>object_mapping: BlockObjectMapping,
     },
-    <span class="doccomment">/// Root block
+    <span class="doccomment">/// Segment header of the parent
     </span><span class="attr">#[codec(index = <span class="number">4</span>)]
-    </span>RootBlock(RootBlock),
+    </span>ParentSegmentHeader(SegmentHeader),
 }
 
-<span class="doccomment">/// Archived segment as a combination of root block hash, segment index and corresponding pieces
+<span class="doccomment">/// Archived segment as a combination of segment header hash, segment index and corresponding pieces
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Decode, Encode)]
 #[cfg_attr(feature = <span class="string">&quot;serde&quot;</span>, derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = <span class="string">&quot;serde&quot;</span>, serde(rename_all = <span class="string">&quot;camelCase&quot;</span>))]
 </span><span class="kw">pub struct </span>ArchivedSegment {
-    <span class="doccomment">/// Root block of the segment
-    </span><span class="kw">pub </span>root_block: RootBlock,
+    <span class="doccomment">/// Segment header of the segment
+    </span><span class="kw">pub </span>segment_header: SegmentHeader,
     <span class="doccomment">/// Pieces that correspond to this segment
     </span><span class="kw">pub </span>pieces: FlatPieces,
     <span class="doccomment">/// Mappings for objects stored in corresponding pieces.
@@ -1091,7 +1092,7 @@
 /// sliced into segments of [`RecordedHistorySegment::SIZE`] size, segments are sliced into source
 /// records of [`RawRecord::SIZE`], records are erasure coded, committed to with [`Kzg`], then
 /// commitments with witnesses are appended and records become pieces that are returned alongside
-/// corresponding root block header.
+/// corresponding segment header header.
 ///
 /// ## Panics
 /// Panics when operating on blocks, whose length doesn&#39;t fit into u32 (should never be the case in
@@ -1109,8 +1110,8 @@
     </span>kzg: Kzg,
     <span class="doccomment">/// An index of the current segment
     </span>segment_index: u64,
-    <span class="doccomment">/// Hash of the root block of the previous segment
-    </span>prev_root_block_hash: Blake2b256Hash,
+    <span class="doccomment">/// Hash of the segment header of the previous segment
+    </span>prev_segment_header_hash: Blake2b256Hash,
     <span class="doccomment">/// Last archived block
     </span>last_archived_block: LastArchivedBlock,
 }
@@ -1138,7 +1139,7 @@
             erasure_coding,
             kzg,
             segment_index: <span class="number">0</span>,
-            prev_root_block_hash: Blake2b256Hash::default(),
+            prev_segment_header_hash: Blake2b256Hash::default(),
             last_archived_block: INITIAL_LAST_ARCHIVED_BLOCK,
         })
     }
@@ -1148,20 +1149,20 @@
     /// `block` corresponds to `last_archived_block` and will be processed accordingly to its state.
     </span><span class="kw">pub fn </span>with_initial_state(
         kzg: Kzg,
-        root_block: RootBlock,
+        segment_header: SegmentHeader,
         encoded_block: <span class="kw-2">&amp;</span>[u8],
         <span class="kw-2">mut </span>object_mapping: BlockObjectMapping,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ArchiverInstantiationError&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>archiver = <span class="self">Self</span>::new(kzg)<span class="question-mark">?</span>;
 
-        archiver.segment_index = root_block.segment_index() + <span class="number">1</span>;
-        archiver.prev_root_block_hash = root_block.hash();
-        archiver.last_archived_block = root_block.last_archived_block();
+        archiver.segment_index = segment_header.segment_index() + <span class="number">1</span>;
+        archiver.prev_segment_header_hash = segment_header.hash();
+        archiver.last_archived_block = segment_header.last_archived_block();
 
-        <span class="comment">// The first thing in the buffer should be root block
+        <span class="comment">// The first thing in the buffer should be segment header
         </span>archiver
             .buffer
-            .push_back(SegmentItem::RootBlock(root_block));
+            .push_back(SegmentItem::ParentSegmentHeader(segment_header));
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(archived_block_bytes) = archiver.last_archived_block.partial_archived() {
             <span class="kw">let </span>encoded_block_bytes = u32::try_from(encoded_block.len())
@@ -1213,7 +1214,7 @@
         </span>}
     }
 
-    <span class="doccomment">/// Adds new block to internal buffer, potentially producing pieces and root block headers
+    <span class="doccomment">/// Adds new block to internal buffer, potentially producing pieces and segment header headers
     </span><span class="kw">pub fn </span>add_block(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         bytes: Vec&lt;u8&gt;,
@@ -1292,10 +1293,10 @@
                         <span class="macro">unreachable!</span>(<span class="string">&quot;Buffer never contains SegmentItem::BlockStart; qed&quot;</span>);
                     }
                     SegmentItem::BlockContinuation { bytes, .. } =&gt; bytes.len(),
-                    SegmentItem::RootBlock(<span class="kw">_</span>) =&gt; {
+                    SegmentItem::ParentSegmentHeader(<span class="kw">_</span>) =&gt; {
                         <span class="macro">unreachable!</span>(
-                            <span class="string">&quot;SegmentItem::RootBlock is always the first element in the buffer and \
-                            fits into the segment; qed&quot;</span>,
+                            <span class="string">&quot;SegmentItem::SegmentHeader is always the first element in the buffer \
+                            and fits into the segment; qed&quot;</span>,
                         );
                     }
                 };
@@ -1336,8 +1337,8 @@
                                 .expect(<span class="string">&quot;Blocks length is never bigger than u32; qed&quot;</span>),
                     );
                 }
-                SegmentItem::RootBlock(<span class="kw">_</span>) =&gt; {
-                    <span class="comment">// We are not interested in root block here
+                SegmentItem::ParentSegmentHeader(<span class="kw">_</span>) =&gt; {
+                    <span class="comment">// We are not interested in segment header here
                 </span>}
             }
 
@@ -1451,9 +1452,9 @@
                         object_mapping,
                     }
                 }
-                SegmentItem::RootBlock(<span class="kw">_</span>) =&gt; {
+                SegmentItem::ParentSegmentHeader(<span class="kw">_</span>) =&gt; {
                     <span class="macro">unreachable!</span>(
-                        <span class="string">&quot;SegmentItem::RootBlock is always the first element in the buffer and \
+                        <span class="string">&quot;SegmentItem::SegmentHeader is always the first element in the buffer and \
                         fits into the segment; qed&quot;</span>,
                     );
                 }
@@ -1527,7 +1528,7 @@
                             }
                         }
                     }
-                    SegmentItem::RootBlock(<span class="kw">_</span>) =&gt; {
+                    SegmentItem::ParentSegmentHeader(<span class="kw">_</span>) =&gt; {
                         <span class="comment">// Ignore, no objects mappings here
                     </span>}
                 }
@@ -1614,7 +1615,7 @@
             )
             .expect(<span class="string">&quot;Internally produced values must never fail; qed&quot;</span>);
 
-        <span class="kw">let </span>records_root = <span class="self">self
+        <span class="kw">let </span>segment_commitment = <span class="self">self
             </span>.kzg
             .commit(<span class="kw-2">&amp;</span>polynomial)
             .expect(<span class="string">&quot;Internally produced values must never fail; qed&quot;</span>);
@@ -1633,29 +1634,30 @@
                     <span class="kw-2">&amp;</span><span class="self">self
                         </span>.kzg
                         .create_witness(<span class="kw-2">&amp;</span>polynomial, position <span class="kw">as </span>u32)
-                        .expect(<span class="string">&quot;We use the same indexes as during Merkle tree creation; qed&quot;</span>)
+                        .expect(<span class="string">&quot;Position is statically known to be valid; qed&quot;</span>)
                         .to_bytes(),
                 );
             });
 
-        <span class="comment">// Now produce root block
-        </span><span class="kw">let </span>root_block = RootBlock::V0 {
+        <span class="comment">// Now produce segment header
+        </span><span class="kw">let </span>segment_header = SegmentHeader::V0 {
             segment_index: <span class="self">self</span>.segment_index,
-            records_root,
-            prev_root_block_hash: <span class="self">self</span>.prev_root_block_hash,
+            segment_commitment,
+            prev_segment_header_hash: <span class="self">self</span>.prev_segment_header_hash,
             last_archived_block: <span class="self">self</span>.last_archived_block,
         };
 
         <span class="comment">// Update state
         </span><span class="self">self</span>.segment_index += <span class="number">1</span>;
-        <span class="self">self</span>.prev_root_block_hash = root_block.hash();
+        <span class="self">self</span>.prev_segment_header_hash = segment_header.hash();
 
-        <span class="comment">// Add root block to the beginning of the buffer to be the first thing included in the next
-        // segment
-        </span><span class="self">self</span>.buffer.push_front(SegmentItem::RootBlock(root_block));
+        <span class="comment">// Add segment header to the beginning of the buffer to be the first thing included in the
+        //  nextsegment
+        </span><span class="self">self</span>.buffer
+            .push_front(SegmentItem::ParentSegmentHeader(segment_header));
 
         ArchivedSegment {
-            root_block,
+            segment_header,
             pieces,
             object_mapping,
         }
@@ -1667,7 +1669,7 @@
     kzg: <span class="kw-2">&amp;</span>Kzg,
     num_pieces_in_segment: usize,
     piece: <span class="kw-2">&amp;</span>PieceArray,
-    records_root: <span class="kw-2">&amp;</span>RecordsRoot,
+    segment_commitment: <span class="kw-2">&amp;</span>SegmentCommitment,
     position: u32,
 ) -&gt; bool {
     <span class="kw">let </span>(record, commitment, witness) = piece.split();
@@ -1715,7 +1717,7 @@
     <span class="kw">let </span>commitment_hash = blake2b_256_254_hash_to_scalar(commitment.as_ref());
 
     kzg.verify(
-        records_root,
+        segment_commitment,
         num_pieces_in_segment,
         position,
         <span class="kw-2">&amp;</span>commitment_hash,
@@ -1728,7 +1730,7 @@
     kzg: <span class="kw-2">&amp;</span>Kzg,
     num_pieces_in_segment: usize,
     piece_record_hash: <span class="kw-2">&amp;</span>Scalar,
-    commitment: <span class="kw-2">&amp;</span>RecordsRoot,
+    commitment: <span class="kw-2">&amp;</span>SegmentCommitment,
     witness: <span class="kw-2">&amp;</span>Witness,
     position: u32,
 ) -&gt; bool {

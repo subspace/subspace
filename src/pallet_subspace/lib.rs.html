@@ -1597,6 +1597,18 @@
 <a href="#1597" id="1597">1597</a>
 <a href="#1598" id="1598">1598</a>
 <a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
+<a href="#1603" id="1603">1603</a>
+<a href="#1604" id="1604">1604</a>
+<a href="#1605" id="1605">1605</a>
+<a href="#1606" id="1606">1606</a>
+<a href="#1607" id="1607">1607</a>
+<a href="#1608" id="1608">1608</a>
+<a href="#1609" id="1609">1609</a>
+<a href="#1610" id="1610">1610</a>
+<a href="#1611" id="1611">1611</a>
 </pre><pre class="rust"><code><span class="attr">#![feature(assert_matches)]
 </span><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
@@ -1656,7 +1668,7 @@
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>subspace_core_primitives::{
-    PublicKey, Randomness, RewardSignature, RootBlock, SectorId, SectorIndex, SegmentIndex,
+    PublicKey, Randomness, RewardSignature, SectorId, SectorIndex, SegmentHeader, SegmentIndex,
     SolutionRange, PIECES_IN_SEGMENT, PIECE_SIZE, RECORDED_HISTORY_SEGMENT_SIZE, RECORD_SIZE,
 };
 <span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
@@ -1667,7 +1679,7 @@
 
 <span class="kw">pub trait </span>WeightInfo {
     <span class="kw">fn </span>report_equivocation() -&gt; Weight;
-    <span class="kw">fn </span>store_root_blocks(root_blocks_count: usize) -&gt; Weight;
+    <span class="kw">fn </span>store_segment_headers(segment_headers_count: usize) -&gt; Weight;
     <span class="kw">fn </span>vote() -&gt; Weight;
 }
 
@@ -1740,7 +1752,7 @@
     <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
     <span class="kw">use </span>sp_std::prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>subspace_core_primitives::{
-        Randomness, RootBlock, SectorIndex, SegmentIndex, SolutionRange,
+        Randomness, SectorIndex, SegmentHeader, SegmentIndex, SolutionRange,
     };
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>InitialSolutionRanges&lt;T: Config&gt; {
@@ -1907,8 +1919,8 @@
     </span><span class="attr">#[pallet::event]
     #[pallet::generate_deposit(<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
     </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {
-        <span class="doccomment">/// Root block was stored in blockchain history.
-        </span>RootBlockStored { root_block: RootBlock },
+        <span class="doccomment">/// Segment header was stored in blockchain history.
+        </span>SegmentHeaderStored { segment_header: SegmentHeader },
         <span class="doccomment">/// Farmer vote.
         </span>FarmerVote {
             public_key: FarmerPublicKey,
@@ -1974,11 +1986,15 @@
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>BlockList&lt;T&gt; = StorageMap&lt;<span class="kw">_</span>, Twox64Concat, FarmerPublicKey, ()&gt;;
 
-    <span class="doccomment">/// Mapping from segment index to corresponding merkle tree root of segment records.
+    <span class="doccomment">/// Mapping from segment index to corresponding segment commitment of contained records.
     </span><span class="attr">#[pallet::storage]
-    #[pallet::getter(<span class="kw">fn </span>records_root)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>RecordsRoot&lt;T&gt; =
-        CountedStorageMap&lt;<span class="kw">_</span>, Twox64Concat, SegmentIndex, subspace_core_primitives::RecordsRoot&gt;;
+    #[pallet::getter(<span class="kw">fn </span>segment_commitment)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>SegmentCommitment&lt;T&gt; = CountedStorageMap&lt;
+        <span class="kw">_</span>,
+        Twox64Concat,
+        SegmentIndex,
+        subspace_core_primitives::SegmentCommitment,
+    &gt;;
 
     <span class="doccomment">/// Storage of previous vote verification data, updated on each block during finalization.
     </span><span class="attr">#[pallet::storage]
@@ -2081,16 +2097,16 @@
             <span class="self">Self</span>::do_report_equivocation(<span class="kw-2">*</span>equivocation_proof)
         }
 
-        <span class="doccomment">/// Submit new root block to the blockchain. This is an inherent extrinsic and part of the
-        /// Subspace consensus logic.
+        <span class="doccomment">/// Submit new segment header to the blockchain. This is an inherent extrinsic and part of
+        /// the Subspace consensus logic.
         </span><span class="attr">#[pallet::call_index(<span class="number">1</span>)]
-        #[pallet::weight((&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::store_root_blocks(root_blocks.len()), DispatchClass::Mandatory, Pays::No))]
-        </span><span class="kw">pub fn </span>store_root_blocks(
+        #[pallet::weight((&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::store_segment_headers(segment_headers.len()), DispatchClass::Mandatory, Pays::No))]
+        </span><span class="kw">pub fn </span>store_segment_headers(
             origin: OriginFor&lt;T&gt;,
-            root_blocks: Vec&lt;RootBlock&gt;,
+            segment_headers: Vec&lt;SegmentHeader&gt;,
         ) -&gt; DispatchResult {
             ensure_none(origin)<span class="question-mark">?</span>;
-            <span class="self">Self</span>::do_store_root_blocks(root_blocks)
+            <span class="self">Self</span>::do_store_segment_headers(segment_headers)
         }
 
         <span class="doccomment">/// Enable solution range adjustment after every era.
@@ -2182,11 +2198,11 @@
                 .expect(<span class="string">&quot;Subspace inherent data not correctly encoded&quot;</span>)
                 .expect(<span class="string">&quot;Subspace inherent data must be provided&quot;</span>);
 
-            <span class="kw">let </span>root_blocks = inherent_data.root_blocks;
-            <span class="kw">if </span>root_blocks.is_empty() {
+            <span class="kw">let </span>segment_headers = inherent_data.segment_headers;
+            <span class="kw">if </span>segment_headers.is_empty() {
                 <span class="prelude-val">None
             </span>} <span class="kw">else </span>{
-                <span class="prelude-val">Some</span>(Call::store_root_blocks { root_blocks })
+                <span class="prelude-val">Some</span>(Call::store_segment_headers { segment_headers })
             }
         }
 
@@ -2196,24 +2212,24 @@
                 .expect(<span class="string">&quot;Subspace inherent data not correctly encoded&quot;</span>)
                 .expect(<span class="string">&quot;Subspace inherent data must be provided&quot;</span>);
 
-            <span class="prelude-val">Ok</span>(<span class="kw">if </span>inherent_data.root_blocks.is_empty() {
+            <span class="prelude-val">Ok</span>(<span class="kw">if </span>inherent_data.segment_headers.is_empty() {
                 <span class="prelude-val">None
             </span>} <span class="kw">else </span>{
-                <span class="prelude-val">Some</span>(InherentError::MissingRootBlocksList)
+                <span class="prelude-val">Some</span>(InherentError::MissingSegmentHeadersList)
             })
         }
 
         <span class="kw">fn </span>check_inherent(call: <span class="kw-2">&amp;</span><span class="self">Self</span>::Call, data: <span class="kw-2">&amp;</span>InherentData) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-            <span class="kw">if let </span>Call::store_root_blocks { root_blocks } = call {
+            <span class="kw">if let </span>Call::store_segment_headers { segment_headers } = call {
                 <span class="kw">let </span>inherent_data = data
                     .get_data::&lt;InherentType&gt;(<span class="kw-2">&amp;</span>INHERENT_IDENTIFIER)
                     .expect(<span class="string">&quot;Subspace inherent data not correctly encoded&quot;</span>)
                     .expect(<span class="string">&quot;Subspace inherent data must be provided&quot;</span>);
 
-                <span class="kw">if </span>root_blocks != <span class="kw-2">&amp;</span>inherent_data.root_blocks {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(InherentError::IncorrectRootBlocksList {
-                        expected: inherent_data.root_blocks,
-                        actual: root_blocks.clone(),
+                <span class="kw">if </span>segment_headers != <span class="kw-2">&amp;</span>inherent_data.segment_headers {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(InherentError::IncorrectSegmentHeadersList {
+                        expected: inherent_data.segment_headers,
+                        actual: segment_headers.clone(),
                     });
                 }
             }
@@ -2222,7 +2238,7 @@
         }
 
         <span class="kw">fn </span>is_inherent(call: <span class="kw-2">&amp;</span><span class="self">Self</span>::Call) -&gt; bool {
-            <span class="macro">matches!</span>(call, Call::store_root_blocks { .. })
+            <span class="macro">matches!</span>(call, Call::store_segment_headers { .. })
         }
     }
 
@@ -2234,8 +2250,8 @@
                 Call::report_equivocation { equivocation_proof } =&gt; {
                     <span class="self">Self</span>::validate_equivocation_report(source, equivocation_proof)
                 }
-                Call::store_root_blocks { root_blocks } =&gt; {
-                    <span class="self">Self</span>::validate_root_block(source, root_blocks)
+                Call::store_segment_headers { segment_headers } =&gt; {
+                    <span class="self">Self</span>::validate_segment_header(source, segment_headers)
                 }
                 Call::vote { signed_vote } =&gt; <span class="self">Self</span>::validate_vote(signed_vote),
                 <span class="kw">_ </span>=&gt; InvalidTransaction::Call.into(),
@@ -2247,8 +2263,8 @@
                 Call::report_equivocation { equivocation_proof } =&gt; {
                     <span class="self">Self</span>::pre_dispatch_equivocation_report(equivocation_proof)
                 }
-                Call::store_root_blocks { root_blocks } =&gt; {
-                    <span class="self">Self</span>::pre_dispatch_root_block(root_blocks)
+                Call::store_segment_headers { segment_headers } =&gt; {
+                    <span class="self">Self</span>::pre_dispatch_segment_header(segment_headers)
                 }
                 Call::vote { signed_vote } =&gt; <span class="self">Self</span>::pre_dispatch_vote(signed_vote),
                 <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(InvalidTransaction::Call.into()),
@@ -2268,7 +2284,7 @@
     <span class="doccomment">/// Total number of pieces in the blockchain
     </span><span class="kw">pub fn </span>total_pieces() -&gt; NonZeroU64 {
         <span class="comment">// Chain starts with one segment plotted, even if it is not recorded in the runtime yet
-        </span><span class="kw">let </span>number_of_segments = u64::from(RecordsRoot::&lt;T&gt;::count()).max(<span class="number">1</span>);
+        </span><span class="kw">let </span>number_of_segments = u64::from(SegmentCommitment::&lt;T&gt;::count()).max(<span class="number">1</span>);
         NonZeroU64::new(number_of_segments * u64::from(PIECES_IN_SEGMENT))
             .expect(<span class="string">&quot;Neither of multiplied values is zero; qed&quot;</span>)
     }
@@ -2517,15 +2533,18 @@
         </span><span class="prelude-val">Ok</span>(Pays::No.into())
     }
 
-    <span class="kw">fn </span>do_store_root_blocks(root_blocks: Vec&lt;RootBlock&gt;) -&gt; DispatchResult {
-        <span class="kw">for </span>root_block <span class="kw">in </span>root_blocks {
-            RecordsRoot::&lt;T&gt;::insert(root_block.segment_index(), root_block.records_root());
+    <span class="kw">fn </span>do_store_segment_headers(segment_headers: Vec&lt;SegmentHeader&gt;) -&gt; DispatchResult {
+        <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
+            SegmentCommitment::&lt;T&gt;::insert(
+                segment_header.segment_index(),
+                segment_header.segment_commitment(),
+            );
             <span class="comment">// Deposit global randomness data such that light client can validate blocks later.
-            </span>frame_system::Pallet::&lt;T&gt;::deposit_log(DigestItem::records_root(
-                root_block.segment_index(),
-                root_block.records_root(),
+            </span>frame_system::Pallet::&lt;T&gt;::deposit_log(DigestItem::segment_commitment(
+                segment_header.segment_index(),
+                segment_header.segment_commitment(),
             ));
-            <span class="self">Self</span>::deposit_event(Event::RootBlockStored { root_block });
+            <span class="self">Self</span>::deposit_event(Event::SegmentHeaderStored { segment_header });
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -2627,7 +2646,7 @@
 
     <span class="doccomment">/// Size of the archived history of the blockchain in bytes
     </span><span class="kw">pub fn </span>archived_history_size() -&gt; u64 {
-        <span class="kw">let </span>archived_segments = RecordsRoot::&lt;T&gt;::count();
+        <span class="kw">let </span>archived_segments = SegmentCommitment::&lt;T&gt;::count();
         <span class="comment">// `*2` because we need to include both data and parity pieces
         </span><span class="kw">let </span>archived_segment_size = RECORDED_HISTORY_SEGMENT_SIZE / RECORD_SIZE
             * u32::try_from(PIECE_SIZE)
@@ -2676,31 +2695,31 @@
 }
 
 <span class="doccomment">/// Methods for the `ValidateUnsigned` implementation:
-/// It restricts calls to `store_root_block` to local calls (i.e. extrinsics generated on this
+/// It restricts calls to `store_segment_header` to local calls (i.e. extrinsics generated on this
 /// node) or that already in a block. This guarantees that only block authors can include root
 /// blocks.
 </span><span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
-    <span class="kw">fn </span>validate_root_block(
+    <span class="kw">fn </span>validate_segment_header(
         source: TransactionSource,
-        root_blocks: <span class="kw-2">&amp;</span>[RootBlock],
+        segment_headers: <span class="kw-2">&amp;</span>[SegmentHeader],
     ) -&gt; TransactionValidity {
-        <span class="comment">// Discard root block not coming from the local node
+        <span class="comment">// Discard segment header not coming from the local node
         </span><span class="kw">if </span>!<span class="macro">matches!</span>(
             source,
             TransactionSource::Local | TransactionSource::InBlock,
         ) {
             <span class="macro">warn!</span>(
                 target: <span class="string">&quot;runtime::subspace&quot;</span>,
-                <span class="string">&quot;Rejecting root block extrinsic because it is not local/in-block.&quot;</span>,
+                <span class="string">&quot;Rejecting segment header extrinsic because it is not local/in-block.&quot;</span>,
             );
 
             <span class="kw">return </span>InvalidTransaction::Call.into();
         }
 
-        check_root_blocks::&lt;T&gt;(root_blocks)<span class="question-mark">?</span>;
+        check_segment_headers::&lt;T&gt;(segment_headers)<span class="question-mark">?</span>;
 
-        ValidTransaction::with_tag_prefix(<span class="string">&quot;SubspaceRootBlock&quot;</span>)
-            <span class="comment">// We assign the maximum priority for any root block.
+        ValidTransaction::with_tag_prefix(<span class="string">&quot;SubspaceSegmentHeader&quot;</span>)
+            <span class="comment">// We assign the maximum priority for any segment header.
             </span>.priority(TransactionPriority::MAX)
             <span class="comment">// Should be included immediately into the current block (this is an inherent
             // extrinsic) with no exceptions.
@@ -2710,8 +2729,10 @@
             .build()
     }
 
-    <span class="kw">fn </span>pre_dispatch_root_block(root_blocks: <span class="kw-2">&amp;</span>[RootBlock]) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
-        check_root_blocks::&lt;T&gt;(root_blocks)
+    <span class="kw">fn </span>pre_dispatch_segment_header(
+        segment_headers: <span class="kw-2">&amp;</span>[SegmentHeader],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
+        check_segment_headers::&lt;T&gt;(segment_headers)
     }
 
     <span class="kw">fn </span>validate_vote(
@@ -2797,7 +2818,7 @@
     SlotInTheFuture,
     SlotInThePast,
     BadRewardSignature(SignatureError),
-    UnknownRecordsRoot,
+    UnknownSegmentCommitment,
     InvalidSolution(String),
     DuplicateVote,
     Equivocated(SubspaceEquivocationOffence&lt;FarmerPublicKey&gt;),
@@ -2814,7 +2835,7 @@
             CheckVoteError::SlotInTheFuture =&gt; InvalidTransaction::Future,
             CheckVoteError::SlotInThePast =&gt; InvalidTransaction::Stale,
             CheckVoteError::BadRewardSignature(<span class="kw">_</span>) =&gt; InvalidTransaction::BadProof,
-            CheckVoteError::UnknownRecordsRoot =&gt; InvalidTransaction::Call,
+            CheckVoteError::UnknownSegmentCommitment =&gt; InvalidTransaction::Call,
             CheckVoteError::InvalidSolution(<span class="kw">_</span>) =&gt; InvalidTransaction::Call,
             CheckVoteError::DuplicateVote =&gt; InvalidTransaction::Call,
             CheckVoteError::Equivocated(<span class="kw">_</span>) =&gt; InvalidTransaction::BadSigner,
@@ -2949,15 +2970,16 @@
     <span class="kw">let </span>pieces_in_segment = vote_verification_data.pieces_in_segment;
     <span class="kw">let </span>segment_index: SegmentIndex = piece_index / SegmentIndex::from(pieces_in_segment);
 
-    <span class="kw">let </span>records_root = <span class="kw">if let </span><span class="prelude-val">Some</span>(records_root) = Pallet::&lt;T&gt;::records_root(segment_index) {
-        records_root
-    } <span class="kw">else </span>{
-        <span class="macro">debug!</span>(
-            target: <span class="string">&quot;runtime::subspace&quot;</span>,
-            <span class="string">&quot;Vote verification error: no records root for segment index {segment_index}&quot;
-        </span>);
-        <span class="kw">return </span><span class="prelude-val">Err</span>(CheckVoteError::UnknownRecordsRoot);
-    };
+    <span class="kw">let </span>segment_commitment =
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(segment_commitment) = Pallet::&lt;T&gt;::segment_commitment(segment_index) {
+            segment_commitment
+        } <span class="kw">else </span>{
+            <span class="macro">debug!</span>(
+                target: <span class="string">&quot;runtime::subspace&quot;</span>,
+                <span class="string">&quot;Vote verification error: no segment commitment for segment index {segment_index}&quot;
+            </span>);
+            <span class="kw">return </span><span class="prelude-val">Err</span>(CheckVoteError::UnknownSegmentCommitment);
+        };
 
     <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = verify_solution(
         solution.into(),
@@ -2966,7 +2988,7 @@
             global_randomness: vote_verification_data.global_randomness,
             solution_range: vote_verification_data.solution_range,
             piece_check_params: <span class="prelude-val">Some</span>(PieceCheckParams {
-                records_root,
+                segment_commitment,
                 pieces_in_segment,
             }),
         })
@@ -3059,41 +3081,43 @@
     <span class="prelude-val">Ok</span>(())
 }
 
-<span class="kw">fn </span>check_root_blocks&lt;T: Config&gt;(root_blocks: <span class="kw-2">&amp;</span>[RootBlock]) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>root_blocks_iter = root_blocks.iter();
+<span class="kw">fn </span>check_segment_headers&lt;T: Config&gt;(
+    segment_headers: <span class="kw-2">&amp;</span>[SegmentHeader],
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>segment_headers_iter = segment_headers.iter();
 
-    <span class="comment">// There should be some root blocks
-    </span><span class="kw">let </span>first_root_block = <span class="kw">match </span>root_blocks_iter.next() {
-        <span class="prelude-val">Some</span>(first_root_block) =&gt; first_root_block,
+    <span class="comment">// There should be some segment headers
+    </span><span class="kw">let </span>first_segment_header = <span class="kw">match </span>segment_headers_iter.next() {
+        <span class="prelude-val">Some</span>(first_segment_header) =&gt; first_segment_header,
         <span class="prelude-val">None </span>=&gt; {
             <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::BadMandatory.into());
         }
     };
 
-    <span class="comment">// Segment in root blocks should monotonically increase
-    </span><span class="kw">if </span>first_root_block.segment_index() &gt; <span class="number">0
-        </span>&amp;&amp; !RecordsRoot::&lt;T&gt;::contains_key(first_root_block.segment_index() - <span class="number">1</span>)
+    <span class="comment">// Segment in segment headers should monotonically increase
+    </span><span class="kw">if </span>first_segment_header.segment_index() &gt; <span class="number">0
+        </span>&amp;&amp; !SegmentCommitment::&lt;T&gt;::contains_key(first_segment_header.segment_index() - <span class="number">1</span>)
     {
         <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::BadMandatory.into());
     }
 
-    <span class="comment">// Root blocks should never repeat
-    </span><span class="kw">if </span>RecordsRoot::&lt;T&gt;::contains_key(first_root_block.segment_index()) {
+    <span class="comment">// Segment headers should never repeat
+    </span><span class="kw">if </span>SegmentCommitment::&lt;T&gt;::contains_key(first_segment_header.segment_index()) {
         <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::BadMandatory.into());
     }
 
-    <span class="kw">let </span><span class="kw-2">mut </span>last_segment_index = first_root_block.segment_index();
+    <span class="kw">let </span><span class="kw-2">mut </span>last_segment_index = first_segment_header.segment_index();
 
-    <span class="kw">for </span>root_block <span class="kw">in </span>root_blocks_iter {
-        <span class="kw">let </span>segment_index = root_block.segment_index();
+    <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers_iter {
+        <span class="kw">let </span>segment_index = segment_header.segment_index();
 
-        <span class="comment">// Segment in root blocks should monotonically increase
+        <span class="comment">// Segment in segment headers should monotonically increase
         </span><span class="kw">if </span>segment_index != last_segment_index + <span class="number">1 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::BadMandatory.into());
         }
 
-        <span class="comment">// Root blocks should never repeat
-        </span><span class="kw">if </span>RecordsRoot::&lt;T&gt;::contains_key(segment_index) {
+        <span class="comment">// Segment headers should never repeat
+        </span><span class="kw">if </span>SegmentCommitment::&lt;T&gt;::contains_key(segment_index) {
             <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::BadMandatory.into());
         }
 
