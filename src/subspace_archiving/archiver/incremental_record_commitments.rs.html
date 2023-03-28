@@ -164,17 +164,42 @@
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
 </pre><pre class="rust"><code><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::archiver::Segment;
-<span class="kw">use </span>alloc::collections::VecDeque;
-<span class="kw">use </span>blake2::digest::typenum::U32;
-<span class="kw">use </span>blake2::digest::{FixedOutput, Update};
-<span class="kw">use </span>blake2::Blake2b;
-<span class="kw">use </span>core::mem;
+<span class="kw">use </span>alloc::vec::Vec;
+<span class="kw">use </span>core::ops::Deref;
 <span class="kw">use </span>parity_scale_codec::{Encode, Output};
+<span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Commitment, Kzg};
 <span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
-<span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, RECORD_SIZE};
+<span class="kw">use </span>subspace_core_primitives::RawRecord;
 
 <span class="doccomment">/// State of incremental record commitments, encapsulated to hide implementation details and
 /// encapsulate tricky logic
@@ -184,19 +209,28 @@
     ///
     /// NOTE: Until full segment is processed, this will not contain commitment to the first record
     /// since it is not ready yet. This in turn means all commitments will be at `-1` offset.
-    </span>state: VecDeque&lt;Scalar&gt;,
+    </span>state: Vec&lt;Commitment&gt;,
+}
+
+<span class="kw">impl </span>Deref <span class="kw">for </span>IncrementalRecordCommitmentsState {
+    <span class="kw">type </span>Target = [Commitment];
+
+    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.state
+    }
 }
 
 <span class="kw">impl </span>IncrementalRecordCommitmentsState {
     <span class="doccomment">/// Creates an empty state with space for at least capacity records.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_capacity(capacity: usize) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            state: VecDeque::with_capacity(capacity),
+            state: Vec::with_capacity(capacity),
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>drain(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = Scalar&gt; + <span class="lifetime">&#39;_ </span>{
-        <span class="self">self</span>.state.drain(..)
+    <span class="doccomment">/// Clears internal state before start of the next segment
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.state.clear();
     }
 }
 
@@ -204,10 +238,12 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_record_commitments(
     incremental_record_commitments: <span class="kw-2">&amp;mut </span>IncrementalRecordCommitmentsState,
     segment: <span class="kw-2">&amp;</span>Segment,
+    kzg: <span class="kw-2">&amp;</span>Kzg,
     full: bool,
 ) {
     segment.encode_to(<span class="kw-2">&amp;mut </span>IncrementalRecordCommitmentsProcessor::new(
         incremental_record_commitments,
+        kzg,
         full,
     ));
 }
@@ -217,24 +253,24 @@
 </span><span class="kw">struct </span>IncrementalRecordCommitmentsProcessor&lt;<span class="lifetime">&#39;a</span>&gt; {
     <span class="doccomment">/// Processed bytes in the segment so far
     </span>processed_bytes: usize,
+    <span class="doccomment">/// Buffer where current (partial) record is written
+    </span>raw_record_buffer: Vec&lt;u8&gt;,
     <span class="doccomment">/// Record commitments already created
     </span>incremental_record_commitments: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>IncrementalRecordCommitmentsState,
+    <span class="doccomment">/// Kzg instance used for commitments creation
+    </span>kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
     <span class="doccomment">/// Whether segment is full or partial
     </span>full: bool,
-    <span class="doccomment">/// Intermediate hashing state that computes Blake2-256-254.
-    ///
-    /// See [`subspace_core_primitives::crypto::blake2b_256_254_hash_to_scalar`] for details.
-    </span>hashing_state: Blake2b&lt;U32&gt;,
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; Drop <span class="kw">for </span>IncrementalRecordCommitmentsProcessor&lt;<span class="lifetime">&#39;a</span>&gt; {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.full {
-            <span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % RECORD_SIZE <span class="kw">as </span>usize;
+            <span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % RawRecord::SIZE;
             <span class="kw">if </span>record_offset &gt; <span class="number">0 </span>{
                 <span class="comment">// This is fine since we&#39;ll have at most a few iterations and allocation is less
                 // desirable than a loop here
-                </span><span class="kw">for _ in </span><span class="number">0</span>..(RECORD_SIZE <span class="kw">as </span>usize - record_offset) {
+                </span><span class="kw">for _ in </span><span class="number">0</span>..(RawRecord::SIZE - record_offset) {
                     <span class="self">self</span>.update_commitment_state(<span class="kw-2">&amp;</span>[<span class="number">0</span>]);
                 }
                 <span class="self">self</span>.create_commitment();
@@ -247,8 +283,8 @@
     <span class="kw">fn </span>write(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw-2">mut </span>bytes: <span class="kw-2">&amp;</span>[u8]) {
         <span class="comment">// Try to finish last partial record if possible
 
-        </span><span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % RECORD_SIZE <span class="kw">as </span>usize;
-        <span class="kw">let </span>bytes_left_in_record = RECORD_SIZE <span class="kw">as </span>usize - record_offset;
+        </span><span class="kw">let </span>record_offset = <span class="self">self</span>.processed_bytes % RawRecord::SIZE;
+        <span class="kw">let </span>bytes_left_in_record = RawRecord::SIZE - record_offset;
         <span class="kw">if </span>bytes_left_in_record &gt; <span class="number">0 </span>{
             <span class="kw">let </span>remaining_record_bytes;
             (remaining_record_bytes, bytes) =
@@ -268,11 +304,11 @@
         <span class="comment">// Continue processing records (full and partial) from remaining data, at this point we have
         // processed some number of full records, so can simply chunk the remaining bytes into
         // record sizes
-        </span>bytes.chunks(RECORD_SIZE <span class="kw">as </span>usize).for_each(|record| {
+        </span>bytes.chunks(RawRecord::SIZE).for_each(|record| {
             <span class="self">self</span>.update_commitment_state(record);
 
             <span class="comment">// Store hashes of full records
-            </span><span class="kw">if </span>record.len() == RECORD_SIZE <span class="kw">as </span>usize {
+            </span><span class="kw">if </span>record.len() == RawRecord::SIZE {
                 <span class="self">self</span>.create_commitment();
             }
         });
@@ -282,13 +318,16 @@
 <span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; IncrementalRecordCommitmentsProcessor&lt;<span class="lifetime">&#39;a</span>&gt; {
     <span class="kw">fn </span>new(
         incremental_record_commitments: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>IncrementalRecordCommitmentsState,
+        kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
         full: bool,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            processed_bytes: <span class="number">0</span>,
+            <span class="comment">// TODO: Remove `processed_bytes`, `raw_record_buffer` should be sufficient
+            </span>processed_bytes: <span class="number">0</span>,
+            raw_record_buffer: Vec::with_capacity(RawRecord::SIZE),
             incremental_record_commitments,
+            kzg,
             full,
-            hashing_state: Blake2b::&lt;U32&gt;::default(),
         }
     }
 
@@ -306,8 +345,8 @@
     /// NOTE: This method is called with bytes that either cover part of the record or stop at the
     /// edge of the record.
     </span><span class="kw">fn </span>update_commitment_state(<span class="kw-2">&amp;mut </span><span class="self">self</span>, bytes: <span class="kw-2">&amp;</span>[u8]) {
-        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / RECORD_SIZE <span class="kw">as </span>usize) {
-            <span class="self">self</span>.hashing_state.update(bytes);
+        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / RawRecord::SIZE) {
+            <span class="self">self</span>.raw_record_buffer.extend_from_slice(bytes);
         }
         <span class="self">self</span>.processed_bytes += bytes.len();
     }
@@ -315,18 +354,33 @@
     <span class="doccomment">/// In case commitment is necessary for currently processed record, internal hashing state will
     /// be finalized and commitment will be stored in shared state.
     </span><span class="kw">fn </span>create_commitment(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / RECORD_SIZE <span class="kw">as </span>usize - <span class="number">1</span>) {
-            <span class="kw">let </span>hashing_state = mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.hashing_state);
+        <span class="kw">if </span><span class="self">self</span>.should_commit_to_record(<span class="self">self</span>.processed_bytes / RawRecord::SIZE - <span class="number">1</span>) {
+            <span class="kw">let </span>scalars = {
+                <span class="kw">let </span>record_chunks = <span class="self">self
+                    </span>.raw_record_buffer
+                    .array_chunks::&lt;{ Scalar::SAFE_BYTES }&gt;();
+                <span class="kw">let </span>number_of_chunks = record_chunks.len();
+                <span class="kw">let </span><span class="kw-2">mut </span>scalars = Vec::with_capacity(number_of_chunks.next_power_of_two());
 
-            <span class="kw">let </span><span class="kw-2">mut </span>hash = Blake2b256Hash::from(hashing_state.finalize_fixed());
-            <span class="comment">// Erase last 2 bits to effectively truncate the hash (number is interpreted as
-            // little-endian)
-            </span>hash[<span class="number">31</span>] &amp;= <span class="number">0b00111111</span>;
+                record_chunks.map(Scalar::from).collect_into(<span class="kw-2">&amp;mut </span>scalars);
 
-            <span class="self">self</span>.incremental_record_commitments.state.push_back(
-                Scalar::try_from(hash)
-                    .expect(<span class="string">&quot;Last bit erased, thus hash is guaranteed to fit into scalar; qed&quot;</span>),
-            );
+                <span class="comment">// Number of scalars for KZG must be a power of two elements
+                </span>scalars.resize(scalars.capacity(), Scalar::default());
+
+                scalars
+            };
+            <span class="self">self</span>.raw_record_buffer.clear();
+
+            <span class="kw">let </span>polynomial = <span class="self">self
+                </span>.kzg
+                .poly(<span class="kw-2">&amp;</span>scalars)
+                .expect(<span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>);
+            <span class="kw">let </span>commitment = <span class="self">self
+                </span>.kzg
+                .commit(<span class="kw-2">&amp;</span>polynomial)
+                .expect(<span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>);
+
+            <span class="self">self</span>.incremental_record_commitments.state.push(commitment);
         }
     }
 }

@@ -250,47 +250,68 @@
 <a href="#250" id="250">250</a>
 <a href="#251" id="251">251</a>
 <a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
 </pre><pre class="rust"><code><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::archiver::{Segment, SegmentItem};
-<span class="kw">use </span><span class="kw">crate</span>::utils;
+<span class="kw">use </span>alloc::boxed::Box;
+<span class="kw">use </span>alloc::string::String;
 <span class="kw">use </span>alloc::vec::Vec;
 <span class="kw">use </span>core::mem;
+<span class="kw">use </span>core::num::NonZeroUsize;
 <span class="kw">use </span>parity_scale_codec::Decode;
-<span class="kw">use </span>reed_solomon_erasure::galois_16::ReedSolomon;
+<span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
 <span class="kw">use </span>subspace_core_primitives::{
-    ArchivedBlockProgress, BlockNumber, LastArchivedBlock, Piece, RootBlock, SegmentIndex,
-    RECORD_SIZE,
+    ArchivedBlockProgress, BlockNumber, LastArchivedBlock, Piece, RawRecord,
+    RecordedHistorySegment, RootBlock, SegmentIndex, PIECES_IN_SEGMENT,
 };
+<span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 
 <span class="doccomment">/// Reconstructor-related instantiation error.
-</span><span class="attr">#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+</span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, derive(thiserror::Error))]
 </span><span class="kw">pub enum </span>ReconstructorInstantiationError {
-    <span class="doccomment">/// Segment size is not bigger than record size
+    <span class="doccomment">/// Failed to initialize erasure coding
     </span><span class="attr">#[cfg_attr(
         feature = <span class="string">&quot;thiserror&quot;</span>,
-        error(<span class="string">&quot;Segment size is not bigger than record size&quot;</span>)
+        error(<span class="string">&quot;Failed to initialize erasure coding: {0}&quot;</span>)
     )]
-    </span>SegmentSizeTooSmall,
-    <span class="doccomment">/// Segment size is not a multiple of record size
-    </span><span class="attr">#[cfg_attr(
-        feature = <span class="string">&quot;thiserror&quot;</span>,
-        error(<span class="string">&quot;Segment size is not a multiple of record size&quot;</span>)
-    )]
-    </span>SegmentSizesNotMultipleOfRecordSize,
+    </span>FailedToInitializeErasureCoding(String),
 }
 
 <span class="doccomment">/// Reconstructor-related instantiation error
 </span><span class="attr">#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, derive(thiserror::Error))]
 </span><span class="kw">pub enum </span>ReconstructorError {
-    <span class="doccomment">/// Segment size is not bigger than record size
+    <span class="doccomment">/// Error during data shards reconstruction
     </span><span class="attr">#[cfg_attr(
         feature = <span class="string">&quot;thiserror&quot;</span>,
         error(<span class="string">&quot;Error during data shards reconstruction: {0}&quot;</span>)
     )]
-    </span>DataShardsReconstruction(reed_solomon_erasure::Error),
+    </span>DataShardsReconstruction(String),
     <span class="doccomment">/// Segment size is not bigger than record size
     </span><span class="attr">#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, error(<span class="string">&quot;Error during segment decoding: {0}&quot;</span>))]
     </span>SegmentDecoding(parity_scale_codec::Error),
@@ -318,10 +339,8 @@
 <span class="doccomment">/// Reconstructor helps to retrieve blocks from archived pieces.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Reconstructor {
-    <span class="doccomment">/// Configuration parameter defining the size of one recorded history segment
-    </span>recorded_history_segment_size: u32,
     <span class="doccomment">/// Erasure coding data structure
-    </span>reed_solomon: ReedSolomon,
+    </span>erasure_coding: ErasureCoding,
     <span class="doccomment">/// Index of last segment added to reconstructor
     </span>last_segment_index: <span class="prelude-ty">Option</span>&lt;SegmentIndex&gt;,
     <span class="doccomment">/// Partially reconstructed block waiting for more data
@@ -329,24 +348,18 @@
 }
 
 <span class="kw">impl </span>Reconstructor {
-    <span class="kw">pub fn </span>new(
-        recorded_history_segment_size: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ReconstructorInstantiationError&gt; {
-        <span class="kw">if </span>recorded_history_segment_size &lt;= RECORD_SIZE {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(ReconstructorInstantiationError::SegmentSizeTooSmall);
-        }
-        <span class="kw">if </span>recorded_history_segment_size % RECORD_SIZE != <span class="number">0 </span>{
-            <span class="kw">return </span><span class="prelude-val">Err</span>(ReconstructorInstantiationError::SegmentSizesNotMultipleOfRecordSize);
-        }
+    <span class="kw">pub fn </span>new() -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ReconstructorInstantiationError&gt; {
+        <span class="comment">// TODO: Check if KZG can process number configured number of elements and update proof
+        //  message in `.expect()`
 
-        <span class="kw">let </span>source_shards = recorded_history_segment_size / RECORD_SIZE;
-        <span class="kw">let </span>parity_shards = source_shards;
-        <span class="kw">let </span>reed_solomon = ReedSolomon::new(source_shards <span class="kw">as </span>usize, parity_shards <span class="kw">as </span>usize)
-            .expect(<span class="string">&quot;ReedSolomon must always be correctly instantiated&quot;</span>);
+        </span><span class="kw">let </span>erasure_coding = ErasureCoding::new(
+            NonZeroUsize::new(PIECES_IN_SEGMENT.ilog2() <span class="kw">as </span>usize)
+                .expect(<span class="string">&quot;Recorded history segment contains at very least one record; qed&quot;</span>),
+        )
+        .map_err(ReconstructorInstantiationError::FailedToInitializeErasureCoding)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            recorded_history_segment_size,
-            reed_solomon,
+            erasure_coding,
             last_segment_index: <span class="prelude-val">None</span>,
             partial_block: <span class="prelude-val">None</span>,
         })
@@ -363,13 +376,24 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         segment_pieces: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;Piece&gt;],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ReconstructedContents, ReconstructorError&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>segment_data = Vec::with_capacity(<span class="self">self</span>.recorded_history_segment_size <span class="kw">as </span>usize);
+        <span class="comment">// TODO: Should have been just `::new()`, but https://github.com/rust-lang/rust/issues/53827
+        // SAFETY: Data structure filled with zeroes is a valid invariant
+        </span><span class="kw">let </span><span class="kw-2">mut </span>segment_data = <span class="kw">unsafe </span>{ Box::&lt;RecordedHistorySegment&gt;::new_zeroed().assume_init() };
+
         <span class="kw">if </span>!segment_pieces
             .iter()
-            .take(<span class="self">self</span>.reed_solomon.data_shard_count())
-            .all(|maybe_piece| {
+            <span class="comment">// Take each source shards here
+            </span>.step_by(<span class="number">2</span>)
+            .zip(segment_data.iter_mut())
+            .all(|(maybe_piece, raw_record)| {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = maybe_piece {
-                    segment_data.extend_from_slice(piece.record().as_ref());
+                    piece
+                        .record()
+                        .safe_scalar_arrays()
+                        .zip(raw_record.iter_mut())
+                        .for_each(|(source, target)| {
+                            <span class="kw-2">*</span>target = <span class="kw-2">*</span>source;
+                        });
                     <span class="bool-val">true
                 </span>} <span class="kw">else </span>{
                     <span class="bool-val">false
@@ -378,32 +402,56 @@
         {
             <span class="comment">// If not all data pieces are available, need to reconstruct data shards using erasure
             // coding.
-            </span><span class="kw">let </span><span class="kw-2">mut </span>shards = segment_pieces
-                .iter()
-                .map(|maybe_piece| maybe_piece.as_ref().map(utils::slice_to_arrays))
-                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-            <span class="self">self</span>.reed_solomon
-                .reconstruct_data(<span class="kw-2">&amp;mut </span>shards)
-                .map_err(ReconstructorError::DataShardsReconstruction)<span class="question-mark">?</span>;
+            // Scratch buffer to avoid re-allocation
+            </span><span class="kw">let </span><span class="kw-2">mut </span>tmp_shards_scalars =
+                Vec::&lt;<span class="prelude-ty">Option</span>&lt;Scalar&gt;&gt;::with_capacity(PIECES_IN_SEGMENT <span class="kw">as </span>usize);
+            <span class="comment">// Iterate over the chunks of `Scalar::SAFE_BYTES` bytes of all records
+            </span><span class="kw">for </span>record_offset <span class="kw">in </span><span class="number">0</span>..RawRecord::SIZE / Scalar::SAFE_BYTES {
+                <span class="comment">// Collect chunks of each record at the same offset
+                </span><span class="kw">for </span>maybe_piece <span class="kw">in </span>segment_pieces.iter() {
+                    <span class="kw">let </span>maybe_scalar = maybe_piece
+                        .as_ref()
+                        .map(|piece| {
+                            piece
+                                .record()
+                                .full_scalar_arrays()
+                                .nth(record_offset)
+                                .expect(<span class="string">&quot;Statically guaranteed to exist in a piece; qed&quot;</span>)
+                        })
+                        .map(Scalar::try_from)
+                        .transpose()
+                        .map_err(ReconstructorError::DataShardsReconstruction)<span class="question-mark">?</span>;
 
-            segment_data.clear();
-            shards
-                .into_iter()
-                .take(<span class="self">self</span>.reed_solomon.data_shard_count())
-                .for_each(|maybe_piece| {
-                    <span class="kw">let </span>piece = maybe_piece.expect(
-                        <span class="string">&quot;All data shards are available after successful reconstruction; qed&quot;</span>,
-                    );
+                    tmp_shards_scalars.push(maybe_scalar);
+                }
 
-                    <span class="kw">for </span>chunk <span class="kw">in </span>piece.iter().take(RECORD_SIZE <span class="kw">as </span>usize / <span class="number">2</span>) {
-                        segment_data.extend_from_slice(chunk.as_ref());
-                    }
-                });
+                <span class="self">self</span>.erasure_coding
+                    .recover(<span class="kw-2">&amp;</span>tmp_shards_scalars)
+                    .map_err(ReconstructorError::DataShardsReconstruction)<span class="question-mark">?
+                    </span>.into_iter()
+                    <span class="comment">// Take each source shards here
+                    </span>.step_by(<span class="number">2</span>)
+                    .zip(segment_data.iter_mut().map(|raw_record| {
+                        raw_record
+                            .iter_mut()
+                            .nth(record_offset)
+                            .expect(<span class="string">&quot;Statically guaranteed to exist in a piece; qed&quot;</span>)
+                    }))
+                    .for_each(|(source_scalar, segment_data)| {
+                        <span class="comment">// Source scalar only contains payload data within first
+                        // [`Scalar::SAFE_BYTES`]
+                        </span>segment_data
+                            .copy_from_slice(<span class="kw-2">&amp;</span>source_scalar.to_bytes()[..Scalar::SAFE_BYTES]);
+                    });
+
+                tmp_shards_scalars.clear();
+            }
         }
 
-        <span class="kw">let </span>Segment::V0 { items } = Segment::decode(<span class="kw-2">&amp;mut </span>segment_data.as_ref())
-            .map_err(ReconstructorError::SegmentDecoding)<span class="question-mark">?</span>;
+        <span class="kw">let </span>Segment::V0 { items } =
+            Segment::decode(<span class="kw-2">&amp;mut </span>AsRef::&lt;[u8]&gt;::as_ref(segment_data.as_ref()))
+                .map_err(ReconstructorError::SegmentDecoding)<span class="question-mark">?</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>reconstructed_contents = ReconstructedContents::default();
         <span class="kw">let </span><span class="kw-2">mut </span>next_block_number = <span class="number">0</span>;
