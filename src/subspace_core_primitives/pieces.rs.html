@@ -501,6 +501,9 @@
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
 <a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
 </pre><pre class="rust"><code><span class="attr">#[cfg(feature = <span class="string">&quot;serde&quot;</span>)]
 </span><span class="kw">mod </span>serde;
 
@@ -518,7 +521,7 @@
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, Input, MaxEncodedLen};
 <span class="kw">use </span>scale_info::TypeInfo;
 
-<span class="comment">// TODO: Redefine records and piece size according to spec
+<span class="comment">// TODO: Remove once we redefine it through raw record
 </span><span class="doccomment">/// Byte size of a piece in Subspace Network, ~32KiB (a bit less due to requirement of being a
 /// multiple of 2 bytes for erasure coding as well as multiple of 31 bytes in order to fit into
 /// BLS12-381 scalar safely).
@@ -527,19 +530,13 @@
 ///  coding implementation, so we might be able to bump it by one field element in size.
 ///
 /// This can not changed after the network is launched.
-</span><span class="kw">pub const </span>PIECE_SIZE: usize = <span class="number">31_744</span>;
-<span class="comment">// TODO: Switch to `Record::SIZE`
+</span><span class="kw">const </span>PIECE_SIZE: usize = <span class="number">31_744</span>;
+<span class="comment">// TODO: Remove once we re-define it through raw record instead
 </span><span class="doccomment">/// Size of a segment record given the global piece size (in bytes), is guaranteed to be multiple
 /// of [`Scalar::FULL_BYTES`].
-</span><span class="kw">pub const </span>RECORD_SIZE: u32 =
-    PIECE_SIZE <span class="kw">as </span>u32 - RecordCommitment::SIZE <span class="kw">as </span>u32 - RecordWitness::SIZE <span class="kw">as </span>u32;
+</span><span class="kw">const </span>RECORD_SIZE: usize = Piece::SIZE - RecordCommitment::SIZE - RecordWitness::SIZE;
 <span class="doccomment">/// 128 data records and 128 parity records (as a result of erasure coding).
 </span><span class="kw">pub const </span>PIECES_IN_SEGMENT: u32 = <span class="number">256</span>;
-<span class="comment">// TODO: Switch to `RecordedHistorySegment::SIZE`
-</span><span class="doccomment">/// Recorded History Segment Size includes half of the records (just data records) that will later
-/// be erasure coded and together with corresponding witnesses will result in `PIECES_IN_SEGMENT`
-/// pieces of archival history.
-</span><span class="kw">pub const </span>RECORDED_HISTORY_SEGMENT_SIZE: u32 = RawRecord::SIZE <span class="kw">as </span>u32 * PIECES_IN_SEGMENT / <span class="number">2</span>;
 
 <span class="doccomment">/// Raw record contained within recorded history segment before archiving is applied.
 ///
@@ -568,7 +565,7 @@
 
 <span class="kw">impl </span>RawRecord {
     <span class="doccomment">/// Size of raw record in bytes, is guaranteed to be multiple of [`Scalar::SAFE_BYTES`].
-    </span><span class="kw">pub const </span>SIZE: usize = RECORD_SIZE <span class="kw">as </span>usize / Scalar::FULL_BYTES * Scalar::SAFE_BYTES;
+    </span><span class="kw">pub const </span>SIZE: usize = Record::SIZE / Scalar::FULL_BYTES * Scalar::SAFE_BYTES;
 }
 
 <span class="doccomment">/// Recorded history segment before archiving is applied.
@@ -603,7 +600,11 @@
 
 <span class="kw">impl </span>RecordedHistorySegment {
     <span class="doccomment">/// Size of recorded history segment in bytes.
-    </span><span class="kw">pub const </span>SIZE: usize = RECORDED_HISTORY_SEGMENT_SIZE <span class="kw">as </span>usize;
+    ///
+    /// It includes half of the records (just source records) that will later be erasure coded and
+    /// together with corresponding commitments and witnesses will result in [`PIECES_IN_SEGMENT`]
+    /// [`Piece`]s of archival history.
+    </span><span class="kw">pub const </span>SIZE: usize = RawRecord::SIZE * PIECES_IN_SEGMENT <span class="kw">as </span>usize / <span class="number">2</span>;
     <span class="doccomment">/// Number of raw records in one segment of recorded history.
     </span><span class="kw">pub const </span>RAW_RECORDS: usize = <span class="self">Self</span>::SIZE / RawRecord::SIZE;
 }
@@ -630,7 +631,7 @@
 <span class="kw">impl </span>Record {
     <span class="doccomment">/// Size of a segment record given the global piece size (in bytes), is guaranteed to be
     /// multiple of [`Scalar::FULL_BYTES`].
-    </span><span class="kw">pub const </span>SIZE: usize = RECORD_SIZE <span class="kw">as </span>usize;
+    </span><span class="kw">pub const </span>SIZE: usize = RECORD_SIZE;
 
     <span class="doccomment">/// Get a stream of arrays, each containing safe scalar bytes.
     ///
@@ -742,7 +743,7 @@
 //  can be replaced with derive once fixed upstream version is released
 </span><span class="kw">impl </span>Decode <span class="kw">for </span>Piece {
     <span class="kw">fn </span>decode&lt;I: Input&gt;(input: <span class="kw-2">&amp;mut </span>I) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, parity_scale_codec::Error&gt; {
-        <span class="kw">let </span>piece = parity_scale_codec::decode_vec_with_len::&lt;u8, <span class="kw">_</span>&gt;(input, PIECE_SIZE)
+        <span class="kw">let </span>piece = parity_scale_codec::decode_vec_with_len::&lt;u8, <span class="kw">_</span>&gt;(input, <span class="self">Self</span>::SIZE)
             .map_err(|error| error.chain(<span class="string">&quot;Could not decode `Piece.0`&quot;</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>piece = ManuallyDrop::new(piece);
         <span class="comment">// SAFETY: Original memory is not dropped and guaranteed to be allocated
@@ -760,7 +761,7 @@
     <span class="kw">type </span>Error = TryFromSliceError;
 
     <span class="kw">fn </span>try_from(slice: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        &lt;[u8; PIECE_SIZE]&gt;::try_from(slice).map(|bytes| Piece(Box::new(PieceArray(bytes))))
+        &lt;[u8; <span class="self">Self</span>::SIZE]&gt;::try_from(slice).map(|bytes| Piece(Box::new(PieceArray(bytes))))
     }
 }
 
@@ -799,6 +800,11 @@
     }
 }
 
+<span class="kw">impl </span>Piece {
+    <span class="doccomment">/// Size of a piece.
+    </span><span class="kw">pub const </span>SIZE: usize = PIECE_SIZE;
+}
+
 <span class="doccomment">/// A piece of archival history in Subspace Network.
 ///
 /// This version is allocated on the stack, for heap-allocated piece see [`Piece`].
@@ -825,11 +831,11 @@
     MaxEncodedLen,
 )]
 #[repr(transparent)]
-</span><span class="kw">pub struct </span>PieceArray([u8; PIECE_SIZE]);
+</span><span class="kw">pub struct </span>PieceArray([u8; Piece::SIZE]);
 
 <span class="kw">impl </span>Default <span class="kw">for </span>PieceArray {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>([<span class="number">0u8</span>; PIECE_SIZE])
+        <span class="self">Self</span>([<span class="number">0u8</span>; Piece::SIZE])
     }
 }
 
@@ -860,10 +866,10 @@
 <span class="kw">impl </span>PieceArray {
     <span class="doccomment">/// Split piece into underlying components.
     </span><span class="kw">pub fn </span>split(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (<span class="kw-2">&amp;</span>Record, <span class="kw-2">&amp;</span>RecordCommitment, <span class="kw-2">&amp;</span>RecordWitness) {
-        <span class="kw">let </span>(record, extra) = <span class="self">self</span>.<span class="number">0</span>.split_at(RECORD_SIZE <span class="kw">as </span>usize);
+        <span class="kw">let </span>(record, extra) = <span class="self">self</span>.<span class="number">0</span>.split_at(Record::SIZE);
         <span class="kw">let </span>(commitment, witness) = extra.split_at(RecordCommitment::SIZE);
 
-        <span class="kw">let </span>record = &lt;<span class="kw-2">&amp;</span>[u8; RECORD_SIZE <span class="kw">as </span>usize]&gt;::try_from(record)
+        <span class="kw">let </span>record = &lt;<span class="kw-2">&amp;</span>[u8; Record::SIZE]&gt;::try_from(record)
             .expect(<span class="string">&quot;Slice of memory has correct length; qed&quot;</span>);
         <span class="kw">let </span>commitment = &lt;<span class="kw-2">&amp;</span>[u8; RecordCommitment::SIZE]&gt;::try_from(commitment)
             .expect(<span class="string">&quot;Slice of memory has correct length; qed&quot;</span>);
@@ -882,10 +888,10 @@
 
     <span class="doccomment">/// Split piece into underlying mutable components.
     </span><span class="kw">pub fn </span>split_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; (<span class="kw-2">&amp;mut </span>Record, <span class="kw-2">&amp;mut </span>RecordCommitment, <span class="kw-2">&amp;mut </span>RecordWitness) {
-        <span class="kw">let </span>(record, extra) = <span class="self">self</span>.<span class="number">0</span>.split_at_mut(RECORD_SIZE <span class="kw">as </span>usize);
+        <span class="kw">let </span>(record, extra) = <span class="self">self</span>.<span class="number">0</span>.split_at_mut(Record::SIZE);
         <span class="kw">let </span>(commitment, witness) = extra.split_at_mut(RecordCommitment::SIZE);
 
-        <span class="kw">let </span>record = &lt;<span class="kw-2">&amp;mut </span>[u8; RECORD_SIZE <span class="kw">as </span>usize]&gt;::try_from(record)
+        <span class="kw">let </span>record = &lt;<span class="kw-2">&amp;mut </span>[u8; Record::SIZE]&gt;::try_from(record)
             .expect(<span class="string">&quot;Slice of memory has correct length; qed&quot;</span>);
         <span class="kw">let </span>commitment = &lt;<span class="kw-2">&amp;mut </span>[u8; RecordCommitment::SIZE]&gt;::try_from(commitment)
             .expect(<span class="string">&quot;Slice of memory has correct length; qed&quot;</span>);
@@ -992,7 +998,7 @@
 <span class="kw">impl </span>AsRef&lt;[u8]&gt; <span class="kw">for </span>FlatPieces {
     <span class="kw">fn </span>as_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8] {
         <span class="comment">// SAFETY: Same memory layout due to `#[repr(transparent)]`
-        </span><span class="kw">let </span>pieces: <span class="kw-2">&amp;</span>[[u8; PIECE_SIZE]] = <span class="kw">unsafe </span>{ mem::transmute(<span class="self">self</span>.<span class="number">0</span>.as_slice()) };
+        </span><span class="kw">let </span>pieces: <span class="kw-2">&amp;</span>[[u8; Piece::SIZE]] = <span class="kw">unsafe </span>{ mem::transmute(<span class="self">self</span>.<span class="number">0</span>.as_slice()) };
         pieces.flatten()
     }
 }
@@ -1000,7 +1006,7 @@
 <span class="kw">impl </span>AsMut&lt;[u8]&gt; <span class="kw">for </span>FlatPieces {
     <span class="kw">fn </span>as_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>[u8] {
         <span class="comment">// SAFETY: Same memory layout due to `#[repr(transparent)]`
-        </span><span class="kw">let </span>pieces: <span class="kw-2">&amp;mut </span>[[u8; PIECE_SIZE]] = <span class="kw">unsafe </span>{ mem::transmute(<span class="self">self</span>.<span class="number">0</span>.as_mut_slice()) };
+        </span><span class="kw">let </span>pieces: <span class="kw-2">&amp;mut </span>[[u8; Piece::SIZE]] = <span class="kw">unsafe </span>{ mem::transmute(<span class="self">self</span>.<span class="number">0</span>.as_mut_slice()) };
         pieces.flatten_mut()
     }
 }
