@@ -483,6 +483,12 @@
 <a href="#483" id="483">483</a>
 <a href="#484" id="484">484</a>
 <a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::object_mappings::{ObjectMappingError, ObjectMappings};
 <span class="kw">use </span>jsonrpsee::core::error::Error;
 <span class="kw">use </span>jsonrpsee::proc_macros::rpc;
@@ -492,7 +498,9 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_archiving::archiver::{Segment, SegmentItem};
 <span class="kw">use </span>subspace_core_primitives::objects::GlobalObject;
-<span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, Piece, PieceIndex, PieceIndexHash, SegmentIndex};
+<span class="kw">use </span>subspace_core_primitives::{
+    Blake2b256Hash, Piece, PieceIndex, PieceIndexHash, Record, RecordedHistorySegment, SegmentIndex,
+};
 <span class="kw">use </span>tracing::{debug, error};
 
 <span class="doccomment">/// Maximum expected size of one object in bytes
@@ -610,7 +618,7 @@
 #[serde(rename_all = <span class="string">&quot;camelCase&quot;</span>)]
 </span><span class="kw">pub struct </span>Object {
     <span class="doccomment">/// Piece index where object is contained (at least its beginning, might not fit fully)
-    </span>piece_index: u64,
+    </span>piece_index: PieceIndex,
     <span class="doccomment">/// Offset of the object
     </span>offset: u32,
     <span class="doccomment">/// The data object contains for convenience
@@ -687,8 +695,8 @@
         // if not we might be able to do very fast object retrieval without assembling and
         // processing the whole segment.
         </span><span class="kw">let </span>last_data_piece_in_segment = {
-            <span class="kw">let </span>piece_position_in_segment = piece_index % u64::from(<span class="self">self</span>.pieces_in_segment);
-            <span class="kw">let </span>last_piece_position_in_segment = u64::from(<span class="self">self</span>.pieces_in_segment) / <span class="number">2 </span>- <span class="number">1</span>;
+            <span class="kw">let </span>piece_position_in_segment = piece_index.position();
+            <span class="kw">let </span>last_piece_position_in_segment = <span class="self">self</span>.pieces_in_segment / <span class="number">2 </span>- <span class="number">1</span>;
 
             piece_position_in_segment &gt;= last_piece_position_in_segment
         };
@@ -696,12 +704,12 @@
         <span class="comment">// How much bytes are definitely available starting at `piece_index` and `offset` without
         // crossing segment boundary
         </span><span class="kw">let </span>bytes_available_in_segment = {
-            <span class="kw">let </span>data_shards = u64::from(<span class="self">self</span>.pieces_in_segment / <span class="number">2</span>);
-            <span class="kw">let </span>piece_position = piece_index % u64::from(<span class="self">self</span>.pieces_in_segment);
+            <span class="kw">let </span>data_shards = RecordedHistorySegment::RAW_RECORDS <span class="kw">as </span>u32;
+            <span class="kw">let </span>piece_position = piece_index.position();
 
             <span class="comment">// `-2` is because last 2 bytes might contain padding if a piece is the last piece in
             // the segment.
-            </span>(data_shards - piece_position) * u64::from(<span class="self">self</span>.record_size) - u64::from(offset) - <span class="number">2
+            </span>u64::from(data_shards - piece_position) * Record::SIZE <span class="kw">as </span>u64 - u64::from(offset) - <span class="number">2
         </span>};
 
         <span class="kw">if </span>last_data_piece_in_segment &amp;&amp; !before_last_two_bytes {
@@ -714,7 +722,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>next_piece_index = piece_index;
 
         <span class="kw">let </span>piece = <span class="self">self</span>.read_and_decode_piece(next_piece_index)<span class="question-mark">?</span>;
-        next_piece_index += <span class="number">1</span>;
+        next_piece_index += PieceIndex::ONE;
         read_records_data.extend_from_slice(piece.record().as_ref());
 
         <span class="comment">// Let&#39;s see how many bytes encode compact length encoding of the data, see
@@ -747,7 +755,7 @@
             <span class="kw">if </span>!length_before_record_end {
                 <span class="comment">// Need the next piece to read the length of data
                 </span><span class="kw">let </span>piece = <span class="self">self</span>.read_and_decode_piece(next_piece_index)<span class="question-mark">?</span>;
-                next_piece_index += <span class="number">1</span>;
+                next_piece_index += PieceIndex::ONE;
                 read_records_data.extend_from_slice(piece.record().as_ref());
             }
 
@@ -776,7 +784,7 @@
         <span class="comment">// Read more pieces until we have enough data
         </span><span class="kw">while </span>data.len() &lt;= data_length <span class="kw">as </span>usize {
             <span class="kw">let </span>piece = <span class="self">self</span>.read_and_decode_piece(next_piece_index)<span class="question-mark">?</span>;
-            next_piece_index += <span class="number">1</span>;
+            next_piece_index += PieceIndex::ONE;
             data.extend_from_slice(<span class="kw-2">&amp;</span>piece[..<span class="self">self</span>.record_size <span class="kw">as </span>usize]);
         }
 
@@ -794,10 +802,10 @@
         offset: u32,
         object_id: <span class="kw-2">&amp;</span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, Error&gt; {
-        <span class="kw">let </span>segment_index = piece_index / u64::from(<span class="self">self</span>.pieces_in_segment);
-        <span class="kw">let </span>piece_position_in_segment = piece_index % u64::from(<span class="self">self</span>.pieces_in_segment);
+        <span class="kw">let </span>segment_index = piece_index.segment_index();
+        <span class="kw">let </span>piece_position_in_segment = piece_index.position();
         <span class="kw">let </span>offset_in_segment =
-            piece_position_in_segment * u64::from(<span class="self">self</span>.record_size) + u64::from(offset);
+            u64::from(piece_position_in_segment) * Record::SIZE <span class="kw">as </span>u64 + u64::from(offset);
 
         <span class="kw">let </span><span class="kw-2">mut </span>data = {
             <span class="kw">let </span>Segment::V0 { items } = <span class="self">self</span>.read_segment(segment_index)<span class="question-mark">?</span>;
@@ -835,7 +843,10 @@
                 segment_item =&gt; {
                     <span class="macro">error!</span>(
                         <span class="question-mark">?</span>segment_item,
-                        offset_in_segment, segment_index, object_id, <span class="string">&quot;Unexpected segment item&quot;</span>,
+                        offset_in_segment,
+                        %segment_index,
+                        object_id,
+                        <span class="string">&quot;Unexpected segment item&quot;</span>,
                     );
 
                     <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Custom(<span class="macro">format!</span>(
@@ -850,7 +861,7 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(data);
         }
 
-        <span class="kw">for </span>segment_index <span class="kw">in </span>segment_index + <span class="number">1</span>.. {
+        <span class="kw">for </span>segment_index <span class="kw">in </span>segment_index + SegmentIndex::ONE.. {
             <span class="kw">let </span>Segment::V0 { items } = <span class="self">self</span>.read_segment(segment_index)<span class="question-mark">?</span>;
             <span class="kw">for </span>segment_item <span class="kw">in </span>items {
                 <span class="kw">if let </span>SegmentItem::BlockContinuation { bytes, .. } = segment_item {
@@ -876,18 +887,19 @@
 
     <span class="doccomment">/// Read the whole segment by its index (just records, skipping witnesses)
     </span><span class="kw">fn </span>read_segment(<span class="kw-2">&amp;</span><span class="self">self</span>, segment_index: SegmentIndex) -&gt; <span class="prelude-ty">Result</span>&lt;Segment, Error&gt; {
-        <span class="kw">let </span>first_piece_in_segment = segment_index * SegmentIndex::from(<span class="self">self</span>.pieces_in_segment);
         <span class="kw">let </span><span class="kw-2">mut </span>segment_bytes =
             Vec::&lt;u8&gt;::with_capacity((<span class="self">self</span>.pieces_in_segment * <span class="self">self</span>.record_size) <span class="kw">as </span>usize);
 
-        <span class="kw">for </span>piece_index <span class="kw">in </span>(first_piece_in_segment..).take(<span class="self">self</span>.pieces_in_segment <span class="kw">as </span>usize / <span class="number">2</span>) {
+        <span class="kw">for </span>piece_index <span class="kw">in
+            </span>(segment_index.first_piece_index()..).take(RecordedHistorySegment::RAW_RECORDS)
+        {
             <span class="kw">let </span>piece = <span class="self">self</span>.read_and_decode_piece(piece_index)<span class="question-mark">?</span>;
             segment_bytes.extend_from_slice(piece.record().as_ref());
         }
 
         <span class="kw">let </span>segment = Segment::decode(<span class="kw-2">&amp;mut </span>segment_bytes.as_slice()).map_err(|error| {
             <span class="macro">error!</span>(
-                index = segment_index,
+                index = %segment_index,
                 %error,
                 <span class="string">&quot;Failed to decode segment of archival history on retrieval&quot;</span>,
             );
