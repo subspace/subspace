@@ -481,18 +481,10 @@
 <a href="#481" id="481">481</a>
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-</pre><pre class="rust"><code><span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
+</pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::system_domain_tx_pre_validator::SystemDomainTxPreValidator;
+<span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
 <span class="kw">use </span>cross_domain_message_gossip::{DomainTxPoolSink, Message <span class="kw">as </span>GossipMessage};
 <span class="kw">use </span>domain_client_executor::state_root_extractor::StateRootExtractorWithSystemDomainClient;
-<span class="kw">use </span>domain_client_executor::xdm_verifier::SystemDomainXDMVerifier;
 <span class="kw">use </span>domain_client_executor::{
     EssentialExecutorParams, ExecutorStreams, SystemDomainParentChain, SystemExecutor,
     SystemGossipMessageValidator,
@@ -531,8 +523,6 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::Blake2b256Hash;
 <span class="kw">use </span>subspace_runtime_primitives::Index <span class="kw">as </span>Nonce;
-<span class="kw">use </span>subspace_transaction_pool::bundle_validator::SkipBundleValidation;
-<span class="kw">use </span>subspace_transaction_pool::FullChainVerifier;
 <span class="kw">use </span>substrate_frame_rpc_system::AccountNonceApi;
 <span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 
@@ -549,7 +539,8 @@
 <span class="doccomment">/// System domain full node along with some other components.
 </span><span class="kw">pub struct </span>NewFullSystem&lt;C, CodeExecutor, PBlock, PClient, RuntimeApi, ExecutorDispatch&gt;
 <span class="kw">where
-    </span>PBlock: BlockT,
+    </span>Block: BlockT,
+    PBlock: BlockT,
     NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
     PBlock::Hash: From&lt;Hash&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
@@ -594,23 +585,18 @@
     </span><span class="kw">pub </span>tx_pool_sink: DomainTxPoolSink,
 }
 
-<span class="kw">pub type </span>FullPool&lt;PBlock, PClient, RuntimeApi, Executor&gt; =
-    subspace_transaction_pool::FullPoolWithChainVerifier&lt;
+<span class="kw">pub type </span>FullPool&lt;PBlock, PClient, RuntimeApi, Executor&gt; = subspace_transaction_pool::FullPool&lt;
+    Block,
+    FullClient&lt;RuntimeApi, Executor&gt;,
+    SystemDomainTxPreValidator&lt;
         Block,
+        PBlock,
         FullClient&lt;RuntimeApi, Executor&gt;,
-        SystemDomainXDMVerifier&lt;
-            PClient,
-            PBlock,
-            Block,
-            FullChainVerifier&lt;
-                Block,
-                FullClient&lt;RuntimeApi, Executor&gt;,
-                FraudProofVerifier&lt;PBlock, PClient, RuntimeApi, Executor&gt;,
-                SkipBundleValidation,
-            &gt;,
-            StateRootExtractorWithSystemDomainClient&lt;FullClient&lt;RuntimeApi, Executor&gt;&gt;,
-        &gt;,
-    &gt;;
+        FraudProofVerifier&lt;PBlock, PClient, RuntimeApi, Executor&gt;,
+        PClient,
+        StateRootExtractorWithSystemDomainClient&lt;FullClient&lt;RuntimeApi, Executor&gt;&gt;,
+    &gt;,
+&gt;;
 
 <span class="kw">type </span>FraudProofVerifier&lt;PBlock, PClient, RuntimeApi, Executor&gt; =
     subspace_fraud_proof::ProofVerifier&lt;
@@ -702,21 +688,19 @@
         subspace_fraud_proof::PrePostStateRootVerifier::new(client.clone()),
     );
 
-    <span class="comment">// Skip bundle validation here because for the system domain the bundle is extract from the
-    // primary block thus it is already validated and accepted by the consensus chain.
-    </span><span class="kw">let </span>system_domain_fraud_proof_verifier =
-        FullChainVerifier::new(client.clone(), proof_verifier, SkipBundleValidation);
-    <span class="kw">let </span>system_domain_xdm_verifier = SystemDomainXDMVerifier::new(
+    <span class="kw">let </span>system_domain_tx_pre_validator = SystemDomainTxPreValidator::new(
+        client.clone(),
+        Box::new(task_manager.spawn_handle()),
+        proof_verifier,
         primary_chain_client,
         StateRootExtractorWithSystemDomainClient::new(client.clone()),
-        system_domain_fraud_proof_verifier,
     );
 
-    <span class="kw">let </span>transaction_pool = subspace_transaction_pool::new_full_with_verifier(
+    <span class="kw">let </span>transaction_pool = subspace_transaction_pool::new_full(
         config,
         <span class="kw-2">&amp;</span>task_manager,
         client.clone(),
-        system_domain_xdm_verifier,
+        system_domain_tx_pre_validator,
     );
 
     <span class="kw">let </span>import_queue = domain_client_consensus_relay_chain::import_queue(
