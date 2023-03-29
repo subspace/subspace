@@ -904,9 +904,8 @@
     BlockObject, BlockObjectMapping, PieceObject, PieceObjectMapping,
 };
 <span class="kw">use </span>subspace_core_primitives::{
-    ArchivedBlockProgress, Blake2b256Hash, BlockNumber, FlatPieces, LastArchivedBlock, PieceArray,
-    RawRecord, RecordedHistorySegment, SegmentCommitment, SegmentHeader, SegmentIndex,
-    PIECES_IN_SEGMENT,
+    ArchivedBlockProgress, ArchivedHistorySegment, Blake2b256Hash, BlockNumber, LastArchivedBlock,
+    PieceArray, RawRecord, RecordedHistorySegment, SegmentCommitment, SegmentHeader, SegmentIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 
@@ -1042,15 +1041,16 @@
     </span>ParentSegmentHeader(SegmentHeader),
 }
 
-<span class="doccomment">/// Archived segment as a combination of segment header hash, segment index and corresponding pieces
+<span class="doccomment">/// Newly archived segment as a combination of segment header hash, segment index and corresponding
+/// archived history segment containing pieces
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Decode, Encode)]
 #[cfg_attr(feature = <span class="string">&quot;serde&quot;</span>, derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = <span class="string">&quot;serde&quot;</span>, serde(rename_all = <span class="string">&quot;camelCase&quot;</span>))]
-</span><span class="kw">pub struct </span>ArchivedSegment {
-    <span class="doccomment">/// Segment header of the segment
+</span><span class="kw">pub struct </span>NewArchivedSegment {
+    <span class="doccomment">/// Segment header
     </span><span class="kw">pub </span>segment_header: SegmentHeader,
-    <span class="doccomment">/// Pieces that correspond to this segment
-    </span><span class="kw">pub </span>pieces: FlatPieces,
+    <span class="doccomment">/// Segment of archived history containing pieces
+    </span><span class="kw">pub </span>pieces: ArchivedHistorySegment,
     <span class="doccomment">/// Mappings for objects stored in corresponding pieces.
     ///
     /// NOTE: Only half (source pieces) will have corresponding mapping item in this `Vec`.
@@ -1126,7 +1126,7 @@
         //  message in `.expect()`
 
         </span><span class="kw">let </span>erasure_coding = ErasureCoding::new(
-            NonZeroUsize::new(PIECES_IN_SEGMENT.ilog2() <span class="kw">as </span>usize)
+            NonZeroUsize::new(ArchivedHistorySegment::NUM_PIECES.ilog2() <span class="kw">as </span>usize)
                 .expect(<span class="string">&quot;Recorded history segment contains at very least one record; qed&quot;</span>),
         )
         .map_err(ArchiverInstantiationError::FailedToInitializeErasureCoding)<span class="question-mark">?</span>;
@@ -1134,7 +1134,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             buffer: VecDeque::default(),
             incremental_record_commitments: IncrementalRecordCommitmentsState::with_capacity(
-                RecordedHistorySegment::RAW_RECORDS,
+                RecordedHistorySegment::NUM_RAW_RECORDS,
             ),
             erasure_coding,
             kzg,
@@ -1219,7 +1219,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         bytes: Vec&lt;u8&gt;,
         object_mapping: BlockObjectMapping,
-    ) -&gt; Vec&lt;ArchivedSegment&gt; {
+    ) -&gt; Vec&lt;NewArchivedSegment&gt; {
         <span class="comment">// Append new block to the buffer
         </span><span class="self">self</span>.buffer.push_back(SegmentItem::Block {
             bytes,
@@ -1481,11 +1481,11 @@
     }
 
     <span class="comment">// Take segment as an input, apply necessary transformations and produce archived segment
-    </span><span class="kw">fn </span>produce_archived_segment(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment: Segment) -&gt; ArchivedSegment {
+    </span><span class="kw">fn </span>produce_archived_segment(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment: Segment) -&gt; NewArchivedSegment {
         <span class="comment">// Create mappings
         </span><span class="kw">let </span>object_mapping = {
             <span class="kw">let </span><span class="kw-2">mut </span>corrected_object_mapping =
-                <span class="macro">vec!</span>[PieceObjectMapping::default(); RecordedHistorySegment::RAW_RECORDS];
+                <span class="macro">vec!</span>[PieceObjectMapping::default(); RecordedHistorySegment::NUM_RAW_RECORDS];
             <span class="kw">let </span>Segment::V0 { items } = <span class="kw-2">&amp;</span>segment;
             <span class="comment">// `+1` corresponds to enum variant encoding
             </span><span class="kw">let </span><span class="kw-2">mut </span>base_offset_in_segment = <span class="number">1</span>;
@@ -1548,11 +1548,11 @@
             <span class="comment">// Segment is quite big and no longer necessary
             </span>drop(segment);
 
-            <span class="kw">let </span><span class="kw-2">mut </span>pieces = FlatPieces::new(PIECES_IN_SEGMENT <span class="kw">as </span>usize);
+            <span class="kw">let </span><span class="kw-2">mut </span>pieces = ArchivedHistorySegment::default();
 
             <span class="comment">// Scratch buffer to avoid re-allocation
             </span><span class="kw">let </span><span class="kw-2">mut </span>tmp_source_shards_scalars =
-                Vec::&lt;Scalar&gt;::with_capacity(RecordedHistorySegment::RAW_RECORDS);
+                Vec::&lt;Scalar&gt;::with_capacity(RecordedHistorySegment::NUM_RAW_RECORDS);
             <span class="comment">// Iterate over the chunks of `Scalar::SAFE_BYTES` bytes of all records
             </span><span class="kw">for </span>record_offset <span class="kw">in </span><span class="number">0</span>..RawRecord::SIZE / Scalar::SAFE_BYTES {
                 <span class="comment">// Collect chunks of each record at the same offset
@@ -1656,7 +1656,7 @@
         </span><span class="self">self</span>.buffer
             .push_front(SegmentItem::ParentSegmentHeader(segment_header));
 
-        ArchivedSegment {
+        NewArchivedSegment {
             segment_header,
             pieces,
             object_mapping,
@@ -1717,7 +1717,7 @@
 
     kzg.verify(
         segment_commitment,
-        PIECES_IN_SEGMENT <span class="kw">as </span>usize,
+        ArchivedHistorySegment::NUM_PIECES,
         position,
         <span class="kw-2">&amp;</span>commitment_hash,
         <span class="kw-2">&amp;</span>witness,
@@ -1734,7 +1734,7 @@
 ) -&gt; bool {
     kzg.verify(
         commitment,
-        PIECES_IN_SEGMENT <span class="kw">as </span>usize,
+        ArchivedHistorySegment::NUM_PIECES,
         position,
         commitment_hash,
         witness,
