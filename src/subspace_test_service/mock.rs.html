@@ -406,7 +406,49 @@
 <a href="#406" id="406">406</a>
 <a href="#407" id="407">407</a>
 <a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_config;
+<span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>sc_block_builder::BlockBuilderProvider;
@@ -425,6 +467,7 @@
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_consensus_subspace::digests::{CompatibleDigestItem, PreDigest};
 <span class="kw">use </span>sp_consensus_subspace::FarmerPublicKey;
+<span class="kw">use </span>sp_domains::ExecutorPublicKey;
 <span class="kw">use </span>sp_inherents::{InherentData, InherentDataProvider};
 <span class="kw">use </span>sp_keyring::Sr25519Keyring;
 <span class="kw">use </span>sp_runtime::generic::Digest;
@@ -442,7 +485,7 @@
 <span class="kw">use </span>subspace_service::FullSelectChain;
 <span class="kw">use </span>subspace_solving::create_chunk_signature;
 <span class="kw">use </span>subspace_test_client::{Backend, Client, FraudProofVerifier, TestExecutorDispatch};
-<span class="kw">use </span>subspace_test_runtime::{RuntimeApi, SLOT_DURATION};
+<span class="kw">use </span>subspace_test_runtime::{RuntimeApi, RuntimeCall, UncheckedExtrinsic, SLOT_DURATION};
 <span class="kw">use </span>subspace_transaction_pool::bundle_validator::BundleValidator;
 <span class="kw">use </span>subspace_transaction_pool::FullPool;
 
@@ -468,7 +511,9 @@
     <span class="doccomment">/// The next slot number
     </span>next_slot: u64,
     <span class="doccomment">/// The slot notification subscribers
-    </span>new_slot_notification_subscribers: Vec&lt;TracingUnboundedSender&lt;(Slot, Blake2b256Hash)&gt;&gt;,
+    </span><span class="attr">#[allow(clippy::type_complexity)]
+    </span>new_slot_notification_subscribers:
+        Vec&lt;TracingUnboundedSender&lt;(Slot, Blake2b256Hash, <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;()&gt;&gt;)&gt;&gt;,
     <span class="doccomment">/// Block import pipeline
     </span>block_import:
         MockBlockImport&lt;BoxBlockImport&lt;Block, TransactionFor&lt;Client, Block&gt;&gt;, Client, Block&gt;,
@@ -564,14 +609,28 @@
         <span class="self">self</span>.next_slot
     }
 
-    <span class="doccomment">/// Produce slot
-    </span><span class="kw">pub fn </span>produce_slot(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Slot {
+    <span class="doccomment">/// Produce a slot and wait for the acknowledgement of all the slot notification subscribers
+    </span><span class="kw">pub async fn </span>produce_slot_and_wait_for_bundle_submission(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Slot {
         <span class="kw">let </span>slot = Slot::from(<span class="self">self</span>.next_slot);
         <span class="self">self</span>.next_slot += <span class="number">1</span>;
 
-        <span class="kw">let </span>value = (slot, Hash::random().into());
-        <span class="self">self</span>.new_slot_notification_subscribers
-            .retain(|subscriber| subscriber.unbounded_send(value).is_ok());
+        <span class="kw">let </span>(slot_acknowledgement_sender, <span class="kw-2">mut </span>slot_acknowledgement_receiver) = mpsc::channel(<span class="number">0</span>);
+
+        <span class="comment">// Must drop `slot_acknowledgement_sender` after the notification otherwise the receiver
+        // will block forever as there is still a sender not closed.
+        </span>{
+            <span class="kw">let </span>value = (
+                slot,
+                Hash::random().into(),
+                <span class="prelude-val">Some</span>(slot_acknowledgement_sender),
+            );
+            <span class="self">self</span>.new_slot_notification_subscribers
+                .retain(|subscriber| subscriber.unbounded_send(value.clone()).is_ok());
+        }
+
+        <span class="kw">while </span>(slot_acknowledgement_receiver.next().<span class="kw">await</span>).is_some() {
+            <span class="comment">// Wait for all the acknowledgements to progress.
+        </span>}
 
         slot
     }
@@ -579,7 +638,7 @@
     <span class="doccomment">/// Subscribe the new slot notification
     </span><span class="kw">pub fn </span>new_slot_notification_stream(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-    ) -&gt; TracingUnboundedReceiver&lt;(Slot, Blake2b256Hash)&gt; {
+    ) -&gt; TracingUnboundedReceiver&lt;(Slot, Blake2b256Hash, <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;()&gt;&gt;)&gt; {
         <span class="kw">let </span>(tx, rx) = tracing_unbounded(<span class="string">&quot;subspace_new_slot_notification_stream&quot;</span>, <span class="number">100</span>);
         <span class="self">self</span>.new_slot_notification_subscribers.push(tx);
         rx
@@ -595,6 +654,30 @@
             .push(tx);
         rx
     }
+
+    <span class="doccomment">/// Check if a bundle that created by `bundle_author` at `slot` is present at the transaction pool
+    </span><span class="kw">pub fn </span>is_bundle_present_in_tx_pool(<span class="kw-2">&amp;</span><span class="self">self</span>, slot: u64, bundle_author: Sr25519Keyring) -&gt; bool {
+        <span class="kw">let </span>bundle_author = ExecutorPublicKey::unchecked_from(bundle_author.public().<span class="number">0</span>);
+        <span class="kw">for </span>ready_tx <span class="kw">in </span><span class="self">self</span>.transaction_pool.ready() {
+            <span class="kw">let </span>ext = UncheckedExtrinsic::decode(<span class="kw-2">&amp;mut </span>ready_tx.data.encode().as_slice())
+                .expect(<span class="string">&quot;should be able to decode&quot;</span>);
+            <span class="kw">if let </span>RuntimeCall::Domains(pallet_domains::Call::submit_bundle {
+                signed_opaque_bundle,
+            }) = ext.function
+            {
+                <span class="kw">let </span>slot_match = signed_opaque_bundle.bundle.header.slot_number == slot;
+                <span class="kw">let </span>author_match = signed_opaque_bundle
+                    .bundle_solution
+                    .proof_of_election()
+                    .executor_public_key
+                    == bundle_author;
+                <span class="kw">if </span>slot_match &amp;&amp; author_match {
+                    <span class="kw">return </span><span class="bool-val">true</span>;
+                }
+            }
+        }
+        <span class="bool-val">false
+    </span>}
 }
 
 <span class="kw">impl </span>MockPrimaryNode {
@@ -704,10 +787,8 @@
     }
 
     <span class="doccomment">/// Produce block based on the current best block and the extrinsics in pool
-    </span><span class="kw">pub async fn </span>produce_block(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+    </span><span class="kw">pub async fn </span>produce_block_with_slot(<span class="kw-2">&amp;mut </span><span class="self">self</span>, slot: Slot) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
         <span class="kw">let </span>block_timer = time::Instant::now();
-
-        <span class="kw">let </span>slot = <span class="self">self</span>.produce_slot();
 
         <span class="kw">let </span>parent_hash = <span class="self">self</span>.client.info().best_hash;
         <span class="kw">let </span>parent_number = <span class="self">self</span>.client.info().best_number;
@@ -736,9 +817,10 @@
     }
 
     <span class="doccomment">/// Produce `n` number of blocks.
-    </span><span class="kw">pub async fn </span>produce_n_blocks(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: u64) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+    </span><span class="kw">pub async fn </span>produce_blocks(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: u64) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
         <span class="kw">for _ in </span><span class="number">0</span>..n {
-            <span class="self">self</span>.produce_block().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>slot = <span class="self">self</span>.produce_slot_and_wait_for_bundle_submission().<span class="kw">await</span>;
+            <span class="self">self</span>.produce_block_with_slot(slot).<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }
