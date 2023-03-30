@@ -237,6 +237,21 @@
 <a href="#237" id="237">237</a>
 <a href="#238" id="238">238</a>
 <a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::{to_number_primitive, BlockInfo, ExecutorSlotInfo};
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>futures::channel::mpsc;
@@ -244,6 +259,7 @@
 <span class="kw">use </span>sc_client_api::{BlockBackend, BlockImportNotification, BlockchainEvents};
 <span class="kw">use </span>sp_api::{ApiError, BlockT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
+<span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_domains::{ExecutorApi, SignedOpaqueBundle};
 <span class="kw">use </span>sp_runtime::traits::{Header <span class="kw">as </span>HeaderT, NumberFor, One, Saturating};
 <span class="kw">use </span>std::collections::hash_map::Entry;
@@ -285,7 +301,8 @@
     }
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>handle_block_import_notifications&lt;
+<span class="attr">#[allow(clippy::too_many_arguments)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>handle_block_import_notifications&lt;
     Block,
     PBlock,
     PClient,
@@ -293,6 +310,7 @@
     SubspaceBlockImports,
     ClientBlockImports,
 &gt;(
+    spawn_essential: Box&lt;<span class="kw">dyn </span>SpawnEssentialNamed&gt;,
     primary_chain_client: <span class="kw-2">&amp;</span>PClient,
     best_domain_number: NumberFor&lt;Block&gt;,
     processor: ProcessorFn,
@@ -312,7 +330,8 @@
             (PBlock::Hash, NumberFor&lt;PBlock&gt;),
         ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt;&gt; + Send&gt;&gt;
         + Send
-        + Sync,
+        + Sync
+        + <span class="lifetime">&#39;static</span>,
     SubspaceBlockImports: Stream&lt;Item = (NumberFor&lt;PBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Unpin,
     ClientBlockImports: Stream&lt;Item = BlockImportNotification&lt;PBlock&gt;&gt; + Unpin,
 {
@@ -340,6 +359,31 @@
     // the primary block import in case the primary chain runs much faster than the domain.).
     </span><span class="kw">let </span>(<span class="kw-2">mut </span>block_info_sender, <span class="kw-2">mut </span>block_info_receiver) =
         mpsc::channel(primary_block_import_throttling_buffer_size <span class="kw">as </span>usize);
+
+    <span class="comment">// Run the actual processor in a dedicated task, otherwise `tokio::select!` might hang forever
+    // when the throttling buffer is full.
+    </span>spawn_essential.spawn_essential_blocking(
+        <span class="string">&quot;primary-block-processor&quot;</span>,
+        <span class="prelude-val">None</span>,
+        Box::pin(<span class="kw">async move </span>{
+            <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_block_info) = block_info_receiver.next().<span class="kw">await </span>{
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(block_info) = maybe_block_info {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = block_imported::&lt;Block, PBlock, <span class="kw">_</span>&gt;(
+                        <span class="kw-2">&amp;</span>processor,
+                        <span class="kw-2">&amp;mut </span>active_leaves,
+                        block_info,
+                    )
+                    .<span class="kw">await
+                    </span>{
+                        <span class="macro">tracing::error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to process primary block&quot;</span>);
+                        <span class="comment">// Bring down the service as bundles processor is an essential task.
+                        // TODO: more graceful shutdown.
+                        </span><span class="kw">break</span>;
+                    }
+                }
+            }
+        }),
+    );
 
     <span class="kw">loop </span>{
         <span class="macro">tokio::select! </span>{
@@ -381,20 +425,6 @@
                 <span class="comment">// Pause the primary block import when the sink is full.
                 </span><span class="kw">let _ </span>= block_info_sender.feed(<span class="prelude-val">None</span>).<span class="kw">await</span>;
                 <span class="kw">let _ </span>= block_import_acknowledgement_sender.send(()).<span class="kw">await</span>;
-            }
-            <span class="prelude-val">Some</span>(maybe_block_info) = block_info_receiver.next() =&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(block_info) = maybe_block_info {
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = block_imported::&lt;Block, PBlock, <span class="kw">_</span>&gt;(
-                        <span class="kw-2">&amp;</span>processor,
-                        <span class="kw-2">&amp;mut </span>active_leaves,
-                        block_info,
-                    ).<span class="kw">await </span>{
-                        <span class="macro">tracing::error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to process primary block&quot;</span>);
-                        <span class="comment">// Bring down the service as bundles processor is an essential task.
-                        // TODO: more graceful shutdown.
-                        </span><span class="kw">break</span>;
-                    }
-                }
             }
         }
     }
