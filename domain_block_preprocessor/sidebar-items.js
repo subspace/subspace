@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":[["preprocessor","This module provides the feature of extracting the potential new domain runtime and final list of extrinsics for the domain block from the original primary block."],["runtime_api",""],["runtime_api_full",""],["runtime_api_light",""],["xdm_verifier",""]]};
