@@ -1332,6 +1332,7 @@
 <a href="#1332" id="1332">1332</a>
 <a href="#1333" id="1333">1333</a>
 <a href="#1334" id="1334">1334</a>
+<a href="#1335" id="1335">1335</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1468,10 +1469,12 @@
     </span><span class="kw">pub </span>acknowledgement_sender: TracingUnboundedSender&lt;()&gt;,
 }
 
-<span class="doccomment">/// Notification with imported block header hash that needs to be archived and sender for
-/// segment headers.
+<span class="doccomment">/// Notification with number of the block that is about to be imported and acknowledgement sender
+/// that can be used to pause block production if desired.
+///
+/// NOTE: Block is not fully imported yet!
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>ImportedBlockNotification&lt;Block&gt;
+</span><span class="kw">pub struct </span>BlockImportingNotification&lt;Block&gt;
 <span class="kw">where
     </span>Block: BlockT,
 {
@@ -1479,7 +1482,7 @@
     </span><span class="kw">pub </span>block_number: NumberFor&lt;Block&gt;,
     <span class="doccomment">/// Sender for pausing the block import when executor is not fast enough to process
     /// the primary block.
-    </span><span class="kw">pub </span>block_import_acknowledgement_sender: mpsc::Sender&lt;()&gt;,
+    </span><span class="kw">pub </span>acknowledgement_sender: mpsc::Sender&lt;()&gt;,
 }
 
 <span class="doccomment">/// Errors encountered by the Subspace authorship task.
@@ -1780,8 +1783,8 @@
     reward_signing_notification_stream: SubspaceNotificationStream&lt;RewardSigningNotification&gt;,
     archived_segment_notification_sender: SubspaceNotificationSender&lt;ArchivedSegmentNotification&gt;,
     archived_segment_notification_stream: SubspaceNotificationStream&lt;ArchivedSegmentNotification&gt;,
-    imported_block_notification_stream:
-        SubspaceNotificationStream&lt;ImportedBlockNotification&lt;Block&gt;&gt;,
+    block_importing_notification_stream:
+        SubspaceNotificationStream&lt;BlockImportingNotification&lt;Block&gt;&gt;,
     <span class="doccomment">/// Segment headers that are expected to appear in the corresponding blocks, used for block
     /// production and validation
     </span>segment_headers: Arc&lt;Mutex&lt;LruCache&lt;NumberFor&lt;Block&gt;, Vec&lt;SegmentHeader&gt;&gt;&gt;&gt;,
@@ -1815,10 +1818,10 @@
     }
 
     <span class="doccomment">/// Get stream with notifications about each imported block.
-    </span><span class="kw">pub fn </span>imported_block_notification_stream(
+    </span><span class="kw">pub fn </span>block_importing_notification_stream(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; SubspaceNotificationStream&lt;ImportedBlockNotification&lt;Block&gt;&gt; {
-        <span class="self">self</span>.imported_block_notification_stream.clone()
+    ) -&gt; SubspaceNotificationStream&lt;BlockImportingNotification&lt;Block&gt;&gt; {
+        <span class="self">self</span>.block_importing_notification_stream.clone()
     }
 
     <span class="doccomment">/// Get blocks that are expected to be included at specified block number.
@@ -2087,8 +2090,8 @@
 </span><span class="kw">pub struct </span>SubspaceBlockImport&lt;Block: BlockT, Client, I, CIDP&gt; {
     inner: I,
     client: Arc&lt;Client&gt;,
-    imported_block_notification_sender:
-        SubspaceNotificationSender&lt;ImportedBlockNotification&lt;Block&gt;&gt;,
+    block_importing_notification_sender:
+        SubspaceNotificationSender&lt;BlockImportingNotification&lt;Block&gt;&gt;,
     subspace_link: SubspaceLink&lt;Block&gt;,
     create_inherent_data_providers: CIDP,
 }
@@ -2103,7 +2106,7 @@
         SubspaceBlockImport {
             inner: <span class="self">self</span>.inner.clone(),
             client: <span class="self">self</span>.client.clone(),
-            imported_block_notification_sender: <span class="self">self</span>.imported_block_notification_sender.clone(),
+            block_importing_notification_sender: <span class="self">self</span>.block_importing_notification_sender.clone(),
             subspace_link: <span class="self">self</span>.subspace_link.clone(),
             create_inherent_data_providers: <span class="self">self</span>.create_inherent_data_providers.clone(),
         }
@@ -2120,8 +2123,8 @@
     <span class="kw">fn </span>new(
         client: Arc&lt;Client&gt;,
         block_import: I,
-        imported_block_notification_sender: SubspaceNotificationSender&lt;
-            ImportedBlockNotification&lt;Block&gt;,
+        block_importing_notification_sender: SubspaceNotificationSender&lt;
+            BlockImportingNotification&lt;Block&gt;,
         &gt;,
         subspace_link: SubspaceLink&lt;Block&gt;,
         create_inherent_data_providers: CIDP,
@@ -2129,7 +2132,7 @@
         SubspaceBlockImport {
             client,
             inner: block_import,
-            imported_block_notification_sender,
+            block_importing_notification_sender,
             subspace_link,
             create_inherent_data_providers,
         }
@@ -2494,17 +2497,16 @@
         block.fork_choice = <span class="prelude-val">Some</span>(fork_choice);
 
         <span class="kw">let </span>import_result = <span class="self">self</span>.inner.import_block(block, new_cache).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>(block_import_acknowledgement_sender, <span class="kw-2">mut </span>block_import_acknowledgement_receiver) =
-            mpsc::channel(<span class="number">0</span>);
+        <span class="kw">let </span>(acknowledgement_sender, <span class="kw-2">mut </span>acknowledgement_receiver) = mpsc::channel(<span class="number">0</span>);
 
-        <span class="self">self</span>.imported_block_notification_sender
-            .notify(<span class="kw">move </span>|| ImportedBlockNotification {
+        <span class="self">self</span>.block_importing_notification_sender
+            .notify(<span class="kw">move </span>|| BlockImportingNotification {
                 block_number,
-                block_import_acknowledgement_sender,
+                acknowledgement_sender,
             });
 
-        <span class="kw">while </span>(block_import_acknowledgement_receiver.next().<span class="kw">await</span>).is_some() {
-            <span class="comment">// Wait for all the acknowledgements to progress.
+        <span class="kw">while </span>(acknowledgement_receiver.next().<span class="kw">await</span>).is_some() {
+            <span class="comment">// Wait for all the acknowledgements to finish.
         </span>}
 
         <span class="prelude-val">Ok</span>(import_result)
@@ -2578,8 +2580,8 @@
         notification::channel(<span class="string">&quot;subspace_reward_signing_notification_stream&quot;</span>);
     <span class="kw">let </span>(archived_segment_notification_sender, archived_segment_notification_stream) =
         notification::channel(<span class="string">&quot;subspace_archived_segment_notification_stream&quot;</span>);
-    <span class="kw">let </span>(imported_block_notification_sender, imported_block_notification_stream) =
-        notification::channel(<span class="string">&quot;subspace_imported_block_notification_stream&quot;</span>);
+    <span class="kw">let </span>(block_importing_notification_sender, block_importing_notification_stream) =
+        notification::channel(<span class="string">&quot;subspace_block_importing_notification_stream&quot;</span>);
 
     <span class="kw">let </span>confirmation_depth_k = get_chain_constants(client.as_ref())
         .expect(<span class="string">&quot;Must always be able to get chain constants&quot;</span>)
@@ -2596,7 +2598,7 @@
         reward_signing_notification_stream,
         archived_segment_notification_sender,
         archived_segment_notification_stream,
-        imported_block_notification_stream,
+        block_importing_notification_stream,
         <span class="comment">// TODO: Consider making `confirmation_depth_k` non-zero
         </span>segment_headers: Arc::new(Mutex::new(LruCache::new(
             NonZeroUsize::new(confirmation_depth_k <span class="kw">as </span>usize)
@@ -2608,7 +2610,7 @@
     <span class="kw">let </span>import = SubspaceBlockImport::new(
         client,
         wrapped_block_import,
-        imported_block_notification_sender,
+        block_importing_notification_sender,
         link.clone(),
         create_inherent_data_providers,
     );
