@@ -869,6 +869,36 @@
 <a href="#869" id="869">869</a>
 <a href="#870" id="870">870</a>
 <a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -898,6 +928,8 @@
 <span class="kw">use </span>core::cmp::Ordering;
 <span class="kw">use </span>core::num::NonZeroUsize;
 <span class="kw">use </span>parity_scale_codec::{Compact, CompactLen, Decode, Encode, Input, Output};
+<span class="attr">#[cfg(feature = <span class="string">&quot;rayon&quot;</span>)]
+</span><span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Kzg, Witness};
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake2b_256_254_hash_to_scalar, Scalar};
 <span class="kw">use </span>subspace_core_primitives::objects::{
@@ -1254,7 +1286,6 @@
                         <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
                         <span class="kw-2">&amp;</span>segment,
                         <span class="kw-2">&amp;</span><span class="self">self</span>.kzg,
-                        <span class="bool-val">false</span>,
                     );
 
                     <span class="kw">let </span>Segment::V0 { items } = segment;
@@ -1470,13 +1501,6 @@
 
         <span class="self">self</span>.last_archived_block = last_archived_block;
 
-        update_record_commitments(
-            <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
-            <span class="kw-2">&amp;</span>segment,
-            <span class="kw-2">&amp;</span><span class="self">self</span>.kzg,
-            <span class="bool-val">true</span>,
-        );
-
         <span class="prelude-val">Some</span>(segment)
     }
 
@@ -1596,6 +1620,42 @@
             pieces
         };
 
+        <span class="kw">let </span>existing_commitments = <span class="self">self</span>.incremental_record_commitments.len();
+        <span class="comment">// Add commitments for pieces that were not created incrementally
+        </span>{
+            <span class="attr">#[cfg(not(feature = <span class="string">&quot;rayon&quot;</span>))]
+            </span><span class="kw">let </span>source_pieces = pieces.source();
+            <span class="attr">#[cfg(feature = <span class="string">&quot;rayon&quot;</span>)]
+            </span><span class="kw">let </span>source_pieces = pieces.par_source();
+
+            <span class="kw">let </span>iter = source_pieces
+                .skip(existing_commitments)
+                .map(|piece| piece.record().safe_scalar_arrays().map(Scalar::from))
+                .map(|record_chunks| {
+                    <span class="kw">let </span>number_of_chunks = record_chunks.len();
+                    <span class="kw">let </span><span class="kw-2">mut </span>scalars = Vec::with_capacity(number_of_chunks.next_power_of_two());
+
+                    record_chunks.collect_into(<span class="kw-2">&amp;mut </span>scalars);
+
+                    <span class="comment">// Number of scalars for KZG must be a power of two elements
+                    </span>scalars.resize(scalars.capacity(), Scalar::default());
+
+                    <span class="kw">let </span>polynomial = <span class="self">self</span>.kzg.poly(<span class="kw-2">&amp;</span>scalars).expect(
+                        <span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>,
+                    );
+                    <span class="self">self</span>.kzg
+                        .commit(<span class="kw-2">&amp;</span>polynomial)
+                        .expect(<span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>)
+                });
+
+            <span class="attr">#[cfg(not(feature = <span class="string">&quot;rayon&quot;</span>))]
+            </span>iter.collect_into(<span class="kw-2">&amp;mut *</span><span class="self">self</span>.incremental_record_commitments);
+            <span class="comment">// TODO: `collect_into_vec()`, unfortunately, truncates input, which is not what we want
+            //  can be unified when https://github.com/rayon-rs/rayon/issues/1039 is resolved
+            </span><span class="attr">#[cfg(feature = <span class="string">&quot;rayon&quot;</span>)]
+            </span><span class="self">self</span>.incremental_record_commitments
+                .extend(<span class="kw-2">&amp;</span>iter.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
+        }
         <span class="comment">// Collect hashes to commitments from all records
         </span><span class="kw">let </span>record_commitments = <span class="self">self
             </span>.erasure_coding
