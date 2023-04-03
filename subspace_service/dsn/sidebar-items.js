@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["DsnConfigurationError","Errors that might happen during DSN configuration."]],"mod":[["import_blocks",""],["node_provider_storage",""]],"struct":[["DsnConfig","DSN configuration parameters."]]};
+window.SIDEBAR_ITEMS = {"enum":["DsnConfigurationError"],"mod":["import_blocks","node_provider_storage"],"struct":["DsnConfig"]};

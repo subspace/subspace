@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["SectorCodecError","Errors that happen when using `SectorCodec`"]],"struct":[["SectorCodec","PoR codec that uses polynomial-based systematic erasure coding"]]};
+window.SIDEBAR_ITEMS = {"enum":["SectorCodecError"],"struct":["SectorCodec"]};

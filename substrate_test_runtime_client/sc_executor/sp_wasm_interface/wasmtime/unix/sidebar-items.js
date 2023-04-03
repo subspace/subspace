@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":[["StoreExt","Extensions for the [`Store`] type only available on Unix."]]};
+window.SIDEBAR_ITEMS = {"trait":["StoreExt"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["PieceReader","Wrapper data structure that can be used to read pieces from single disk plot"]]};
+window.SIDEBAR_ITEMS = {"struct":["PieceReader"]};

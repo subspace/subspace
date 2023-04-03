@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["block_import",""]],"struct":[["FraudProofBlockImport","A block-import handler for Subspace fraud proof."]]};
+window.SIDEBAR_ITEMS = {"fn":["block_import"],"struct":["FraudProofBlockImport"]};

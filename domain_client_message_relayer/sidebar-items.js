@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["Error","Relayer error types."]],"mod":[["worker",""]],"type":[["GossipMessageSink","Sink used to submit all the gossip messages."]]};
+window.SIDEBAR_ITEMS = {"enum":["Error"],"mod":["worker"],"type":["GossipMessageSink"]};

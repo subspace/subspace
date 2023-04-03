@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["RuntimeApiFull","A runtime api with full backend."]]};
+window.SIDEBAR_ITEMS = {"struct":["RuntimeApiFull"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":[["PieceCache","Defines persistent piece cache interface."]]};
+window.SIDEBAR_ITEMS = {"trait":["PieceCache"]};

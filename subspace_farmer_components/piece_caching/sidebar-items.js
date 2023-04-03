@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["PieceMemoryCache",""]]};
+window.SIDEBAR_ITEMS = {"struct":["PieceMemoryCache"]};

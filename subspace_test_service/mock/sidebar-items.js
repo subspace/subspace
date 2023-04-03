@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["MockPrimaryNode","A mock Subspace primary node instance used for testing."]]};
+window.SIDEBAR_ITEMS = {"struct":["MockPrimaryNode"]};

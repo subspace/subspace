@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["BlockObject","Object stored inside of the block"],["GlobalObject","Object stored inside in the history of the blockchain"],["PieceObject","Object stored inside of the block"]],"struct":[["BlockObjectMapping","Mapping of objects stored inside of the block"],["PieceObjectMapping","Mapping of objects stored inside of the piece"]]};
+window.SIDEBAR_ITEMS = {"enum":["BlockObject","GlobalObject","PieceObject"],"struct":["BlockObjectMapping","PieceObjectMapping"]};

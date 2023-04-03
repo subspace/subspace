@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["RuntimeApiLight","This is a stateless wrapper around the runtime api. Note: Dispatch may give invalid output if the invoked function relies on state of the chain. Note: Be sure to use this only when there is no domain client available as this holds since entire domain runtime on heap."]]};
+window.SIDEBAR_ITEMS = {"struct":["RuntimeApiLight"]};

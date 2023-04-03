@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":[["ExecutorRegistry","Executor registry interface."],["OnNewEpoch","Hook invoked after the executor set is updated on each epoch."]]};
+window.SIDEBAR_ITEMS = {"trait":["ExecutorRegistry","OnNewEpoch"]};

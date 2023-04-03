@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["PrimaryChainTxPreValidator",""]]};
+window.SIDEBAR_ITEMS = {"struct":["PrimaryChainTxPreValidator"]};

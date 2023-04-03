@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["CreatedAt","DomainAuthorities","DomainCreators","DomainOperators","DomainTotalStakeWeight","Domains","NextDomainId"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["HeadReceiptNumber","OldestReceiptNumber","PrimaryBlockHash","ReceiptVotes","Receipts","StateRoots"]};

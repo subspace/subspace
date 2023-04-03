@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["ErasureCoding","Erasure coding abstraction."]]};
+window.SIDEBAR_ITEMS = {"struct":["ErasureCoding"]};

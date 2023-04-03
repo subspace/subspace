@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["start_farmer","Run a farmer."]],"mod":[["chain_spec","Chain specification for the test runtime."]],"struct":[["TestExecutorDispatch","Subspace native executor instance."]],"type":[["Backend","The backend type being used by the test service."],["Client","The client type being used by the test service."],["FraudProofVerifier","The fraud proof verifier being used the test service."]]};
+window.SIDEBAR_ITEMS = {"fn":["start_farmer"],"mod":["chain_spec"],"struct":["TestExecutorDispatch"],"type":["Backend","Client","FraudProofVerifier"]};

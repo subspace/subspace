@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":[["VESTING_LOCK_ID",""]],"mod":[["module","The module that hosts all the FRAME types needed to add this pallet to a runtime."]],"struct":[["VestingSchedule","The vesting schedule."]],"trait":[["WeightInfo","Weight functions needed for orml_vesting."]]};
+window.SIDEBAR_ITEMS = {"constant":["VESTING_LOCK_ID"],"mod":["module"],"struct":["VestingSchedule"],"trait":["WeightInfo"]};

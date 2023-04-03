@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["reward_signing",""]]};
+window.SIDEBAR_ITEMS = {"fn":["reward_signing"]};

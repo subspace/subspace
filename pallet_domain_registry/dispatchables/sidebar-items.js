@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["create_domain","deregister_domain_operator","register_domain_operator","submit_bundle_equivocation_proof","submit_core_bundle","submit_fraud_proof","submit_invalid_transaction_proof","update_domain_config","update_domain_stake"]};

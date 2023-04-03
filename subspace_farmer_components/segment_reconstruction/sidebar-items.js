@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["SegmentReconstructionError",""]],"fn":[["recover_missing_piece",""]]};
+window.SIDEBAR_ITEMS = {"enum":["SegmentReconstructionError"],"fn":["recover_missing_piece"]};

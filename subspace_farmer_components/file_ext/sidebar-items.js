@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":[["FileExt","Extension convenience trait that allows pre-allocating files, suggesting random access pattern and doing cross-platform exact reads/writes"]]};
+window.SIDEBAR_ITEMS = {"trait":["FileExt"]};

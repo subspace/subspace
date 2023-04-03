@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["is_proof_valid","Check whether proof created earlier is valid"]],"struct":[["Quality","Abstraction that represents quality of the solution in the table"],["Table","Subspace proof of space table"]]};
+window.SIDEBAR_ITEMS = {"fn":["is_proof_valid"],"struct":["Quality","Table"]};

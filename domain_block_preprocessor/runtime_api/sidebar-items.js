@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":[["CoreBundleConstructor","Trait to extract core domain bundles from the given set of core domain extrinsics."],["SignerExtractor","Trait to extract the signer of the extrinsic."],["StateRootExtractor","Trait to extract XDM state roots from the Extrinsic."]],"type":[["ExtractSignerResult",""],["ExtractedStateRoots",""]]};
+window.SIDEBAR_ITEMS = {"trait":["CoreBundleConstructor","SignerExtractor","StateRootExtractor"],"type":["ExtractSignerResult","ExtractedStateRoots"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["VerificationError","Verification error."]],"struct":[["StorageProofVerifier",""]]};
+window.SIDEBAR_ITEMS = {"enum":["VerificationError"],"struct":["StorageProofVerifier"]};

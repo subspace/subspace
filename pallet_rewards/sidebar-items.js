@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["Call","Contains one variant per dispatchable that can be called by an extrinsic."],["Event","`pallet-rewards` events"]],"struct":[["Pallet","Pallet rewards for issuing rewards to block producers."]],"trait":[["Config","Configuration trait of this pallet."],["WeightInfo",""]],"type":[["Module","Type alias to `Pallet`, to be used by `construct_runtime`."]]};
+window.SIDEBAR_ITEMS = {"enum":["Call","Event"],"mod":["dispatchables","storage_types"],"struct":["Pallet"],"trait":["Config","WeightInfo"],"type":["Module"]};

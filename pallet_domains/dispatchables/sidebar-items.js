@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["submit_bundle","submit_bundle_equivocation_proof","submit_fraud_proof","submit_invalid_transaction_proof"]};

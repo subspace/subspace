@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["SegmentCommitmentPieceValidator",""]]};
+window.SIDEBAR_ITEMS = {"struct":["SegmentCommitmentPieceValidator"]};

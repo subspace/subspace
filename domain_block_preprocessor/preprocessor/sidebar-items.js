@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["CoreDomainBlockPreprocessor",""],["SystemDomainBlockPreprocessor",""]]};
+window.SIDEBAR_ITEMS = {"struct":["CoreDomainBlockPreprocessor","SystemDomainBlockPreprocessor"]};

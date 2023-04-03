@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["enable_authoring_by_anyone","enable_rewards","enable_solution_range_adjustment","enable_storage_access","report_equivocation","store_segment_headers","vote"]};

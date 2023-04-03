@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":[["get_account_id_from_seed","Generate an account ID from seed."],["get_from_seed","Generate a crypto pair from seed."],["subspace_local_testnet_config","Local testnet config (multivalidator Alice + Bob)."]],"type":[["TestChainSpec","The `ChainSpec` parameterized for subspace test runtime."]]};
+window.SIDEBAR_ITEMS = {"fn":["get_account_id_from_seed","get_from_seed","subspace_local_testnet_config"],"type":["TestChainSpec"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":[["BundleError",""]],"struct":[["BundleValidator",""]],"trait":[["ValidateBundle",""]]};
+window.SIDEBAR_ITEMS = {"enum":["BundleError"],"struct":["BundleValidator"],"trait":["ValidateBundle"]};

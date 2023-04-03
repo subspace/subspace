@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["NodeProviderStorage",""]]};
+window.SIDEBAR_ITEMS = {"struct":["NodeProviderStorage"]};

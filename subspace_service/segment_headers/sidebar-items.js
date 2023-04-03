@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["SegmentHeaderCache","Cache of recently produced segment headers in aux storage"]]};
+window.SIDEBAR_ITEMS = {"struct":["SegmentHeaderCache"]};

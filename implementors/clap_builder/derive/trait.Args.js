@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"subspace_node":[["impl Args for <a class=\"struct\" href=\"subspace_node/struct.PurgeChainCmd.html\" title=\"struct subspace_node::PurgeChainCmd\">PurgeChainCmd</a>"],["impl Args for <a class=\"struct\" href=\"subspace_node/struct.Cli.html\" title=\"struct subspace_node::Cli\">Cli</a>"],["impl Args for <a class=\"struct\" href=\"subspace_node/struct.ImportBlocksFromDsnCmd.html\" title=\"struct subspace_node::ImportBlocksFromDsnCmd\">ImportBlocksFromDsnCmd</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

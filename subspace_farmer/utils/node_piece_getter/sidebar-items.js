@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":[["NodePieceGetter",""]]};
+window.SIDEBAR_ITEMS = {"struct":["NodePieceGetter"]};

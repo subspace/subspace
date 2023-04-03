@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":[["endpoint",""],["messages",""],["verification",""]],"trait":[["MessengerApi","Api to provide XDM extraction from Runtime Calls."],["RelayerApi","Api useful for relayers to fetch messages and submit transactions."]]};
+window.SIDEBAR_ITEMS = {"mod":["endpoint","messages","verification"],"trait":["MessengerApi","RelayerApi"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Channels","Inbox","InboxResponses","NextChannelId","NextRelayerIdx","Outbox","OutboxResponses","RelayerMessages","Relayers","RelayersInfo"]};
