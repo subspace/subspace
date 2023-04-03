@@ -261,14 +261,27 @@
 <a href="#261" id="261">261</a>
 <a href="#262" id="262">262</a>
 <a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
 </pre><pre class="rust"><code><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span>alloc::string::String;
 <span class="kw">use </span>alloc::vec::Vec;
 <span class="kw">use </span>core::num::NonZeroUsize;
+<span class="attr">#[cfg(feature = <span class="string">&quot;rayon&quot;</span>)]
+</span><span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Commitment, Kzg, Polynomial};
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake2b_256_254_hash_to_scalar, Scalar};
-<span class="kw">use </span>subspace_core_primitives::{ArchivedHistorySegment, Piece, RawRecord, RecordedHistorySegment};
+<span class="kw">use </span>subspace_core_primitives::{ArchivedHistorySegment, Piece, RawRecord};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 
 <span class="doccomment">/// Reconstructor-related instantiation error.
@@ -406,46 +419,50 @@
             }
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>source_record_commitments =
-            Vec::with_capacity(RecordedHistorySegment::NUM_RAW_RECORDS);
-        <span class="kw">for </span>(piece, maybe_input_piece) <span class="kw">in
-            </span>reconstructed_pieces.iter_mut().zip(input_pieces).step_by(<span class="number">2</span>)
-        {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(input_piece) = maybe_input_piece {
-                source_record_commitments.push(
+        <span class="kw">let </span>source_record_commitments = {
+            <span class="attr">#[cfg(not(feature = <span class="string">&quot;rayon&quot;</span>))]
+            </span><span class="kw">let </span>iter = reconstructed_pieces.iter_mut().zip(input_pieces).step_by(<span class="number">2</span>);
+            <span class="attr">#[cfg(feature = <span class="string">&quot;rayon&quot;</span>)]
+            </span><span class="kw">let </span>iter = reconstructed_pieces
+                .par_iter_mut()
+                .zip_eq(input_pieces)
+                .step_by(<span class="number">2</span>);
+
+            iter.map(|(piece, maybe_input_piece)| {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(input_piece) = maybe_input_piece {
                     Commitment::try_from_bytes(input_piece.commitment())
-                        .map_err(|_error| ReconstructorError::InvalidInputPieceCommitment)<span class="question-mark">?</span>,
-                );
-            } <span class="kw">else </span>{
-                <span class="kw">let </span>scalars = {
-                    <span class="kw">let </span>record_chunks = piece.record().full_scalar_arrays();
-                    <span class="kw">let </span>number_of_chunks = record_chunks.len();
-                    <span class="kw">let </span><span class="kw-2">mut </span>scalars = Vec::with_capacity(number_of_chunks.next_power_of_two());
+                        .map_err(|_error| ReconstructorError::InvalidInputPieceCommitment)
+                } <span class="kw">else </span>{
+                    <span class="kw">let </span>scalars = {
+                        <span class="kw">let </span>record_chunks = piece.record().full_scalar_arrays();
+                        <span class="kw">let </span>number_of_chunks = record_chunks.len();
+                        <span class="kw">let </span><span class="kw-2">mut </span>scalars = Vec::with_capacity(number_of_chunks.next_power_of_two());
 
-                    <span class="kw">for </span>record_chunk <span class="kw">in </span>record_chunks {
-                        scalars.push(
-                            Scalar::try_from(record_chunk)
-                                .map_err(ReconstructorError::DataShardsReconstruction)<span class="question-mark">?</span>,
-                        );
-                    }
+                        <span class="kw">for </span>record_chunk <span class="kw">in </span>record_chunks {
+                            scalars.push(
+                                Scalar::try_from(record_chunk)
+                                    .map_err(ReconstructorError::DataShardsReconstruction)<span class="question-mark">?</span>,
+                            );
+                        }
 
-                    <span class="comment">// Number of scalars for KZG must be a power of two elements
-                    </span>scalars.resize(scalars.capacity(), Scalar::default());
+                        <span class="comment">// Number of scalars for KZG must be a power of two elements
+                        </span>scalars.resize(scalars.capacity(), Scalar::default());
 
-                    scalars
-                };
+                        scalars
+                    };
 
-                <span class="kw">let </span>polynomial = <span class="self">self
-                    </span>.kzg
-                    .poly(<span class="kw-2">&amp;</span>scalars)
-                    .expect(<span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>);
-                <span class="kw">let </span>commitment = <span class="self">self
-                    </span>.kzg
-                    .commit(<span class="kw-2">&amp;</span>polynomial)
-                    .expect(<span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>);
-                source_record_commitments.push(commitment);
-            }
-        }
+                    <span class="kw">let </span>polynomial = <span class="self">self</span>.kzg.poly(<span class="kw-2">&amp;</span>scalars).expect(
+                        <span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>,
+                    );
+                    <span class="kw">let </span>commitment = <span class="self">self</span>.kzg.commit(<span class="kw-2">&amp;</span>polynomial).expect(
+                        <span class="string">&quot;KZG instance must be configured to support this many scalars; qed&quot;</span>,
+                    );
+
+                    <span class="prelude-val">Ok</span>(commitment)
+                }
+            })
+            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
+        </span>};
         <span class="kw">let </span>record_commitments = <span class="self">self
             </span>.erasure_coding
             .extend_commitments(<span class="kw-2">&amp;</span>source_record_commitments)
@@ -483,7 +500,12 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ArchivedHistorySegment, ReconstructorError&gt; {
         <span class="kw">let </span>(<span class="kw-2">mut </span>pieces, polynomial) = <span class="self">self</span>.reconstruct_shards(segment_pieces)<span class="question-mark">?</span>;
 
-        pieces.iter_mut().enumerate().for_each(|(position, piece)| {
+        <span class="attr">#[cfg(not(feature = <span class="string">&quot;rayon&quot;</span>))]
+        </span><span class="kw">let </span>iter = pieces.iter_mut().enumerate();
+        <span class="attr">#[cfg(feature = <span class="string">&quot;rayon&quot;</span>)]
+        </span><span class="kw">let </span>iter = pieces.par_iter_mut().enumerate();
+
+        iter.for_each(|(position, piece)| {
             piece.witness_mut().copy_from_slice(
                 <span class="kw-2">&amp;</span><span class="self">self
                     </span>.kzg
