@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["validate_fraud_proof_in_tx_pool"],"struct":["ExecutionProver","PrePostStateRootVerifier","ProofVerifier"],"trait":["VerifyFraudProof","VerifyPrePostStateRoot"]};
+window.SIDEBAR_ITEMS = {"fn":["validate_fraud_proof_in_tx_pool"],"mod":["invalid_state_transition_proof"],"struct":["ProofVerifier"],"trait":["VerifyFraudProof"]};
