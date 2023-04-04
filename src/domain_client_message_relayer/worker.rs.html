@@ -236,17 +236,46 @@
 <a href="#236" id="236">236</a>
 <a href="#237" id="237">237</a>
 <a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
 </pre><pre class="rust"><code><span class="kw">use crate</span>::{BlockT, Error, GossipMessageSink, HeaderBackend, HeaderT, Relayer, LOG_TARGET};
 <span class="kw">use </span>domain_runtime_primitives::RelayerId;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::FullCodec;
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockchainEvents, ProofProvider};
-<span class="kw">use </span>sp_api::ProvideRuntimeApi;
+<span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_consensus::SyncOracle;
+<span class="kw">use </span>sp_domains::DomainId;
 <span class="kw">use </span>sp_messenger::RelayerApi;
 <span class="kw">use </span>sp_runtime::scale_info::TypeInfo;
 <span class="kw">use </span>sp_runtime::traits::{CheckedSub, NumberFor, Zero};
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 
 <span class="doccomment">/// Starts relaying system domain messages to other domains.
 /// If the node is in major sync, worker waits waits until the sync is finished.
@@ -280,6 +309,12 @@
             )
         },
         system_domain_sync_oracle,
+        |_domain_id, _block_number| -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt; {
+            <span class="comment">// since we just need to provide a storage proof with the state root of system domain
+            // proof can always be generated for any system domain block.
+            // So we can always relay messages.
+            </span><span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+        },
     )
     .<span class="kw">await</span>;
 
@@ -295,7 +330,7 @@
 <span class="doccomment">/// Starts relaying core domain messages to other domains.
 /// If the either system domain or core domain node is in major sync,
 /// worker waits waits until the sync is finished.
-</span><span class="kw">pub async fn </span>relay_core_domain_messages&lt;CDC, SDC, SBlock, Block, SDSO, CDSO&gt;(
+</span><span class="kw">pub async fn </span>relay_core_domain_messages&lt;CDC, SDC, PBlock, SBlock, Block, SDSO, CDSO&gt;(
     relayer_id: RelayerId,
     core_domain_client: Arc&lt;CDC&gt;,
     system_domain_client: Arc&lt;SDC&gt;,
@@ -304,6 +339,7 @@
     gossip_message_sink: GossipMessageSink,
 ) <span class="kw">where
     </span>Block: BlockT,
+    PBlock: BlockT,
     SBlock: BlockT,
     Block::Hash: FullCodec,
     NumberFor&lt;Block&gt;: FullCodec + TypeInfo,
@@ -316,7 +352,8 @@
         + ProvideRuntimeApi&lt;Block&gt;,
     CDC::Api: RelayerApi&lt;Block, RelayerId, NumberFor&lt;Block&gt;&gt;,
     SDC: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + ProofProvider&lt;SBlock&gt;,
-    SDC::Api: RelayerApi&lt;SBlock, RelayerId, NumberFor&lt;SBlock&gt;&gt;,
+    SDC::Api: RelayerApi&lt;SBlock, RelayerId, NumberFor&lt;SBlock&gt;&gt;
+        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
     SDSO: SyncOracle + Send,
     CDSO: SyncOracle + Send,
 {
@@ -346,6 +383,13 @@
             )
         },
         combined_sync_oracle,
+        |domain_id, block_number| -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt; {
+            <span class="kw">let </span>api = system_domain_client.runtime_api();
+            <span class="kw">let </span>at = system_domain_client.info().best_hash;
+            <span class="kw">let </span>oldest_tracked_number = api.oldest_receipt_number(at, domain_id)<span class="question-mark">?</span>;
+            <span class="comment">// ensure block number is at least the oldest tracked number
+            </span><span class="prelude-val">Ok</span>(block_number &gt;= oldest_tracked_number.into())
+        },
     )
     .<span class="kw">await</span>;
     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = result {
@@ -357,12 +401,13 @@
     }
 }
 
-<span class="kw">async fn </span>relay_domain_messages&lt;Client, Block, MP, SO&gt;(
+<span class="kw">async fn </span>relay_domain_messages&lt;Client, Block, MP, SO, SRM&gt;(
     relayer_id: RelayerId,
     relay_confirmation_depth: NumberFor&lt;Block&gt;,
     domain_client: Arc&lt;Client&gt;,
     message_processor: MP,
     sync_oracle: SO,
+    can_relay_message_from_block: SRM,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -374,6 +419,7 @@
     Client::Api: RelayerApi&lt;Block, RelayerId, NumberFor&lt;Block&gt;&gt;,
     MP: Fn(RelayerId, <span class="kw-2">&amp;</span>Arc&lt;Client&gt;, Block::Hash) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;,
     SO: SyncOracle,
+    SRM: Fn(DomainId, NumberFor&lt;Block&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt;,
 {
     <span class="kw">let </span>domain_id = Relayer::domain_id(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
     <span class="macro">tracing::info!</span>(
@@ -421,14 +467,22 @@
                 <span class="string">&quot;Checking messages to be submitted from domain: {domain_id:?} at block: ({number:?}, {hash:?})&quot;</span>,
             );
 
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = message_processor(relayer_id.clone(), <span class="kw-2">&amp;</span>domain_client, hash) {
-                <span class="macro">tracing::error!</span>(
+            <span class="comment">// check if the message is ready to be relayed.
+            // if not, the node is lagging behind and/or there is no way to generate a proof.
+            // mark this block processed and continue to next one.
+            </span><span class="kw">if </span>!can_relay_message_from_block(domain_id, number)<span class="question-mark">? </span>{
+                <span class="macro">tracing::info!</span>(
                     target: LOG_TARGET,
-                    <span class="question-mark">?</span>err,
-                    <span class="string">&quot;Failed to submit messages from the domain {domain_id:?} at the block ({number:?}, {hash:?})&quot;
-                </span>);
+                    <span class="string">&quot;Domain({domain_id:?}) messages in the Block ({number:?}, {hash:?}) cannot be relayed. Skipping...&quot;</span>,
+                );
+            } <span class="kw">else if let </span><span class="prelude-val">Err</span>(err) = message_processor(relayer_id.clone(), <span class="kw-2">&amp;</span>domain_client, hash) {
+                <span class="macro">tracing::error!</span>(
+                target: LOG_TARGET,
+                <span class="question-mark">?</span>err,
+                <span class="string">&quot;Failed to submit messages from the domain {domain_id:?} at the block ({number:?}, {hash:?})&quot;
+            </span>);
                 <span class="kw">break</span>;
-            };
+            }
 
             <span class="comment">// TODO: at the moment the aux storage grows as the chain grows
             // We can prune the the storage by doing another round of check for any undelivered messages
