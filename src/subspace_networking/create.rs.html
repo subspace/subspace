@@ -465,6 +465,23 @@
 <a href="#465" id="465">465</a>
 <a href="#466" id="466">466</a>
 <a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
 </pre><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
 <span class="kw">mod </span>transport;
 
@@ -501,6 +518,7 @@
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::iter::Empty;
 <span class="kw">use </span>std::num::NonZeroUsize;
+<span class="kw">use </span>std::string::ToString;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>std::{fmt, io, iter};
@@ -509,8 +527,11 @@
 <span class="kw">use </span>tokio::sync::watch;
 <span class="kw">use </span>tracing::{debug, error, info};
 
-<span class="kw">const </span>KADEMLIA_PROTOCOL: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;/subspace/kad/0.1.0&quot;</span>;
-<span class="kw">const </span>GOSSIPSUB_PROTOCOL_PREFIX: <span class="kw-2">&amp;</span>str = <span class="string">&quot;subspace/gossipsub&quot;</span>;
+<span class="kw">const </span>DEFAULT_NETWORK_PROTOCOL_PREFIX: <span class="kw-2">&amp;</span>str = <span class="string">&quot;dev&quot;</span>;
+<span class="kw">const </span>PROTOCOL_PREFIX_PLACEHOLDER: <span class="kw-2">&amp;</span>str = <span class="string">&quot;{}&quot;</span>;
+<span class="kw">const </span>KADEMLIA_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/{}/kad/0.1.0&quot;</span>;
+<span class="kw">const </span>GOSSIPSUB_PROTOCOL_PREFIX: <span class="kw-2">&amp;</span>str = <span class="string">&quot;subspace/{}/gossipsub&quot;</span>;
+
 <span class="comment">// Defines max_negotiating_inbound_streams constant for the swarm.
 // It must be set for large plots.
 </span><span class="kw">const </span>SWARM_MAX_NEGOTIATING_INBOUND_STREAMS: usize = <span class="number">100000</span>;
@@ -699,9 +720,15 @@
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Config&lt;MemoryProviderStorage&gt; {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>keypair = identity::ed25519::Keypair::generate();
-        <span class="kw">let </span>peer_id = identity::PublicKey::Ed25519(keypair.public()).to_peer_id();
-        <span class="self">Self</span>::with_keypair_and_provider_storage(keypair, MemoryProviderStorage::new(peer_id))
+        <span class="kw">let </span>ed25519_keypair = identity::ed25519::Keypair::generate();
+
+        <span class="kw">let </span>peer_id = identity::PublicKey::Ed25519(ed25519_keypair.public()).to_peer_id();
+        <span class="kw">let </span>keypair = identity::Keypair::Ed25519(ed25519_keypair);
+        <span class="self">Self</span>::new(
+            DEFAULT_NETWORK_PROTOCOL_PREFIX.to_string(),
+            keypair,
+            MemoryProviderStorage::new(peer_id),
+        )
     }
 }
 
@@ -709,14 +736,19 @@
 <span class="kw">where
     </span>ProviderStorage: provider_storage::ProviderStorage,
 {
-    <span class="kw">pub fn </span>with_keypair_and_provider_storage(
-        keypair: identity::ed25519::Keypair,
+    <span class="kw">pub fn </span>new(
+        protocol_prefix: String,
+        keypair: identity::Keypair,
         provider_storage: ProviderStorage,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>kademlia = KademliaConfig::default();
         kademlia
             .set_query_timeout(KADEMLIA_QUERY_TIMEOUT)
-            .set_protocol_names(<span class="macro">vec!</span>[KADEMLIA_PROTOCOL.into()])
+            .set_protocol_names(<span class="macro">vec!</span>[Cow::Owned(
+                KADEMLIA_PROTOCOL
+                    .replace(PROTOCOL_PREFIX_PLACEHOLDER, <span class="kw-2">&amp;</span>protocol_prefix)
+                    .into_bytes(),
+            )])
             .set_max_packet_size(<span class="number">2 </span>* Piece::SIZE)
             .set_kbucket_inserts(KademliaBucketInserts::Manual)
             .set_record_filtering(KademliaStoreInserts::FilterBoth)
@@ -732,7 +764,10 @@
 
         <span class="kw">let </span>gossipsub = ENABLE_GOSSIP_PROTOCOL.then(|| {
             GossipsubConfigBuilder::default()
-                .protocol_id_prefix(GOSSIPSUB_PROTOCOL_PREFIX)
+                .protocol_id_prefix(
+                    GOSSIPSUB_PROTOCOL_PREFIX
+                        .replace(PROTOCOL_PREFIX_PLACEHOLDER, <span class="kw-2">&amp;</span>protocol_prefix),
+                )
                 <span class="comment">// TODO: Do we want message signing?
                 </span>.validation_mode(ValidationMode::None)
                 <span class="comment">// To content-address message, we can take the hash of message and use it as an ID.
@@ -744,7 +779,6 @@
                 .expect(<span class="string">&quot;Default config for gossipsub is always correct; qed&quot;</span>)
         });
 
-        <span class="kw">let </span>keypair = identity::Keypair::Ed25519(keypair);
         <span class="kw">let </span>identify = IdentifyConfig::new(<span class="string">&quot;ipfs/0.1.0&quot;</span>.to_string(), keypair.public());
 
         <span class="kw">let </span>temporary_ban_backoff = ExponentialBackoff {
