@@ -482,6 +482,9 @@
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
 <a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
 </pre><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
 <span class="kw">mod </span>transport;
 
@@ -527,10 +530,9 @@
 <span class="kw">use </span>tokio::sync::watch;
 <span class="kw">use </span>tracing::{debug, error, info};
 
-<span class="kw">const </span>DEFAULT_NETWORK_PROTOCOL_PREFIX: <span class="kw-2">&amp;</span>str = <span class="string">&quot;dev&quot;</span>;
-<span class="kw">const </span>PROTOCOL_PREFIX_PLACEHOLDER: <span class="kw-2">&amp;</span>str = <span class="string">&quot;{}&quot;</span>;
-<span class="kw">const </span>KADEMLIA_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/{}/kad/0.1.0&quot;</span>;
-<span class="kw">const </span>GOSSIPSUB_PROTOCOL_PREFIX: <span class="kw-2">&amp;</span>str = <span class="string">&quot;subspace/{}/gossipsub&quot;</span>;
+<span class="kw">const </span>DEFAULT_NETWORK_PROTOCOL_VERSION: <span class="kw-2">&amp;</span>str = <span class="string">&quot;dev&quot;</span>;
+<span class="kw">const </span>KADEMLIA_PROTOCOL: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;/subspace/kad/0.1.0&quot;</span>;
+<span class="kw">const </span>GOSSIPSUB_PROTOCOL_PREFIX: <span class="kw-2">&amp;</span>str = <span class="string">&quot;subspace/gossipsub&quot;</span>;
 
 <span class="comment">// Defines max_negotiating_inbound_streams constant for the swarm.
 // It must be set for large plots.
@@ -710,6 +712,8 @@
     </span><span class="kw">pub </span>temporary_ban_backoff: ExponentialBackoff,
     <span class="doccomment">/// Optional external prometheus metrics. None will disable metrics gathering.
     </span><span class="kw">pub </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// Defines protocol version for the network peers. Affects network partition.
+    </span><span class="kw">pub </span>protocol_version: String,
 }
 
 <span class="kw">impl</span>&lt;ProviderStorage&gt; fmt::Debug <span class="kw">for </span>Config&lt;ProviderStorage&gt; {
@@ -725,7 +729,7 @@
         <span class="kw">let </span>peer_id = identity::PublicKey::Ed25519(ed25519_keypair.public()).to_peer_id();
         <span class="kw">let </span>keypair = identity::Keypair::Ed25519(ed25519_keypair);
         <span class="self">Self</span>::new(
-            DEFAULT_NETWORK_PROTOCOL_PREFIX.to_string(),
+            DEFAULT_NETWORK_PROTOCOL_VERSION.to_string(),
             keypair,
             MemoryProviderStorage::new(peer_id),
         )
@@ -737,18 +741,14 @@
     </span>ProviderStorage: provider_storage::ProviderStorage,
 {
     <span class="kw">pub fn </span>new(
-        protocol_prefix: String,
+        protocol_version: String,
         keypair: identity::Keypair,
         provider_storage: ProviderStorage,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>kademlia = KademliaConfig::default();
         kademlia
             .set_query_timeout(KADEMLIA_QUERY_TIMEOUT)
-            .set_protocol_names(<span class="macro">vec!</span>[Cow::Owned(
-                KADEMLIA_PROTOCOL
-                    .replace(PROTOCOL_PREFIX_PLACEHOLDER, <span class="kw-2">&amp;</span>protocol_prefix)
-                    .into_bytes(),
-            )])
+            .set_protocol_names(<span class="macro">vec!</span>[Cow::Owned(KADEMLIA_PROTOCOL.into())])
             .set_max_packet_size(<span class="number">2 </span>* Piece::SIZE)
             .set_kbucket_inserts(KademliaBucketInserts::Manual)
             .set_record_filtering(KademliaStoreInserts::FilterBoth)
@@ -764,10 +764,7 @@
 
         <span class="kw">let </span>gossipsub = ENABLE_GOSSIP_PROTOCOL.then(|| {
             GossipsubConfigBuilder::default()
-                .protocol_id_prefix(
-                    GOSSIPSUB_PROTOCOL_PREFIX
-                        .replace(PROTOCOL_PREFIX_PLACEHOLDER, <span class="kw-2">&amp;</span>protocol_prefix),
-                )
+                .protocol_id_prefix(GOSSIPSUB_PROTOCOL_PREFIX)
                 <span class="comment">// TODO: Do we want message signing?
                 </span>.validation_mode(ValidationMode::None)
                 <span class="comment">// To content-address message, we can take the hash of message and use it as an ID.
@@ -779,7 +776,8 @@
                 .expect(<span class="string">&quot;Default config for gossipsub is always correct; qed&quot;</span>)
         });
 
-        <span class="kw">let </span>identify = IdentifyConfig::new(<span class="string">&quot;ipfs/0.1.0&quot;</span>.to_string(), keypair.public());
+        <span class="kw">let </span>protocol_version = <span class="macro">format!</span>(<span class="string">&quot;/subspace/{}&quot;</span>, protocol_version);
+        <span class="kw">let </span>identify = IdentifyConfig::new(protocol_version.clone(), keypair.public());
 
         <span class="kw">let </span>temporary_ban_backoff = ExponentialBackoff {
             current_interval: TEMPORARY_BANS_DEFAULT_BACKOFF_INITIAL_INTERVAL,
@@ -815,6 +813,7 @@
             temporary_bans_cache_size: TEMPORARY_BANS_CACHE_SIZE,
             temporary_ban_backoff,
             metrics: <span class="prelude-val">None</span>,
+            protocol_version,
         }
     }
 }
@@ -875,6 +874,7 @@
         temporary_bans_cache_size,
         temporary_ban_backoff,
         metrics,
+        protocol_version,
     } = config;
     <span class="kw">let </span>local_peer_id = peer_id(<span class="kw-2">&amp;</span>keypair);
 
@@ -890,7 +890,12 @@
         yamux_config,
     )<span class="question-mark">?</span>;
 
-    <span class="macro">info!</span>(%allow_non_global_addresses_in_dht, peer_id = %local_peer_id, <span class="string">&quot;DSN instance configured.&quot;</span>);
+    <span class="macro">info!</span>(
+        %allow_non_global_addresses_in_dht,
+        peer_id = %local_peer_id,
+        %protocol_version,
+        <span class="string">&quot;DSN instance configured.&quot;
+    </span>);
 
     <span class="kw">let </span>behaviour = Behavior::new(BehaviorConfig {
         peer_id: local_peer_id,
@@ -962,6 +967,7 @@
         temporary_bans,
         metrics,
         online_status_observer_tx,
+        protocol_version,
     });
 
     <span class="prelude-val">Ok</span>((node, node_runner))
