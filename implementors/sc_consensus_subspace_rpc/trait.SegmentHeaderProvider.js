@@ -1,3 +1,3 @@
 (function() {var implementors = {
-"subspace_service":[["impl&lt;AS: AuxStore&gt; SegmentHeaderProvider for <a class=\"struct\" href=\"subspace_service/segment_headers/struct.SegmentHeaderCache.html\" title=\"struct subspace_service::segment_headers::SegmentHeaderCache\">SegmentHeaderCache</a>&lt;AS&gt;"]]
+"subspace_service":[["impl&lt;AS: AuxStore&gt; <a class=\"trait\" href=\"sc_consensus_subspace_rpc/trait.SegmentHeaderProvider.html\" title=\"trait sc_consensus_subspace_rpc::SegmentHeaderProvider\">SegmentHeaderProvider</a> for <a class=\"struct\" href=\"subspace_service/segment_headers/struct.SegmentHeaderCache.html\" title=\"struct subspace_service::segment_headers::SegmentHeaderCache\">SegmentHeaderCache</a>&lt;AS&gt;"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
