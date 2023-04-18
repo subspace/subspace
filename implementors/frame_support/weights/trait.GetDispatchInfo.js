@@ -1,5 +1,6 @@
 (function() {var implementors = {
 "core_eth_relay_runtime":[["impl GetDispatchInfo for <a class=\"enum\" href=\"core_eth_relay_runtime/enum.RuntimeCall.html\" title=\"enum core_eth_relay_runtime::RuntimeCall\">RuntimeCall</a>"]],
+"core_evm_runtime":[["impl GetDispatchInfo for <a class=\"enum\" href=\"core_evm_runtime/enum.RuntimeCall.html\" title=\"enum core_evm_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "core_payments_domain_runtime":[["impl GetDispatchInfo for <a class=\"enum\" href=\"core_payments_domain_runtime/enum.RuntimeCall.html\" title=\"enum core_payments_domain_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "domain_pallet_executive":[["impl&lt;T: <a class=\"trait\" href=\"domain_pallet_executive/trait.Config.html\" title=\"trait domain_pallet_executive::Config\">Config</a>&gt; GetDispatchInfo for <a class=\"enum\" href=\"domain_pallet_executive/enum.Call.html\" title=\"enum domain_pallet_executive::Call\">Call</a>&lt;T&gt;"]],
 "domain_test_runtime":[["impl GetDispatchInfo for <a class=\"enum\" href=\"domain_test_runtime/enum.RuntimeCall.html\" title=\"enum domain_test_runtime::RuntimeCall\">RuntimeCall</a>"]],
