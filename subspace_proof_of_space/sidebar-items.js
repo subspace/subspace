@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["is_proof_valid"],"struct":["Quality","Table"]};
+window.SIDEBAR_ITEMS = {"mod":["chia"],"trait":["Quality","Table"]};
