@@ -529,6 +529,14 @@
 <a href="#529" id="529">529</a>
 <a href="#530" id="530">530</a>
 <a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
 </pre><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the primary block.
 //!
@@ -558,7 +566,7 @@
     verify_xdm_with_primary_chain_client, verify_xdm_with_system_domain_client,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
-<span class="kw">use </span>domain_runtime_primitives::AccountId;
+<span class="kw">use </span>domain_runtime_primitives::opaque::AccountId;
 <span class="kw">use </span>rand::seq::SliceRandom;
 <span class="kw">use </span>rand::SeedableRng;
 <span class="kw">use </span>rand_chacha::ChaCha8Rng;
@@ -680,7 +688,7 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;Block::Extrinsic&gt;, sp_blockchain::Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    SE: SignerExtractor&lt;Block, AccountId&gt;,
+    SE: SignerExtractor&lt;Block&gt;,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>seen = Vec::new();
     extrinsics.retain(|uxt| <span class="kw">match </span>seen.contains(uxt) {
@@ -705,7 +713,8 @@
         }
     };
 
-    <span class="kw">let </span>extrinsics = shuffle_extrinsics::&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;(extrinsics, shuffling_seed);
+    <span class="kw">let </span>extrinsics =
+        shuffle_extrinsics::&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic, AccountId&gt;(extrinsics, shuffling_seed);
 
     <span class="prelude-val">Ok</span>(extrinsics)
 }
@@ -715,7 +724,7 @@
 /// The extrinsics are grouped by the signer. The extrinsics without a signer, i.e., unsigned
 /// extrinsics, are considered as a special group. The items in different groups are cross shuffled,
 /// while the order of items inside the same group is still maintained.
-</span><span class="kw">fn </span>shuffle_extrinsics&lt;Extrinsic: Debug&gt;(
+</span><span class="kw">fn </span>shuffle_extrinsics&lt;Extrinsic: Debug, AccountId: Ord + Clone&gt;(
     extrinsics: Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Extrinsic)&gt;,
     shuffling_seed: Randomness,
 ) -&gt; Vec&lt;Extrinsic&gt; {
@@ -783,7 +792,7 @@
     PBlock::Hash: From&lt;Block::Hash&gt;,
     NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
     RuntimeApi: CoreBundleConstructor&lt;PBlock, Block&gt;
-        + SignerExtractor&lt;Block, AccountId&gt;
+        + SignerExtractor&lt;Block&gt;
         + StateRootExtractor&lt;Block&gt;
         + SetCodeConstructor&lt;Block&gt;,
     PClient: HeaderBackend&lt;PBlock&gt;
@@ -925,13 +934,14 @@
     </span>Block: BlockT,
     PBlock: BlockT,
     SBlock: BlockT,
-    RuntimeApi: SignerExtractor&lt;Block, AccountId&gt; + SetCodeConstructor&lt;Block&gt;,
+    SBlock::Hash: From&lt;Block::Hash&gt;,
+    NumberFor&lt;SBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
+    RuntimeApi: SignerExtractor&lt;Block&gt; + SetCodeConstructor&lt;Block&gt; + StateRootExtractor&lt;Block&gt;,
     PClient: HeaderBackend&lt;PBlock&gt; + BlockBackend&lt;PBlock&gt; + ProvideRuntimeApi&lt;PBlock&gt; + Send + Sync,
     PClient::Api: ExecutorApi&lt;PBlock, Block::Hash&gt;,
     SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
     SClient::Api: SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;
         + MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;,
-    Block::Extrinsic: Into&lt;SBlock::Extrinsic&gt;,
 {
     <span class="kw">pub fn </span>new(
         domain_id: DomainId,
@@ -986,7 +996,7 @@
             extrinsics,
             shuffling_seed,
         )
-        .map(|extrinsics| <span class="self">self</span>.filter_invalid_xdm_extrinsics(extrinsics))<span class="question-mark">?</span>;
+        .map(|extrinsics| <span class="self">self</span>.filter_invalid_xdm_extrinsics(domain_hash, extrinsics))<span class="question-mark">?</span>;
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(new_runtime) = maybe_new_runtime {
             <span class="kw">let </span>encoded_set_code = <span class="self">self
@@ -1004,12 +1014,18 @@
         <span class="prelude-val">Ok</span>(extrinsics)
     }
 
-    <span class="kw">fn </span>filter_invalid_xdm_extrinsics(<span class="kw-2">&amp;</span><span class="self">self</span>, exts: Vec&lt;Block::Extrinsic&gt;) -&gt; Vec&lt;Block::Extrinsic&gt; {
+    <span class="kw">fn </span>filter_invalid_xdm_extrinsics(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        at: Block::Hash,
+        exts: Vec&lt;Block::Extrinsic&gt;,
+    ) -&gt; Vec&lt;Block::Extrinsic&gt; {
         exts.into_iter()
             .filter(|ext| {
-                <span class="kw">match </span>verify_xdm_with_system_domain_client::&lt;<span class="kw">_</span>, Block, SBlock, PBlock&gt;(
+                <span class="kw">match </span>verify_xdm_with_system_domain_client::&lt;<span class="kw">_</span>, Block, SBlock, PBlock, <span class="kw">_</span>&gt;(
                     <span class="kw-2">&amp;</span><span class="self">self</span>.system_domain_client,
-                    <span class="kw-2">&amp;</span>(ext.clone().into()),
+                    at,
+                    ext,
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
                 ) {
                     <span class="prelude-val">Ok</span>(valid) =&gt; valid,
                     <span class="prelude-val">Err</span>(err) =&gt; {

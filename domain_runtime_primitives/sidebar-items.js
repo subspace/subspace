@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["opaque"],"trait":["DomainCoreApi","Signer"],"type":["AccountId","Address","Balance","BlockNumber","Hash","Index","RelayerId","Signature"]};
+window.SIDEBAR_ITEMS = {"mod":["opaque"],"trait":["DomainCoreApi","Signer"],"type":["AccountId","Address","Balance","BlockNumber","Hash","Index","Signature"]};

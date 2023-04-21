@@ -111,8 +111,9 @@
 <a href="#111" id="111">111</a>
 <a href="#112" id="112">112</a>
 <a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::runtime_api::StateRootExtractor;
-<span class="kw">use </span><span class="kw">crate</span>::utils::extract_xdm_proof_state_roots_with_client;
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_blockchain::{Error, HeaderBackend};
 <span class="kw">use </span>sp_domains::ExecutorApi;
@@ -126,48 +127,51 @@
 /// Core domains nodes use this to verify an XDM coming from other domains.
 /// Returns either true if the XDM is valid else false.
 /// Returns Error when required calls to fetch header info fails.
-</span><span class="kw">pub fn </span>verify_xdm_with_system_domain_client&lt;Client, Block, SBlock, PBlock&gt;(
-    system_domain_client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
-    extrinsic: <span class="kw-2">&amp;</span>SBlock::Extrinsic,
+</span><span class="kw">pub fn </span>verify_xdm_with_system_domain_client&lt;SClient, Block, SBlock, PBlock, SRE&gt;(
+    system_domain_client: <span class="kw-2">&amp;</span>Arc&lt;SClient&gt;,
+    at: Block::Hash,
+    extrinsic: <span class="kw-2">&amp;</span>Block::Extrinsic,
+    state_root_extractor: <span class="kw-2">&amp;</span>SRE,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;bool, Error&gt;
 <span class="kw">where
-    </span>Client: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
-    Client::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
+    </span>SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
+    SClient::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
         + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
     Block: BlockT,
     SBlock: BlockT,
+    SBlock::Hash: From&lt;Block::Hash&gt;,
+    NumberFor&lt;SBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
     PBlock: BlockT,
+    SRE: StateRootExtractor&lt;Block&gt;,
 {
-    <span class="kw">let </span>api = system_domain_client.runtime_api();
-    <span class="kw">let </span>best_hash = system_domain_client.info().best_hash;
-    <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(state_roots)) =
-        extract_xdm_proof_state_roots_with_client(<span class="kw-2">&amp;*</span>api, best_hash, extrinsic)
-    {
+    <span class="kw">if let </span><span class="prelude-val">Ok</span>(state_roots) = state_root_extractor.extract_state_roots(at, extrinsic) {
         <span class="comment">// verify system domain state root
         </span><span class="kw">let </span>header = system_domain_client
-            .header(state_roots.system_domain_block_info.block_hash)<span class="question-mark">?
+            .header(state_roots.system_domain_block_info.block_hash.into())<span class="question-mark">?
             </span>.ok_or(Error::MissingHeader(<span class="macro">format!</span>(
                 <span class="string">&quot;hash: {}&quot;</span>,
                 state_roots.system_domain_block_info.block_hash
             )))<span class="question-mark">?</span>;
 
-        <span class="kw">if </span><span class="kw-2">*</span>header.number() != state_roots.system_domain_block_info.block_number {
+        <span class="kw">if </span><span class="kw-2">*</span>header.number() != state_roots.system_domain_block_info.block_number.into() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
         }
 
-        <span class="kw">if </span><span class="kw-2">*</span>header.state_root() != state_roots.system_domain_state_root {
+        <span class="kw">if </span><span class="kw-2">*</span>header.state_root() != state_roots.system_domain_state_root.into() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
         }
 
         <span class="comment">// verify core domain state root and the if the number is K-deep.
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, core_domain_info, core_domain_state_root)) =
+        </span><span class="kw">let </span>best_hash = system_domain_client.info().best_hash;
+        <span class="kw">let </span>api = system_domain_client.runtime_api();
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, core_domain_info, core_domain_state_root)) =
             state_roots.core_domain_info
         {
             <span class="kw">let </span>best_number = api.head_receipt_number(best_hash, domain_id)<span class="question-mark">?</span>;
             <span class="kw">if let </span><span class="prelude-val">Some</span>(confirmed_number) =
                 best_number.checked_sub(<span class="kw-2">&amp;</span>api.confirmation_depth(best_hash)<span class="question-mark">?</span>)
             {
-                <span class="kw">if </span>confirmed_number &lt; core_domain_info.block_number {
+                <span class="kw">if </span>confirmed_number &lt; core_domain_info.block_number.into() {
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
                 }
             }
@@ -175,10 +179,10 @@
             <span class="kw">if let </span><span class="prelude-val">Some</span>(expected_core_domain_state_root) = api.core_domain_state_root_at(
                 best_hash,
                 domain_id,
-                core_domain_info.block_number,
-                core_domain_info.block_hash,
+                core_domain_info.block_number.into(),
+                core_domain_info.block_hash.into(),
             )<span class="question-mark">? </span>{
-                <span class="kw">if </span>expected_core_domain_state_root != core_domain_state_root {
+                <span class="kw">if </span>expected_core_domain_state_root != core_domain_state_root.into() {
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
                 }
             }

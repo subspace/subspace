@@ -296,6 +296,32 @@
 <a href="#296" id="296">296</a>
 <a href="#297" id="297">297</a>
 <a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -312,10 +338,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.
 
-</span><span class="kw">use </span><span class="kw">crate</span>::core_domain::{core_eth_relay_chain_spec, core_payments_chain_spec};
-<span class="kw">use </span><span class="kw">crate</span>::parser::parse_relayer_id;
+</span><span class="kw">use </span><span class="kw">crate</span>::core_domain::{
+    core_eth_relay_chain_spec, core_evm_chain_spec, core_payments_chain_spec,
+};
 <span class="kw">use </span>clap::Parser;
-<span class="kw">use </span>domain_runtime_primitives::RelayerId;
+<span class="kw">use </span>core_evm_runtime::AccountId <span class="kw">as </span>AccountId20;
 <span class="kw">use </span>domain_service::DomainConfiguration;
 <span class="kw">use </span>once_cell::sync::OnceCell;
 <span class="kw">use </span>sc_cli::{
@@ -324,10 +351,14 @@
 };
 <span class="kw">use </span>sc_service::config::PrometheusConfig;
 <span class="kw">use </span>sc_service::BasePath;
+<span class="kw">use </span>sp_core::crypto::AccountId32;
+<span class="kw">use </span>sp_core::{ByteArray, H160};
 <span class="kw">use </span>sp_domains::DomainId;
+<span class="kw">use </span>sp_runtime::traits::Convert;
 <span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::num::ParseIntError;
 <span class="kw">use </span>std::path::PathBuf;
+<span class="kw">use </span>std::str::FromStr;
 
 <span class="doccomment">/// Sub-commands supported by the executor.
 </span><span class="attr">#[derive(Debug, clap::Subcommand)]
@@ -357,12 +388,21 @@
     </span><span class="kw">pub </span>domain_id: DomainId,
 
     <span class="doccomment">/// Optional relayer address to relay messages on behalf.
-    </span><span class="attr">#[clap(long, value_parser = parse_relayer_id)]
-    </span><span class="kw">pub </span>relayer_id: <span class="prelude-ty">Option</span>&lt;RelayerId&gt;,
+    </span><span class="attr">#[clap(long)]
+    </span><span class="kw">pub </span>relayer_id: <span class="prelude-ty">Option</span>&lt;String&gt;,
 
     <span class="doccomment">/// The base path that should be used by the core domain.
     </span><span class="attr">#[clap(skip)]
     </span><span class="kw">pub </span>base_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
+}
+
+<span class="kw">pub struct </span>AccountId32ToAccountId20Converter;
+
+<span class="kw">impl </span>Convert&lt;AccountId32, AccountId20&gt; <span class="kw">for </span>AccountId32ToAccountId20Converter {
+    <span class="kw">fn </span>convert(acc: AccountId32) -&gt; AccountId20 {
+        <span class="comment">// Using the full hex key, truncating to the first 20 bytes (the first 40 hex chars)
+        </span>H160::from_slice(<span class="kw-2">&amp;</span>acc.as_slice()[<span class="number">0</span>..<span class="number">20</span>]).into()
+    }
 }
 
 <span class="kw">static </span>CORE_DOMAIN_ID: OnceCell&lt;DomainId&gt; = OnceCell::new();
@@ -397,16 +437,26 @@
     }
 
     <span class="doccomment">/// Creates domain configuration from Core domain cli.
-    </span><span class="kw">pub fn </span>create_domain_configuration(
+    </span><span class="kw">pub fn </span>create_domain_configuration&lt;AccountId, CA&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         tokio_handle: tokio::runtime::Handle,
-    ) -&gt; sc_cli::Result&lt;DomainConfiguration&gt; {
+    ) -&gt; sc_cli::Result&lt;DomainConfiguration&lt;AccountId&gt;&gt;
+    <span class="kw">where
+        </span>CA: Convert&lt;AccountId32, AccountId&gt;,
+        AccountId: FromStr,
+    {
         <span class="comment">// if is dev, use the known key ring to start relayer
         </span><span class="kw">let </span>maybe_relayer_id = <span class="kw">if </span><span class="self">self</span>.shared_params().is_dev() &amp;&amp; <span class="self">self</span>.relayer_id.is_none() {
-            <span class="self">self</span>.run.get_keyring().map(|kr| kr.to_account_id())
+            <span class="self">self</span>.run
+                .get_keyring()
+                .map(|kr| CA::convert(kr.to_account_id()))
+        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(relayer_id) = <span class="self">self</span>.relayer_id.clone() {
+            <span class="prelude-val">Some</span>(AccountId::from_str(<span class="kw-2">&amp;</span>relayer_id).map_err(|_err| {
+                sc_cli::Error::Input(<span class="macro">format!</span>(<span class="string">&quot;Invalid Relayer Id: {relayer_id}&quot;</span>))
+            })<span class="question-mark">?</span>)
         } <span class="kw">else </span>{
-            <span class="self">self</span>.relayer_id.clone()
-        };
+            <span class="prelude-val">None
+        </span>};
 
         <span class="kw">let </span>service_config = SubstrateCli::create_configuration(<span class="self">self</span>, <span class="self">self</span>, tokio_handle)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(DomainConfiguration {
@@ -452,6 +502,7 @@
         </span><span class="kw">match </span><span class="self">self</span>.domain_id {
             DomainId::CORE_PAYMENTS =&gt; core_payments_chain_spec::load_chain_spec(id),
             DomainId::CORE_ETH_RELAY =&gt; core_eth_relay_chain_spec::load_chain_spec(id),
+            DomainId::CORE_EVM =&gt; core_evm_chain_spec::load_chain_spec(id),
             domain_id =&gt; <span class="macro">unreachable!</span>(<span class="string">&quot;Unsupported core domain: {domain_id:?}&quot;</span>),
         }
     }
@@ -463,6 +514,7 @@
         {
             <span class="kw-2">&amp;</span>DomainId::CORE_PAYMENTS =&gt; <span class="kw-2">&amp;</span>core_payments_domain_runtime::VERSION,
             <span class="kw-2">&amp;</span>DomainId::CORE_ETH_RELAY =&gt; <span class="kw-2">&amp;</span>core_eth_relay_runtime::VERSION,
+            <span class="kw-2">&amp;</span>DomainId::CORE_EVM =&gt; <span class="kw-2">&amp;</span>core_evm_runtime::VERSION,
             domain_id =&gt; <span class="macro">unreachable!</span>(<span class="string">&quot;Unsupported core domain: {domain_id:?}&quot;</span>),
         }
     }

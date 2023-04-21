@@ -64,7 +64,19 @@
 <a href="#64" id="64">64</a>
 <a href="#65" id="65">65</a>
 <a href="#66" id="66">66</a>
-</pre><pre class="rust"><code><span class="kw">use </span>domain_client_block_preprocessor::xdm_verifier::verify_xdm_with_system_domain_client;
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+</pre><pre class="rust"><code><span class="kw">use </span>domain_client_block_preprocessor::runtime_api_full::RuntimeApiFull;
+<span class="kw">use </span>domain_client_block_preprocessor::xdm_verifier::verify_xdm_with_system_domain_client;
 <span class="kw">use </span>sc_transaction_pool::error::Result <span class="kw">as </span>TxPoolResult;
 <span class="kw">use </span>sc_transaction_pool_api::error::Error <span class="kw">as </span>TxPoolError;
 <span class="kw">use </span>sc_transaction_pool_api::TransactionSource;
@@ -77,39 +89,47 @@
 <span class="kw">use </span>subspace_transaction_pool::PreValidateTransaction;
 <span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 
-<span class="kw">pub struct </span>CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, SClient&gt; {
+<span class="kw">pub struct </span>CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, Client, SClient&gt; {
     system_domain_client: Arc&lt;SClient&gt;,
+    domain_client: RuntimeApiFull&lt;Client&gt;,
     _phantom_data: PhantomData&lt;(Block, SBlock, PBlock)&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, SBlock, PBlock, SClient&gt; Clone
-    <span class="kw">for </span>CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, SClient&gt;
+<span class="kw">impl</span>&lt;Block, SBlock, PBlock, Client, SClient&gt; Clone
+    <span class="kw">for </span>CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, Client, SClient&gt;
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             system_domain_client: <span class="self">self</span>.system_domain_client.clone(),
+            domain_client: <span class="self">self</span>.domain_client.clone(),
             _phantom_data: <span class="self">self</span>._phantom_data,
         }
     }
 }
 
-<span class="kw">impl</span>&lt;Block, SBlock, PBlock, SClient&gt; CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, SClient&gt; {
-    <span class="kw">pub fn </span>new(system_domain_client: Arc&lt;SClient&gt;) -&gt; <span class="self">Self </span>{
+<span class="kw">impl</span>&lt;Block, SBlock, PBlock, Client, SClient&gt;
+    CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, Client, SClient&gt;
+{
+    <span class="kw">pub fn </span>new(client: Arc&lt;Client&gt;, system_domain_client: Arc&lt;SClient&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             system_domain_client,
+            domain_client: RuntimeApiFull::new(client),
             _phantom_data: Default::default(),
         }
     }
 }
 
 <span class="attr">#[async_trait::async_trait]
-</span><span class="kw">impl</span>&lt;Block, SBlock, PBlock, SClient&gt; PreValidateTransaction
-    <span class="kw">for </span>CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, SClient&gt;
+</span><span class="kw">impl</span>&lt;Block, SBlock, PBlock, Client, SClient&gt; PreValidateTransaction
+    <span class="kw">for </span>CoreDomainTxPreValidator&lt;Block, SBlock, PBlock, Client, SClient&gt;
 <span class="kw">where
     </span>Block: BlockT,
     SBlock: BlockT,
     PBlock: BlockT,
-    Block::Extrinsic: Into&lt;SBlock::Extrinsic&gt;,
+    SBlock::Hash: From&lt;Block::Hash&gt;,
+    NumberFor&lt;SBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
+    Client: ProvideRuntimeApi&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    Client::Api: MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
     SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     SClient::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
         + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
@@ -117,13 +137,15 @@
     <span class="kw">type </span>Block = Block;
     <span class="kw">async fn </span>pre_validate_transaction(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        _at: Block::Hash,
+        at: Block::Hash,
         _source: TransactionSource,
         uxt: Block::Extrinsic,
     ) -&gt; TxPoolResult&lt;()&gt; {
-        <span class="kw">if </span>!verify_xdm_with_system_domain_client::&lt;<span class="kw">_</span>, Block, SBlock, PBlock&gt;(
+        <span class="kw">if </span>!verify_xdm_with_system_domain_client::&lt;<span class="kw">_</span>, Block, SBlock, PBlock, <span class="kw">_</span>&gt;(
             <span class="kw-2">&amp;</span><span class="self">self</span>.system_domain_client,
-            <span class="kw-2">&amp;</span>(uxt.into()),
+            at,
+            <span class="kw-2">&amp;</span>uxt,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.domain_client,
         )<span class="question-mark">? </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(TxPoolError::ImmediatelyDropped.into());
         }
