@@ -92,6 +92,28 @@
 <a href="#92" id="92">92</a>
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
 </pre><pre class="rust"><code><span class="doccomment">//! A collection of node-specific RPC methods.
 //! Substrate provides the `sc-rpc` crate, which defines the core RPC layer
 //! used by Substrate nodes. This file extends those RPC definitions with
@@ -100,60 +122,81 @@
 </span><span class="attr">#![warn(missing_docs)]
 
 </span><span class="kw">use </span>domain_runtime_primitives::{Balance, Index <span class="kw">as </span>Nonce};
-<span class="kw">use </span>frame_benchmarking::frame_support::inherent::BlockT;
 <span class="kw">use </span>jsonrpsee::RpcModule;
 <span class="kw">use </span>pallet_transaction_payment_rpc::{TransactionPayment, TransactionPaymentApiServer};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend};
+<span class="kw">use </span>sc_network::NetworkService;
+<span class="kw">use </span>sc_network_sync::SyncingService;
 <span class="kw">use </span>sc_rpc::DenyUnsafe;
 <span class="kw">use </span>sc_rpc_spec_v2::chain_spec::{ChainSpec, ChainSpecApiServer};
+<span class="kw">use </span>sc_service::{DatabaseSource, SpawnTaskHandle};
+<span class="kw">use </span>sc_transaction_pool::{ChainApi, Pool};
 <span class="kw">use </span>sc_transaction_pool_api::TransactionPool;
 <span class="kw">use </span>serde::de::DeserializeOwned;
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>BlockChainError, HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_core::{Decode, Encode};
+<span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::fmt::{Debug, Display};
-<span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>substrate_frame_rpc_system::{System, SystemApiServer};
+<span class="kw">use </span>substrate_prometheus_endpoint::Registry;
 
-<span class="doccomment">/// Full client dependencies
-</span><span class="kw">pub struct </span>FullDeps&lt;C, P, AccountId&gt; {
+<span class="doccomment">/// Full RPC dependencies.
+</span><span class="kw">pub struct </span>FullDeps&lt;Block: BlockT, Client, TP, CA: ChainApi, BE&gt; {
     <span class="doccomment">/// The client instance to use.
-    </span><span class="kw">pub </span>client: Arc&lt;C&gt;,
+    </span><span class="kw">pub </span>client: Arc&lt;Client&gt;,
+    <span class="doccomment">/// The chain backend.
+    </span><span class="kw">pub </span>backend: Arc&lt;BE&gt;,
     <span class="doccomment">/// Transaction pool instance.
-    </span><span class="kw">pub </span>pool: Arc&lt;P&gt;,
+    </span><span class="kw">pub </span>pool: Arc&lt;TP&gt;,
+    <span class="doccomment">/// Graph pool instance.
+    </span><span class="kw">pub </span>graph: Arc&lt;Pool&lt;CA&gt;&gt;,
     <span class="doccomment">/// A copy of the chain spec.
     </span><span class="kw">pub </span>chain_spec: Box&lt;<span class="kw">dyn </span>sc_chain_spec::ChainSpec&gt;,
     <span class="doccomment">/// Whether to deny unsafe calls
     </span><span class="kw">pub </span>deny_unsafe: DenyUnsafe,
-    _data: PhantomData&lt;AccountId&gt;,
+    <span class="doccomment">/// Network service
+    </span><span class="kw">pub </span>network: Arc&lt;NetworkService&lt;Block, Block::Hash&gt;&gt;,
+    <span class="doccomment">/// Chain syncing service
+    </span><span class="kw">pub </span>sync: Arc&lt;SyncingService&lt;Block&gt;&gt;,
+    <span class="doccomment">/// Is node running as authority.
+    </span><span class="kw">pub </span>is_authority: bool,
+    <span class="doccomment">/// Prometheus registry
+    </span><span class="kw">pub </span>prometheus_registry: <span class="prelude-ty">Option</span>&lt;Registry&gt;,
+    <span class="doccomment">/// Database source
+    </span><span class="kw">pub </span>database_source: DatabaseSource,
+    <span class="doccomment">/// Task Spawner.
+    </span><span class="kw">pub </span>task_spawner: SpawnTaskHandle,
 }
 
-<span class="kw">impl</span>&lt;C, P, AccountId&gt; FullDeps&lt;C, P, AccountId&gt; {
-    <span class="kw">pub fn </span>new(
-        client: Arc&lt;C&gt;,
-        pool: Arc&lt;P&gt;,
-        chain_spec: Box&lt;<span class="kw">dyn </span>sc_chain_spec::ChainSpec&gt;,
-        deny_unsafe: DenyUnsafe,
-    ) -&gt; <span class="self">Self </span>{
+<span class="kw">impl</span>&lt;Block: BlockT, Client, TP, CA: ChainApi, BE&gt; Clone <span class="kw">for </span>FullDeps&lt;Block, Client, TP, CA, BE&gt; {
+    <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            client,
-            pool,
-            chain_spec,
-            deny_unsafe,
-            _data: Default::default(),
+            client: <span class="self">self</span>.client.clone(),
+            backend: <span class="self">self</span>.backend.clone(),
+            pool: <span class="self">self</span>.pool.clone(),
+            graph: <span class="self">self</span>.graph.clone(),
+            chain_spec: <span class="self">self</span>.chain_spec.cloned_box(),
+            deny_unsafe: <span class="self">self</span>.deny_unsafe,
+            network: <span class="self">self</span>.network.clone(),
+            sync: <span class="self">self</span>.sync.clone(),
+            is_authority: <span class="self">self</span>.is_authority,
+            task_spawner: <span class="self">self</span>.task_spawner.clone(),
+            prometheus_registry: <span class="self">self</span>.prometheus_registry.clone(),
+            database_source: <span class="self">self</span>.database_source.clone(),
         }
     }
 }
 
 <span class="doccomment">/// Instantiate all RPC extensions.
-</span><span class="kw">pub fn </span>create_full&lt;Block, C, P, AccountId&gt;(
-    deps: FullDeps&lt;C, P, AccountId&gt;,
+</span><span class="kw">pub fn </span>create_full&lt;Block, Client, P, CA, AccountId, BE&gt;(
+    deps: FullDeps&lt;Block, Client, P, CA, BE&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RpcModule&lt;()&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    C: ProvideRuntimeApi&lt;Block&gt;
+    Client: ProvideRuntimeApi&lt;Block&gt;
         + BlockBackend&lt;Block&gt;
         + HeaderBackend&lt;Block&gt;
         + AuxStore
@@ -161,10 +204,11 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    C::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi&lt;Block, Balance&gt;,
-    C::Api: substrate_frame_rpc_system::AccountNonceApi&lt;Block, AccountId, Nonce&gt;,
-    C::Api: BlockBuilder&lt;Block&gt;,
+    Client::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
+        + substrate_frame_rpc_system::AccountNonceApi&lt;Block, AccountId, Nonce&gt;
+        + BlockBuilder&lt;Block&gt;,
     P: TransactionPool + Sync + Send + <span class="lifetime">&#39;static</span>,
+    CA: ChainApi,
     AccountId: DeserializeOwned + Encode + Debug + Decode + Display + Clone + Sync + Send + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>module = RpcModule::new(());
@@ -173,7 +217,7 @@
         pool,
         chain_spec,
         deny_unsafe,
-        _data,
+        ..
     } = deps;
 
     <span class="kw">let </span>chain_name = chain_spec.name().to_string();

@@ -9,9 +9,10 @@ var sourcesIndex = JSON.parse('{\
 "domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","parent_chain.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
+"domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
-"domain_service":["",[],["core_domain.rs","core_domain_tx_pre_validator.rs","lib.rs","rpc.rs","system_domain.rs","system_domain_tx_pre_validator.rs"]],\
+"domain_service":["",[],["core_domain.rs","core_domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs","system_domain.rs","system_domain_tx_pre_validator.rs"]],\
 "domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "domain_test_service":["",[],["chain_spec.rs","lib.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
