@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["provider"],"struct":["DefaultEthConfig"]};
+window.SIDEBAR_ITEMS = {"mod":["provider"],"struct":["DefaultEthConfig","EthConfiguration"]};
