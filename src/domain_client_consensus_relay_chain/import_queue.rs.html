@@ -113,14 +113,6 @@
 <a href="#113" id="113">113</a>
 <a href="#114" id="114">114</a>
 <a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright 2019-2021 Parity Technologies (UK) Ltd.
 // This file is part of Cumulus.
 
@@ -137,37 +129,33 @@
 // You should have received a copy of the GNU General Public License
 // along with Cumulus.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
 
-</span><span class="kw">use </span>sc_consensus::import_queue::{BasicQueue, Verifier <span class="kw">as </span>VerifierT};
-<span class="kw">use </span>sc_consensus::{
-    BlockCheckParams, BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult,
-};
+</span><span class="kw">use </span>futures::lock::Mutex;
+<span class="kw">use </span>sc_consensus::import_queue::{BasicQueue, Verifier <span class="kw">as </span>VerifierT};
+<span class="kw">use </span>sc_consensus::{BlockCheckParams, BlockImport, BlockImportParams, ImportResult};
 <span class="kw">use </span>sp_blockchain::Result <span class="kw">as </span>ClientResult;
 <span class="kw">use </span>sp_consensus::error::Error <span class="kw">as </span>ConsensusError;
-<span class="kw">use </span>sp_consensus::BlockOrigin;
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>substrate_prometheus_endpoint::Registry;
 
-<span class="comment">// TODO: remove as it&#39;s unused, and may even remove this whole crate.
-</span><span class="doccomment">/// Domain specific block import.
-///
-/// This is used to set `block_import_params.fork_choice` to `false` as long as the block origin is
-/// not `NetworkInitialSync`. The best block for domain is determined by the primary chain.
-/// Meaning we will update the best block, as it is included by the primary chain.
-</span><span class="kw">struct </span>DomainBlockImport&lt;I&gt; {
-    inner: I,
+<span class="doccomment">/// Domain specific block import.
+/// We use it to wrap Custom Block import the Core domain would need and share it between tasks.
+</span><span class="kw">pub struct </span>DomainBlockImport&lt;I&gt; {
+    inner: Mutex&lt;I&gt;,
 }
 
 <span class="kw">impl</span>&lt;I&gt; DomainBlockImport&lt;I&gt; {
     <span class="doccomment">/// Create a new instance.
-    </span><span class="kw">fn </span>new(inner: I) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ inner }
+    </span><span class="kw">pub fn </span>new(inner: I) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            inner: Mutex::new(inner),
+        }
     }
 }
 
 <span class="attr">#[async_trait::async_trait]
-</span><span class="kw">impl</span>&lt;Block, I&gt; BlockImport&lt;Block&gt; <span class="kw">for </span>DomainBlockImport&lt;I&gt;
+</span><span class="kw">impl</span>&lt;Block, I&gt; BlockImport&lt;Block&gt; <span class="kw">for </span><span class="kw-2">&amp;</span>DomainBlockImport&lt;I&gt;
 <span class="kw">where
     </span>Block: BlockT,
     I: BlockImport&lt;Block&gt; + Send,
@@ -179,21 +167,17 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         block: BlockCheckParams&lt;Block&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ImportResult, <span class="self">Self</span>::Error&gt; {
-        <span class="self">self</span>.inner.check_block(block).<span class="kw">await
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().<span class="kw">await</span>;
+        inner.check_block(block).<span class="kw">await
     </span>}
 
     <span class="kw">async fn </span>import_block(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        <span class="kw-2">mut </span>block_import_params: BlockImportParams&lt;Block, <span class="self">Self</span>::Transaction&gt;,
+        block_import_params: BlockImportParams&lt;Block, <span class="self">Self</span>::Transaction&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ImportResult, <span class="self">Self</span>::Error&gt; {
-        <span class="comment">// Best block is determined by the primary chain, or if we are doing the initial sync
-        // we import all blocks as new best.
-        </span>block_import_params.fork_choice = <span class="prelude-val">Some</span>(ForkChoiceStrategy::Custom(
-            block_import_params.origin == BlockOrigin::NetworkInitialSync,
-        ));
-        <span class="kw">let </span>import_result = <span class="self">self</span>.inner.import_block(block_import_params).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(import_result)
-    }
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().<span class="kw">await</span>;
+        inner.import_block(block_import_params).<span class="kw">await
+    </span>}
 }
 
 <span class="doccomment">/// A verifier that just checks the inherents.
@@ -238,7 +222,7 @@
 {
     <span class="prelude-val">Ok</span>(BasicQueue::new(
         Verifier::default(),
-        Box::new(DomainBlockImport::&lt;I&gt;::new(block_import)),
+        Box::new(block_import),
         <span class="prelude-val">None</span>,
         spawner,
         registry,
