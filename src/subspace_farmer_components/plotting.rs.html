@@ -416,8 +416,41 @@
 <a href="#416" id="416">416</a>
 <a href="#417" id="417">417</a>
 <a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_caching::PieceMemoryCache;
-<span class="kw">use </span><span class="kw">crate</span>::sector::{RawSector, RecordMetadata, SectorContentsMap, SectorMetadata};
+<span class="kw">use </span><span class="kw">crate</span>::sector::{
+    sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
+    SectorMetadata,
+};
 <span class="kw">use </span><span class="kw">crate</span>::segment_reconstruction::recover_missing_piece;
 <span class="kw">use </span><span class="kw">crate</span>::FarmerProtocolInfo;
 <span class="kw">use </span>async_trait::async_trait;
@@ -429,16 +462,14 @@
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::error::Error;
-<span class="kw">use </span>std::io;
-<span class="kw">use </span>std::io::{BufWriter, Write};
 <span class="kw">use </span>std::simd::Simd;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
 <span class="kw">use </span>subspace_core_primitives::{
-    ArchivedHistorySegment, Piece, PieceIndex, PieceOffset, PublicKey, Record, SBucket, SectorId,
-    SectorIndex,
+    ArchivedHistorySegment, Piece, PieceIndex, PieceOffset, PublicKey, Record, RecordCommitment,
+    RecordWitness, SBucket, SectorId, SectorIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_proof_of_space::{Quality, Table};
@@ -528,6 +559,22 @@
     <span class="doccomment">/// Invalid erasure coding instance
     </span><span class="attr">#[error(<span class="string">&quot;Invalid erasure coding instance&quot;</span>)]
     </span>InvalidErasureCodingInstance,
+    <span class="doccomment">/// Bad sector output size
+    </span><span class="attr">#[error(<span class="string">&quot;Bad sector output size: provided {provided}, expected {expected}&quot;</span>)]
+    </span>BadSectorOutputSize {
+        <span class="doccomment">/// Actual size
+        </span>provided: usize,
+        <span class="doccomment">/// Expected size
+        </span>expected: usize,
+    },
+    <span class="doccomment">/// Bad sector metadata output size
+    </span><span class="attr">#[error(<span class="string">&quot;Bad sector metadata output size: provided {provided}, expected {expected}&quot;</span>)]
+    </span>BadSectorMetadataOutputSize {
+        <span class="doccomment">/// Actual size
+        </span>provided: usize,
+        <span class="doccomment">/// Expected size
+        </span>expected: usize,
+    },
     <span class="doccomment">/// Piece not found, can&#39;t create sector, this should never happen
     </span><span class="attr">#[error(<span class="string">&quot;Piece {piece_index} not found, can&#39;t create sector, this should never happen&quot;</span>)]
     </span>PieceNotFound {
@@ -548,9 +595,6 @@
         <span class="doccomment">/// Lower-level error
         </span>error: Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;,
     },
-    <span class="doccomment">/// I/O error occurred
-    </span><span class="attr">#[error(<span class="string">&quot;I/O error: {0}&quot;</span>)]
-    </span>Io(<span class="attr">#[from] </span>io::Error),
 }
 
 <span class="doccomment">/// Plot a single sector, where `sector` and `sector_metadata` must be positioned correctly at the
@@ -560,7 +604,7 @@
 /// NOTE: Even though this function is async, it has blocking code inside and must be running in a
 /// separate thread in order to prevent blocking an executor.
 </span><span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">pub async fn </span>plot_sector&lt;PG, S, SM, PosTable&gt;(
+</span><span class="kw">pub async fn </span>plot_sector&lt;PG, PosTable&gt;(
     public_key: <span class="kw-2">&amp;</span>PublicKey,
     sector_index: u64,
     piece_getter: <span class="kw-2">&amp;</span>PG,
@@ -569,18 +613,30 @@
     kzg: <span class="kw-2">&amp;</span>Kzg,
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
     pieces_in_sector: u16,
-    sector_output: <span class="kw-2">&amp;mut </span>S,
-    sector_metadata_output: <span class="kw-2">&amp;mut </span>SM,
+    sector_output: <span class="kw-2">&amp;mut </span>[u8],
+    sector_metadata_output: <span class="kw-2">&amp;mut </span>[u8],
     piece_memory_cache: PieceMemoryCache,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;PlottedSector, PlottingError&gt;
 <span class="kw">where
     </span>PG: PieceGetter,
-    S: Write,
-    SM: Write,
     PosTable: Table,
 {
     <span class="kw">if </span>erasure_coding.max_shards() &lt; Record::NUM_S_BUCKETS {
         <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::InvalidErasureCodingInstance);
+    }
+
+    <span class="kw">if </span>sector_output.len() &lt; sector_size(pieces_in_sector) {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::BadSectorOutputSize {
+            provided: sector_output.len(),
+            expected: sector_size(pieces_in_sector),
+        });
+    }
+
+    <span class="kw">if </span>sector_metadata_output.len() &lt; SectorMetadata::encoded_size() {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::BadSectorMetadataOutputSize {
+            provided: sector_metadata_output.len(),
+            expected: SectorMetadata::encoded_size(),
+        });
     }
 
     <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
@@ -707,50 +763,54 @@
         });
 
     {
-        <span class="kw">let </span><span class="kw-2">mut </span>sector_output = BufWriter::new(sector_output);
-
+        <span class="kw">let </span>(sector_contents_map_region, remainder) =
+            sector_output.split_at_mut(SectorContentsMap::encoded_size(pieces_in_sector));
         <span class="comment">// Write sector contents map so we can decode it later
-        </span>sector_output.write_all(sector_contents_map.as_ref())<span class="question-mark">?</span>;
+        </span>sector_contents_map_region.copy_from_slice(sector_contents_map.as_ref());
+        <span class="comment">// Slice remaining memory into belonging to s-buckets and metadata
+        </span><span class="kw">let </span>(s_buckets_region, metadata_region) =
+            remainder.split_at_mut(sector_record_chunks_size(pieces_in_sector));
 
         <span class="kw">let </span>num_encoded_record_chunks = sector_contents_map.num_encoded_record_chunks();
         <span class="kw">let </span><span class="kw-2">mut </span>next_encoded_record_chunks_offset = <span class="macro">vec!</span>[<span class="number">0_usize</span>; pieces_in_sector.into()];
         <span class="kw">let </span><span class="kw-2">mut </span>next_unencoded_record_chunks_offset = <span class="macro">vec!</span>[<span class="number">0_usize</span>; pieces_in_sector.into()];
         <span class="comment">// Write record chunks, one s-bucket at a time
-        </span><span class="kw">for </span>s_bucket <span class="kw">in </span>SBucket::ZERO..=SBucket::MAX {
-            <span class="kw">for </span>(piece_offset, encoded_chunk_used) <span class="kw">in </span>sector_contents_map
-                .iter_s_bucket_records(s_bucket)
-                .expect(<span class="string">&quot;S-bucket guaranteed to be in range; qed&quot;</span>)
-            {
-                <span class="kw">let </span>num_encoded_record_chunks =
-                    usize::from(num_encoded_record_chunks[usize::from(piece_offset)]);
-                <span class="kw">let </span>next_encoded_record_chunks_offset =
-                    <span class="kw-2">&amp;mut </span>next_encoded_record_chunks_offset[usize::from(piece_offset)];
-                <span class="kw">let </span>next_unencoded_record_chunks_offset =
-                    <span class="kw-2">&amp;mut </span>next_unencoded_record_chunks_offset[usize::from(piece_offset)];
+        </span><span class="kw">for </span>((piece_offset, encoded_chunk_used), output) <span class="kw">in </span>(SBucket::ZERO..=SBucket::MAX)
+            .flat_map(|s_bucket| {
+                sector_contents_map
+                    .iter_s_bucket_records(s_bucket)
+                    .expect(<span class="string">&quot;S-bucket guaranteed to be in range; qed&quot;</span>)
+            })
+            .zip(s_buckets_region.array_chunks_mut::&lt;{ Scalar::FULL_BYTES }&gt;())
+        {
+            <span class="kw">let </span>num_encoded_record_chunks =
+                usize::from(num_encoded_record_chunks[usize::from(piece_offset)]);
+            <span class="kw">let </span>next_encoded_record_chunks_offset =
+                <span class="kw-2">&amp;mut </span>next_encoded_record_chunks_offset[usize::from(piece_offset)];
+            <span class="kw">let </span>next_unencoded_record_chunks_offset =
+                <span class="kw-2">&amp;mut </span>next_unencoded_record_chunks_offset[usize::from(piece_offset)];
 
-                <span class="comment">// We know that s-buckets in `raw_sector.records` are stored in order (encoded
-                // first, then unencoded), hence we don&#39;t need to calculate the position, we can
-                // just store a few cursors and know the position that way
-                </span><span class="kw">let </span>chunk_position;
-                <span class="kw">if </span>encoded_chunk_used {
-                    chunk_position = <span class="kw-2">*</span>next_encoded_record_chunks_offset;
-                    <span class="kw-2">*</span>next_encoded_record_chunks_offset += <span class="number">1</span>;
-                } <span class="kw">else </span>{
-                    chunk_position =
-                        num_encoded_record_chunks + <span class="kw-2">*</span>next_unencoded_record_chunks_offset;
-                    <span class="kw-2">*</span>next_unencoded_record_chunks_offset += <span class="number">1</span>;
-                }
-                sector_output
-                    .write_all(<span class="kw-2">&amp;</span>raw_sector.records[usize::from(piece_offset)][chunk_position])<span class="question-mark">?</span>;
+            <span class="comment">// We know that s-buckets in `raw_sector.records` are stored in order (encoded first,
+            // then unencoded), hence we don&#39;t need to calculate the position, we can just store a
+            // few cursors and know the position that way
+            </span><span class="kw">let </span>chunk_position;
+            <span class="kw">if </span>encoded_chunk_used {
+                chunk_position = <span class="kw-2">*</span>next_encoded_record_chunks_offset;
+                <span class="kw-2">*</span>next_encoded_record_chunks_offset += <span class="number">1</span>;
+            } <span class="kw">else </span>{
+                chunk_position = num_encoded_record_chunks + <span class="kw-2">*</span>next_unencoded_record_chunks_offset;
+                <span class="kw-2">*</span>next_unencoded_record_chunks_offset += <span class="number">1</span>;
             }
+            output.copy_from_slice(<span class="kw-2">&amp;</span>raw_sector.records[usize::from(piece_offset)][chunk_position]);
         }
 
-        <span class="kw">for </span>record_metadata <span class="kw">in </span>raw_sector.metadata {
-            sector_output.write_all(record_metadata.commitment.as_ref())<span class="question-mark">?</span>;
-            sector_output.write_all(record_metadata.witness.as_ref())<span class="question-mark">?</span>;
+        <span class="kw">for </span>(record_metadata, output) <span class="kw">in </span>raw_sector.metadata.into_iter().zip(
+            metadata_region.array_chunks_mut::&lt;{ RecordCommitment::SIZE + RecordWitness::SIZE }&gt;(),
+        ) {
+            <span class="kw">let </span>(commitment, witness) = output.split_at_mut(RecordCommitment::SIZE);
+            commitment.copy_from_slice(record_metadata.commitment.as_ref());
+            witness.copy_from_slice(record_metadata.witness.as_ref());
         }
-
-        sector_output.flush()<span class="question-mark">?</span>;
     }
 
     <span class="comment">// TODO: Write commitments and witnesses
@@ -762,7 +822,7 @@
         expires_at,
     };
 
-    sector_metadata_output.write_all(<span class="kw-2">&amp;</span>sector_metadata.encode())<span class="question-mark">?</span>;
+    sector_metadata_output.copy_from_slice(<span class="kw-2">&amp;</span>sector_metadata.encode());
 
     <span class="prelude-val">Ok</span>(PlottedSector {
         sector_id,
