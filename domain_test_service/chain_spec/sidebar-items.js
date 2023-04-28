@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["get_account_id_from_seed","get_chain_spec","get_from_seed","local_testnet_genesis"],"type":["ChainSpec"]};
+window.SIDEBAR_ITEMS = {"fn":["get_account_id_from_seed","get_chain_spec"]};

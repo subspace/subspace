@@ -2,6 +2,7 @@ var sourcesIndex = JSON.parse('{\
 "core_eth_relay_runtime":["",[],["feed_processor.rs","lib.rs","runtime.rs"]],\
 "core_evm_runtime":["",[],["lib.rs","precompiles.rs","runtime.rs"]],\
 "core_payments_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
+"core_payments_domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "cross_domain_message_gossip":["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_block_preprocessor":["",[],["lib.rs","runtime_api.rs","runtime_api_full.rs","runtime_api_light.rs","utils.rs","xdm_verifier.rs"]],\
@@ -13,8 +14,7 @@ var sourcesIndex = JSON.parse('{\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
 "domain_service":["",[],["core_domain.rs","core_domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs","system_domain.rs","system_domain_tx_pre_validator.rs"]],\
-"domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
-"domain_test_service":["",[],["chain_spec.rs","lib.rs"]],\
+"domain_test_service":["",[],["chain_spec.rs","core_domain.rs","lib.rs","system_domain.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_domain_registry":["",[],["lib.rs"]],\
 "pallet_domains":["",[],["lib.rs"]],\
@@ -67,6 +67,7 @@ var sourcesIndex = JSON.parse('{\
 "substrate_test_runtime_client":["",[],["block_builder_ext.rs","lib.rs","trait_tests.rs"]],\
 "substrate_test_runtime_transaction_pool":["",[],["lib.rs"]],\
 "system_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
+"system_domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "system_runtime_primitives":["",[],["lib.rs"]]\
 }');
 createSourceSidebar();
