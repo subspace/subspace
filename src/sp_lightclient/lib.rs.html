@@ -871,21 +871,6 @@
 <a href="#871" id="871">871</a>
 <a href="#872" id="872">872</a>
 <a href="#873" id="873">873</a>
-<a href="#874" id="874">874</a>
-<a href="#875" id="875">875</a>
-<a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
-<a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a>
-<a href="#884" id="884">884</a>
-<a href="#885" id="885">885</a>
-<a href="#886" id="886">886</a>
-<a href="#887" id="887">887</a>
-<a href="#888" id="888">888</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -924,13 +909,11 @@
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::marker::PhantomData;
 <span class="kw">use </span>subspace_core_primitives::{
-    ArchivedHistorySegment, BlockWeight, LegacySectorId, PublicKey, Randomness, RewardSignature,
+    ArchivedHistorySegment, BlockWeight, PublicKey, Randomness, RewardSignature, SectorId,
     SegmentCommitment, SegmentIndex, SolutionRange,
 };
-<span class="kw">use </span>subspace_solving::{derive_global_challenge, REWARD_SIGNING_CONTEXT};
-<span class="kw">use </span>subspace_verification::{
-    check_reward_signature, derive_audit_chunk, PieceCheckParams, VerifySolutionParams,
-};
+<span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
+<span class="kw">use </span>subspace_verification::{check_reward_signature, PieceCheckParams, VerifySolutionParams};
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
@@ -1103,6 +1086,9 @@
 
     <span class="doccomment">/// Returns the stored segment count.
     </span><span class="kw">fn </span>number_of_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64;
+
+    <span class="doccomment">/// How many pieces one sector is supposed to contain (max)
+    </span><span class="kw">fn </span>max_pieces_in_sector(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16;
 }
 
 <span class="doccomment">/// Error type that holds the current finalized number and the header number we are trying to import.
@@ -1146,7 +1132,8 @@
 }
 
 <span class="kw">impl</span>&lt;Header: HeaderT&gt; From&lt;DigestError&gt; <span class="kw">for </span>ImportError&lt;Header&gt; {
-    <span class="kw">fn </span>from(error: DigestError) -&gt; <span class="self">Self </span>{
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>from(error: DigestError) -&gt; <span class="self">Self </span>{
         ImportError::DigestError(error)
     }
 }
@@ -1228,15 +1215,15 @@
         </span><span class="self">Self</span>::verify_block_signature(<span class="kw-2">&amp;mut </span>header, <span class="kw-2">&amp;</span>header_digests.pre_digest.solution.public_key)<span class="question-mark">?</span>;
 
         <span class="comment">// verify solution
-        </span><span class="kw">let </span>sector_id = LegacySectorId::new(
-            <span class="kw-2">&amp;</span>(<span class="kw-2">&amp;</span>header_digests.pre_digest.solution.public_key).into(),
+        </span><span class="kw">let </span>sector_id = SectorId::new(
+            PublicKey::from(<span class="kw-2">&amp;</span>header_digests.pre_digest.solution.public_key).hash(),
             header_digests.pre_digest.solution.sector_index,
         );
 
         <span class="kw">let </span>segment_index = sector_id
             .derive_piece_index(
                 header_digests.pre_digest.solution.piece_offset,
-                header_digests.pre_digest.solution.total_pieces,
+                header_digests.pre_digest.solution.history_size,
             )
             .segment_index();
 
@@ -1245,20 +1232,23 @@
             parent_header.header.hash(),
         )<span class="question-mark">?</span>;
 
-        verify_solution(
+        <span class="kw">let </span>solution_distance = verify_solution(
             (<span class="kw-2">&amp;</span>header_digests.pre_digest.solution).into(),
             header_digests.pre_digest.slot.into(),
             (<span class="kw-2">&amp;</span>VerifySolutionParams {
                 global_randomness: header_digests.global_randomness,
                 solution_range: header_digests.solution_range,
-                piece_check_params: <span class="prelude-val">Some</span>(PieceCheckParams { segment_commitment }),
+                piece_check_params: <span class="prelude-val">Some</span>(PieceCheckParams {
+                    max_pieces_in_sector: <span class="self">self</span>.store.max_pieces_in_sector(),
+                    segment_commitment,
+                }),
             })
                 .into(),
         )
         .map_err(ImportError::InvalidSolution)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>block_weight = <span class="self">Self</span>::calculate_block_weight(<span class="kw-2">&amp;</span>sector_id, <span class="kw-2">&amp;</span>header_digests);
-        <span class="kw">let </span>total_weight = parent_header.total_weight + block_weight;
+        <span class="kw">let </span>total_weight =
+            parent_header.total_weight + BlockWeight::from(SolutionRange::MAX - solution_distance);
 
         <span class="comment">// last best header should ideally be parent header. if not check for forks and pick the best chain
         </span><span class="kw">let </span>last_best_header = <span class="self">self</span>.store.best_header();
@@ -1416,26 +1406,6 @@
         <span class="comment">// push the seal back into the header
         </span>header.digest_mut().push(seal);
         <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Calculates block weight from randomness and predigest.
-    </span><span class="kw">fn </span>calculate_block_weight(
-        sector_id: <span class="kw-2">&amp;</span>LegacySectorId,
-        header_digests: <span class="kw-2">&amp;</span>SubspaceDigestItems&lt;FarmerPublicKey, FarmerPublicKey, FarmerSignature&gt;,
-    ) -&gt; BlockWeight {
-        <span class="kw">let </span>global_challenge = derive_global_challenge(
-            <span class="kw-2">&amp;</span>header_digests.global_randomness,
-            header_digests.pre_digest.slot.into(),
-        );
-
-        <span class="kw">let </span>local_challenge = sector_id.derive_local_challenge(<span class="kw-2">&amp;</span>global_challenge);
-
-        <span class="kw">let </span>audit_chunk = derive_audit_chunk(<span class="kw-2">&amp;</span>header_digests.pre_digest.solution.chunk.to_bytes());
-
-        BlockWeight::from(
-            SolutionRange::MAX
-                - subspace_core_primitives::bidirectional_distance(<span class="kw-2">&amp;</span>local_challenge, <span class="kw-2">&amp;</span>audit_chunk),
-        )
     }
 
     <span class="doccomment">/// Returns the ancestor of the header at number.

@@ -44,14 +44,14 @@ var sourcesIndex = JSON.parse('{\
 "sp_objects":["",[],["lib.rs"]],\
 "sp_receipts":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["incremental_record_commitments.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs"]],\
-"subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]],["pieces",[],["serde.rs"]]],["crypto.rs","lib.rs","objects.rs","pieces.rs","sector_codec.rs","segments.rs","serde.rs"]],\
+"subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]],["pieces",[],["serde.rs"]]],["crypto.rs","lib.rs","objects.rs","pieces.rs","segments.rs","serde.rs"]],\
 "subspace_erasure_coding":["",[],["lib.rs"]],\
 "subspace_farmer":["",[["node_client",[],["node_rpc_client.rs"]],["single_disk_plot",[],["piece_reader.rs"]],["utils",[],["farmer_piece_cache.rs","farmer_piece_getter.rs","farmer_provider_record_processor.rs","farmer_provider_storage.rs","node_piece_getter.rs","parity_db_store.rs","piece_cache.rs","piece_validator.rs","readers_and_pieces.rs"]]],["identity.rs","lib.rs","node_client.rs","object_mappings.rs","reward_signing.rs","single_disk_plot.rs","utils.rs","ws_rpc_server.rs"]],\
-"subspace_farmer_components":["",[],["farming.rs","file_ext.rs","lib.rs","piece_caching.rs","plotting.rs","segment_reconstruction.rs"]],\
+"subspace_farmer_components":["",[],["auditing.rs","file_ext.rs","lib.rs","piece_caching.rs","plotting.rs","proving.rs","reading.rs","sector.rs","segment_reconstruction.rs"]],\
 "subspace_fraud_proof":["",[],["domain_extrinsics_builder.rs","domain_runtime_code.rs","invalid_state_transition_proof.rs","lib.rs","verifier_api.rs"]],\
 "subspace_networking":["",[["behavior",[["provider_storage",[],["providers.rs"]]],["persistent_parameters.rs","provider_storage.rs"]],["create",[],["temporary_bans.rs","transport.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","peer_info.rs","piece_by_key.rs","pieces_by_range.rs","segment_header.rs"]],["utils",[],["multihash.rs","piece_provider.rs","pieces.rs","prometheus.rs","unique_record_binary_heap.rs"]]],["behavior.rs","create.rs","lib.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["core_domain",[],["cli.rs","core_eth_relay_chain_spec.rs","core_evm_chain_spec.rs","core_payments_chain_spec.rs"]],["system_domain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","core_domain.rs","import_blocks_from_dsn.rs","lib.rs","system_domain.rs"]],\
-"subspace_proof_of_space":["",[],["chia.rs","lib.rs"]],\
+"subspace_proof_of_space":["",[],["chia.rs","lib.rs","shim.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[["weights",[],["subspace.rs"]]],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs","weights.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["REWARD_SIGNING_CONTEXT"],"fn":["create_chunk_signature","create_chunk_signature_transcript","derive_global_challenge","verify_chunk_signature"]};
+window.SIDEBAR_ITEMS = {"constant":["REWARD_SIGNING_CONTEXT"]};

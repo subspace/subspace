@@ -126,17 +126,21 @@
 <a href="#126" id="126">126</a>
 <a href="#127" id="127">127</a>
 <a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
 </pre><pre class="rust"><code><span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::SinkExt;
-<span class="kw">use </span>subspace_core_primitives::crypto::ScalarLegacy;
-<span class="kw">use </span>subspace_core_primitives::sector_codec::SectorCodec;
-<span class="kw">use </span>subspace_core_primitives::{Piece, SectorIndex, PLOT_SECTOR_SIZE};
-<span class="kw">use </span>tracing::warn;
+<span class="kw">use </span>subspace_core_primitives::{Piece, PieceOffset, PublicKey, SectorId, SectorIndex};
+<span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
+<span class="kw">use </span>subspace_farmer_components::reading;
+<span class="kw">use </span>subspace_farmer_components::sector::{sector_size, SectorMetadata};
+<span class="kw">use </span>subspace_proof_of_space::Table;
+<span class="kw">use </span>tracing::{error, warn};
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ReadPieceRequest {
     <span class="kw">pub</span>(<span class="kw">super</span>) sector_index: SectorIndex,
-    <span class="kw">pub</span>(<span class="kw">super</span>) piece_offset: u64,
+    <span class="kw">pub</span>(<span class="kw">super</span>) piece_offset: PieceOffset,
     <span class="kw">pub</span>(<span class="kw">super</span>) response_sender: oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;,
 }
 
@@ -162,7 +166,7 @@
     </span><span class="kw">pub async fn </span>read_piece(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         sector_index: SectorIndex,
-        piece_offset: u64,
+        piece_offset: PieceOffset,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
         <span class="kw">let </span>(response_sender, response_receiver) = oneshot::channel();
         <span class="self">self</span>.read_piece_sender
@@ -177,14 +181,21 @@
     </span>}
 }
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_piece(
-    sector_index: SectorIndex,
-    piece_offset: u64,
-    sector_count: u64,
+<span class="attr">#[allow(clippy::too_many_arguments)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_piece&lt;PosTable&gt;(
+    public_key: <span class="kw-2">&amp;</span>PublicKey,
+    piece_offset: PieceOffset,
+    pieces_in_sector: u16,
+    sector_count: usize,
     first_sector_index: SectorIndex,
-    sector_codec: <span class="kw-2">&amp;</span>SectorCodec,
+    sector_metadata: <span class="kw-2">&amp;</span>SectorMetadata,
     global_plot: <span class="kw-2">&amp;</span>[u8],
-) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+    erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
+) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt;
+<span class="kw">where
+    </span>PosTable: Table,
+{
+    <span class="kw">let </span>sector_index = sector_metadata.sector_index;
     <span class="kw">if </span>sector_index &lt; first_sector_index {
         <span class="macro">warn!</span>(
             %sector_index,
@@ -195,7 +206,7 @@
         </span>);
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
-    <span class="kw">let </span>sector_offset = sector_index - first_sector_index;
+    <span class="kw">let </span>sector_offset = (sector_index - first_sector_index) <span class="kw">as </span>usize;
     <span class="comment">// Sector must be plotted
     </span><span class="kw">if </span>sector_offset &gt;= sector_count {
         <span class="macro">warn!</span>(
@@ -208,7 +219,7 @@
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
     <span class="comment">// Piece must be within sector
-    </span><span class="kw">if </span>piece_offset &gt;= PLOT_SECTOR_SIZE / Piece::SIZE <span class="kw">as </span>u64 {
+    </span><span class="kw">if </span>u16::from(piece_offset) &gt;= pieces_in_sector {
         <span class="macro">warn!</span>(
             %sector_index,
             %piece_offset,
@@ -219,37 +230,30 @@
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
 
-    <span class="kw">let </span>piece = {
-        <span class="kw">let </span>sector_bytes = <span class="kw-2">&amp;</span>global_plot[(sector_offset * PLOT_SECTOR_SIZE) <span class="kw">as </span>usize..]
-            [..PLOT_SECTOR_SIZE <span class="kw">as </span>usize];
+    <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
+    <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
+    <span class="comment">// TODO: Would be nicer to have list of plots here and just index it
+    </span><span class="kw">let </span>sector = <span class="kw-2">&amp;</span>global_plot[sector_size * sector_offset..][..sector_size];
 
-        <span class="kw">let </span><span class="kw-2">mut </span>sector_bytes_scalars = sector_bytes
-            .chunks_exact(ScalarLegacy::FULL_BYTES)
-            .map(|bytes| {
-                ScalarLegacy::from(
-                    &lt;<span class="kw-2">&amp;</span>[u8; ScalarLegacy::FULL_BYTES]&gt;::try_from(bytes)
-                        .expect(<span class="string">&quot;Chunked into scalar full bytes above; qed&quot;</span>),
-                )
-            })
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        sector_codec.decode(<span class="kw-2">&amp;mut </span>sector_bytes_scalars).ok()<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>scalars_in_piece = Piece::SIZE / ScalarLegacy::SAFE_BYTES;
-        <span class="kw">let </span>piece_scalars =
-            <span class="kw-2">&amp;</span>sector_bytes_scalars[piece_offset <span class="kw">as </span>usize * scalars_in_piece..][..scalars_in_piece];
-
-        <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
-        piece
-            .chunks_exact_mut(ScalarLegacy::SAFE_BYTES)
-            .zip(piece_scalars)
-            .for_each(|(output, input)| {
-                <span class="comment">// After decoding we get piece scalar bytes padded with zero byte, so we can read
-                // the whole thing first and then copy just first `Scalar::SAFE_BYTES` we actually
-                // care about
-                </span>output.copy_from_slice(<span class="kw-2">&amp;</span>input.to_bytes()[..ScalarLegacy::SAFE_BYTES]);
-            });
-
-        piece
+    <span class="kw">let </span>piece = <span class="kw">match </span>reading::read_piece::&lt;PosTable&gt;(
+        piece_offset,
+        <span class="kw-2">&amp;</span>sector_id,
+        sector_metadata,
+        sector,
+        erasure_coding,
+    ) {
+        <span class="prelude-val">Ok</span>(piece) =&gt; piece,
+        <span class="prelude-val">Err</span>(error) =&gt; {
+            <span class="macro">error!</span>(
+                %sector_index,
+                %piece_offset,
+                %sector_count,
+                %first_sector_index,
+                %error,
+                <span class="string">&quot;Failed to read piece from sector&quot;
+            </span>);
+            <span class="kw">return </span><span class="prelude-val">None</span>;
+        }
     };
 
     <span class="prelude-val">Some</span>(piece)

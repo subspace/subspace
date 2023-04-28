@@ -1283,6 +1283,10 @@
 <a href="#1283" id="1283">1283</a>
 <a href="#1284" id="1284">1284</a>
 <a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a>
+<a href="#1289" id="1289">1289</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1315,7 +1319,6 @@
 </span><span class="macro">include!</span>(<span class="macro">concat!</span>(<span class="macro">env!</span>(<span class="string">&quot;OUT_DIR&quot;</span>), <span class="string">&quot;/wasm_binary.rs&quot;</span>));
 
 <span class="kw">use </span>codec::{Compact, CompactLen, Encode};
-<span class="kw">use </span>core::num::NonZeroU64;
 <span class="kw">use </span>core::time::Duration;
 <span class="kw">use </span>frame_support::traits::{
     ConstU128, ConstU16, ConstU32, ConstU64, ConstU8, Currency, ExistenceRequirement, Get,
@@ -1359,7 +1362,7 @@
 <span class="kw">use </span>sp_version::RuntimeVersion;
 <span class="kw">use </span>subspace_core_primitives::objects::{BlockObject, BlockObjectMapping};
 <span class="kw">use </span>subspace_core_primitives::{
-    Piece, PublicKey, Randomness, SegmentCommitment, SegmentHeader, SegmentIndex, SolutionRange,
+    HistorySize, Piece, Randomness, SegmentCommitment, SegmentHeader, SegmentIndex, SolutionRange,
 };
 <span class="kw">use </span>subspace_runtime_primitives::{
     opaque, AccountId, Balance, BlockNumber, Hash, Index, Moment, Signature,
@@ -1371,6 +1374,9 @@
     <span class="kw">pub struct </span>SessionKeys {
     }
 }
+
+<span class="comment">// Smaller value for testing purposes
+</span><span class="kw">const </span>MAX_PIECES_IN_SECTOR: u16 = <span class="number">32</span>;
 
 <span class="comment">// To learn more about runtime versioning and what each of the following value means:
 //   https://substrate.dev/docs/en/knowledgebase/runtime/upgrades#runtime-versioning
@@ -1534,6 +1540,7 @@
     <span class="kw">type </span>ExpectedBlockTime = ExpectedBlockTime;
     <span class="kw">type </span>ConfirmationDepthK = ConfirmationDepthK;
     <span class="kw">type </span>ExpectedVotesPerBlock = ExpectedVotesPerBlock;
+    <span class="kw">type </span>MaxPiecesInSector = ConstU16&lt;{ MAX_PIECES_IN_SECTOR }&gt;;
     <span class="kw">type </span>ShouldAdjustSolutionRange = ShouldAdjustSolutionRange;
     <span class="kw">type </span>GlobalRandomnessIntervalTrigger = pallet_subspace::NormalGlobalRandomnessInterval;
     <span class="kw">type </span>EraChangeTrigger = pallet_subspace::NormalEraChange;
@@ -2245,24 +2252,20 @@
         <span class="kw">let </span>pre_digest = pre_digest.expect(<span class="string">&quot;Header must contain one pre-runtime digest; qed&quot;</span>);
 
         <span class="kw">let </span>seed: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;extrinsics-shuffling-seed&quot;</span>;
-        <span class="kw">let </span>randomness = derive_randomness(
-            <span class="kw-2">&amp;</span>Into::&lt;PublicKey&gt;::into(<span class="kw-2">&amp;</span>pre_digest.solution.public_key),
-            <span class="kw-2">&amp;</span>pre_digest.solution.chunk.to_bytes(),
-            <span class="kw-2">&amp;</span>pre_digest.solution.chunk_signature,
-        )
-        .expect(<span class="string">&quot;Tag signature is verified by the client and must always be valid; qed&quot;</span>);
+        <span class="kw">let </span>randomness = derive_randomness(<span class="kw-2">&amp;</span>pre_digest.solution, pre_digest.slot.into());
         <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(seed.len() + randomness.len());
         data.extend_from_slice(seed);
-        data.extend_from_slice(<span class="kw-2">&amp;</span>randomness);
+        data.extend_from_slice(randomness.as_ref());
 
-        BlakeTwo256::hash_of(<span class="kw-2">&amp;</span>data).into()
+        Randomness::from(BlakeTwo256::hash_of(<span class="kw-2">&amp;</span>data).to_fixed_bytes())
     }
 }
 
 <span class="kw">struct </span>RewardAddress([u8; <span class="number">32</span>]);
 
 <span class="kw">impl </span>From&lt;FarmerPublicKey&gt; <span class="kw">for </span>RewardAddress {
-    <span class="kw">fn </span>from(farmer_public_key: FarmerPublicKey) -&gt; <span class="self">Self </span>{
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>from(farmer_public_key: FarmerPublicKey) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(
             farmer_public_key
                 .as_slice()
@@ -2273,7 +2276,8 @@
 }
 
 <span class="kw">impl </span>From&lt;RewardAddress&gt; <span class="kw">for </span>AccountId32 {
-    <span class="kw">fn </span>from(reward_address: RewardAddress) -&gt; <span class="self">Self </span>{
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>from(reward_address: RewardAddress) -&gt; <span class="self">Self </span>{
         reward_address.<span class="number">0</span>.into()
     }
 }
@@ -2355,8 +2359,12 @@
     }
 
     <span class="kw">impl </span>sp_consensus_subspace::SubspaceApi&lt;Block, FarmerPublicKey&gt; <span class="kw">for </span>Runtime {
-        <span class="kw">fn </span>total_pieces() -&gt; NonZeroU64 {
-            &lt;pallet_subspace::Pallet&lt;Runtime&gt;&gt;::total_pieces()
+        <span class="kw">fn </span>history_size() -&gt; HistorySize {
+            &lt;pallet_subspace::Pallet&lt;Runtime&gt;&gt;::history_size()
+        }
+
+        <span class="kw">fn </span>max_pieces_in_sector() -&gt; u16 {
+            MAX_PIECES_IN_SECTOR
         }
 
         <span class="kw">fn </span>slot_duration() -&gt; Duration {

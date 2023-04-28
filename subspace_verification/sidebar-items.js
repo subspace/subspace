@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"fn":["check_piece","check_reward_signature","derive_audit_chunk","derive_next_solution_range","derive_randomness","is_within_solution_range","verify_solution"],"struct":["PieceCheckParams","VerifySolutionParams"]};
+window.SIDEBAR_ITEMS = {"enum":["Error"],"fn":["calculate_block_weight","calculate_solution_distance","check_reward_signature","derive_next_solution_range","derive_randomness","is_within_solution_range","verify_solution"],"struct":["PieceCheckParams","VerifySolutionParams"]};

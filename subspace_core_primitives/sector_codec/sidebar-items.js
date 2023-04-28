@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SectorCodecError"],"struct":["SectorCodec"]};

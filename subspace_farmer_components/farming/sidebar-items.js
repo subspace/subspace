@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["FarmingError"],"fn":["audit_sector"],"struct":["EligibleChunk","EligibleSector"]};
