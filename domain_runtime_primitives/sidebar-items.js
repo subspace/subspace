@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["opaque"],"trait":["DomainCoreApi","Signer"],"type":["AccountId","Address","Balance","BlockNumber","Hash","Index","Signature"]};
+window.SIDEBAR_ITEMS = {"constant":["SLOT_DURATION"],"mod":["opaque"],"trait":["DomainCoreApi","InherentExtrinsicApi","Signer"],"type":["AccountId","Address","Balance","BlockNumber","Hash","Index","Signature"]};
