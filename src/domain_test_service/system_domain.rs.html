@@ -343,24 +343,9 @@
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
 <a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a>
-<a href="#347" id="347">347</a>
-<a href="#348" id="348">348</a>
-<a href="#349" id="349">349</a>
-<a href="#350" id="350">350</a>
-<a href="#351" id="351">351</a>
-<a href="#352" id="352">352</a>
-<a href="#353" id="353">353</a>
-<a href="#354" id="354">354</a>
-<a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
 </pre><pre class="rust"><code><span class="doccomment">//! Utilities used for testing with the system domain.
 </span><span class="attr">#![warn(missing_docs)]
 </span><span class="kw">use crate</span>::{construct_extrinsic_generic, node_config};
-<span class="kw">use </span>cross_domain_message_gossip::GossipWorker;
 <span class="kw">use </span>domain_client_executor::ExecutorStreams;
 <span class="kw">use </span>domain_service::{DomainConfiguration, FullPool};
 <span class="kw">use </span>frame_system_rpc_runtime_api::AccountNonceApi;
@@ -373,12 +358,10 @@
     TaskManager,
 };
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
-<span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::DomainId;
 <span class="kw">use </span>sp_keyring::Sr25519Keyring;
 <span class="kw">use </span>sp_runtime::OpaqueExtrinsic;
-<span class="kw">use </span>std::collections::BTreeMap;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block <span class="kw">as </span>PBlock;
@@ -448,8 +431,6 @@
     RpcHandlers,
     SystemExecutor,
 )&gt; {
-    <span class="kw">let </span>(gossip_msg_sink, gossip_msg_stream) =
-        sc_utils::mpsc::tracing_unbounded(<span class="string">&quot;cross_domain_gossip_messages&quot;</span>, <span class="number">100</span>);
     <span class="kw">let </span>system_domain_config = DomainConfiguration {
         service_config: system_domain_config,
         maybe_relayer_id: <span class="prelude-val">None</span>,
@@ -466,6 +447,9 @@
         new_slot_notification_stream: mock_primary_node.new_slot_notification_stream(),
         _phantom: Default::default(),
     };
+    <span class="kw">let </span>gossip_msg_sink = mock_primary_node
+        .xdm_gossip_worker_builder()
+        .gossip_msg_sink();
     <span class="kw">let </span>system_domain_node = domain_service::new_full_system::&lt;
         <span class="kw">_</span>,
         <span class="kw">_</span>,
@@ -478,7 +462,7 @@
     &gt;(
         system_domain_config,
         mock_primary_node.client.clone(),
-        MockPrimaryNode::sync_oracle(),
+        mock_primary_node.sync_service.clone(),
         <span class="kw-2">&amp;</span>mock_primary_node.select_chain,
         executor_streams,
         gossip_msg_sink,
@@ -498,21 +482,9 @@
         tx_pool_sink,
     } = system_domain_node;
 
-    <span class="kw">let </span><span class="kw-2">mut </span>domain_tx_pool_sinks = BTreeMap::new();
-    domain_tx_pool_sinks.insert(DomainId::SYSTEM, tx_pool_sink);
-    <span class="kw">let </span>cross_domain_message_gossip_worker = GossipWorker::&lt;Block&gt;::new(
-        network_service.clone(),
-        sync_service.clone(),
-        domain_tx_pool_sinks,
-    );
-
-    task_manager
-        .spawn_essential_handle()
-        .spawn_essential_blocking(
-            <span class="string">&quot;cross-domain-gossip-message-worker&quot;</span>,
-            <span class="prelude-val">None</span>,
-            Box::pin(cross_domain_message_gossip_worker.run(gossip_msg_stream)),
-        );
+    mock_primary_node
+        .xdm_gossip_worker_builder()
+        .push_domain_tx_pool_sink(DomainId::SYSTEM, tx_pool_sink);
 
     network_starter.start_network();
 
