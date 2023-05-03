@@ -262,6 +262,30 @@
 <a href="#262" id="262">262</a>
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
 </pre><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
 <span class="kw">use </span><span class="kw">crate</span>::utils::to_number_primitive;
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
@@ -274,7 +298,7 @@
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_domains::{Bundle, BundleHeader};
-<span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, One, Zero};
+<span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, One, Saturating, Zero};
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time;
@@ -333,6 +357,7 @@
         ParentChain: ParentChainInterface&lt;ParentChainBlock&gt;,
     {
         <span class="kw">let </span>parent_number = <span class="self">self</span>.client.info().best_number;
+        <span class="kw">let </span>parent_hash = <span class="self">self</span>.client.info().best_hash;
 
         <span class="kw">let </span><span class="kw-2">mut </span>t1 = <span class="self">self</span>.transaction_pool.ready_at(parent_number).fuse();
         <span class="comment">// TODO: proper timeout
@@ -378,7 +403,7 @@
         <span class="kw">let </span>receipts = <span class="kw">if </span>primary_number.is_zero() {
             Vec::new()
         } <span class="kw">else </span>{
-            <span class="self">self</span>.collect_bundle_receipts(parent_number, parent_chain)<span class="question-mark">?
+            <span class="self">self</span>.collect_bundle_receipts(parent_number, parent_hash, parent_chain)<span class="question-mark">?
         </span>};
 
         receipts_sanity_check::&lt;Block, PBlock&gt;(<span class="kw-2">&amp;</span>receipts)<span class="question-mark">?</span>;
@@ -398,9 +423,12 @@
     }
 
     <span class="doccomment">/// Returns the receipts in the next domain bundle.
+    ///
+    /// There will be at least one receipt in the collected receipts.
     </span><span class="kw">fn </span>collect_bundle_receipts&lt;ParentChain, ParentChainBlock&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         header_number: NumberFor&lt;Block&gt;,
+        header_hash: Block::Hash,
         parent_chain: ParentChain,
     ) -&gt; sp_blockchain::Result&lt;Vec&lt;ExecutionReceiptFor&lt;PBlock, Block::Hash&gt;&gt;&gt;
     <span class="kw">where
@@ -418,7 +446,7 @@
             <span class="string">&quot;Collecting receipts at {parent_chain_block_hash:?}&quot;
         </span>);
 
-        <span class="kw">let </span>load_receipt = |primary_block_hash| {
+        <span class="kw">let </span>load_receipt = |primary_block_hash, block_number| {
             <span class="kw">crate</span>::aux_schema::load_execution_receipt::&lt;
                 <span class="kw">_</span>,
                 Block::Hash,
@@ -427,14 +455,34 @@
             &gt;(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, primary_block_hash)<span class="question-mark">?
             </span>.ok_or_else(|| {
                 sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                    <span class="string">&quot;Receipt of primary block #{primary_block_hash} not found&quot;
+                    <span class="string">&quot;Receipt of primary block #{block_number},{primary_block_hash} not found&quot;
                 </span>))
             })
         };
 
         <span class="kw">let </span><span class="kw-2">mut </span>receipts = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>to_send = head_receipt_number + <span class="number">1</span>;
-        <span class="kw">let </span>max_allowed = (head_receipt_number + max_drift).min(to_number_primitive(header_number));
+
+        <span class="kw">let </span>header_block_receipt_is_written =
+            <span class="kw">crate</span>::aux_schema::primary_hash_for::&lt;<span class="kw">_</span>, <span class="kw">_</span>, PBlock::Hash&gt;(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, header_hash)<span class="question-mark">?
+                </span>.is_some();
+
+        <span class="comment">// TODO: remove once the receipt generation can be done before the domain block is
+        // committed to the database, in other words, only when the receipt of block N+1 has
+        // been generated can the `client.info().best_number` be updated from N to N+1.
+        //
+        // This requires:
+        // 1. Reimplement `runtime_api.intermediate_roots()` on the client side.
+        // 2. Add a hook before the upstream `client.commit_operation(op)`.
+        </span><span class="kw">let </span>available_best_receipt_number = <span class="kw">if </span>header_block_receipt_is_written {
+            header_number
+        } <span class="kw">else </span>{
+            header_number.saturating_sub(One::one())
+        };
+
+        <span class="kw">let </span>max_allowed = (head_receipt_number + max_drift)
+            .min(to_number_primitive(available_best_receipt_number));
+
         <span class="kw">loop </span>{
             <span class="kw">let </span>primary_block_hash =
                 <span class="self">self</span>.primary_chain_client
@@ -444,7 +492,7 @@
                             <span class="string">&quot;Primary block hash for #{to_send:?} not found&quot;
                         </span>))
                     })<span class="question-mark">?</span>;
-            receipts.push(load_receipt(primary_block_hash)<span class="question-mark">?</span>);
+            receipts.push(load_receipt(primary_block_hash, to_send)<span class="question-mark">?</span>);
             to_send += <span class="number">1</span>;
 
             <span class="kw">if </span>to_send &gt; max_allowed {
