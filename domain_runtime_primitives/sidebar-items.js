@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["SLOT_DURATION"],"mod":["opaque"],"trait":["DomainCoreApi","InherentExtrinsicApi","Signer"],"type":["AccountId","Address","Balance","BlockNumber","Hash","Index","Signature"]};
+window.SIDEBAR_ITEMS = {"constant":["SLOT_DURATION"],"enum":["MultiAccountId"],"mod":["opaque"],"struct":["AccountIdConverter"],"trait":["DomainCoreApi","InherentExtrinsicApi","Signer","TryConvertBack"],"type":["AccountId","Address","Balance","BlockNumber","Hash","Index","Signature"]};

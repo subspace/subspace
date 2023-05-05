@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"core_evm_runtime":[["impl <a class=\"trait\" href=\"domain_runtime_primitives/trait.TryConvertBack.html\" title=\"trait domain_runtime_primitives::TryConvertBack\">TryConvertBack</a>&lt;&lt;&lt;EthereumSignature as Verify&gt;::Signer as IdentifyAccount&gt;::AccountId, <a class=\"enum\" href=\"domain_runtime_primitives/enum.MultiAccountId.html\" title=\"enum domain_runtime_primitives::MultiAccountId\">MultiAccountId</a>&gt; for <a class=\"struct\" href=\"core_evm_runtime/struct.AccountId20Converter.html\" title=\"struct core_evm_runtime::AccountId20Converter\">AccountId20Converter</a>"]],
+"domain_runtime_primitives":[]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
