@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"core_eth_relay_domain_test_runtime":[["impl GetNodeBlockType for <a class=\"struct\" href=\"core_eth_relay_domain_test_runtime/struct.Runtime.html\" title=\"struct core_eth_relay_domain_test_runtime::Runtime\">Runtime</a>"]],
 "core_eth_relay_runtime":[["impl GetNodeBlockType for <a class=\"struct\" href=\"core_eth_relay_runtime/struct.Runtime.html\" title=\"struct core_eth_relay_runtime::Runtime\">Runtime</a>"]],
 "core_evm_runtime":[["impl GetNodeBlockType for <a class=\"struct\" href=\"core_evm_runtime/struct.Runtime.html\" title=\"struct core_evm_runtime::Runtime\">Runtime</a>"]],
 "core_payments_domain_runtime":[["impl GetNodeBlockType for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.Runtime.html\" title=\"struct core_payments_domain_runtime::Runtime\">Runtime</a>"]],

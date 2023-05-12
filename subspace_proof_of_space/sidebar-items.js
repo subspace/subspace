@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PosTableType"],"mod":["chia","shim"],"trait":["Quality","Table"]};
+window.SIDEBAR_ITEMS = {"enum":["PosTableType"],"mod":["chia","chiapos","shim"],"trait":["Quality","Table"]};

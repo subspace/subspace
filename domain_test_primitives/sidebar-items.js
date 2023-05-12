@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":["TimestampApi"]};
+window.SIDEBAR_ITEMS = {"trait":["OnchainStateApi","TimestampApi"]};
