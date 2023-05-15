@@ -673,6 +673,18 @@
 <a href="#673" id="673">673</a>
 <a href="#674" id="674">674</a>
 <a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
 </pre><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -701,7 +713,7 @@
 <span class="kw">use </span>frame_system::offchain::SubmitTransaction;
 <span class="kw">pub use </span>pallet::<span class="kw-2">*</span>;
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_domains::bundle_election::{verify_system_bundle_solution, verify_vrf_proof};
+<span class="kw">use </span>sp_domains::bundle_election::verify_system_bundle_solution;
 <span class="kw">use </span>sp_domains::fraud_proof::FraudProof;
 <span class="kw">use </span>sp_domains::merkle_tree::Witness;
 <span class="kw">use </span>sp_domains::transaction::InvalidTransactionCode;
@@ -709,6 +721,7 @@
 <span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Zero};
 <span class="kw">use </span>sp_runtime::transaction_validity::TransactionValidityError;
 <span class="kw">use </span>sp_runtime::RuntimeAppPublic;
+<span class="kw">use </span>sp_std::vec::Vec;
 
 <span class="attr">#[frame_support::pallet]
 </span><span class="kw">mod </span>pallet {
@@ -722,6 +735,7 @@
     <span class="kw">use </span>sp_domains::{DomainId, ExecutorPublicKey, SignedOpaqueBundle};
     <span class="kw">use </span>sp_runtime::traits::{One, Zero};
     <span class="kw">use </span>sp_std::fmt::Debug;
+    <span class="kw">use </span>sp_std::vec::Vec;
 
     <span class="attr">#[pallet::config]
     </span><span class="kw">pub trait </span>Config: frame_system::Config + pallet_receipts::Config {
@@ -734,6 +748,10 @@
     <span class="attr">#[pallet::pallet]
     #[pallet::without_storage_info]
     </span><span class="kw">pub struct </span>Pallet&lt;T&gt;(<span class="kw">_</span>);
+
+    <span class="doccomment">/// Bundles submitted successfully in current block.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>SuccessfulBundles&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, Vec&lt;H256&gt;, ValueQuery&gt;;
 
     <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
     </span><span class="kw">pub enum </span>BundleError {
@@ -840,9 +858,13 @@
                 .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
             }
 
+            <span class="kw">let </span>bundle_hash = signed_opaque_bundle.hash();
+
+            SuccessfulBundles::&lt;T&gt;::append(bundle_hash);
+
             <span class="self">Self</span>::deposit_event(Event::BundleStored {
                 domain_id,
-                bundle_hash: signed_opaque_bundle.hash(),
+                bundle_hash,
                 bundle_author: signed_opaque_bundle.into_executor_public_key(),
             });
 
@@ -890,7 +912,9 @@
                 );
             }
 
-            T::DbWeight::get().writes(<span class="number">1</span>)
+            SuccessfulBundles::&lt;T&gt;::kill();
+
+            T::DbWeight::get().writes(<span class="number">2</span>)
         }
     }
 
@@ -965,6 +989,10 @@
 }
 
 <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
+    <span class="kw">pub fn </span>successful_bundles() -&gt; Vec&lt;H256&gt; {
+        SuccessfulBundles::&lt;T&gt;::get()
+    }
+
     <span class="doccomment">/// Returns the block number of the latest receipt.
     </span><span class="kw">pub fn </span>head_receipt_number() -&gt; T::BlockNumber {
         pallet_receipts::Pallet::&lt;T&gt;::head_receipt_number(DomainId::SYSTEM)
@@ -1198,13 +1226,9 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::BadSignature);
         }
 
-        verify_vrf_proof(
-            <span class="kw-2">&amp;</span>proof_of_election.executor_public_key,
-            <span class="kw-2">&amp;</span>proof_of_election.vrf_output,
-            <span class="kw-2">&amp;</span>proof_of_election.vrf_proof,
-            <span class="kw-2">&amp;</span>proof_of_election.global_challenge,
-        )
-        .map_err(|<span class="kw">_</span>| BundleError::BadVrfProof)<span class="question-mark">?</span>;
+        proof_of_election
+            .verify_vrf_proof()
+            .map_err(|<span class="kw">_</span>| BundleError::BadVrfProof)<span class="question-mark">?</span>;
 
         <span class="self">Self</span>::validate_execution_receipts(<span class="kw-2">&amp;</span>bundle.receipts).map_err(BundleError::Receipt)<span class="question-mark">?</span>;
 

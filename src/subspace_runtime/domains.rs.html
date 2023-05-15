@@ -138,15 +138,9 @@
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
-</pre><pre class="rust"><code><span class="kw">use crate</span>::{Block, BlockNumber, Hash, RuntimeCall, RuntimeEvent, System, UncheckedExtrinsic};
+</pre><pre class="rust"><code><span class="kw">use crate</span>::{Block, BlockNumber, Domains, Hash, Receipts, RuntimeCall, UncheckedExtrinsic};
 <span class="kw">use </span>sp_consensus_subspace::digests::CompatibleDigestItem;
 <span class="kw">use </span>sp_consensus_subspace::FarmerPublicKey;
-<span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::fraud_proof::FraudProof;
 <span class="kw">use </span>sp_domains::transaction::PreValidationObject;
 <span class="kw">use </span>sp_domains::{DomainId, ExecutionReceipt};
@@ -161,21 +155,20 @@
     sp_domains::OpaqueBundles&lt;Block, domain_runtime_primitives::Hash&gt;,
     sp_domains::SignedOpaqueBundles&lt;Block, domain_runtime_primitives::Hash&gt;,
 ) {
+    <span class="kw">let </span>successful_bundles = Domains::successful_bundles();
     <span class="kw">let </span>(system_bundles, core_bundles): (Vec&lt;<span class="kw">_</span>&gt;, Vec&lt;<span class="kw">_</span>&gt;) = extrinsics
         .into_iter()
-        .filter_map(|uxt| {
-            <span class="kw">if let </span>RuntimeCall::Domains(pallet_domains::Call::submit_bundle {
+        .filter_map(|uxt| <span class="kw">match </span>uxt.function {
+            RuntimeCall::Domains(pallet_domains::Call::submit_bundle {
                 signed_opaque_bundle,
-            }) = uxt.function
-            {
+            }) <span class="kw">if </span>successful_bundles.contains(<span class="kw-2">&amp;</span>signed_opaque_bundle.hash()) =&gt; {
                 <span class="kw">if </span>signed_opaque_bundle.domain_id().is_system() {
                     <span class="prelude-val">Some</span>((<span class="prelude-val">Some</span>(signed_opaque_bundle.bundle), <span class="prelude-val">None</span>))
                 } <span class="kw">else </span>{
                     <span class="prelude-val">Some</span>((<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(signed_opaque_bundle)))
                 }
-            } <span class="kw">else </span>{
-                <span class="prelude-val">None
-            </span>}
+            }
+            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         })
         .unzip();
     (
@@ -188,12 +181,15 @@
     extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
     domain_id: DomainId,
 ) -&gt; sp_domains::OpaqueBundles&lt;Block, domain_runtime_primitives::Hash&gt; {
+    <span class="kw">let </span>successful_bundles = Domains::successful_bundles();
     extrinsics
         .into_iter()
         .filter_map(|uxt| <span class="kw">match </span>uxt.function {
             RuntimeCall::Domains(pallet_domains::Call::submit_bundle {
                 signed_opaque_bundle,
-            }) <span class="kw">if </span>signed_opaque_bundle.domain_id() == domain_id =&gt; {
+            }) <span class="kw">if </span>signed_opaque_bundle.domain_id() == domain_id
+                &amp;&amp; successful_bundles.contains(<span class="kw-2">&amp;</span>signed_opaque_bundle.hash()) =&gt;
+            {
                 <span class="prelude-val">Some</span>(signed_opaque_bundle.bundle)
             }
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
@@ -201,27 +197,19 @@
         .collect()
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>extract_stored_bundle_hashes() -&gt; Vec&lt;H256&gt; {
-    System::read_events_no_consensus()
-        .filter_map(|e| <span class="kw">match </span>e.event {
-            RuntimeEvent::Domains(pallet_domains::Event::BundleStored { bundle_hash, .. }) =&gt; {
-                <span class="prelude-val">Some</span>(bundle_hash)
-            }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-        })
-        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-}
-
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>extract_receipts(
     extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
     domain_id: DomainId,
 ) -&gt; Vec&lt;ExecutionReceipt&lt;BlockNumber, Hash, domain_runtime_primitives::Hash&gt;&gt; {
+    <span class="kw">let </span>successful_bundles = Domains::successful_bundles();
     extrinsics
         .into_iter()
         .filter_map(|uxt| <span class="kw">match </span>uxt.function {
             RuntimeCall::Domains(pallet_domains::Call::submit_bundle {
                 signed_opaque_bundle,
-            }) <span class="kw">if </span>signed_opaque_bundle.domain_id() == domain_id =&gt; {
+            }) <span class="kw">if </span>signed_opaque_bundle.domain_id() == domain_id
+                &amp;&amp; successful_bundles.contains(<span class="kw-2">&amp;</span>signed_opaque_bundle.hash()) =&gt;
+            {
                 <span class="prelude-val">Some</span>(signed_opaque_bundle.bundle.receipts)
             }
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
@@ -234,11 +222,13 @@
     extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
     domain_id: DomainId,
 ) -&gt; Vec&lt;FraudProof&lt;BlockNumber, Hash&gt;&gt; {
+    <span class="kw">let </span>successful_fraud_proofs = Receipts::successful_fraud_proofs();
     extrinsics
         .into_iter()
         .filter_map(|uxt| <span class="kw">match </span>uxt.function {
             RuntimeCall::Domains(pallet_domains::Call::submit_fraud_proof { fraud_proof })
-                <span class="kw">if </span>fraud_proof.domain_id() == domain_id =&gt;
+                <span class="kw">if </span>fraud_proof.domain_id() == domain_id
+                    &amp;&amp; successful_fraud_proofs.contains(<span class="kw-2">&amp;</span>fraud_proof.hash()) =&gt;
             {
                 <span class="prelude-val">Some</span>(fraud_proof)
             }
