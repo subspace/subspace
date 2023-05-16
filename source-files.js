@@ -36,6 +36,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
 "sc_network_test":["",[],["lib.rs"]],\
+"sc_subspace_block_relay":["",[["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","utils.rs"]],\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
