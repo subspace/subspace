@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["online_status_informer"],"mod":["multihash","piece_announcement","piece_provider"]};
+window.SIDEBAR_ITEMS = {"mod":["multihash","piece_announcement","piece_provider"]};
