@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["BundleError","Call","Error","Event","ExecutionReceiptError"],"mod":["dispatchables","storage_types"],"struct":["Pallet"],"trait":["Config"],"type":["Module"]};
+window.SIDEBAR_ITEMS = {"enum":["BundleError","Call","Error","Event","ExecutionReceiptError"],"mod":["dispatchables","storage_types","weights"],"struct":["Pallet"],"trait":["Config"],"type":["Module"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ExecutionPhase","FraudProof","VerificationError"],"struct":["BundleEquivocationProof","ImproperTransactionSortitionProof","InvalidStateTransitionProof","InvalidTransactionProof"]};
+window.SIDEBAR_ITEMS = {"enum":["ExecutionPhase","FraudProof","VerificationError"],"fn":["dummy_invalid_state_transition_proof"],"struct":["BundleEquivocationProof","ImproperTransactionSortitionProof","InvalidStateTransitionProof","InvalidTransactionProof"]};

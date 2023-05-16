@@ -19,7 +19,7 @@ var sourcesIndex = JSON.parse('{\
 "domain_test_service":["",[],["chain_spec.rs","core_domain.rs","lib.rs","system_domain.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_domain_registry":["",[],["lib.rs"]],\
-"pallet_domains":["",[],["lib.rs"]],\
+"pallet_domains":["",[],["lib.rs","weights.rs"]],\
 "pallet_executor_registry":["",[],["lib.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
