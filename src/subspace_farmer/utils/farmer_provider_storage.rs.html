@@ -158,6 +158,12 @@
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
 <a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::piece_cache::PieceCache;
 <span class="kw">use </span><span class="kw">crate</span>::utils::readers_and_pieces::ReadersAndPieces;
 <span class="kw">use </span>parking_lot::Mutex;
@@ -173,7 +179,8 @@
 <span class="kw">use </span>subspace_networking::ProviderStorage;
 <span class="kw">use </span>tracing::trace;
 
-<span class="kw">pub struct </span>FarmerProviderStorage&lt;PersistentProviderStorage, LocalPieceCache&gt; {
+<span class="attr">#[derive(Clone)]
+</span><span class="kw">pub struct </span>FarmerProviderStorage&lt;PersistentProviderStorage, LocalPieceCache: Clone&gt; {
     local_peer_id: PeerId,
     readers_and_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;ReadersAndPieces&gt;&gt;&gt;,
     persistent_provider_storage: PersistentProviderStorage,
@@ -184,6 +191,7 @@
     FarmerProviderStorage&lt;PersistentProviderStorage, LocalPieceCache&gt;
 <span class="kw">where
     </span>PersistentProviderStorage: ProviderStorage,
+    LocalPieceCache: PieceCache + Clone,
 {
     <span class="kw">pub fn </span>new(
         local_peer_id: PeerId,
@@ -204,14 +212,14 @@
     <span class="kw">for </span>FarmerProviderStorage&lt;PersistentProviderStorage, LocalPieceCache&gt;
 <span class="kw">where
     </span>PersistentProviderStorage: ProviderStorage,
-    LocalPieceCache: PieceCache,
+    LocalPieceCache: PieceCache + Clone,
 {
     <span class="kw">type </span>ProvidedIter&lt;<span class="lifetime">&#39;a</span>&gt; = <span class="kw">impl </span>Iterator&lt;Item = Cow&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;&gt;
     <span class="kw">where
         </span><span class="self">Self</span>:<span class="lifetime">&#39;a</span>;
 
     <span class="kw">fn </span>add_provider(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
         record: ProviderRecord,
     ) -&gt; subspace_networking::libp2p::kad::store::Result&lt;()&gt; {
         <span class="comment">// Local providers are implicit and should not be put into persistent storage
@@ -263,12 +271,15 @@
             .contains_piece(<span class="kw-2">&amp;</span>piece_index_hash)
             || <span class="self">self</span>.piece_cache.get_piece(key).is_some()
         {
-            provider_records.push(ProviderRecord {
+            <span class="comment">// Note: We store our own provider records locally without local addresses
+            // to avoid redundant storage and outdated addresses. Instead these are
+            // acquired on demand when returning a `ProviderRecord` for the local node.
+            </span>provider_records.push(ProviderRecord {
                 key: piece_index_hash.to_multihash().into(),
                 provider: <span class="self">self</span>.local_peer_id,
                 expires: <span class="prelude-val">None</span>,
-                addresses: Vec::new(), <span class="comment">// TODO: add address hints
-            </span>});
+                addresses: Vec::new(),
+            });
         }
 
         provider_records
@@ -298,22 +309,23 @@
             })
             .unwrap_or_default();
 
-        provided_by_cache
+        <span class="comment">// Note: We store our own provider records locally without local addresses
+        // to avoid redundant storage and outdated addresses. Instead these are
+        // acquired on demand when returning a `ProviderRecord` for the local node.
+        </span>provided_by_cache
             .into_iter()
             .chain(provided_by_plots)
-            .map(|key| {
-                ProviderRecord {
-                    key,
-                    provider: <span class="self">self</span>.local_peer_id,
-                    expires: <span class="prelude-val">None</span>,
-                    addresses: Vec::new(), <span class="comment">// TODO: add address hints
-                </span>}
+            .map(|key| ProviderRecord {
+                key,
+                provider: <span class="self">self</span>.local_peer_id,
+                expires: <span class="prelude-val">None</span>,
+                addresses: Vec::new(),
             })
             .map(Cow::Owned)
             .chain(<span class="self">self</span>.persistent_provider_storage.provided())
     }
 
-    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, peer_id: <span class="kw-2">&amp;</span>PeerId) {
+    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, peer_id: <span class="kw-2">&amp;</span>PeerId) {
         <span class="self">self</span>.persistent_provider_storage
             .remove_provider(key, peer_id);
     }

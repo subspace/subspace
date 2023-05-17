@@ -695,6 +695,18 @@
 <a href="#695" id="695">695</a>
 <a href="#696" id="696">696</a>
 <a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -707,13 +719,15 @@
 <span class="kw">use </span>libp2p::{Multiaddr, PeerId};
 <span class="kw">use </span>parity_db::{ColumnOptions, Db, Options};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::borrow::{Borrow, Cow};
-<span class="kw">use </span>std::collections::{hash_set, BTreeMap};
+<span class="kw">use </span>std::collections::BTreeMap;
 <span class="kw">use </span>std::iter;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant, SystemTime};
+<span class="kw">use </span>std::vec::IntoIter;
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
 
 <span class="comment">// Defines max provider records number. Each provider record is expected to be less than 1KB.
@@ -729,7 +743,7 @@
 <span class="kw">impl </span>ProviderStorage <span class="kw">for </span>VoidProviderStorage {
     <span class="kw">type </span>ProvidedIter&lt;<span class="lifetime">&#39;a</span>&gt; = iter::Empty&lt;Cow&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;&gt;;
 
-    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: ProviderRecord) -&gt; store::Result&lt;()&gt; {
+    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw">_</span>: ProviderRecord) -&gt; store::Result&lt;()&gt; {
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -741,18 +755,19 @@
         iter::empty()
     }
 
-    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: <span class="kw-2">&amp;</span>Key, <span class="kw">_</span>: <span class="kw-2">&amp;</span>PeerId) {}
+    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw">_</span>: <span class="kw-2">&amp;</span>Key, <span class="kw">_</span>: <span class="kw-2">&amp;</span>PeerId) {}
 }
 
 <span class="doccomment">/// Memory based provider records storage.
+</span><span class="attr">#[derive(Clone)]
 </span><span class="kw">pub struct </span>MemoryProviderStorage {
-    inner: store::MemoryStore,
+    inner: Arc&lt;Mutex&lt;store::MemoryStore&gt;&gt;,
 }
 
 <span class="kw">impl </span>MemoryProviderStorage {
     <span class="kw">pub fn </span>new(peer_id: PeerId) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            inner: store::MemoryStore::with_config(
+            inner: Arc::new(Mutex::new(store::MemoryStore::with_config(
                 peer_id,
                 MemoryStoreConfig {
                     max_records: <span class="number">0</span>,
@@ -760,35 +775,44 @@
                     max_providers_per_key: K_VALUE.get(),
                     max_provided_keys: MEMORY_STORE_PROVIDED_KEY_LIMIT,
                 },
-            ),
+            ))),
         }
     }
 }
 
 <span class="kw">impl </span>ProviderStorage <span class="kw">for </span>MemoryProviderStorage {
     <span class="kw">type </span>ProvidedIter&lt;<span class="lifetime">&#39;a</span>&gt; = iter::Map&lt;
-        hash_set::Iter&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;,
-        <span class="kw">fn</span>(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>ProviderRecord) -&gt; Cow&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;,
+        IntoIter&lt;ProviderRecord&gt;,
+        <span class="kw">fn</span>(ProviderRecord) -&gt; Cow&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;,
     &gt; <span class="kw">where </span><span class="self">Self</span>:<span class="lifetime">&#39;a</span>;
 
-    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, record: ProviderRecord) -&gt; store::Result&lt;()&gt; {
+    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, record: ProviderRecord) -&gt; store::Result&lt;()&gt; {
         <span class="macro">trace!</span>(<span class="string">&quot;New provider record added: {:?}&quot;</span>, record);
 
-        <span class="self">self</span>.inner.add_provider(record)
+        <span class="self">self</span>.inner.lock().add_provider(record)
     }
 
     <span class="kw">fn </span>providers(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key) -&gt; Vec&lt;ProviderRecord&gt; {
-        <span class="self">self</span>.inner.providers(key)
+        <span class="self">self</span>.inner.lock().providers(key)
     }
 
     <span class="kw">fn </span>provided(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span>::ProvidedIter&lt;<span class="lifetime">&#39;_</span>&gt; {
-        <span class="self">self</span>.inner.provided()
+        <span class="comment">// We copy records here. The downstream usage of this method is a relatively rare periodic job.
+        </span><span class="kw">let </span>records = {
+            <span class="self">self</span>.inner
+                .lock()
+                .provided()
+                .map(|item| item.into_owned())
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+        };
+
+        records.into_iter().map(Cow::Owned)
     }
 
-    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, provider: <span class="kw-2">&amp;</span>PeerId) {
+    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, provider: <span class="kw-2">&amp;</span>PeerId) {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>key, <span class="question-mark">?</span>provider, <span class="string">&quot;Provider record removed.&quot;</span>);
 
-        <span class="self">self</span>.inner.remove_provider(key, provider)
+        <span class="self">self</span>.inner.lock().remove_provider(key, provider)
     }
 }
 
@@ -908,7 +932,7 @@
     <span class="doccomment">/// Parity DB instance
     </span>db: Arc&lt;Db&gt;,
     <span class="doccomment">/// Maintains a heap to limit total item number.
-    </span>heap: UniqueRecordBinaryHeap,
+    </span>heap: Arc&lt;Mutex&lt;UniqueRecordBinaryHeap&gt;&gt;,
     <span class="doccomment">/// Local provider PeerID
     </span>local_peer_id: PeerId,
 }
@@ -972,13 +996,13 @@
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             db: Arc::new(db),
-            heap,
+            heap: Arc::new(Mutex::new(heap)),
             local_peer_id,
         })
     }
 
     <span class="kw">pub fn </span>size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.heap.size()
+        <span class="self">self</span>.heap.lock().size()
     }
 
     <span class="kw">fn </span>add_provider_to_db(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, rec: ParityDbProviderRecord) {
@@ -1089,7 +1113,7 @@
 <span class="kw">impl </span>ProviderStorage <span class="kw">for </span>ParityDbProviderStorage {
     <span class="kw">type </span>ProvidedIter&lt;<span class="lifetime">&#39;a</span>&gt; = ParityDbProviderRecordIterator&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">where </span><span class="self">Self</span>:<span class="lifetime">&#39;a</span>;
 
-    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, record: ProviderRecord) -&gt; store::Result&lt;()&gt; {
+    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, record: ProviderRecord) -&gt; store::Result&lt;()&gt; {
         <span class="kw">let </span>record_key = record.key.clone();
         <span class="kw">let </span>provider_peer_id = record.provider;
 
@@ -1103,7 +1127,7 @@
 
         <span class="self">self</span>.add_provider_to_db(<span class="kw-2">&amp;</span>record_key, db_rec);
 
-        <span class="kw">let </span>evicted_key = <span class="self">self</span>.heap.insert(record_key);
+        <span class="kw">let </span>evicted_key = { <span class="self">self</span>.heap.lock().insert(record_key) };
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(key) = evicted_key {
             <span class="macro">trace!</span>(<span class="question-mark">?</span>key, <span class="string">&quot;Record evicted from cache.&quot;</span>);
@@ -1115,7 +1139,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, provider: <span class="kw-2">&amp;</span>PeerId) {
+    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, provider: <span class="kw-2">&amp;</span>PeerId) {
         <span class="macro">debug!</span>(<span class="question-mark">?</span>key, %provider, <span class="string">&quot;Removing a provider from DB&quot;</span>);
 
         <span class="kw">if </span><span class="kw-2">*</span>provider == <span class="self">self</span>.local_peer_id {
@@ -1124,7 +1148,7 @@
 
         <span class="self">self</span>.remove_provider_from_db(key, provider.to_bytes());
 
-        <span class="self">self</span>.heap.remove(key);
+        <span class="self">self</span>.heap.lock().remove(key);
     }
 
     <span class="kw">fn </span>provided(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span>::ProvidedIter&lt;<span class="lifetime">&#39;_</span>&gt; {
@@ -1217,7 +1241,7 @@
 {
     <span class="kw">type </span>ProvidedIter&lt;<span class="lifetime">&#39;a</span>&gt; = <span class="kw">impl </span>Iterator&lt;Item = Cow&lt;<span class="lifetime">&#39;a</span>, ProviderRecord&gt;&gt; <span class="kw">where </span><span class="self">Self</span>:<span class="lifetime">&#39;a</span>;
 
-    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, record: ProviderRecord) -&gt; store::Result&lt;()&gt; {
+    <span class="kw">fn </span>add_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, record: ProviderRecord) -&gt; store::Result&lt;()&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             Either::Left(inner) =&gt; inner.add_provider(record),
             Either::Right(inner) =&gt; inner.add_provider(record),
@@ -1240,7 +1264,7 @@
         EitherProviderStorageIterator::new(iterator)
     }
 
-    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, peer_id: <span class="kw-2">&amp;</span>PeerId) {
+    <span class="kw">fn </span>remove_provider(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>Key, peer_id: <span class="kw-2">&amp;</span>PeerId) {
         <span class="kw">match </span><span class="self">self </span>{
             Either::Left(inner) =&gt; inner.remove_provider(key, peer_id),
             Either::Right(inner) =&gt; inner.remove_provider(key, peer_id),
