@@ -1157,6 +1157,7 @@
 <a href="#1157" id="1157">1157</a>
 <a href="#1158" id="1158">1158</a>
 <a href="#1159" id="1159">1159</a>
+<a href="#1160" id="1160">1160</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::NetworkingParametersRegistry;
 <span class="kw">use </span><span class="kw">crate</span>::behavior::{provider_storage, Behavior, Event};
 <span class="kw">use </span><span class="kw">crate</span>::create::temporary_bans::TemporaryBans;
@@ -1195,7 +1196,7 @@
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>tokio::time::Sleep;
-<span class="kw">use </span>tracing::{debug, error, info, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, trace, warn};
 
 <span class="doccomment">/// How many peers should node be connected to before boosting turns on.
 ///
@@ -1707,11 +1708,7 @@
                     <span class="string">&quot;Peer has different protocol version. Peer was banned.&quot;</span>,
                 );
 
-                <span class="self">self</span>.swarm.behaviour_mut().kademlia.remove_peer(<span class="kw-2">&amp;</span>peer_id);
-                <span class="self">self</span>.networking_parameters_registry
-                    .remove_all_known_peer_addresses(peer_id)
-                    .<span class="kw">await</span>;
-                <span class="self">self</span>.swarm.ban_peer_id(peer_id);
+                <span class="self">self</span>.ban_peer(peer_id).<span class="kw">await</span>;
             }
 
             <span class="kw">if </span>info.listen_addrs.len() &gt; <span class="number">30 </span>{
@@ -2274,20 +2271,25 @@
                 );
             }
             Command::BanPeer { peer_id } =&gt; {
-                <span class="comment">// Remove temporary ban if there is any before creating a permanent one
-                </span><span class="self">self</span>.temporary_bans.lock().remove(<span class="kw-2">&amp;</span>peer_id);
-
-                <span class="macro">info!</span>(<span class="question-mark">?</span>peer_id, <span class="string">&quot;Banning peer on network level&quot;</span>);
-                <span class="self">self</span>.swarm.ban_peer_id(peer_id);
-                <span class="self">self</span>.swarm.behaviour_mut().kademlia.remove_peer(<span class="kw-2">&amp;</span>peer_id);
-                <span class="self">self</span>.networking_parameters_registry
-                    .remove_all_known_peer_addresses(peer_id)
-                    .<span class="kw">await</span>;
+                <span class="self">self</span>.ban_peer(peer_id).<span class="kw">await</span>;
             }
             Command::Dial { address } =&gt; {
                 <span class="kw">let _ </span>= <span class="self">self</span>.swarm.dial(address);
             }
         }
+    }
+
+    <span class="kw">async fn </span>ban_peer(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer_id: PeerId) {
+        <span class="comment">// Remove temporary ban if there is any before creating a permanent one
+        </span><span class="self">self</span>.temporary_bans.lock().remove(<span class="kw-2">&amp;</span>peer_id);
+
+        <span class="macro">debug!</span>(<span class="question-mark">?</span>peer_id, <span class="string">&quot;Banning peer on network level&quot;</span>);
+
+        <span class="self">self</span>.swarm.behaviour_mut().block_list.block_peer(peer_id);
+        <span class="self">self</span>.swarm.behaviour_mut().kademlia.remove_peer(<span class="kw-2">&amp;</span>peer_id);
+        <span class="self">self</span>.networking_parameters_registry
+            .remove_all_known_peer_addresses(peer_id)
+            .<span class="kw">await</span>;
     }
 
     <span class="kw">fn </span>register_event_metrics&lt;E: Debug&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, swarm_event: <span class="kw-2">&amp;</span>SwarmEvent&lt;Event, E&gt;) {
