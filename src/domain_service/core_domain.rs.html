@@ -689,14 +689,21 @@
 <a href="#689" id="689">689</a>
 <a href="#690" id="690">690</a>
 <a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::core_domain_tx_pre_validator::CoreDomainTxPreValidator;
 <span class="kw">use </span><span class="kw">crate</span>::providers::{BlockImportProvider, RpcProvider};
 <span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
 <span class="kw">use </span>cross_domain_message_gossip::{DomainTxPoolSink, Message <span class="kw">as </span>GossipMessage};
 <span class="kw">use </span>domain_client_consensus_relay_chain::DomainBlockImport;
 <span class="kw">use </span>domain_client_executor::{
-    CoreDomainParentChain, CoreExecutor, CoreGossipMessageValidator, EssentialExecutorParams,
-    ExecutorStreams,
+    CoreDomainParentChain, CoreExecutor, CoreGossipMessageValidator, DomainImportNotifications,
+    EssentialExecutorParams, ExecutorStreams,
 };
 <span class="kw">use </span>domain_client_executor_gossip::ExecutorGossipParams;
 <span class="kw">use </span>domain_client_message_relayer::GossipMessageSink;
@@ -816,7 +823,7 @@
         + RelayerApi&lt;Block, AccountId, NumberFor&lt;Block&gt;&gt;,
     SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
     SClient::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
-        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
+        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash, Block::Hash&gt;,
     AccountId: Encode + Decode,
 {
     <span class="doccomment">/// Task manager.
@@ -897,7 +904,7 @@
     PBlock: BlockT,
     SDC: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
     SDC::Api: MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
-        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;,
+        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash, Block::Hash&gt;,
     BIMP: BlockImportProvider&lt;Block, FullClient&lt;Block, RuntimeApi, Executor&gt;&gt;,
 {
     <span class="kw">let </span>telemetry = config
@@ -985,6 +992,7 @@
     <span class="kw">pub </span>core_domain_config: DomainConfiguration&lt;AccountId&gt;,
     <span class="kw">pub </span>system_domain_client: Arc&lt;SClient&gt;,
     <span class="kw">pub </span>system_domain_sync_service: Arc&lt;SyncingService&lt;SBlock&gt;&gt;,
+    <span class="kw">pub </span>system_domain_block_import_notifications: DomainImportNotifications&lt;SBlock, PBlock&gt;,
     <span class="kw">pub </span>primary_chain_client: Arc&lt;PClient&gt;,
     <span class="kw">pub </span>primary_network_sync_oracle: Arc&lt;<span class="kw">dyn </span>SyncOracle + Send + Sync&gt;,
     <span class="kw">pub </span>select_chain: SC,
@@ -1043,14 +1051,18 @@
     </span>Block: BlockT,
     PBlock: BlockT,
     SBlock: BlockT,
-    SBlock::Hash: Into&lt;Block::Hash&gt; + From&lt;Block::Hash&gt;,
     Block::Hash: From&lt;H256&gt; + Into&lt;H256&gt; + FullCodec + TypeInfo + Unpin,
+    SBlock::Hash: Into&lt;Block::Hash&gt; + From&lt;Block::Hash&gt;,
+    NumberFor&lt;Block&gt;: From&lt;NumberFor&lt;PBlock&gt;&gt; + Into&lt;NumberFor&lt;PBlock&gt;&gt; + FullCodec + TypeInfo,
     NumberFor&lt;SBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt; + Into&lt;NumberFor&lt;Block&gt;&gt;,
     &lt;Block <span class="kw">as </span>BlockT&gt;::Header: Unpin,
-    NumberFor&lt;Block&gt;: FullCodec + TypeInfo,
-    SClient: HeaderBackend&lt;SBlock&gt; + ProvideRuntimeApi&lt;SBlock&gt; + ProofProvider&lt;SBlock&gt; + <span class="lifetime">&#39;static</span>,
+    SClient: HeaderBackend&lt;SBlock&gt;
+        + BlockBackend&lt;SBlock&gt;
+        + ProvideRuntimeApi&lt;SBlock&gt;
+        + ProofProvider&lt;SBlock&gt;
+        + <span class="lifetime">&#39;static</span>,
     SClient::Api: DomainCoreApi&lt;SBlock&gt;
-        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;
+        + SystemDomainApi&lt;SBlock, NumberFor&lt;PBlock&gt;, PBlock::Hash, Block::Hash&gt;
         + MessengerApi&lt;SBlock, NumberFor&lt;SBlock&gt;&gt;
         + RelayerApi&lt;SBlock, domain_runtime_primitives::AccountId, NumberFor&lt;SBlock&gt;&gt;
         + ReceiptsApi&lt;SBlock, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;,
@@ -1129,6 +1141,7 @@
         <span class="kw-2">mut </span>core_domain_config,
         system_domain_client,
         system_domain_sync_service,
+        system_domain_block_import_notifications,
         primary_chain_client,
         primary_network_sync_oracle,
         select_chain,
@@ -1239,6 +1252,7 @@
     <span class="kw">let </span>executor = CoreExecutor::new(
         domain_id,
         system_domain_client.clone(),
+        system_domain_block_import_notifications,
         Box::new(task_manager.spawn_essential_handle()),
         <span class="kw-2">&amp;</span>select_chain,
         EssentialExecutorParams::&lt;
@@ -1273,9 +1287,9 @@
 
     <span class="kw">let </span>gossip_message_validator =
         CoreGossipMessageValidator::&lt;<span class="kw">_</span>, SBlock, PBlock, <span class="kw">_</span>, SClient, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(
-            CoreDomainParentChain::&lt;<span class="kw">_</span>, SBlock, PBlock&gt;::new(
-                system_domain_client.clone(),
+            CoreDomainParentChain::&lt;<span class="kw">_</span>, SBlock, PBlock, <span class="kw">_</span>&gt;::new(
                 domain_id,
+                system_domain_client.clone(),
             ),
             client.clone(),
             Box::new(task_manager.spawn_handle()),

@@ -209,13 +209,42 @@
 <a href="#209" id="209">209</a>
 <a href="#210" id="210">210</a>
 <a href="#211" id="211">211</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::domain_block_processor::DomainBlockProcessor;
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::domain_block_processor::{DomainBlockProcessor, ReceiptsChecker};
 <span class="kw">use </span><span class="kw">crate</span>::domain_bundle_producer::DomainBundleProducer;
 <span class="kw">use </span><span class="kw">crate</span>::domain_bundle_proposer::DomainBundleProposer;
 <span class="kw">use </span><span class="kw">crate</span>::fraud_proof::FraudProofGenerator;
 <span class="kw">use </span><span class="kw">crate</span>::parent_chain::SystemDomainParentChain;
 <span class="kw">use </span><span class="kw">crate</span>::system_bundle_processor::SystemBundleProcessor;
-<span class="kw">use crate</span>::{active_leaves, EssentialExecutorParams, TransactionFor};
+<span class="kw">use crate</span>::{active_leaves, DomainImportNotifications, EssentialExecutorParams, TransactionFor};
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{FutureExt, Stream};
@@ -223,6 +252,7 @@
     AuxStore, BlockBackend, BlockImportNotification, BlockchainEvents, Finalizer, ProofProvider,
     StateBackendFor,
 };
+<span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_consensus::SelectChain;
@@ -239,6 +269,7 @@
 </span><span class="kw">pub struct </span>Executor&lt;Block, PBlock, Client, PClient, TransactionPool, Backend, E&gt;
 <span class="kw">where
     </span>Block: BlockT,
+    PBlock: BlockT,
 {
     primary_chain_client: Arc&lt;PClient&gt;,
     client: Arc&lt;Client&gt;,
@@ -247,12 +278,14 @@
     backend: Arc&lt;Backend&gt;,
     fraud_proof_generator: FraudProofGenerator&lt;Block, PBlock, Client, PClient, Backend, E&gt;,
     bundle_processor: SystemBundleProcessor&lt;Block, PBlock, Client, PClient, Backend, E&gt;,
+    domain_block_processor: DomainBlockProcessor&lt;Block, PBlock, Client, PClient, Backend, Client&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, PBlock, Client, PClient, TransactionPool, Backend, E&gt; Clone
     <span class="kw">for </span>Executor&lt;Block, PBlock, Client, PClient, TransactionPool, Backend, E&gt;
 <span class="kw">where
     </span>Block: BlockT,
+    PBlock: BlockT,
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -263,6 +296,7 @@
             backend: <span class="self">self</span>.backend.clone(),
             fraud_proof_generator: <span class="self">self</span>.fraud_proof_generator.clone(),
             bundle_processor: <span class="self">self</span>.bundle_processor.clone(),
+            domain_block_processor: <span class="self">self</span>.domain_block_processor.clone(),
         }
     }
 }
@@ -272,7 +306,7 @@
 <span class="kw">where
     </span>Block: BlockT,
     PBlock: BlockT,
-    NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
+    NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt; + Into&lt;NumberFor&lt;Block&gt;&gt;,
     PBlock::Hash: From&lt;Block::Hash&gt;,
     Client: HeaderBackend&lt;Block&gt;
         + BlockBackend&lt;Block&gt;
@@ -283,7 +317,7 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: DomainCoreApi&lt;Block&gt;
         + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;
-        + SystemDomainApi&lt;Block, NumberFor&lt;PBlock&gt;, PBlock::Hash&gt;
+        + SystemDomainApi&lt;Block, NumberFor&lt;PBlock&gt;, PBlock::Hash, Block::Hash&gt;
         + sp_block_builder::BlockBuilder&lt;Block&gt;
         + sp_api::ApiExt&lt;Block, StateBackend = StateBackendFor&lt;Backend, Block&gt;&gt;,
     <span class="kw">for</span>&lt;<span class="lifetime">&#39;b</span>&gt; <span class="kw-2">&amp;</span><span class="lifetime">&#39;b </span>Client: sc_consensus::BlockImport&lt;
@@ -344,7 +378,7 @@
             DomainId::SYSTEM,
             params.client.clone(),
             params.client.clone(),
-            parent_chain,
+            parent_chain.clone(),
             domain_bundle_proposer,
             params.bundle_sender,
             params.keystore.clone(),
@@ -362,11 +396,20 @@
             domain_id: DomainId::SYSTEM,
             client: params.client.clone(),
             primary_chain_client: params.primary_chain_client.clone(),
-            primary_network_sync_oracle: params.primary_network_sync_oracle,
             backend: params.backend.clone(),
-            fraud_proof_generator: fraud_proof_generator.clone(),
             domain_confirmation_depth: params.domain_confirmation_depth,
             block_import: params.block_import,
+            import_notification_sinks: Default::default(),
+        };
+
+        <span class="kw">let </span>receipts_checker = ReceiptsChecker {
+            domain_id: DomainId::SYSTEM,
+            client: params.client.clone(),
+            primary_chain_client: params.primary_chain_client.clone(),
+            fraud_proof_generator: fraud_proof_generator.clone(),
+            parent_chain,
+            primary_network_sync_oracle: params.primary_network_sync_oracle,
+            _phantom: std::marker::PhantomData,
         };
 
         <span class="kw">let </span>bundle_processor = SystemBundleProcessor::new(
@@ -374,7 +417,8 @@
             params.client.clone(),
             params.backend.clone(),
             params.keystore,
-            domain_block_processor,
+            receipts_checker,
+            domain_block_processor.clone(),
         );
 
         spawn_essential.spawn_essential_blocking(
@@ -401,6 +445,7 @@
             backend: params.backend,
             fraud_proof_generator,
             bundle_processor,
+            domain_block_processor,
         })
     }
 
@@ -408,6 +453,19 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; FraudProofGenerator&lt;Block, PBlock, Client, PClient, Backend, E&gt; {
         <span class="self">self</span>.fraud_proof_generator.clone()
+    }
+
+    <span class="doccomment">/// Get system domain block import notification stream.
+    ///
+    /// NOTE: Unlike `BlockchainEvents::import_notification_stream()`, this notification won&#39;t be
+    /// fired until the system domain block&#39;s receipt processing is done.
+    </span><span class="kw">pub fn </span>import_notification_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DomainImportNotifications&lt;Block, PBlock&gt; {
+        <span class="kw">let </span>(sink, stream) = tracing_unbounded(<span class="string">&quot;mpsc_domain_import_notification_stream&quot;</span>, <span class="number">100</span>);
+        <span class="self">self</span>.domain_block_processor
+            .import_notification_sinks
+            .lock()
+            .push(sink);
+        stream
     }
 
     <span class="doccomment">/// Processes the bundles extracted from the primary block.
