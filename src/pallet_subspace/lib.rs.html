@@ -1605,18 +1605,6 @@
 <a href="#1605" id="1605">1605</a>
 <a href="#1606" id="1606">1606</a>
 <a href="#1607" id="1607">1607</a>
-<a href="#1608" id="1608">1608</a>
-<a href="#1609" id="1609">1609</a>
-<a href="#1610" id="1610">1610</a>
-<a href="#1611" id="1611">1611</a>
-<a href="#1612" id="1612">1612</a>
-<a href="#1613" id="1613">1613</a>
-<a href="#1614" id="1614">1614</a>
-<a href="#1615" id="1615">1615</a>
-<a href="#1616" id="1616">1616</a>
-<a href="#1617" id="1617">1617</a>
-<a href="#1618" id="1618">1618</a>
-<a href="#1619" id="1619">1619</a>
 </pre></div><pre class="rust"><code><span class="attr">#![feature(assert_matches)]
 </span><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
@@ -1639,7 +1627,6 @@
 
 </span><span class="kw">extern crate </span>alloc;
 
-<span class="kw">mod </span>default_weights;
 <span class="kw">pub mod </span>equivocation;
 
 <span class="attr">#[cfg(test)]
@@ -1647,13 +1634,17 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
+<span class="attr">#[cfg(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>)]
+</span><span class="kw">mod </span>benchmarking;
+
+<span class="kw">pub mod </span>weights;
+
 <span class="kw">use </span>alloc::string::String;
 <span class="kw">use </span>codec::{Decode, Encode, MaxEncodedLen};
 <span class="kw">use </span>core::num::NonZeroU64;
 <span class="kw">use </span>equivocation::{HandleEquivocation, SubspaceEquivocationOffence};
 <span class="kw">use </span>frame_support::dispatch::{DispatchResult, DispatchResultWithPostInfo, Pays};
 <span class="kw">use </span>frame_support::traits::{Get, OnTimestampSet};
-<span class="kw">use </span>frame_support::weights::Weight;
 <span class="kw">use </span>frame_system::offchain::{SendTransactionTypes, SubmitTransaction};
 <span class="kw">use </span>log::{debug, error, warn};
 <span class="kw">pub use </span>pallet::<span class="kw-2">*</span>;
@@ -1685,12 +1676,6 @@
     check_reward_signature, derive_next_solution_range, derive_randomness, PieceCheckParams,
     VerifySolutionParams,
 };
-
-<span class="kw">pub trait </span>WeightInfo {
-    <span class="kw">fn </span>report_equivocation() -&gt; Weight;
-    <span class="kw">fn </span>store_segment_headers(segment_headers_count: usize) -&gt; Weight;
-    <span class="kw">fn </span>vote() -&gt; Weight;
-}
 
 <span class="doccomment">/// Trigger global randomness every interval.
 </span><span class="kw">pub trait </span>GlobalRandomnessIntervalTrigger {
@@ -1747,9 +1732,9 @@
 </span><span class="kw">mod </span>pallet {
     <span class="kw">use super</span>::{
         AuditChunkOffset, EraChangeTrigger, GlobalRandomnessIntervalTrigger, VoteVerificationData,
-        WeightInfo,
     };
     <span class="kw">use </span><span class="kw">crate</span>::equivocation::HandleEquivocation;
+    <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
     <span class="kw">use </span>frame_support::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>sp_consensus_slots::Slot;
@@ -1945,8 +1930,6 @@
 
     <span class="attr">#[pallet::error]
     </span><span class="kw">pub enum </span>Error&lt;T&gt; {
-        <span class="doccomment">/// An equivocation proof provided as part of an equivocation report is invalid.
-        </span>InvalidEquivocationProof,
         <span class="doccomment">/// A given equivocation report is valid but already previously reported.
         </span>DuplicateOffenceReport,
         <span class="doccomment">/// Solution range adjustment already enabled.
@@ -2114,7 +2097,7 @@
         <span class="doccomment">/// Submit new segment header to the blockchain. This is an inherent extrinsic and part of
         /// the Subspace consensus logic.
         </span><span class="attr">#[pallet::call_index(<span class="number">1</span>)]
-        #[pallet::weight((&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::store_segment_headers(segment_headers.len()), DispatchClass::Mandatory, Pays::No))]
+        #[pallet::weight((&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::store_segment_headers(segment_headers.len() <span class="kw">as </span>u32), DispatchClass::Mandatory, Pays::No))]
         </span><span class="kw">pub fn </span>store_segment_headers(
             origin: OriginFor&lt;T&gt;,
             segment_headers: Vec&lt;SegmentHeader&gt;,
@@ -2126,7 +2109,7 @@
         <span class="doccomment">/// Enable solution range adjustment after every era.
         /// Note: No effect on the solution range for the current era
         </span><span class="attr">#[pallet::call_index(<span class="number">2</span>)]
-        #[pallet::weight(T::DbWeight::get().writes(<span class="number">1</span>))]
+        #[pallet::weight(&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::enable_solution_range_adjustment())]
         </span><span class="kw">pub fn </span>enable_solution_range_adjustment(
             origin: OriginFor&lt;T&gt;,
             solution_range_override: <span class="prelude-ty">Option</span>&lt;u64&gt;,
@@ -2164,7 +2147,7 @@
 
         <span class="doccomment">/// Enable rewards for blocks and votes at specified block height.
         </span><span class="attr">#[pallet::call_index(<span class="number">4</span>)]
-        #[pallet::weight(T::DbWeight::get().writes(<span class="number">1</span>))]
+        #[pallet::weight(&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::enable_rewards())]
         </span><span class="kw">pub fn </span>enable_rewards(
             origin: OriginFor&lt;T&gt;,
             height: <span class="prelude-ty">Option</span>&lt;T::BlockNumber&gt;,
@@ -2176,7 +2159,7 @@
 
         <span class="doccomment">/// Enable storage access for all users.
         </span><span class="attr">#[pallet::call_index(<span class="number">5</span>)]
-        #[pallet::weight(T::DbWeight::get().writes(<span class="number">1</span>))]
+        #[pallet::weight(&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::enable_storage_access())]
         </span><span class="kw">pub fn </span>enable_storage_access(origin: OriginFor&lt;T&gt;) -&gt; DispatchResult {
             ensure_root(origin)<span class="question-mark">?</span>;
 
@@ -2187,7 +2170,7 @@
 
         <span class="doccomment">/// Enable storage access for all users.
         </span><span class="attr">#[pallet::call_index(<span class="number">6</span>)]
-        #[pallet::weight(T::DbWeight::get().writes(<span class="number">1</span>))]
+        #[pallet::weight(&lt;T <span class="kw">as </span>Config&gt;::WeightInfo::enable_authoring_by_anyone())]
         </span><span class="kw">pub fn </span>enable_authoring_by_anyone(origin: OriginFor&lt;T&gt;) -&gt; DispatchResult {
             ensure_root(origin)<span class="question-mark">?</span>;
 
@@ -2531,13 +2514,6 @@
     ) -&gt; DispatchResultWithPostInfo {
         <span class="kw">let </span>offender = equivocation_proof.offender.clone();
         <span class="kw">let </span>slot = equivocation_proof.slot;
-
-        <span class="comment">// validate the equivocation proof
-        </span><span class="kw">if </span>!sp_consensus_subspace::is_equivocation_proof_valid::&lt;<span class="kw">_</span>, T::AccountId&gt;(
-            equivocation_proof,
-        ) {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::InvalidEquivocationProof.into());
-        }
 
         <span class="kw">let </span>offence = SubspaceEquivocationOffence { slot, offender };
 

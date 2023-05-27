@@ -29,7 +29,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_receipts":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_runtime_configs":["",[],["lib.rs"]],\
-"pallet_subspace":["",[],["default_weights.rs","equivocation.rs","lib.rs"]],\
+"pallet_subspace":["",[],["equivocation.rs","lib.rs","weights.rs"]],\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_transporter":["",[],["lib.rs"]],\
 "sc_consensus_fraud_proof":["",[],["lib.rs"]],\
@@ -56,7 +56,7 @@ var sourcesIndex = JSON.parse('{\
 "subspace_node":["",[["core_domain",[],["cli.rs","core_eth_relay_chain_spec.rs","core_evm_chain_spec.rs","core_payments_chain_spec.rs"]],["system_domain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","core_domain.rs","import_blocks_from_dsn.rs","lib.rs","system_domain.rs"]],\
 "subspace_proof_of_space":["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
-"subspace_runtime":["",[["weights",[],["subspace.rs"]]],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs","weights.rs"]],\
+"subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
 "subspace_service":["",[["dsn",[["import_blocks",[],["piece_validator.rs","segment_headers.rs"]]],["import_blocks.rs","node_provider_storage.rs"]]],["dsn.rs","lib.rs","piece_cache.rs","rpc.rs","segment_headers.rs","tx_pre_validator.rs"]],\
 "subspace_solving":["",[],["lib.rs"]],\
