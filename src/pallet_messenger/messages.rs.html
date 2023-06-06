@@ -338,17 +338,29 @@
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
-    BalanceOf, ChannelId, Channels, Config, Error, Event, FeeModel, Inbox, InboxResponses, Nonce,
-    Outbox, OutboxMessageResult, OutboxResponses, Pallet, RelayerMessages,
+    BalanceOf, ChannelId, Channels, Config, Error, Event, FeeModel, InboxResponses, Nonce, Outbox,
+    OutboxMessageResult, Pallet, RelayerMessages,
 };
 <span class="kw">use </span>frame_support::ensure;
 <span class="kw">use </span>sp_domains::DomainId;
 <span class="kw">use </span>sp_messenger::messages::{
-    Message, Payload, ProtocolMessageRequest, ProtocolMessageResponse, RequestResponse,
-    VersionedPayload,
+    Message, MessageWeightTag, Payload, ProtocolMessageRequest, ProtocolMessageResponse,
+    RequestResponse, VersionedPayload,
 };
-<span class="kw">use </span>sp_runtime::traits::{CheckedMul, Get};
+<span class="kw">use </span>sp_runtime::traits::Get;
 <span class="kw">use </span>sp_runtime::{ArithmeticError, DispatchError, DispatchResult};
 
 <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
@@ -377,6 +389,8 @@
                     Error::&lt;T&gt;::OutboxFull
                 );
 
+                <span class="kw">let </span>weight_tag = MessageWeightTag::outbox(<span class="kw-2">&amp;</span>payload);
+
                 <span class="kw">let </span>next_outbox_nonce = channel.next_outbox_nonce;
                 <span class="comment">// add message to outbox
                 </span><span class="kw">let </span>msg = Message {
@@ -399,9 +413,11 @@
                 </span><span class="kw">let </span>relayer_id = <span class="self">Self</span>::next_relayer()<span class="question-mark">?</span>;
                 RelayerMessages::&lt;T&gt;::mutate(relayer_id.clone(), |maybe_messages| {
                     <span class="kw">let </span><span class="kw-2">mut </span>messages = maybe_messages.as_mut().cloned().unwrap_or_default();
-                    messages
-                        .outbox
-                        .push((dst_domain_id, (channel_id, next_outbox_nonce)));
+                    messages.outbox.push((
+                        dst_domain_id,
+                        (channel_id, next_outbox_nonce),
+                        weight_tag,
+                    ));
                     <span class="kw-2">*</span>maybe_messages = <span class="prelude-val">Some</span>(messages)
                 });
 
@@ -442,104 +458,113 @@
 
     <span class="doccomment">/// Process the incoming messages from given domain_id and channel_id.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>process_inbox_messages(
-        dst_domain_id: DomainId,
-        channel_id: ChannelId,
+        msg: Message&lt;BalanceOf&lt;T&gt;&gt;,
+        msg_weight_tag: MessageWeightTag,
     ) -&gt; DispatchResult {
+        <span class="kw">let </span>(dst_domain_id, channel_id, nonce) = (msg.src_domain_id, msg.channel_id, msg.nonce);
         <span class="kw">let </span>channel =
             Channels::&lt;T&gt;::get(dst_domain_id, channel_id).ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>next_inbox_nonce = channel.next_inbox_nonce;
 
-        <span class="comment">// TODO(ved): maybe a bound of number of messages to process in a single call?
-        </span><span class="kw">let </span><span class="kw-2">mut </span>messages_processed = <span class="number">0</span>;
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = Inbox::&lt;T&gt;::take((dst_domain_id, channel_id, next_inbox_nonce)) {
-            <span class="kw">let </span>response = <span class="kw">match </span>msg.payload {
-                <span class="comment">// process incoming protocol message.
-                </span>VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(req))) =&gt; {
-                    Payload::Protocol(RequestResponse::Response(
-                        <span class="self">Self</span>::process_incoming_protocol_message_req(dst_domain_id, channel_id, req),
-                    ))
-                }
+        <span class="macro">assert_eq!</span>(
+            nonce,
+            channel.next_inbox_nonce,
+            <span class="string">&quot;The message nonce and the channel next inbox nonce must be the same as checked in pre_dispatch; qed&quot;
+        </span>);
 
-                <span class="comment">// process incoming endpoint message.
-                </span>VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))) =&gt; {
-                    <span class="kw">let </span>response = <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) =
-                        T::get_endpoint_response_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
+        <span class="kw">let </span>response = <span class="kw">match </span>msg.payload {
+            <span class="comment">// process incoming protocol message.
+            </span>VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(req))) =&gt; {
+                Payload::Protocol(RequestResponse::Response(
+                    <span class="self">Self</span>::process_incoming_protocol_message_req(
+                        dst_domain_id,
+                        channel_id,
+                        req,
+                        <span class="kw-2">&amp;</span>msg_weight_tag,
+                    ),
+                ))
+            }
+
+            <span class="comment">// process incoming endpoint message.
+            </span>VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))) =&gt; {
+                <span class="kw">let </span>response = <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) =
+                    T::get_endpoint_response_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
+                {
+                    <span class="kw">if </span>msg_weight_tag != MessageWeightTag::EndpointRequest(req.dst_endpoint.clone())
                     {
-                        endpoint_handler.message(dst_domain_id, (channel_id, next_inbox_nonce), req)
-                    } <span class="kw">else </span>{
-                        <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
-                    };
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+                    }
+                    endpoint_handler.message(dst_domain_id, (channel_id, nonce), req)
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
+                };
 
-                    Payload::Endpoint(RequestResponse::Response(response))
-                }
+                Payload::Endpoint(RequestResponse::Response(response))
+            }
 
-                <span class="comment">// return error for all the remaining branches
-                </span>VersionedPayload::V0(payload) =&gt; <span class="kw">match </span>payload {
-                    Payload::Protocol(<span class="kw">_</span>) =&gt; Payload::Protocol(RequestResponse::Response(<span class="prelude-val">Err</span>(
-                        Error::&lt;T&gt;::InvalidMessagePayload.into(),
-                    ))),
-                    Payload::Endpoint(<span class="kw">_</span>) =&gt; Payload::Endpoint(RequestResponse::Response(<span class="prelude-val">Err</span>(
-                        Error::&lt;T&gt;::InvalidMessagePayload.into(),
-                    ))),
-                },
-            };
+            <span class="comment">// return error for all the remaining branches
+            </span>VersionedPayload::V0(payload) =&gt; <span class="kw">match </span>payload {
+                Payload::Protocol(<span class="kw">_</span>) =&gt; Payload::Protocol(RequestResponse::Response(<span class="prelude-val">Err</span>(
+                    Error::&lt;T&gt;::InvalidMessagePayload.into(),
+                ))),
+                Payload::Endpoint(<span class="kw">_</span>) =&gt; Payload::Endpoint(RequestResponse::Response(<span class="prelude-val">Err</span>(
+                    Error::&lt;T&gt;::InvalidMessagePayload.into(),
+                ))),
+            },
+        };
 
-            InboxResponses::&lt;T&gt;::insert(
-                (dst_domain_id, channel_id, next_inbox_nonce),
-                Message {
-                    src_domain_id: T::SelfDomainId::get(),
-                    dst_domain_id,
-                    channel_id,
-                    nonce: next_inbox_nonce,
-                    payload: VersionedPayload::V0(response),
-                    <span class="comment">// this nonce is not considered in response context.
-                    </span>last_delivered_message_response_nonce: <span class="prelude-val">None</span>,
-                },
-            );
+        <span class="kw">let </span>resp_payload = VersionedPayload::V0(response);
+        <span class="kw">let </span>weight_tag = MessageWeightTag::inbox_response(msg_weight_tag, <span class="kw-2">&amp;</span>resp_payload);
 
-            <span class="comment">// get the next relayer
-            </span><span class="kw">let </span>relayer_id = <span class="self">Self</span>::next_relayer()<span class="question-mark">?</span>;
-            RelayerMessages::&lt;T&gt;::mutate(relayer_id.clone(), |maybe_messages| {
-                <span class="kw">let </span><span class="kw-2">mut </span>messages = maybe_messages.as_mut().cloned().unwrap_or_default();
-                messages
-                    .inbox_responses
-                    .push((dst_domain_id, (channel_id, next_inbox_nonce)));
-                <span class="kw-2">*</span>maybe_messages = <span class="prelude-val">Some</span>(messages)
-            });
-
-            <span class="self">Self</span>::deposit_event(Event::InboxMessageResponse {
-                domain_id: dst_domain_id,
-                channel_id,
-                nonce: next_inbox_nonce,
-                relayer_id,
-            });
-
-            next_inbox_nonce = next_inbox_nonce
-                .checked_add(Nonce::one())
-                .ok_or(DispatchError::Arithmetic(ArithmeticError::Overflow))<span class="question-mark">?</span>;
-            messages_processed += <span class="number">1</span>;
-
-            <span class="comment">// reward relayers for relaying message responses to src_domain.
-            // clean any delivered inbox responses
-            </span><span class="self">Self</span>::distribute_rewards_for_delivered_message_responses(
+        InboxResponses::&lt;T&gt;::insert(
+            (dst_domain_id, channel_id, nonce),
+            Message {
+                src_domain_id: T::SelfDomainId::get(),
                 dst_domain_id,
                 channel_id,
-                msg.last_delivered_message_response_nonce,
-                <span class="kw-2">&amp;</span>channel.fee,
-            )<span class="question-mark">?</span>;
-        }
+                nonce,
+                payload: resp_payload,
+                <span class="comment">// this nonce is not considered in response context.
+                </span>last_delivered_message_response_nonce: <span class="prelude-val">None</span>,
+            },
+        );
 
-        <span class="kw">if </span>messages_processed &gt; <span class="number">0 </span>{
-            Channels::&lt;T&gt;::mutate(
-                dst_domain_id,
-                channel_id,
-                |maybe_channel| -&gt; DispatchResult {
-                    <span class="kw">let </span>channel = maybe_channel.as_mut().ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
-                    channel.next_inbox_nonce = next_inbox_nonce;
-                    <span class="prelude-val">Ok</span>(())
-                },
-            )<span class="question-mark">?</span>;
-        }
+        <span class="comment">// get the next relayer
+        </span><span class="kw">let </span>relayer_id = <span class="self">Self</span>::next_relayer()<span class="question-mark">?</span>;
+        RelayerMessages::&lt;T&gt;::mutate(relayer_id.clone(), |maybe_messages| {
+            <span class="kw">let </span><span class="kw-2">mut </span>messages = maybe_messages.as_mut().cloned().unwrap_or_default();
+            messages
+                .inbox_responses
+                .push((dst_domain_id, (channel_id, nonce), weight_tag));
+            <span class="kw-2">*</span>maybe_messages = <span class="prelude-val">Some</span>(messages)
+        });
+
+        Channels::&lt;T&gt;::mutate(
+            dst_domain_id,
+            channel_id,
+            |maybe_channel| -&gt; DispatchResult {
+                <span class="kw">let </span>channel = maybe_channel.as_mut().ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
+                channel.next_inbox_nonce = nonce
+                    .checked_add(Nonce::one())
+                    .ok_or(DispatchError::Arithmetic(ArithmeticError::Overflow))<span class="question-mark">?</span>;
+                <span class="prelude-val">Ok</span>(())
+            },
+        )<span class="question-mark">?</span>;
+
+        <span class="comment">// reward relayers for relaying message responses to src_domain.
+        // clean any delivered inbox responses
+        </span><span class="self">Self</span>::distribute_rewards_for_delivered_message_responses(
+            dst_domain_id,
+            channel_id,
+            msg.last_delivered_message_response_nonce,
+            <span class="kw-2">&amp;</span>channel.fee,
+        )<span class="question-mark">?</span>;
+
+        <span class="self">Self</span>::deposit_event(Event::InboxMessageResponse {
+            domain_id: dst_domain_id,
+            channel_id,
+            nonce,
+            relayer_id,
+        });
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -548,10 +573,21 @@
         domain_id: DomainId,
         channel_id: ChannelId,
         req: ProtocolMessageRequest&lt;BalanceOf&lt;T&gt;&gt;,
+        weight_tag: <span class="kw-2">&amp;</span>MessageWeightTag,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), DispatchError&gt; {
         <span class="kw">match </span>req {
-            ProtocolMessageRequest::ChannelOpen(<span class="kw">_</span>) =&gt; <span class="self">Self</span>::do_open_channel(domain_id, channel_id),
-            ProtocolMessageRequest::ChannelClose =&gt; <span class="self">Self</span>::do_close_channel(domain_id, channel_id),
+            ProtocolMessageRequest::ChannelOpen(<span class="kw">_</span>) =&gt; {
+                <span class="kw">if </span>weight_tag != <span class="kw-2">&amp;</span>MessageWeightTag::ProtocolChannelOpen {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+                }
+                <span class="self">Self</span>::do_open_channel(domain_id, channel_id)
+            }
+            ProtocolMessageRequest::ChannelClose =&gt; {
+                <span class="kw">if </span>weight_tag != <span class="kw-2">&amp;</span>MessageWeightTag::ProtocolChannelClose {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+                }
+                <span class="self">Self</span>::do_close_channel(domain_id, channel_id)
+            }
         }
     }
 
@@ -560,11 +596,15 @@
         channel_id: ChannelId,
         req: ProtocolMessageRequest&lt;BalanceOf&lt;T&gt;&gt;,
         resp: ProtocolMessageResponse,
+        weight_tag: <span class="kw-2">&amp;</span>MessageWeightTag,
     ) -&gt; DispatchResult {
         <span class="kw">match </span>(req, resp) {
             <span class="comment">// channel open request is accepted by dst_domain.
             // open channel on our end.
             </span>(ProtocolMessageRequest::ChannelOpen(<span class="kw">_</span>), <span class="prelude-val">Ok</span>(<span class="kw">_</span>)) =&gt; {
+                <span class="kw">if </span>weight_tag != <span class="kw-2">&amp;</span>MessageWeightTag::ProtocolChannelOpen {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+                }
                 <span class="self">Self</span>::do_open_channel(domain_id, channel_id)
             }
 
@@ -576,103 +616,87 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>process_outbox_message_responses(
-        dst_domain_id: DomainId,
-        channel_id: ChannelId,
+        resp_msg: Message&lt;BalanceOf&lt;T&gt;&gt;,
+        resp_msg_weight_tag: MessageWeightTag,
     ) -&gt; DispatchResult {
-        <span class="comment">// fetch the next message response nonce to process
-        // starts with nonce 0
-        </span><span class="kw">let </span>channel =
+        <span class="kw">let </span>(dst_domain_id, channel_id, nonce) =
+            (resp_msg.src_domain_id, resp_msg.channel_id, resp_msg.nonce);
+        <span class="kw">let </span>channel =
             Channels::&lt;T&gt;::get(dst_domain_id, channel_id).ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>last_message_response_nonce = channel.latest_response_received_message_nonce;
 
-        <span class="kw">let </span><span class="kw-2">mut </span>next_message_response_nonce = last_message_response_nonce
-            .and_then(|nonce| nonce.checked_add(Nonce::one()))
-            .unwrap_or(Nonce::zero());
+        <span class="macro">assert_eq!</span>(
+            nonce,
+            channel.latest_response_received_message_nonce
+                .and_then(|nonce| nonce.checked_add(Nonce::one()))
+                .unwrap_or(Nonce::zero()),
+            <span class="string">&quot;The message nonce and the channel last msg response nonce must be the same as checked in pre_dispatch; qed&quot;
+        </span>);
 
-        <span class="comment">// TODO(ved): maybe a bound of number of message responses to process in a single call?
-        </span><span class="kw">let </span><span class="kw-2">mut </span>messages_processed = <span class="number">0u32</span>;
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(resp_msg) =
-            OutboxResponses::&lt;T&gt;::take((dst_domain_id, channel_id, next_message_response_nonce))
-        {
-            <span class="comment">// fetch original request
-            </span><span class="kw">let </span>req_msg =
-                Outbox::&lt;T&gt;::take((dst_domain_id, channel_id, next_message_response_nonce))
-                    .ok_or(Error::&lt;T&gt;::MissingMessage)<span class="question-mark">?</span>;
+        <span class="comment">// fetch original request
+        </span><span class="kw">let </span>req_msg = Outbox::&lt;T&gt;::take((dst_domain_id, channel_id, nonce))
+            .ok_or(Error::&lt;T&gt;::MissingMessage)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>resp = <span class="kw">match </span>(req_msg.payload, resp_msg.payload) {
-                <span class="comment">// process incoming protocol outbox message response.
-                </span>(
-                    VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(req))),
-                    VersionedPayload::V0(Payload::Protocol(RequestResponse::Response(resp))),
-                ) =&gt; <span class="self">Self</span>::process_incoming_protocol_message_response(
-                    dst_domain_id,
-                    channel_id,
-                    req,
-                    resp,
-                ),
-
-                <span class="comment">// process incoming endpoint outbox message response.
-                </span>(
-                    VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))),
-                    VersionedPayload::V0(Payload::Endpoint(RequestResponse::Response(resp))),
-                ) =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) =
-                        T::get_endpoint_response_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
-                    {
-                        endpoint_handler.message_response(
-                            dst_domain_id,
-                            (channel_id, next_message_response_nonce),
-                            req,
-                            resp,
-                        )
-                    } <span class="kw">else </span>{
-                        <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
-                    }
-                }
-
-                (<span class="kw">_</span>, <span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(Error::&lt;T&gt;::InvalidMessagePayload.into()),
-            };
-
-            <span class="comment">// deposit event notifying the message status.
-            </span><span class="kw">match </span>resp {
-                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="self">Self</span>::deposit_event(Event::OutboxMessageResult {
-                    domain_id: dst_domain_id,
-                    channel_id,
-                    nonce: next_message_response_nonce,
-                    result: OutboxMessageResult::Ok,
-                }),
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="self">Self</span>::deposit_event(Event::OutboxMessageResult {
-                    domain_id: dst_domain_id,
-                    channel_id,
-                    nonce: next_message_response_nonce,
-                    result: OutboxMessageResult::Err(err),
-                }),
-            }
-
-            last_message_response_nonce = <span class="prelude-val">Some</span>(next_message_response_nonce);
-            next_message_response_nonce = next_message_response_nonce
-                .checked_add(Nonce::one())
-                .ok_or(DispatchError::Arithmetic(ArithmeticError::Overflow))<span class="question-mark">?</span>;
-            messages_processed += <span class="number">1</span>;
-        }
-
-        <span class="kw">if </span>messages_processed &gt; <span class="number">0 </span>{
-            <span class="comment">// distribute rewards to relayers for relaying the outbox messages.
-            </span><span class="kw">let </span>reward = BalanceOf::&lt;T&gt;::from(messages_processed)
-                .checked_mul(<span class="kw-2">&amp;</span>channel.fee.outbox_fee.relayer_pool_fee)
-                .ok_or(ArithmeticError::Overflow)<span class="question-mark">?</span>;
-
-            <span class="self">Self</span>::distribute_reward_to_relayers(reward)<span class="question-mark">?</span>;
-
-            Channels::&lt;T&gt;::mutate(
+        <span class="kw">let </span>resp = <span class="kw">match </span>(req_msg.payload, resp_msg.payload) {
+            <span class="comment">// process incoming protocol outbox message response.
+            </span>(
+                VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(req))),
+                VersionedPayload::V0(Payload::Protocol(RequestResponse::Response(resp))),
+            ) =&gt; <span class="self">Self</span>::process_incoming_protocol_message_response(
                 dst_domain_id,
                 channel_id,
-                |maybe_channel| -&gt; DispatchResult {
-                    <span class="kw">let </span>channel = maybe_channel.as_mut().ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
-                    channel.latest_response_received_message_nonce = last_message_response_nonce;
-                    <span class="prelude-val">Ok</span>(())
-                },
-            )<span class="question-mark">?</span>;
+                req,
+                resp,
+                <span class="kw-2">&amp;</span>resp_msg_weight_tag,
+            ),
+
+            <span class="comment">// process incoming endpoint outbox message response.
+            </span>(
+                VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))),
+                VersionedPayload::V0(Payload::Endpoint(RequestResponse::Response(resp))),
+            ) =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) = T::get_endpoint_response_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
+                {
+                    <span class="kw">if </span>resp_msg_weight_tag
+                        != MessageWeightTag::EndpointResponse(req.dst_endpoint.clone())
+                    {
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+                    }
+                    endpoint_handler.message_response(dst_domain_id, (channel_id, nonce), req, resp)
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
+                }
+            }
+
+            (<span class="kw">_</span>, <span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(Error::&lt;T&gt;::InvalidMessagePayload.into()),
+        };
+
+        <span class="comment">// distribute rewards to relayers for relaying the outbox messages.
+        </span><span class="self">Self</span>::distribute_reward_to_relayers(channel.fee.outbox_fee.relayer_pool_fee)<span class="question-mark">?</span>;
+
+        Channels::&lt;T&gt;::mutate(
+            dst_domain_id,
+            channel_id,
+            |maybe_channel| -&gt; DispatchResult {
+                <span class="kw">let </span>channel = maybe_channel.as_mut().ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
+                channel.latest_response_received_message_nonce = <span class="prelude-val">Some</span>(nonce);
+                <span class="prelude-val">Ok</span>(())
+            },
+        )<span class="question-mark">?</span>;
+
+        <span class="comment">// deposit event notifying the message status.
+        </span><span class="kw">match </span>resp {
+            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="self">Self</span>::deposit_event(Event::OutboxMessageResult {
+                domain_id: dst_domain_id,
+                channel_id,
+                nonce,
+                result: OutboxMessageResult::Ok,
+            }),
+            <span class="prelude-val">Err</span>(err) =&gt; <span class="self">Self</span>::deposit_event(Event::OutboxMessageResult {
+                domain_id: dst_domain_id,
+                channel_id,
+                nonce,
+                result: OutboxMessageResult::Err(err),
+            }),
         }
 
         <span class="prelude-val">Ok</span>(())

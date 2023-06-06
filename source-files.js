@@ -23,7 +23,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_executor_registry":["",[],["lib.rs","weights.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
-"pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs"]],\
+"pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs","weights.rs"]],\
 "pallet_object_store":["",[],["lib.rs"]],\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
@@ -31,7 +31,7 @@ var sourcesIndex = JSON.parse('{\
 "pallet_settlement":["",[],["lib.rs"]],\
 "pallet_subspace":["",[],["equivocation.rs","lib.rs","weights.rs"]],\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
-"pallet_transporter":["",[],["lib.rs"]],\
+"pallet_transporter":["",[],["lib.rs","weights.rs"]],\
 "sc_consensus_fraud_proof":["",[],["lib.rs"]],\
 "sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
