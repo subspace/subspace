@@ -322,10 +322,6 @@
 <a href="#322" id="322">322</a>
 <a href="#323" id="323">323</a>
 <a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::bundle_election_solver::{BundleElectionSolver, PreliminaryBundleSolution};
 <span class="kw">use </span><span class="kw">crate</span>::domain_bundle_proposer::DomainBundleProposer;
 <span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
@@ -337,9 +333,7 @@
 <span class="kw">use </span>sp_api::{NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
-<span class="kw">use </span>sp_domains::{
-    Bundle, BundleSolution, DomainId, ExecutorPublicKey, ExecutorSignature, SignedBundle,
-};
+<span class="kw">use </span>sp_domains::{Bundle, BundleSolution, DomainId, ExecutorPublicKey, ExecutorSignature};
 <span class="kw">use </span>sp_keystore::KeystorePtr;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, One, Saturating, Zero};
 <span class="kw">use </span>sp_runtime::RuntimeAppPublic;
@@ -347,11 +341,8 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>system_runtime_primitives::SystemDomainApi;
 
-<span class="kw">type </span>SignedOpaqueBundle&lt;Block, PBlock&gt; = sp_domains::SignedOpaqueBundle&lt;
-    NumberFor&lt;PBlock&gt;,
-    &lt;PBlock <span class="kw">as </span>BlockT&gt;::Hash,
-    &lt;Block <span class="kw">as </span>BlockT&gt;::Hash,
-&gt;;
+<span class="kw">type </span>OpaqueBundle&lt;Block, PBlock&gt; =
+    sp_domains::OpaqueBundle&lt;NumberFor&lt;PBlock&gt;, &lt;PBlock <span class="kw">as </span>BlockT&gt;::Hash, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DomainBundleProducer&lt;
     Block,
@@ -499,7 +490,7 @@
         <span class="self">self</span>,
         primary_info: (PBlock::Hash, NumberFor&lt;PBlock&gt;),
         slot_info: ExecutorSlotInfo,
-    ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;SignedOpaqueBundle&lt;Block, PBlock&gt;&gt;&gt; {
+    ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;OpaqueBundle&lt;Block, PBlock&gt;&gt;&gt; {
         <span class="kw">let </span>ExecutorSlotInfo {
             slot,
             global_challenge,
@@ -563,18 +554,61 @@
         </span>{
             <span class="macro">tracing::info!</span>(<span class="string">&quot;📦 Claimed bundle at slot {slot}&quot;</span>);
 
-            <span class="kw">let </span>bundle = <span class="self">self
-                </span>.domain_bundle_proposer
-                .propose_bundle_at(slot, primary_info, <span class="self">self</span>.parent_chain.clone())
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-
             <span class="kw">let </span>bundle_solution = <span class="self">self</span>.construct_bundle_solution(preliminary_bundle_solution)<span class="question-mark">?</span>;
 
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(sign_new_bundle::&lt;Block, PBlock&gt;(
-                bundle,
-                <span class="self">self</span>.keystore,
-                bundle_solution,
-            )<span class="question-mark">?</span>))
+            <span class="kw">let </span>bundle_author = bundle_solution
+                .proof_of_election()
+                .executor_public_key
+                .clone();
+
+            <span class="kw">let </span>(preliminary_bundle_header, receipts, extrinsics) = <span class="self">self
+                </span>.domain_bundle_proposer
+                .propose_bundle_at(
+                    bundle_solution,
+                    slot,
+                    primary_info,
+                    <span class="self">self</span>.parent_chain.clone(),
+                )
+                .<span class="kw">await</span><span class="question-mark">?</span>;
+
+            <span class="kw">let </span>to_sign = preliminary_bundle_header.hash();
+
+            <span class="kw">let </span>signature = <span class="self">self
+                </span>.keystore
+                .sr25519_sign(
+                    ExecutorPublicKey::ID,
+                    bundle_author.as_ref(),
+                    to_sign.as_ref(),
+                )
+                .map_err(|error| {
+                    sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                        <span class="string">&quot;Error occurred when signing the bundle: {error}&quot;
+                    </span>)))
+                })<span class="question-mark">?
+                </span>.ok_or_else(|| {
+                    sp_blockchain::Error::Application(Box::from(
+                        <span class="string">&quot;This should not happen as the existence of key was just checked&quot;</span>,
+                    ))
+                })<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>signature = ExecutorSignature::decode(<span class="kw-2">&amp;mut </span>signature.as_ref()).map_err(|err| {
+                sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                    <span class="string">&quot;Failed to decode the signature of bundle: {err}&quot;
+                </span>)))
+            })<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>bundle = Bundle {
+                header: preliminary_bundle_header.into_bundle_header(signature),
+                receipts,
+                extrinsics,
+            };
+
+            <span class="comment">// TODO: Re-enable the bundle gossip over X-Net when the compact bundle is supported.
+            // if let Err(e) = self.bundle_sender.unbounded_send(signed_bundle.clone()) {
+            // tracing::error!(error = ?e, &quot;Failed to send transaction bundle&quot;);
+            // }
+
+            </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bundle.into_opaque_bundle()))
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
         }
@@ -610,48 +644,6 @@
                 })
             }
         }
-    }
-}
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>sign_new_bundle&lt;Block: BlockT, PBlock: BlockT&gt;(
-    bundle: Bundle&lt;Block::Extrinsic, NumberFor&lt;PBlock&gt;, PBlock::Hash, Block::Hash&gt;,
-    keystore: KeystorePtr,
-    bundle_solution: BundleSolution&lt;Block::Hash&gt;,
-) -&gt; sp_blockchain::Result&lt;SignedOpaqueBundle&lt;Block, PBlock&gt;&gt; {
-    <span class="kw">let </span>to_sign = bundle.hash();
-    <span class="kw">let </span>bundle_author = bundle_solution
-        .proof_of_election()
-        .executor_public_key
-        .clone();
-    <span class="kw">match </span>keystore.sr25519_sign(
-        ExecutorPublicKey::ID,
-        bundle_author.as_ref(),
-        to_sign.as_ref(),
-    ) {
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signature)) =&gt; {
-            <span class="kw">let </span>signed_bundle = SignedBundle {
-                bundle,
-                bundle_solution,
-                signature: ExecutorSignature::decode(<span class="kw-2">&amp;mut </span>signature.as_ref()).map_err(|err| {
-                    sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
-                        <span class="string">&quot;Failed to decode the signature of bundle: {err}&quot;
-                    </span>)))
-                })<span class="question-mark">?</span>,
-            };
-
-            <span class="comment">// TODO: Re-enable the bundle gossip over X-Net when the compact bundle is supported.
-            // if let Err(e) = self.bundle_sender.unbounded_send(signed_bundle.clone()) {
-            // tracing::error!(error = ?e, &quot;Failed to send transaction bundle&quot;);
-            // }
-
-            </span><span class="prelude-val">Ok</span>(signed_bundle.into_signed_opaque_bundle())
-        }
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Err</span>(sp_blockchain::Error::Application(Box::from(
-            <span class="string">&quot;This should not happen as the existence of key was just checked&quot;</span>,
-        ))),
-        <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Err</span>(sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
-            <span class="string">&quot;Error occurred when signing the bundle: {error}&quot;
-        </span>)))),
     }
 }
 </code></pre></div></section></main></body></html>
