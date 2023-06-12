@@ -295,25 +295,6 @@
 <a href="#295" id="295">295</a>
 <a href="#296" id="296">296</a>
 <a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a>
-<a href="#300" id="300">300</a>
-<a href="#301" id="301">301</a>
-<a href="#302" id="302">302</a>
-<a href="#303" id="303">303</a>
-<a href="#304" id="304">304</a>
-<a href="#305" id="305">305</a>
-<a href="#306" id="306">306</a>
-<a href="#307" id="307">307</a>
-<a href="#308" id="308">308</a>
-<a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>std::collections::{BTreeSet, HashMap};
 <span class="kw">use </span>std::error::Error;
@@ -322,14 +303,9 @@
 <span class="kw">use </span>subspace_networking::{Node, SegmentHeaderRequest, SegmentHeaderResponse};
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
 
-<span class="kw">const </span>LAST_BLOCK_GET_RETRIES: u8 = <span class="number">5</span>;
-<span class="kw">const </span>ROOT_BLOCK_NUMBER_PER_REQUEST: u64 = <span class="number">1000</span>;
-<span class="doccomment">/// Minimum peers number to participate in segment header election.
-</span><span class="comment">// TODO: change the value
-</span><span class="kw">const </span>ROOT_BLOCK_CONSENSUS_MIN_SET: usize = <span class="number">2</span>;
-<span class="doccomment">/// Threshold for the segment header election success (percentage).
-</span><span class="comment">// TODO: change the value
-</span><span class="kw">const </span>ROOT_BLOCK_CONSENSUS_THRESHOLD: (usize, usize) = (<span class="number">51</span>, <span class="number">100</span>);
+<span class="kw">const </span>SEGMENT_HEADER_NUMBER_PER_REQUEST: u64 = <span class="number">1000</span>;
+<span class="doccomment">/// Initial number of peers to query for segment header
+</span><span class="kw">const </span>SEGMENT_HEADER_CONSENSUS_INITIAL_NODES: usize = <span class="number">20</span>;
 
 <span class="doccomment">/// Helps gathering segment headers from DSN
 </span><span class="kw">pub struct </span>SegmentHeaderHandler {
@@ -360,7 +336,7 @@
         <span class="kw">while </span>last_segment_header.segment_index() &gt; SegmentIndex::ZERO {
             <span class="kw">let </span>segment_indexes: Vec&lt;<span class="kw">_</span>&gt; = (SegmentIndex::ZERO..last_segment_header.segment_index())
                 .rev()
-                .take(ROOT_BLOCK_NUMBER_PER_REQUEST <span class="kw">as </span>usize)
+                .take(SEGMENT_HEADER_NUMBER_PER_REQUEST <span class="kw">as </span>usize)
                 .collect();
 
             <span class="kw">let </span>(peer_id, segment_headers) = <span class="self">self
@@ -394,13 +370,17 @@
     }
 
     <span class="doccomment">/// Return last segment header known to DSN and peers voted for it. We ask several peers for the
-    /// highest segment header known to them. Target segment header should be known to at least
-    /// ROOT_BLOCK_CONSENSUS_THRESHOLD among peer set with minimum size
-    /// of ROOT_BLOCK_CONSENSUS_MIN_SET peers.
+    /// highest segment header known to them. Target segment header should be known to the majority
+    /// of the peer set with minimum initial size of [`SEGMENT_HEADER_CONSENSUS_INITIAL_NODES`]
+    /// peers.
     </span><span class="kw">async fn </span>get_last_segment_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(SegmentHeader, Vec&lt;PeerId&gt;), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
-        <span class="kw">for </span>retry_attempt <span class="kw">in </span><span class="number">1</span>..=LAST_BLOCK_GET_RETRIES {
+        <span class="kw">for </span>(root_block_consensus_nodes, retry_attempt) <span class="kw">in </span>(<span class="number">1
+            </span>..=SEGMENT_HEADER_CONSENSUS_INITIAL_NODES)
+            .rev()
+            .zip(<span class="number">1_usize</span>..)
+        {
             <span class="macro">trace!</span>(%retry_attempt, <span class="string">&quot;Getting last segment header...&quot;</span>);
 
             <span class="comment">// Get random peers. Some of them could be bootstrap nodes with no support for
@@ -428,7 +408,7 @@
                         .send_generic_request(
                             peer_id,
                             SegmentHeaderRequest::LastSegmentHeaders {
-                                segment_header_number: ROOT_BLOCK_NUMBER_PER_REQUEST,
+                                segment_header_number: SEGMENT_HEADER_NUMBER_PER_REQUEST,
                             },
                         )
                         .<span class="kw">await</span>;
@@ -461,8 +441,13 @@
 
             <span class="kw">let </span>peer_count = peer_blocks.len();
 
-            <span class="kw">if </span>peer_count &lt; ROOT_BLOCK_CONSENSUS_MIN_SET {
-                <span class="macro">debug!</span>(%peer_count, <span class="string">&quot;Segment header consensus failed: not enough peers&quot;</span>);
+            <span class="kw">if </span>peer_count &lt; root_block_consensus_nodes {
+                <span class="macro">debug!</span>(
+                    %peer_count,
+                    %root_block_consensus_nodes,
+                    %retry_attempt,
+                    <span class="string">&quot;Segment header consensus requires more peers, will retry&quot;
+                </span>);
 
                 <span class="kw">continue</span>;
             }
@@ -482,49 +467,26 @@
             }
 
             <span class="kw">let </span><span class="kw-2">mut </span>segment_header_peers_iter = segment_header_peers.into_iter();
-            <span class="kw">let </span>(<span class="kw-2">mut </span>last_segment_header, <span class="kw-2">mut </span>last_segment_header_peers) = segment_header_peers_iter
-                .next()
-                .expect(
-                <span class="string">&quot;Not empty due to not empty list of peers with non empty list of segment headers \
-                    each; qed&quot;</span>,
-            );
-            <span class="kw">let </span><span class="kw-2">mut </span>last_share =
-                last_segment_header_peers.len() * ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">1 </span>/ peer_count;
+            <span class="kw">let </span>(<span class="kw-2">mut </span>best_segment_header, <span class="kw-2">mut </span>most_peers) =
+                segment_header_peers_iter.next().expect(
+                    <span class="string">&quot;Not empty due to not empty list of peers with non empty list of segment \
+                    headers each; qed&quot;</span>,
+                );
 
             <span class="kw">for </span>(segment_header, peers) <span class="kw">in </span>segment_header_peers_iter {
-                <span class="kw">if </span>segment_header.segment_index() &gt; last_segment_header.segment_index()
-                    || last_share &lt; ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">0
-                </span>{
-                    <span class="kw">let </span>share = peers.len() * ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">1 </span>/ peer_count;
-
-                    <span class="macro">trace!</span>(
-                        %share,
-                        required_share=%ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">0</span>,
-                        <span class="string">&quot;Segment headers share&quot;
-                    </span>);
-
-                    <span class="kw">if </span>share &gt;= ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">0 </span>{
-                        (last_segment_header, last_segment_header_peers) = (segment_header, peers);
-                        last_share = share;
-                    }
+                <span class="kw">if </span>peers.len() &gt; most_peers.len()
+                    || (peers.len() == most_peers.len()
+                        &amp;&amp; segment_header.segment_index() &gt; best_segment_header.segment_index())
+                {
+                    best_segment_header = segment_header;
+                    most_peers = peers;
                 }
             }
 
-            <span class="macro">debug!</span>(
-                %last_share,
-                required_share=%ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">0</span>,
-                <span class="question-mark">?</span>last_segment_header,
-                <span class="string">&quot;Best segment header selected&quot;
-            </span>);
-
-            <span class="kw">if </span>last_share &gt;= ROOT_BLOCK_CONSENSUS_THRESHOLD.<span class="number">0 </span>{
-                <span class="kw">return </span><span class="prelude-val">Ok</span>((last_segment_header, last_segment_header_peers));
-            }
-
-            <span class="macro">debug!</span>(retry_attempt, <span class="string">&quot;Failed attempt to get a segment header.&quot;</span>);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>((best_segment_header, most_peers));
         }
 
-        <span class="prelude-val">Err</span>(<span class="string">&quot;Segment header consensus failed: can&#39;t pass the threshold.&quot;</span>.into())
+        <span class="prelude-val">Err</span>(<span class="string">&quot;No peers found to sync from&quot;</span>.into())
     }
 
     <span class="doccomment">/// Validates segment headers and related segment indexes.

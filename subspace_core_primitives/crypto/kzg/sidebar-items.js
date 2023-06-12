@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["EMBEDDED_KZG_SETTINGS_BYTES"],"fn":["bytes_to_kzg_settings","embedded_kzg_settings"],"struct":["Commitment","Kzg","Polynomial","Witness"]};
+window.SIDEBAR_ITEMS = {"constant":["EMBEDDED_KZG_SETTINGS_BYTES","NUM_G1_POWERS","NUM_G2_POWERS"],"fn":["bytes_to_kzg_settings","embedded_kzg_settings"],"struct":["Commitment","Kzg","Polynomial","Witness"]};

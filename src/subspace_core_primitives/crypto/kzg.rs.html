@@ -580,6 +580,18 @@
 <a href="#580" id="580">580</a>
 <a href="#581" id="581">581</a>
 <a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for KZG commitment scheme
 
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;serde&quot;</span>)]
@@ -603,6 +615,7 @@
 <span class="kw">use </span>core::hash::{Hash, Hasher};
 <span class="kw">use </span>core::mem;
 <span class="kw">use </span>derive_more::{AsMut, AsRef, Deref, DerefMut, From, Into};
+<span class="kw">use </span>kzg::eip_4844::{BYTES_PER_G1, BYTES_PER_G2};
 <span class="kw">use </span>kzg::{FFTFr, FFTSettings, Fr, KZGSettings};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, EncodeLike, Input, MaxEncodedLen};
 <span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
@@ -612,23 +625,35 @@
 </span><span class="kw">use </span>spin::Mutex;
 <span class="kw">use </span>tracing::debug;
 
-<span class="doccomment">/// Embedded KZG settings as bytes, too big for `no_std` in most cases
+<span class="comment">// TODO: Update with final Ethereum parameters once KZG Summoning Ceremony is finished:
+//  https://ceremony.ethereum.org/
+</span><span class="doccomment">/// Embedded KZG settings as bytes, too big for `no_std` in most cases
+/// Generated with with following command (using current Ethereum KZG Summoning Ceremony):
+/// ```bash
+/// curl -s https://seq.ceremony.ethereum.org/info/current_state | jq &#39;.transcripts[3].powersOfTau&#39; | jq -r &#39;.G1Powers + .G2Powers | map(.[2:]) | join(&quot;&quot;)&#39; | xxd -r -p - eth-public-parameters.bin
+/// ```
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;embedded-kzg-settings&quot;</span>)]
-</span><span class="kw">pub const </span>EMBEDDED_KZG_SETTINGS_BYTES: <span class="kw-2">&amp;</span>[u8] = <span class="macro">include_bytes!</span>(<span class="string">&quot;kzg/test-public-parameters.bin&quot;</span>);
+</span><span class="kw">pub const </span>EMBEDDED_KZG_SETTINGS_BYTES: <span class="kw-2">&amp;</span>[u8] = <span class="macro">include_bytes!</span>(<span class="string">&quot;kzg/eth-public-parameters.bin&quot;</span>);
+<span class="doccomment">/// Number of G1 powers stored in [`EMBEDDED_KZG_SETTINGS_BYTES`]
+</span><span class="kw">pub const </span>NUM_G1_POWERS: usize = <span class="number">32_768</span>;
+<span class="doccomment">/// Number of G2 powers stored in [`EMBEDDED_KZG_SETTINGS_BYTES`]
+</span><span class="kw">pub const </span>NUM_G2_POWERS: usize = <span class="number">65</span>;
 
 <span class="comment">// Symmetric function is present in tests
 </span><span class="doccomment">/// Function turns bytes into `FsKZGSettings`, it is up to the user to ensure that bytes make sense,
 /// otherwise result can be very wrong (but will not panic).
-</span><span class="kw">pub fn </span>bytes_to_kzg_settings(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;FsKZGSettings, String&gt; {
-    <span class="comment">// 48 bytes per G1 and 96 bytes per G2;
-    </span><span class="kw">if </span>bytes.is_empty() || bytes.len() % (<span class="number">48 </span>+ <span class="number">96</span>) != <span class="number">0 </span>{
-        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">&quot;Bad bytes&quot;</span>.to_string());
+</span><span class="kw">pub fn </span>bytes_to_kzg_settings(
+    bytes: <span class="kw-2">&amp;</span>[u8],
+    num_g1_powers: usize,
+    num_g2_powers: usize,
+) -&gt; <span class="prelude-ty">Result</span>&lt;FsKZGSettings, String&gt; {
+    <span class="kw">if </span>bytes.len() != BYTES_PER_G1 * num_g1_powers + BYTES_PER_G2 * num_g2_powers {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">&quot;Invalid bytes length&quot;</span>.to_string());
     }
-    <span class="kw">let </span>secret_len = bytes.len() / (<span class="number">48 </span>+ <span class="number">96</span>);
 
-    <span class="kw">let </span>(secret_g1_bytes, secret_g2_bytes) = bytes.split_at(secret_len * <span class="number">48</span>);
+    <span class="kw">let </span>(secret_g1_bytes, secret_g2_bytes) = bytes.split_at(BYTES_PER_G1 * num_g1_powers);
     <span class="kw">let </span>secret_g1 = secret_g1_bytes
-        .chunks_exact(<span class="number">48</span>)
+        .chunks_exact(BYTES_PER_G1)
         .map(|bytes| {
             FsG1::from_bytes(
                 bytes
@@ -638,7 +663,7 @@
         })
         .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
     <span class="kw">let </span>secret_g2 = secret_g2_bytes
-        .chunks_exact(<span class="number">96</span>)
+        .chunks_exact(BYTES_PER_G2)
         .map(|bytes| {
             FsG2::from_bytes(
                 bytes
@@ -649,14 +674,14 @@
         .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 
     <span class="kw">let </span>fft_settings = FsFFTSettings::new(
-        secret_len
+        num_g1_powers
             .checked_sub(<span class="number">1</span>)
             .expect(<span class="string">&quot;Checked to be not empty above; qed&quot;</span>)
             .ilog2() <span class="kw">as </span>usize,
     )
     .expect(<span class="string">&quot;Scale is within allowed bounds; qed&quot;</span>);
 
-    <span class="comment">// Below is the same as `FsKZGSettings::new(&amp;s1, &amp;s2, secret_len, &amp;fft_settings)`, but without
+    <span class="comment">// Below is the same as `FsKZGSettings::new(&amp;s1, &amp;s2, num_g1_powers, &amp;fft_settings)`, but without
     // extra checks (parameters are static anyway) and without unnecessary allocations
     </span><span class="prelude-val">Ok</span>(FsKZGSettings {
         fs: fft_settings,
@@ -665,11 +690,10 @@
     })
 }
 
-<span class="doccomment">/// TODO: Test public parameters, must be replaced with proper public parameters later
-/// Embedded KZG settings
+<span class="doccomment">/// Embedded KZG settings
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;embedded-kzg-settings&quot;</span>)]
 </span><span class="kw">pub fn </span>embedded_kzg_settings() -&gt; FsKZGSettings {
-    bytes_to_kzg_settings(EMBEDDED_KZG_SETTINGS_BYTES)
+    bytes_to_kzg_settings(EMBEDDED_KZG_SETTINGS_BYTES, NUM_G1_POWERS, NUM_G2_POWERS)
         .expect(<span class="string">&quot;Static bytes are correct, there is a test for this; qed&quot;</span>)
 }
 
