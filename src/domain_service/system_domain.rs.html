@@ -550,37 +550,9 @@
 <a href="#550" id="550">550</a>
 <a href="#551" id="551">551</a>
 <a href="#552" id="552">552</a>
-<a href="#553" id="553">553</a>
-<a href="#554" id="554">554</a>
-<a href="#555" id="555">555</a>
-<a href="#556" id="556">556</a>
-<a href="#557" id="557">557</a>
-<a href="#558" id="558">558</a>
-<a href="#559" id="559">559</a>
-<a href="#560" id="560">560</a>
-<a href="#561" id="561">561</a>
-<a href="#562" id="562">562</a>
-<a href="#563" id="563">563</a>
-<a href="#564" id="564">564</a>
-<a href="#565" id="565">565</a>
-<a href="#566" id="566">566</a>
-<a href="#567" id="567">567</a>
-<a href="#568" id="568">568</a>
-<a href="#569" id="569">569</a>
-<a href="#570" id="570">570</a>
-<a href="#571" id="571">571</a>
-<a href="#572" id="572">572</a>
-<a href="#573" id="573">573</a>
-<a href="#574" id="574">574</a>
-<a href="#575" id="575">575</a>
-<a href="#576" id="576">576</a>
-<a href="#577" id="577">577</a>
-<a href="#578" id="578">578</a>
-<a href="#579" id="579">579</a>
-<a href="#580" id="580">580</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::system_domain_tx_pre_validator::SystemDomainTxPreValidator;
 <span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
-<span class="kw">use </span>cross_domain_message_gossip::{DomainTxPoolSink, Message <span class="kw">as </span>GossipMessage};
+<span class="kw">use </span>cross_domain_message_gossip::DomainTxPoolSink;
 <span class="kw">use </span>domain_client_block_preprocessor::runtime_api_full::RuntimeApiFull;
 <span class="kw">use </span>domain_client_executor::{
     EssentialExecutorParams, ExecutorStreams, SystemDomainParentChain, SystemExecutor,
@@ -590,7 +562,7 @@
 <span class="kw">use </span>domain_runtime_primitives::opaque::Block;
 <span class="kw">use </span>domain_runtime_primitives::{AccountId, Balance, DomainCoreApi, Hash};
 <span class="kw">use </span>futures::channel::mpsc;
-<span class="kw">use </span>futures::{Stream, StreamExt};
+<span class="kw">use </span>futures::Stream;
 <span class="kw">use </span>jsonrpsee::tracing;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
 <span class="kw">use </span>sc_client_api::{BlockBackend, BlockImportNotification, BlockchainEvents, StateBackendFor};
@@ -601,7 +573,6 @@
     SpawnTaskHandle, SpawnTasksParams, TFullBackend, TaskManager,
 };
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker, TelemetryWorkerHandle};
-<span class="kw">use </span>sc_transaction_pool_api::{InPoolTransaction, TransactionPool};
 <span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
 <span class="kw">use </span>sp_api::{ApiExt, BlockT, ConstructRuntimeApi, Metadata, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
@@ -609,7 +580,6 @@
 <span class="kw">use </span>sp_consensus::{SelectChain, SyncOracle};
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
-<span class="kw">use </span>sp_core::Encode;
 <span class="kw">use </span>sp_domains::transaction::PreValidationObjectApi;
 <span class="kw">use </span>sp_domains::{DomainId, ExecutorApi};
 <span class="kw">use </span>sp_messenger::{MessengerApi, RelayerApi};
@@ -979,7 +949,7 @@
     <span class="kw">let </span>transaction_pool = params.transaction_pool.clone();
     <span class="kw">let </span><span class="kw-2">mut </span>task_manager = params.task_manager;
     <span class="kw">let </span>(network_service, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
-        sc_service::build_network(BuildNetworkParams {
+        <span class="kw">crate</span>::build_network(BuildNetworkParams {
             config: <span class="kw-2">&amp;</span>system_domain_config.service_config,
             client: client.clone(),
             transaction_pool: transaction_pool.clone(),
@@ -1115,32 +1085,6 @@
         <span class="prelude-val">None</span>,
         Box::pin(system_domain_listener),
     );
-
-    spawn_essential.spawn_blocking(<span class="string">&quot;system-domain-transaction-gossip&quot;</span>, <span class="prelude-val">None</span>, {
-        Box::pin(<span class="kw">async move </span>{
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(hash) = transaction_pool.import_notification_stream().next().<span class="kw">await </span>{
-                <span class="kw">let </span>maybe_transaction = transaction_pool.ready_transaction(<span class="kw-2">&amp;</span>hash).and_then(
-                    <span class="comment">// Only propagable transactions should be resolved for network service.
-                    </span>|tx| {
-                        <span class="kw">if </span>tx.is_propagable() {
-                            <span class="prelude-val">Some</span>(tx.data().clone())
-                        } <span class="kw">else </span>{
-                            <span class="prelude-val">None
-                        </span>}
-                    },
-                );
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = maybe_transaction {
-                    <span class="kw">let </span>msg = GossipMessage {
-                        domain_id: DomainId::SYSTEM,
-                        encoded_data: tx.encode(),
-                    };
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(_e) = gossip_message_sink.unbounded_send(msg) {
-                        <span class="kw">return</span>;
-                    }
-                }
-            }
-        })
-    });
 
     <span class="kw">let </span>new_full = NewFullSystem {
         task_manager,
