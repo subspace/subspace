@@ -199,9 +199,23 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
+<span class="kw">use </span><span class="kw">crate</span>::sortition::{TransactionSelectError, TransactionSelector};
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::Encode;
+<span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>futures::{select, FutureExt};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend};
 <span class="kw">use </span>sc_transaction_pool_api::InPoolTransaction;
@@ -248,7 +262,7 @@
     PBlock: BlockT,
     NumberFor&lt;Block&gt;: Into&lt;NumberFor&lt;PBlock&gt;&gt;,
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + AuxStore + ProvideRuntimeApi&lt;Block&gt;,
-    Client::Api: BlockBuilder&lt;Block&gt;,
+    Client::Api: BlockBuilder&lt;Block&gt; + DomainCoreApi&lt;Block&gt;,
     PClient: HeaderBackend&lt;PBlock&gt;,
     TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = Block&gt;,
 {
@@ -271,6 +285,7 @@
         slot: Slot,
         primary_info: (PBlock::Hash, NumberFor&lt;PBlock&gt;),
         parent_chain: ParentChain,
+        tx_selector: TransactionSelector&lt;Block, Client&gt;,
     ) -&gt; sp_blockchain::Result&lt;ProposeBundleOutput&lt;Block, PBlock&gt;&gt;
     <span class="kw">where
         </span>ParentChainBlock: BlockT,
@@ -310,7 +325,16 @@
                 <span class="kw">break</span>;
             }
             <span class="kw">let </span>pending_tx_data = pending_tx.data().clone();
-            extrinsics.push(pending_tx_data);
+            <span class="kw">let </span>should_select_this_tx = tx_selector
+                .should_select_tx(parent_hash, pending_tx_data.clone())
+                .unwrap_or_else(|err| {
+                    <span class="comment">// Accept unsigned transactions like cross domain.
+                    </span><span class="macro">tracing::trace!</span>(<span class="string">&quot;propose bundle: sortition select failed: {err:?}&quot;</span>);
+                    <span class="macro">matches!</span>(err, TransactionSelectError::TxSignerNotFound)
+                });
+            <span class="kw">if </span>should_select_this_tx {
+                extrinsics.push(pending_tx_data);
+            }
         }
 
         <span class="kw">let </span>extrinsics_root = BlakeTwo256::ordered_trie_root(
