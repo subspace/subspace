@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"substrate_test_runtime_client":[["impl <a class=\"trait\" href=\"substrate_test_runtime_client/trait.GenesisInit.html\" title=\"trait substrate_test_runtime_client::GenesisInit\">GenesisInit</a> for <a class=\"struct\" href=\"substrate_test_runtime_client/struct.GenesisParameters.html\" title=\"struct substrate_test_runtime_client::GenesisParameters\">GenesisParameters</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

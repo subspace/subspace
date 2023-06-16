@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["additional_storage_with_genesis","insert_genesis_block"],"struct":["GenesisConfig"]};

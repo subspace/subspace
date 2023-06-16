@@ -35,7 +35,6 @@ var sourcesIndex = JSON.parse('{\
 "sc_consensus_fraud_proof":["",[],["lib.rs"]],\
 "sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
-"sc_network_test":["",[],["lib.rs"]],\
 "sc_subspace_block_relay":["",[["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","utils.rs"]],\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
@@ -66,9 +65,6 @@ var sourcesIndex = JSON.parse('{\
 "subspace_transaction_pool":["",[],["bundle_validator.rs","lib.rs"]],\
 "subspace_verification":["",[],["lib.rs"]],\
 "subspace_wasm_tools":["",[],["lib.rs"]],\
-"substrate_test_runtime":["",[],["genesismap.rs","lib.rs","system.rs"]],\
-"substrate_test_runtime_client":["",[],["block_builder_ext.rs","lib.rs","trait_tests.rs"]],\
-"substrate_test_runtime_transaction_pool":["",[],["lib.rs"]],\
 "system_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
 "system_domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "system_runtime_primitives":["",[],["lib.rs"]]\

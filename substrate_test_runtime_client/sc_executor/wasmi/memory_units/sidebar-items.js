@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["size_of"],"struct":["Bytes","Pages","Words"],"trait":["ByteSize","RoundUpTo"]};

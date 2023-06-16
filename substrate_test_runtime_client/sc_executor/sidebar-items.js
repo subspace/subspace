@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["WasmExecutionMethod","WasmtimeInstantiationStrategy"],"fn":["read_embedded_version","with_externalities_safe"],"mod":["error","sp_wasm_interface","wasmi"],"struct":["NativeElseWasmExecutor","NativeVersion","RuntimeVersion","WasmExecutor"],"trait":["Codec","Externalities","NativeExecutionDispatch","RuntimeVersionOf"]};

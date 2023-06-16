@@ -10,7 +10,6 @@
 "subspace_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"subspace_runtime/enum.OriginCaller.html\" title=\"enum subspace_runtime::OriginCaller\">OriginCaller</a>"]],
 "subspace_test_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"subspace_test_runtime/enum.OriginCaller.html\" title=\"enum subspace_test_runtime::OriginCaller\">OriginCaller</a>"]],
 "subspace_verification":[["impl MaxEncodedLen for <a class=\"struct\" href=\"subspace_verification/struct.PieceCheckParams.html\" title=\"struct subspace_verification::PieceCheckParams\">PieceCheckParams</a>"],["impl MaxEncodedLen for <a class=\"struct\" href=\"subspace_verification/struct.VerifySolutionParams.html\" title=\"struct subspace_verification::VerifySolutionParams\">VerifySolutionParams</a>"]],
-"substrate_test_runtime":[["impl MaxEncodedLen for <a class=\"struct\" href=\"substrate_test_runtime/struct.RuntimeOrigin.html\" title=\"struct substrate_test_runtime::RuntimeOrigin\">RuntimeOrigin</a>"]],
 "system_domain_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"system_domain_runtime/enum.OriginCaller.html\" title=\"enum system_domain_runtime::OriginCaller\">OriginCaller</a>"]],
 "system_domain_test_runtime":[["impl MaxEncodedLen for <a class=\"enum\" href=\"system_domain_test_runtime/enum.OriginCaller.html\" title=\"enum system_domain_test_runtime::OriginCaller\">OriginCaller</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
