@@ -1,6 +1,4 @@
 (function() {var implementors = {
-"core_eth_relay_domain_test_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"core_eth_relay_domain_test_runtime/enum.RuntimeCall.html\" title=\"enum core_eth_relay_domain_test_runtime::RuntimeCall\">RuntimeCall</a>"]],
-"core_eth_relay_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"core_eth_relay_runtime/enum.RuntimeCall.html\" title=\"enum core_eth_relay_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "core_evm_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"core_evm_runtime/enum.RuntimeCall.html\" title=\"enum core_evm_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "core_payments_domain_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"core_payments_domain_runtime/enum.RuntimeCall.html\" title=\"enum core_payments_domain_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "core_payments_domain_test_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"core_payments_domain_test_runtime/enum.RuntimeCall.html\" title=\"enum core_payments_domain_test_runtime::RuntimeCall\">RuntimeCall</a>"]],

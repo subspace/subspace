@@ -307,42 +307,13 @@
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a>
-<a href="#333" id="333">333</a>
-<a href="#334" id="334">334</a>
-<a href="#335" id="335">335</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::merkle_tree::{MerkleProof, Witness};
 <span class="kw">use crate</span>::{DomainId, ExecutorPublicKey, ProofOfElection, StakeWeight};
-<span class="kw">use </span>merlin::Transcript;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>scale_info::TypeInfo;
-<span class="kw">use </span>schnorrkel::vrf::{VRFOutput, VRFProof, VRF_OUTPUT_LENGTH};
-<span class="kw">use </span>schnorrkel::{SignatureError, SignatureResult};
+<span class="kw">use </span>sp_core::crypto::{VrfPublic, Wraps};
+<span class="kw">use </span>sp_core::sr25519::vrf::{VrfInput, VrfOutput, VrfSignature};
 <span class="kw">use </span>sp_core::H256;
-<span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
-</span><span class="kw">use </span>sp_keystore::vrf::{VRFTranscriptData, VRFTranscriptValue};
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Hash};
 <span class="kw">use </span>sp_std::vec::Vec;
 <span class="kw">use </span>sp_trie::{read_trie_value, LayoutV1, StorageProof};
@@ -357,25 +328,24 @@
 <span class="kw">type </span>LocalRandomness = [u8; core::mem::size_of::&lt;u128&gt;()];
 
 <span class="kw">fn </span>derive_local_randomness(
-    vrf_output: [u8; VRF_OUTPUT_LENGTH],
+    vrf_output: <span class="kw-2">&amp;</span>VrfOutput,
     public_key: <span class="kw-2">&amp;</span>ExecutorPublicKey,
     global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash,
-) -&gt; SignatureResult&lt;LocalRandomness&gt; {
-    <span class="kw">let </span>in_out = VRFOutput(vrf_output).attach_input_hash(
-        <span class="kw-2">&amp;</span>schnorrkel::PublicKey::from_bytes(public_key.as_ref())<span class="question-mark">?</span>,
-        make_local_randomness_transcript(global_challenge),
-    )<span class="question-mark">?</span>;
-
-    <span class="prelude-val">Ok</span>(in_out.make_bytes(LOCAL_RANDOMNESS_CONTEXT))
+) -&gt; <span class="prelude-ty">Result</span>&lt;LocalRandomness, parity_scale_codec::Error&gt; {
+    vrf_output.make_bytes(
+        LOCAL_RANDOMNESS_CONTEXT,
+        <span class="kw-2">&amp;</span>make_local_randomness_input(global_challenge),
+        public_key.as_ref(),
+    )
 }
 
 <span class="doccomment">/// Returns the domain-specific solution for the challenge of producing a bundle.
 </span><span class="kw">pub fn </span>derive_bundle_election_solution(
     domain_id: DomainId,
-    vrf_output: [u8; VRF_OUTPUT_LENGTH],
+    vrf_output: <span class="kw-2">&amp;</span>VrfOutput,
     public_key: <span class="kw-2">&amp;</span>ExecutorPublicKey,
     global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash,
-) -&gt; SignatureResult&lt;u128&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;u128, parity_scale_codec::Error&gt; {
     <span class="kw">let </span>local_randomness = derive_local_randomness(vrf_output, public_key, global_challenge)<span class="question-mark">?</span>;
     <span class="kw">let </span>local_domain_randomness =
         blake2b_256_hash_list(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>domain_id.to_le_bytes(), <span class="kw-2">&amp;</span>local_randomness]);
@@ -413,25 +383,12 @@
     election_solution &lt;= threshold
 }
 
-<span class="doccomment">/// Make a VRF transcript.
-</span><span class="kw">pub fn </span>make_local_randomness_transcript(global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash) -&gt; Transcript {
-    <span class="kw">let </span><span class="kw-2">mut </span>transcript = Transcript::new(VRF_TRANSCRIPT_LABEL);
-    transcript.append_message(<span class="string">b&quot;global challenge&quot;</span>, global_challenge);
-    transcript
-}
-
-<span class="doccomment">/// Make a VRF transcript data.
-</span><span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
-</span><span class="kw">pub fn </span>make_local_randomness_transcript_data(
-    global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash,
-) -&gt; VRFTranscriptData {
-    VRFTranscriptData {
-        label: VRF_TRANSCRIPT_LABEL,
-        items: <span class="macro">vec!</span>[(
-            <span class="string">&quot;global challenge&quot;</span>,
-            VRFTranscriptValue::Bytes(global_challenge.to_vec()),
-        )],
-    }
+<span class="doccomment">/// Make a VRF inout.
+</span><span class="kw">pub fn </span>make_local_randomness_input(global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash) -&gt; VrfInput {
+    VrfInput::new(
+        VRF_TRANSCRIPT_LABEL,
+        <span class="kw-2">&amp;</span>[(<span class="string">b&quot;global challenge&quot;</span>, global_challenge)],
+    )
 }
 
 <span class="kw">pub mod </span>well_known_keys {
@@ -496,8 +453,6 @@
 
 <span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
 </span><span class="kw">pub enum </span>VrfProofError {
-    <span class="doccomment">/// Can not construct the vrf public_key/output/proof from the raw bytes.
-    </span>VrfSignatureConstructionError,
     <span class="doccomment">/// Invalid vrf proof.
     </span>BadProof,
 }
@@ -505,22 +460,15 @@
 <span class="doccomment">/// Verify the vrf proof generated in the bundle election.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>verify_vrf_proof(
     public_key: <span class="kw-2">&amp;</span>ExecutorPublicKey,
-    vrf_output: <span class="kw-2">&amp;</span>[u8],
-    vrf_proof: <span class="kw-2">&amp;</span>[u8],
+    vrf_signature: <span class="kw-2">&amp;</span>VrfSignature,
     global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VrfProofError&gt; {
-    <span class="kw">let </span>public_key = schnorrkel::PublicKey::from_bytes(public_key.as_ref())
-        .map_err(|<span class="kw">_</span>| VrfProofError::VrfSignatureConstructionError)<span class="question-mark">?</span>;
-
-    public_key
-        .vrf_verify(
-            make_local_randomness_transcript(global_challenge),
-            <span class="kw-2">&amp;</span>VRFOutput::from_bytes(vrf_output)
-                .map_err(|<span class="kw">_</span>| VrfProofError::VrfSignatureConstructionError)<span class="question-mark">?</span>,
-            <span class="kw-2">&amp;</span>VRFProof::from_bytes(vrf_proof)
-                .map_err(|<span class="kw">_</span>| VrfProofError::VrfSignatureConstructionError)<span class="question-mark">?</span>,
-        )
-        .map_err(|<span class="kw">_</span>| VrfProofError::BadProof)<span class="question-mark">?</span>;
+    <span class="kw">if </span>!public_key.as_inner_ref().vrf_verify(
+        <span class="kw-2">&amp;</span>make_local_randomness_input(global_challenge).into(),
+        vrf_signature,
+    ) {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(VrfProofError::BadProof);
+    }
 
     <span class="prelude-val">Ok</span>(())
 }
@@ -579,7 +527,7 @@
     <span class="doccomment">/// Invalid merkle proof.
     </span>BadMerkleProof,
     <span class="doccomment">/// Failed to derive the bundle election solution.
-    </span>FailedToDeriveBundleElectionSolution(SignatureError),
+    </span>FailedToDeriveBundleElectionSolution(parity_scale_codec::Error),
     <span class="doccomment">/// Election solution does not satisfy the threshold.
     </span>InvalidElectionSolution,
 }
@@ -631,7 +579,7 @@
 
     verify_bundle_solution_threshold(
         <span class="kw-2">*</span>domain_id,
-        <span class="kw-2">*</span>vrf_output,
+        vrf_output,
         stake_weight,
         total_stake_weight,
         slot_probability,
@@ -644,7 +592,7 @@
 
 <span class="kw">pub fn </span>verify_bundle_solution_threshold(
     domain_id: DomainId,
-    vrf_output: [u8; VRF_OUTPUT_LENGTH],
+    vrf_output: <span class="kw-2">&amp;</span>VrfOutput,
     stake_weight: StakeWeight,
     total_stake_weight: StakeWeight,
     slot_probability: (u64, u64),

@@ -1,6 +1,4 @@
 (function() {var implementors = {
-"core_eth_relay_domain_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"core_eth_relay_domain_test_runtime/struct.SessionKeys.html\" title=\"struct core_eth_relay_domain_test_runtime::SessionKeys\">SessionKeys</a>"]],
-"core_eth_relay_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"core_eth_relay_runtime/struct.SessionKeys.html\" title=\"struct core_eth_relay_runtime::SessionKeys\">SessionKeys</a>"]],
 "core_evm_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"core_evm_runtime/struct.SessionKeys.html\" title=\"struct core_evm_runtime::SessionKeys\">SessionKeys</a>"]],
 "core_payments_domain_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"core_payments_domain_runtime/struct.SessionKeys.html\" title=\"struct core_payments_domain_runtime::SessionKeys\">SessionKeys</a>"]],
 "core_payments_domain_test_runtime":[["impl OpaqueKeys for <a class=\"struct\" href=\"core_payments_domain_test_runtime/struct.SessionKeys.html\" title=\"struct core_payments_domain_test_runtime::SessionKeys\">SessionKeys</a>"]],

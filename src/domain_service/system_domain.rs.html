@@ -545,11 +545,6 @@
 <a href="#545" id="545">545</a>
 <a href="#546" id="546">546</a>
 <a href="#547" id="547">547</a>
-<a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a>
-<a href="#552" id="552">552</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::system_domain_tx_pre_validator::SystemDomainTxPreValidator;
 <span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
 <span class="kw">use </span>cross_domain_message_gossip::DomainTxPoolSink;
@@ -570,7 +565,7 @@
 <span class="kw">use </span>sc_rpc_api::DenyUnsafe;
 <span class="kw">use </span>sc_service::{
     BuildNetworkParams, Configuration <span class="kw">as </span>ServiceConfiguration, NetworkStarter, PartialComponents,
-    SpawnTaskHandle, SpawnTasksParams, TFullBackend, TaskManager,
+    SpawnTasksParams, TFullBackend, TaskManager,
 };
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker, TelemetryWorkerHandle};
 <span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
@@ -709,7 +704,6 @@
         PBlock,
         PClient,
         NativeElseWasmExecutor&lt;Executor&gt;,
-        SpawnTaskHandle,
         Hash,
         VerifierClient&lt;FullClient&lt;Block, RuntimeApi, Executor&gt;, Block&gt;,
         CoreDomainExtrinsicsBuilder&lt;
@@ -783,12 +777,7 @@
         })
         .transpose()<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>executor = NativeElseWasmExecutor::new(
-        config.wasm_method,
-        config.default_heap_pages,
-        config.max_runtime_instances,
-        config.runtime_cache_size,
-    );
+    <span class="kw">let </span>executor = sc_service::new_native_or_wasm_executor(config);
 
     <span class="kw">let </span>(client, backend, keystore_container, task_manager) = sc_service::new_full_parts(
         config,
@@ -815,7 +804,6 @@
     <span class="kw">let </span>invalid_state_transition_proof_verifier = InvalidStateTransitionProofVerifier::new(
         primary_chain_client.clone(),
         executor.clone(),
-        task_manager.spawn_handle(),
         VerifierClient::new(client.clone()),
         domain_extrinsics_builder.clone(),
     );
@@ -873,7 +861,7 @@
 ///
 /// This is the actual implementation that is abstract over the executor and the runtime api.
 </span><span class="kw">pub async fn </span>new_full_system&lt;PBlock, PClient, SC, IBNS, CIBNS, NSNS, RuntimeApi, ExecutorDispatch&gt;(
-    <span class="kw-2">mut </span>system_domain_config: DomainConfiguration&lt;AccountId&gt;,
+    system_domain_config: DomainConfiguration&lt;AccountId&gt;,
     primary_chain_client: Arc&lt;PClient&gt;,
     primary_network_sync_oracle: Arc&lt;<span class="kw">dyn </span>SyncOracle + Send + Sync&gt;,
     select_chain: <span class="kw-2">&amp;</span>SC,
@@ -930,13 +918,7 @@
     <span class="comment">// TODO: Do we even need block announcement on system domain node?
     // system_domain_config.announce_block = false;
 
-    </span>system_domain_config
-        .service_config
-        .network
-        .extra_sets
-        .push(domain_client_executor_gossip::executor_gossip_peers_set_config());
-
-    <span class="kw">let </span>params = new_partial(
+    </span><span class="kw">let </span>params = new_partial(
         <span class="kw-2">&amp;</span>system_domain_config.service_config,
         primary_chain_client.clone(),
     )<span class="question-mark">?</span>;
@@ -948,9 +930,18 @@
 
     <span class="kw">let </span>transaction_pool = params.transaction_pool.clone();
     <span class="kw">let </span><span class="kw-2">mut </span>task_manager = params.task_manager;
+    <span class="kw">let </span><span class="kw-2">mut </span>net_config = sc_network::config::FullNetworkConfiguration::new(
+        <span class="kw-2">&amp;</span>system_domain_config.service_config.network,
+    );
+
+    net_config.add_notification_protocol(
+        domain_client_executor_gossip::executor_gossip_peers_set_config(),
+    );
+
     <span class="kw">let </span>(network_service, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
         <span class="kw">crate</span>::build_network(BuildNetworkParams {
             config: <span class="kw-2">&amp;</span>system_domain_config.service_config,
+            net_config,
             client: client.clone(),
             transaction_pool: transaction_pool.clone(),
             spawn_handle: task_manager.spawn_handle(),
@@ -1022,7 +1013,6 @@
             code_executor: code_executor.clone(),
             is_authority,
             keystore: params.keystore_container.keystore(),
-            spawner: Box::new(task_manager.spawn_handle()),
             bundle_sender: Arc::new(bundle_sender),
             executor_streams,
             domain_confirmation_depth,
