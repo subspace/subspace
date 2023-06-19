@@ -957,23 +957,6 @@
 <a href="#957" id="957">957</a>
 <a href="#958" id="958">958</a>
 <a href="#959" id="959">959</a>
-<a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
-<a href="#971" id="971">971</a>
-<a href="#972" id="972">972</a>
-<a href="#973" id="973">973</a>
-<a href="#974" id="974">974</a>
-<a href="#975" id="975">975</a>
-<a href="#976" id="976">976</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1009,7 +992,6 @@
 <span class="kw">use </span>cross_domain_message_gossip::cdm_gossip_peers_set_config;
 <span class="kw">use </span>derive_more::{Deref, DerefMut, Into};
 <span class="kw">use </span>domain_runtime_primitives::Hash <span class="kw">as </span>DomainHash;
-<span class="kw">use </span>dsn::start_dsn_archiver;
 <span class="kw">pub use </span>dsn::DsnConfig;
 <span class="kw">use </span>frame_system_rpc_runtime_api::AccountNonceApi;
 <span class="kw">use </span>futures::channel::oneshot;
@@ -1051,7 +1033,6 @@
 <span class="kw">use </span>sp_settlement::SettlementApi;
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>std::marker::PhantomData;
-<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::{Arc, Mutex};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{embedded_kzg_settings, Kzg};
 <span class="kw">use </span>subspace_fraud_proof::domain_extrinsics_builder::SystemDomainExtrinsicsBuilder;
@@ -1176,8 +1157,6 @@
     </span><span class="kw">pub </span>force_new_slot_notifications: bool,
     <span class="doccomment">/// Subspace networking (DSN).
     </span><span class="kw">pub </span>subspace_networking: SubspaceNetworking,
-    <span class="doccomment">/// Max number of segments that can be published concurrently.
-    </span><span class="kw">pub </span>segment_publish_concurrency: NonZeroUsize,
     <span class="doccomment">/// Enables DSN-sync on startup.
     </span><span class="kw">pub </span>sync_from_dsn: bool,
     <span class="doccomment">/// Use the block request handler implementation from subspace
@@ -1528,11 +1507,12 @@
 
     <span class="kw">let </span>segment_header_cache = SegmentHeaderCache::new(client.clone());
 
-    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking.clone() {
+    <span class="kw">let </span>(node, bootstrap_nodes, piece_cache) = <span class="kw">match </span>config.subspace_networking.clone() {
         SubspaceNetworking::Reuse {
             node,
             bootstrap_nodes,
-        } =&gt; (node, bootstrap_nodes),
+            <span class="comment">// TODO: Revisit piece cache creation when we get SDK requirements.
+        </span>} =&gt; (node, bootstrap_nodes, <span class="prelude-val">None</span>),
         SubspaceNetworking::Create {
             config: dsn_config,
             piece_cache_size,
@@ -1585,7 +1565,7 @@
             <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) = create_dsn_instance(
                 dsn_protocol_version,
                 dsn_config.clone(),
-                piece_cache,
+                piece_cache.clone(),
                 segment_header_cache.clone(),
             )<span class="question-mark">?</span>;
 
@@ -1614,24 +1594,9 @@
                 ),
             );
 
-            (node, dsn_config.bootstrap_nodes)
+            (node, dsn_config.bootstrap_nodes, <span class="prelude-val">Some</span>(piece_cache))
         }
     };
-
-    <span class="kw">let </span>dsn_archiving_fut = start_dsn_archiver(
-        subspace_link
-            .archived_segment_notification_stream()
-            .subscribe(),
-        node.clone(),
-        task_manager.spawn_handle(),
-        config.segment_publish_concurrency,
-    );
-
-    task_manager.spawn_essential_handle().spawn_essential(
-        <span class="string">&quot;dsn-archiver&quot;</span>,
-        <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-        Box::pin(dsn_archiving_fut.in_current_span()),
-    );
 
     <span class="kw">let </span>segment_header_archiving_fut = start_segment_header_archiver(
         segment_header_cache.clone(),
@@ -1919,6 +1884,7 @@
                     dsn_bootstrap_nodes: dsn_bootstrap_nodes.clone(),
                     subspace_link: subspace_link.clone(),
                     segment_headers_provider: segment_header_cache.clone(),
+                    piece_provider: piece_cache.clone(),
                 };
 
                 rpc::create_full(deps).map_err(Into::into)
