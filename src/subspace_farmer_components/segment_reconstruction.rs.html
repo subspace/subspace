@@ -96,13 +96,23 @@
 <a href="#96" id="96">96</a>
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::plotting::{PieceGetter, PieceGetterRetryPolicy};
 <span class="kw">use </span>futures::stream::FuturesOrdered;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
 <span class="kw">use </span>subspace_archiving::piece_reconstructor::{PiecesReconstructor, ReconstructorError};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
-<span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, RecordedHistorySegment};
+<span class="kw">use </span>subspace_core_primitives::{ArchivedHistorySegment, Piece, PieceIndex, RecordedHistorySegment};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
@@ -137,7 +147,7 @@
     </span><span class="kw">let </span>semaphore = <span class="kw-2">&amp;</span>semaphore;
     <span class="kw">let </span>acquired_pieces_counter = <span class="kw-2">&amp;</span>acquired_pieces_counter;
 
-    <span class="kw">let </span>pieces = segment_index
+    <span class="kw">let </span><span class="kw-2">mut </span>received_segment_pieces = segment_index
         .segment_piece_indexes_source_first()
         .map(|piece_index| <span class="kw">async move </span>{
             <span class="kw">let </span>_permit = <span class="kw">match </span>semaphore.acquire().<span class="kw">await </span>{
@@ -164,11 +174,13 @@
 
             <span class="kw">match </span>piece {
                 <span class="prelude-val">Ok</span>(piece) =&gt; {
-                    <span class="kw">if </span>piece.is_some() {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = piece {
                         acquired_pieces_counter.fetch_add(<span class="number">1</span>, Ordering::SeqCst);
-                    }
 
-                    piece
+                        <span class="prelude-val">Some</span>((piece_index, piece))
+                    } <span class="kw">else </span>{
+                        <span class="prelude-val">None
+                    </span>}
                 }
                 <span class="prelude-val">Err</span>(error) =&gt; {
                     <span class="macro">debug!</span>(<span class="question-mark">?</span>error, %piece_index, <span class="string">&quot;Failed to get piece&quot;</span>);
@@ -176,9 +188,17 @@
                 </span>}
             }
         })
-        .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;()
-        .collect::&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;&gt;()
-        .<span class="kw">await</span>;
+        .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;();
+
+    <span class="kw">let </span><span class="kw-2">mut </span>segment_pieces = <span class="macro">vec!</span>[<span class="prelude-val">None</span>::&lt;Piece&gt;; ArchivedHistorySegment::NUM_PIECES];
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_received_piece) = received_segment_pieces.next().<span class="kw">await </span>{
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((piece_index, received_piece)) = maybe_received_piece {
+            segment_pieces
+                .get_mut(piece_index.position() <span class="kw">as </span>usize)
+                .expect(<span class="string">&quot;Piece position is by definition within segment; qed&quot;</span>)
+                .replace(received_piece);
+        }
+    }
 
     <span class="kw">if </span>acquired_pieces_counter.load(Ordering::SeqCst) &lt; required_pieces_number {
         <span class="macro">error!</span>(%missing_piece_index, <span class="string">&quot;Recovering missing piece failed.&quot;</span>);
@@ -188,7 +208,7 @@
 
     <span class="kw">let </span>archiver = PiecesReconstructor::new(kzg).expect(<span class="string">&quot;Internal constructor call must succeed.&quot;</span>);
 
-    <span class="kw">let </span>result = archiver.reconstruct_piece(<span class="kw-2">&amp;</span>pieces, position <span class="kw">as </span>usize)<span class="question-mark">?</span>;
+    <span class="kw">let </span>result = archiver.reconstruct_piece(<span class="kw-2">&amp;</span>segment_pieces, position <span class="kw">as </span>usize)<span class="question-mark">?</span>;
 
     <span class="macro">info!</span>(%missing_piece_index, <span class="string">&quot;Recovering missing piece succeeded.&quot;</span>);
 
