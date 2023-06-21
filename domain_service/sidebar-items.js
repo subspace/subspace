@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["build_network","new_full_core","new_full_system"],"mod":["providers","rpc"],"struct":["CoreDomainParams","CoreDomainTxPreValidator","DomainConfiguration","NewFullCore","NewFullSystem"],"type":["CoreDomainExecutor","FullBackend","FullClient","FullPool"]};
+window.SIDEBAR_ITEMS = {"fn":["build_network","new_full_system"],"mod":["providers","rpc"],"struct":["DomainConfiguration","NewFullSystem"],"type":["FullBackend","FullClient","FullPool"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["CoreDomainNode","CoreDomainNodeBuilder","CorePaymentsDomainExecutorDispatch"],"type":["CoreDomainExecutor","CorePaymentsDomainNode"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["CoreDomainParentChain","CoreExecutor","CoreGossipMessageValidator","DomainBlockImportNotification","EssentialExecutorParams","ExecutorStreams","SystemDomainParentChain","SystemExecutor","SystemGossipMessageValidator"],"type":["DomainImportNotifications"]};
+window.SIDEBAR_ITEMS = {"struct":["CoreDomainParentChain","DomainBlockImportNotification","EssentialExecutorParams","ExecutorStreams","SystemDomainParentChain","SystemExecutor","SystemGossipMessageValidator"],"type":["DomainImportNotifications"]};

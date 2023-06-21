@@ -1,20 +1,18 @@
 var sourcesIndex = JSON.parse('{\
 "core_evm_runtime":["",[],["lib.rs","precompiles.rs","runtime.rs"]],\
-"core_payments_domain_runtime":["",[],["lib.rs","runtime.rs"]],\
-"core_payments_domain_test_runtime":["",[],["lib.rs","runtime.rs"]],\
 "cross_domain_message_gossip":["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_block_preprocessor":["",[],["inherents.rs","lib.rs","runtime_api.rs","runtime_api_full.rs","runtime_api_light.rs","xdm_verifier.rs"]],\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
-"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","core_bundle_processor.rs","core_domain_worker.rs","core_executor.rs","core_gossip_message_validator.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","parent_chain.rs","sortition.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs"]],\
+"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fraud_proof.rs","gossip_message_validator.rs","lib.rs","parent_chain.rs","sortition.rs","system_bundle_processor.rs","system_domain_worker.rs","system_executor.rs","system_gossip_message_validator.rs","utils.rs"]],\
 "domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
 "domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
-"domain_service":["",[],["core_domain.rs","core_domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs","system_domain.rs","system_domain_tx_pre_validator.rs"]],\
+"domain_service":["",[],["lib.rs","providers.rs","rpc.rs","system_domain.rs","system_domain_tx_pre_validator.rs"]],\
 "domain_test_primitives":["",[],["lib.rs"]],\
-"domain_test_service":["",[],["chain_spec.rs","core_domain.rs","lib.rs","system_domain.rs"]],\
+"domain_test_service":["",[],["chain_spec.rs","lib.rs","system_domain.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_domain_registry":["",[],["lib.rs","weights.rs"]],\
 "pallet_domains":["",[],["lib.rs","weights.rs"]],\
@@ -50,7 +48,7 @@ var sourcesIndex = JSON.parse('{\
 "subspace_farmer_components":["",[],["auditing.rs","file_ext.rs","lib.rs","piece_caching.rs","plotting.rs","proving.rs","reading.rs","sector.rs","segment_reconstruction.rs"]],\
 "subspace_fraud_proof":["",[],["domain_extrinsics_builder.rs","domain_runtime_code.rs","invalid_state_transition_proof.rs","invalid_transaction_proof.rs","lib.rs","verifier_api.rs"]],\
 "subspace_networking":["",[["behavior",[["provider_storage",[],["providers.rs"]]],["persistent_parameters.rs","provider_storage.rs"]],["create",[],["temporary_bans.rs","transport.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","peer_info.rs","piece_announcement.rs","piece_by_key.rs","pieces_by_range.rs","segment_header.rs"]],["reserved_peers",[],["handler.rs"]],["utils",[],["multihash.rs","piece_announcement.rs","piece_provider.rs","prometheus.rs","unique_record_binary_heap.rs"]]],["behavior.rs","create.rs","lib.rs","node.rs","node_runner.rs","request_handlers.rs","request_responses.rs","reserved_peers.rs","shared.rs","utils.rs"]],\
-"subspace_node":["",[["core_domain",[],["cli.rs","core_evm_chain_spec.rs","core_payments_chain_spec.rs"]],["system_domain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","core_domain.rs","import_blocks_from_dsn.rs","lib.rs","system_domain.rs"]],\
+"subspace_node":["",[["core_domain",[],["core_evm_chain_spec.rs"]],["system_domain",[],["chain_spec.rs","cli.rs"]]],["chain_spec.rs","chain_spec_utils.rs","core_domain.rs","import_blocks_from_dsn.rs","lib.rs","system_domain.rs"]],\
 "subspace_proof_of_space":["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
