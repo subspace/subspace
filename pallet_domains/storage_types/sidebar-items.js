@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["SuccessfulBundles"]};
+window.SIDEBAR_ITEMS = {"struct":["RuntimeRegistry","SuccessfulBundles"]};

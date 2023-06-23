@@ -390,10 +390,6 @@
 <a href="#390" id="390">390</a>
 <a href="#391" id="391">391</a>
 <a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the primary block.
 //!
@@ -416,15 +412,15 @@
 <span class="kw">pub mod </span>runtime_api_light;
 <span class="kw">pub mod </span>xdm_verifier;
 
-<span class="kw">use </span><span class="kw">crate</span>::runtime_api::{
-    CoreBundleConstructor, SetCodeConstructor, SignerExtractor, StateRootExtractor,
-};
+<span class="kw">use </span><span class="kw">crate</span>::inherents::construct_inherent_extrinsics;
+<span class="kw">use </span><span class="kw">crate</span>::runtime_api::{SetCodeConstructor, SignerExtractor, StateRootExtractor};
 <span class="kw">use </span><span class="kw">crate</span>::xdm_verifier::verify_xdm_with_primary_chain_client;
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>domain_runtime_primitives::opaque::AccountId;
 <span class="kw">use </span>rand::seq::SliceRandom;
 <span class="kw">use </span>rand::SeedableRng;
 <span class="kw">use </span>rand_chacha::ChaCha8Rng;
+<span class="kw">use </span>runtime_api::InherentExtrinsicConstructor;
 <span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
@@ -469,27 +465,25 @@
         sp_blockchain::Error::Backend(<span class="macro">format!</span>(<span class="string">&quot;BlockHeader of {block_hash:?} unavailable&quot;</span>))
     })<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>maybe_new_runtime = <span class="kw">if </span>header
+    <span class="comment">// TODO: Upgrade the domain runtime properly.
+    // This works under the assumption that the consensus chain runtime upgrade triggers a domain
+    // runtime upgrade, which is no longer valid.
+    </span><span class="kw">let </span>maybe_new_runtime = <span class="kw">if </span>header
         .digest()
         .logs
         .iter()
         .any(|item| <span class="kw-2">*</span>item == DigestItem::RuntimeEnvironmentUpdated)
     {
-        <span class="kw">let </span>system_domain_runtime = primary_chain_client
+        <span class="kw">let </span>new_domain_runtime = primary_chain_client
             .runtime_api()
-            .system_domain_wasm_bundle(block_hash)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>new_runtime = {
-            <span class="kw">if </span>domain_id.is_system() {
-                system_domain_runtime
-            } <span class="kw">else </span>{
-                <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+            .domain_runtime_code(block_hash, domain_id)<span class="question-mark">?
+            </span>.ok_or_else(|| {
+                sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
                     <span class="string">&quot;No new runtime code for {domain_id:?}&quot;
-                </span>))));
-            }
-        };
+                </span>)))
+            })<span class="question-mark">?</span>;
 
-        <span class="prelude-val">Some</span>(new_runtime)
+        <span class="prelude-val">Some</span>(new_domain_runtime.into())
     } <span class="kw">else </span>{
         <span class="prelude-val">None
     </span>};
@@ -615,14 +609,14 @@
     shuffled_extrinsics
 }
 
-<span class="kw">pub struct </span>SystemDomainBlockPreprocessor&lt;Block, PBlock, PClient, RuntimeApi&gt; {
+<span class="kw">pub struct </span>DomainBlockPreprocessor&lt;Block, PBlock, PClient, RuntimeApi&gt; {
     primary_chain_client: Arc&lt;PClient&gt;,
     runtime_api: RuntimeApi,
     _phantom_data: PhantomData&lt;(Block, PBlock)&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, PBlock, PClient, RuntimeApi: Clone&gt; Clone
-    <span class="kw">for </span>SystemDomainBlockPreprocessor&lt;Block, PBlock, PClient, RuntimeApi&gt;
+    <span class="kw">for </span>DomainBlockPreprocessor&lt;Block, PBlock, PClient, RuntimeApi&gt;
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -633,17 +627,16 @@
     }
 }
 
-<span class="kw">impl</span>&lt;Block, PBlock, PClient, RuntimeApi&gt;
-    SystemDomainBlockPreprocessor&lt;Block, PBlock, PClient, RuntimeApi&gt;
+<span class="kw">impl</span>&lt;Block, PBlock, PClient, RuntimeApi&gt; DomainBlockPreprocessor&lt;Block, PBlock, PClient, RuntimeApi&gt;
 <span class="kw">where
     </span>Block: BlockT,
     PBlock: BlockT,
     PBlock::Hash: From&lt;Block::Hash&gt;,
     NumberFor&lt;PBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
-    RuntimeApi: CoreBundleConstructor&lt;PBlock, Block&gt;
-        + SignerExtractor&lt;Block&gt;
+    RuntimeApi: SignerExtractor&lt;Block&gt;
         + StateRootExtractor&lt;Block&gt;
-        + SetCodeConstructor&lt;Block&gt;,
+        + SetCodeConstructor&lt;Block&gt;
+        + InherentExtrinsicConstructor&lt;Block&gt;,
     PClient: HeaderBackend&lt;PBlock&gt;
         + BlockBackend&lt;PBlock&gt;
         + ProvideRuntimeApi&lt;PBlock&gt;
@@ -685,31 +678,30 @@
                 primary_hash,
             )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(system_bundles, core_bundles) = <span class="self">self
+        <span class="kw">let </span>bundles = <span class="self">self
             </span>.primary_chain_client
             .runtime_api()
-            .extract_system_bundles(primary_hash, primary_extrinsics)<span class="question-mark">?</span>;
+            .extract_successful_bundles(primary_hash, primary_extrinsics)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>origin_system_extrinsics = compile_own_domain_bundles::&lt;Block, PBlock&gt;(system_bundles);
+        <span class="kw">let </span>extrinsics = compile_own_domain_bundles::&lt;Block, PBlock&gt;(bundles);
 
-        <span class="kw">let </span>extrinsics = <span class="self">self
-            </span>.runtime_api
-            .construct_submit_core_bundle_extrinsics(domain_hash, core_bundles)<span class="question-mark">?
-            </span>.into_iter()
-            .map(|uxt| {
-                &lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;::decode(<span class="kw-2">&amp;mut </span>uxt.as_slice())
-                    .expect(<span class="string">&quot;Internally constructed extrinsic must be valid; qed&quot;</span>)
-            })
-            .chain(origin_system_extrinsics)
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-
-        <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = deduplicate_and_shuffle_extrinsics(
+        <span class="kw">let </span>extrinsics_in_bundle = deduplicate_and_shuffle_extrinsics(
             domain_hash,
             <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
             extrinsics,
             shuffling_seed,
         )
         .map(|exts| <span class="self">self</span>.filter_invalid_xdm_extrinsics(domain_hash, exts))<span class="question-mark">?</span>;
+
+        <span class="comment">// Fetch inherent extrinsics
+        </span><span class="kw">let </span><span class="kw-2">mut </span>extrinsics = construct_inherent_extrinsics(
+            <span class="kw-2">&amp;</span><span class="self">self</span>.primary_chain_client,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
+            primary_hash,
+            domain_hash,
+        )<span class="question-mark">?</span>;
+
+        extrinsics.extend(extrinsics_in_bundle);
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(new_runtime) = maybe_new_runtime {
             <span class="kw">let </span>encoded_set_code = <span class="self">self

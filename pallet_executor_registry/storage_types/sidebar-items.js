@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["Authorities","AuthoritiesRoot","Executors","KeyOwner","NextKey","SlotProbability","TotalActiveExecutors","TotalActiveStake","TotalStakeWeight"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["SystemDomainExecutorDispatch","SystemDomainNode","SystemDomainNodeBuilder"],"type":["Backend","SClient","SystemCodeExecutor","SystemExecutor"]};

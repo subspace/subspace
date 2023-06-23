@@ -1,5 +1,3 @@
 (function() {var implementors = {
-"core_evm_runtime":[["impl <a class=\"trait\" href=\"pallet_messenger/pallet/trait.Config.html\" title=\"trait pallet_messenger::pallet::Config\">Config</a> for <a class=\"struct\" href=\"core_evm_runtime/struct.Runtime.html\" title=\"struct core_evm_runtime::Runtime\">Runtime</a>"]],
-"system_domain_runtime":[["impl <a class=\"trait\" href=\"pallet_messenger/pallet/trait.Config.html\" title=\"trait pallet_messenger::pallet::Config\">Config</a> for <a class=\"struct\" href=\"system_domain_runtime/struct.Runtime.html\" title=\"struct system_domain_runtime::Runtime\">Runtime</a>"]],
-"system_domain_test_runtime":[["impl <a class=\"trait\" href=\"pallet_messenger/pallet/trait.Config.html\" title=\"trait pallet_messenger::pallet::Config\">Config</a> for <a class=\"struct\" href=\"system_domain_test_runtime/struct.Runtime.html\" title=\"struct system_domain_test_runtime::Runtime\">Runtime</a>"]]
+"evm_domain_runtime":[["impl <a class=\"trait\" href=\"pallet_messenger/pallet/trait.Config.html\" title=\"trait pallet_messenger::pallet::Config\">Config</a> for <a class=\"struct\" href=\"evm_domain_runtime/struct.Runtime.html\" title=\"struct evm_domain_runtime::Runtime\">Runtime</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Subcommand","SystemDomainSubcommand"],"struct":["AccountId32ToAccountId20Converter","Cli","ExecutorDispatch","ImportBlocksFromDsnCmd","PurgeChainCmd","SystemDomainCli"]};
+window.SIDEBAR_ITEMS = {"enum":["DomainSubcommand","Subcommand"],"struct":["AccountId32ToAccountId20Converter","Cli","DomainCli","ExecutorDispatch","ImportBlocksFromDsnCmd","PurgeChainCmd"]};

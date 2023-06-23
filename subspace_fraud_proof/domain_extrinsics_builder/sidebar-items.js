@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["SystemDomainExtrinsicsBuilder"],"trait":["BuildDomainExtrinsics"]};
+window.SIDEBAR_ITEMS = {"struct":["DomainExtrinsicsBuilder"],"trait":["BuildDomainExtrinsics"]};

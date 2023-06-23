@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["UncheckedExtrinsic"],"type":["AccountId","Block","BlockId","Header"]};
