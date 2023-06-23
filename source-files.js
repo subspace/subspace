@@ -48,7 +48,7 @@ var sourcesIndex = JSON.parse('{\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
-"subspace_service":["",[["dsn",[["import_blocks",[],["piece_validator.rs","segment_headers.rs"]]],["import_blocks.rs","node_provider_storage.rs"]]],["dsn.rs","lib.rs","metrics.rs","piece_cache.rs","rpc.rs","segment_headers.rs","tx_pre_validator.rs"]],\
+"subspace_service":["",[["dsn",[["import_blocks",[],["piece_validator.rs","segment_headers.rs"]]],["import_blocks.rs","node_provider_storage.rs"]]],["dsn.rs","lib.rs","metrics.rs","piece_cache.rs","rpc.rs","segment_headers.rs","sync_from_dsn.rs","tx_pre_validator.rs"]],\
 "subspace_solving":["",[],["lib.rs"]],\
 "subspace_test_client":["",[],["chain_spec.rs","lib.rs"]],\
 "subspace_test_runtime":["",[],["lib.rs"]],\

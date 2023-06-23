@@ -961,6 +961,37 @@
 <a href="#961" id="961">961</a>
 <a href="#962" id="962">962</a>
 <a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -985,6 +1016,7 @@
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>rpc;
 <span class="kw">pub mod </span>segment_headers;
+<span class="kw">mod </span>sync_from_dsn;
 <span class="kw">pub mod </span>tx_pre_validator;
 
 <span class="kw">use </span><span class="kw">crate</span>::dsn::import_blocks::initial_block_import_from_dsn;
@@ -1007,7 +1039,7 @@
 <span class="kw">use </span>sc_client_api::{
     BlockBackend, BlockchainEvents, ExecutorProvider, HeaderBackend, StateBackendFor,
 };
-<span class="kw">use </span>sc_consensus::{BlockImport, DefaultImportQueue};
+<span class="kw">use </span>sc_consensus::{BlockImport, DefaultImportQueue, ImportQueue};
 <span class="kw">use </span>sc_consensus_slots::SlotProportion;
 <span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
 <span class="kw">use </span>sc_consensus_subspace::{
@@ -1015,6 +1047,7 @@
     RewardSigningNotification, SubspaceLink, SubspaceParams,
 };
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
+<span class="kw">use </span>sc_network::NetworkService;
 <span class="kw">use </span>sc_service::error::Error <span class="kw">as </span>ServiceError;
 <span class="kw">use </span>sc_service::{Configuration, NetworkStarter, PartialComponents, SpawnTasksParams, TaskManager};
 <span class="kw">use </span>sc_subspace_block_relay::{build_consensus_relay, NetworkWrapper};
@@ -1408,7 +1441,7 @@
     <span class="doccomment">/// Chain selection rule.
     </span><span class="kw">pub </span>select_chain: FullSelectChain,
     <span class="doccomment">/// Network service.
-    </span><span class="kw">pub </span>network_service: Arc&lt;sc_network::NetworkService&lt;Block, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
+    </span><span class="kw">pub </span>network_service: Arc&lt;NetworkService&lt;Block, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
     <span class="doccomment">/// Sync service.
     </span><span class="kw">pub </span>sync_service: Arc&lt;sc_network_sync::SyncingService&lt;Block&gt;&gt;,
     <span class="doccomment">/// RPC handlers.
@@ -1509,7 +1542,9 @@
         other: (block_import, subspace_link, <span class="kw-2">mut </span>telemetry, <span class="kw-2">mut </span>bundle_validator),
     } = partial_components;
 
-    <span class="kw">let </span>segment_header_cache = SegmentHeaderCache::new(client.clone());
+    <span class="kw">let </span>segment_header_cache = SegmentHeaderCache::new(client.clone()).map_err(|error| {
+        Error::Other(<span class="macro">format!</span>(<span class="string">&quot;Failed to instantiate segment header cache: {error}&quot;</span>).into())
+    })<span class="question-mark">?</span>;
 
     <span class="kw">let </span>(node, bootstrap_nodes, piece_cache) = <span class="kw">match </span>config.subspace_networking.clone() {
         SubspaceNetworking::Reuse {
@@ -1676,7 +1711,8 @@
         .spawn_essential_handle()
         .spawn_essential_blocking(<span class="string">&quot;subspace-archiver&quot;</span>, <span class="prelude-val">None</span>, Box::pin(subspace_archiver));
 
-    <span class="kw">if </span>config.sync_from_dsn {
+    <span class="comment">// TODO: This prevents SIGINT from working properly
+    </span><span class="kw">if </span>config.sync_from_dsn {
         <span class="kw">let </span><span class="kw-2">mut </span>imported_blocks = <span class="number">0</span>;
 
         <span class="comment">// Repeat until no new blocks are imported
@@ -1697,22 +1733,25 @@
             imported_blocks += new_imported_blocks;
 
             <span class="macro">info!</span>(
-                <span class="string">&quot;🎉 Imported {} blocks, best #{}/#{}&quot;</span>,
+                <span class="string">&quot;🎉 Imported {} blocks from DSN, current best #{}/#{}&quot;</span>,
                 imported_blocks,
                 client.info().best_number,
                 client.info().best_hash
             );
         }
 
-        <span class="macro">info!</span>(
-            <span class="string">&quot;🎉 Imported {} blocks, best #{}/#{}, check against reliable sources to make sure it is a \
-            block on canonical chain&quot;</span>,
-            imported_blocks,
-            client.info().best_number,
-            client.info().best_hash
-        );
+        <span class="kw">if </span>imported_blocks &gt; <span class="number">0 </span>{
+            <span class="macro">info!</span>(
+                <span class="string">&quot;🎉 Imported {} blocks from DSN, best #{}/#{}, check against reliable sources to \
+                make sure it is a block on canonical chain&quot;</span>,
+                imported_blocks,
+                client.info().best_number,
+                client.info().best_hash
+            );
+        }
     }
 
+    <span class="kw">let </span>import_queue_service = import_queue.service();
     <span class="kw">let </span>network_wrapper = Arc::new(NetworkWrapper::default());
     <span class="kw">let </span>block_relay = <span class="kw">if </span>config.enable_subspace_block_relay {
         <span class="prelude-val">Some</span>(build_consensus_relay(
@@ -1738,8 +1777,31 @@
             warp_sync_params: <span class="prelude-val">None</span>,
             block_relay,
         })<span class="question-mark">?</span>;
+
     <span class="kw">if </span>config.enable_subspace_block_relay {
         network_wrapper.set(network_service.clone());
+    }
+    <span class="kw">if </span>config.sync_from_dsn {
+        <span class="kw">let </span>(observer, worker) = sync_from_dsn::create_observer_and_worker(
+            Arc::clone(<span class="kw-2">&amp;</span>network_service),
+            node.clone(),
+            Arc::clone(<span class="kw-2">&amp;</span>client),
+            import_queue_service,
+        );
+        task_manager
+            .spawn_handle()
+            .spawn(<span class="string">&quot;observer&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;sync-from-dsn&quot;</span>), observer);
+        task_manager
+            .spawn_essential_handle()
+            .spawn_essential_blocking(
+                <span class="string">&quot;worker&quot;</span>,
+                <span class="prelude-val">Some</span>(<span class="string">&quot;sync-from-dsn&quot;</span>),
+                Box::pin(<span class="kw">async move </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = worker.<span class="kw">await </span>{
+                        <span class="macro">error!</span>(%error, <span class="string">&quot;Sync from DSN exited with an error&quot;</span>);
+                    }
+                }),
+            );
     }
 
     <span class="kw">let </span>sync_oracle = sync_service.clone();

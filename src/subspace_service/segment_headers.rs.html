@@ -107,6 +107,36 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::{Stream, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
@@ -164,16 +194,35 @@
     <span class="kw">const </span>KEY_PREFIX: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;segment-headers-cache&quot;</span>;
 
     <span class="doccomment">/// Create new instance.
-    </span><span class="kw">pub fn </span>new(aux_store: Arc&lt;AS&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(aux_store: Arc&lt;AS&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+        <span class="kw">let </span>instance = <span class="self">Self </span>{
             aux_store,
             max_segment_index: Default::default(),
+        };
+
+        <span class="comment">// Crude way to find last segment index without checking every index
+        // TODO: Binary search would be more efficient in the inner loop, but I&#39;m lazy right now
+        </span><span class="lifetime">&#39;outer</span>: <span class="kw">for </span>segment_index <span class="kw">in </span>(SegmentIndex::ZERO..).step_by(<span class="number">100</span>) {
+            <span class="kw">if </span>instance.get_segment_header(segment_index)<span class="question-mark">?</span>.is_none() {
+                <span class="kw">for </span>segment_index <span class="kw">in </span>(SegmentIndex::ZERO..segment_index).rev() {
+                    <span class="kw">if </span>instance.get_segment_header(segment_index)<span class="question-mark">?</span>.is_some()
+                        || segment_index == SegmentIndex::ZERO
+                    {
+                        instance
+                            .max_segment_index
+                            .store(u64::from(segment_index), Ordering::Release);
+                        <span class="kw">break </span><span class="lifetime">&#39;outer</span>;
+                    }
+                }
+            }
         }
+
+        <span class="prelude-val">Ok</span>(instance)
     }
 
     <span class="doccomment">/// Returns last observed segment index.
     </span><span class="kw">pub fn </span>max_segment_index(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SegmentIndex {
-        SegmentIndex::from(<span class="self">self</span>.max_segment_index.load(Ordering::Relaxed))
+        SegmentIndex::from(<span class="self">self</span>.max_segment_index.load(Ordering::Acquire))
     }
 
     <span class="doccomment">/// Add segment header to cache (likely as the result of archiving)
@@ -187,21 +236,11 @@
 
         <span class="self">self</span>.aux_store.insert_aux(<span class="kw-2">&amp;</span>insert_data, <span class="kw-2">&amp;</span>Vec::new())<span class="question-mark">?</span>;
         <span class="self">self</span>.max_segment_index
-            .store(u64::from(segment_header.segment_index()), Ordering::Relaxed);
+            .store(u64::from(segment_header.segment_index()), Ordering::Release);
 
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>key(segment_index: SegmentIndex) -&gt; Vec&lt;u8&gt; {
-        <span class="self">Self</span>::key_from_bytes(<span class="kw-2">&amp;</span>u64::from(segment_index).to_le_bytes())
-    }
-
-    <span class="kw">fn </span>key_from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; Vec&lt;u8&gt; {
-        (<span class="self">Self</span>::KEY_PREFIX, bytes).encode()
-    }
-}
-
-<span class="kw">impl</span>&lt;AS: AuxStore&gt; SegmentHeaderProvider <span class="kw">for </span>SegmentHeaderCache&lt;AS&gt; {
     <span class="doccomment">/// Get segment header from storage
     </span><span class="kw">fn </span>get_segment_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -214,6 +253,27 @@
                 SegmentHeader::decode(<span class="kw-2">&amp;mut </span>segment_header.as_slice())
                     .expect(<span class="string">&quot;Always correct segment header unless DB is corrupted; qed&quot;</span>)
             }))
+    }
+
+    <span class="kw">fn </span>key(segment_index: SegmentIndex) -&gt; Vec&lt;u8&gt; {
+        <span class="self">Self</span>::key_from_bytes(<span class="kw-2">&amp;</span>u64::from(segment_index).to_le_bytes())
+    }
+
+    <span class="kw">fn </span>key_from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; Vec&lt;u8&gt; {
+        (<span class="self">Self</span>::KEY_PREFIX, bytes).encode()
+    }
+}
+
+<span class="kw">impl</span>&lt;AS&gt; SegmentHeaderProvider <span class="kw">for </span>SegmentHeaderCache&lt;AS&gt;
+<span class="kw">where
+    </span>AS: AuxStore,
+{
+    <span class="doccomment">/// Get segment header from storage
+    </span><span class="kw">fn </span>get_segment_header(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        segment_index: SegmentIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+        <span class="self">self</span>.get_segment_header(segment_index)
     }
 }
 </code></pre></div></section></main></body></html>
