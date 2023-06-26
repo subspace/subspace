@@ -12,7 +12,7 @@ var sourcesIndex = JSON.parse('{\
 "domain_service":["",[],["domain.rs","domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs"]],\
 "evm_domain_runtime":["",[],["lib.rs","precompiles.rs","runtime.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
-"pallet_domains":["",[],["lib.rs","weights.rs"]],\
+"pallet_domains":["",[],["lib.rs","runtime_registry.rs","weights.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
 "pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs","weights.rs"]],\
