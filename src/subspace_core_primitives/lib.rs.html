@@ -818,6 +818,32 @@
 <a href="#818" id="818">818</a>
 <a href="#819" id="819">819</a>
 <a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1602,10 +1628,36 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_offset: PieceOffset,
         history_size: HistorySize,
+        max_pieces_in_sector: u16,
+        recent_segments: HistorySize,
+        recent_history_fraction: (HistorySize, HistorySize),
     ) -&gt; PieceIndex {
-        <span class="kw">let </span>piece_index =
-            U256::from_le_bytes(blake2b_256_hash_with_key(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>, <span class="kw-2">&amp;</span>piece_offset.to_bytes()))
-                % U256::from(history_size.in_pieces().get());
+        <span class="kw">let </span>recent_segments_in_pieces = recent_segments.in_pieces().get();
+        <span class="comment">// Recent history must be at most `recent_history_fraction` of all history to use separate
+        // policy for recent pieces
+        </span><span class="kw">let </span>min_history_size_in_pieces = recent_segments_in_pieces
+            * recent_history_fraction.<span class="number">1</span>.in_pieces().get()
+            / recent_history_fraction.<span class="number">0</span>.in_pieces().get();
+        <span class="kw">let </span>input_hash =
+            U256::from_le_bytes(blake2b_256_hash_with_key(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>, <span class="kw-2">&amp;</span>piece_offset.to_bytes()));
+        <span class="kw">let </span>history_size_in_pieces = history_size.in_pieces().get();
+        <span class="kw">let </span>num_interleaved_pieces = <span class="number">1</span>.max(
+            u64::from(max_pieces_in_sector) * recent_history_fraction.<span class="number">0</span>.in_pieces().get()
+                / recent_history_fraction.<span class="number">1</span>.in_pieces().get()
+                * <span class="number">2</span>,
+        );
+
+        <span class="kw">let </span>piece_index = <span class="kw">if </span>history_size_in_pieces &gt; min_history_size_in_pieces
+            &amp;&amp; u64::from(piece_offset) &lt; num_interleaved_pieces
+            &amp;&amp; u16::from(piece_offset) % <span class="number">2 </span>== <span class="number">1
+        </span>{
+            <span class="comment">// For odd piece offsets at the beginning of the sector pick pieces at random from
+            // recent history only
+            </span>input_hash % U256::from(recent_segments_in_pieces)
+                + U256::from(history_size_in_pieces - recent_segments_in_pieces)
+        } <span class="kw">else </span>{
+            input_hash % U256::from(history_size_in_pieces)
+        };
 
         PieceIndex::from(u64::try_from(piece_index).expect(
             <span class="string">&quot;Remainder of division by PieceIndex is guaranteed to fit into PieceIndex; qed&quot;</span>,

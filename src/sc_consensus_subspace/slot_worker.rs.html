@@ -552,6 +552,19 @@
 <a href="#552" id="552">552</a>
 <a href="#553" id="553">553</a>
 <a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -570,12 +583,13 @@
 // along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.
 
 </span><span class="kw">use crate</span>::{
-    BlockImportingNotification, NewSlotInfo, NewSlotNotification, RewardSigningNotification,
-    SubspaceLink,
+    get_chain_constants, BlockImportingNotification, NewSlotInfo, NewSlotNotification,
+    RewardSigningNotification, SubspaceLink,
 };
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{StreamExt, TryFutureExt};
 <span class="kw">use </span>log::{debug, error, info, warn};
+<span class="kw">use </span>sc_client_api::AuxStore;
 <span class="kw">use </span>sc_consensus::block_import::{BlockImport, BlockImportParams, StateAction};
 <span class="kw">use </span>sc_consensus::{JustificationSyncLink, StorageChanges};
 <span class="kw">use </span>sc_consensus_slots::{
@@ -654,6 +668,7 @@
     Client: ProvideRuntimeApi&lt;Block&gt;
         + HeaderBackend&lt;Block&gt;
         + HeaderMetadata&lt;Block, Error = ClientError&gt;
+        + AuxStore
         + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     E: Environment&lt;Block, Error = Error&gt; + Send + Sync,
@@ -788,15 +803,23 @@
                 solution.sector_index,
             );
 
+            <span class="comment">// TODO: This will be necessary for verifying sector expiration in the future
+            </span><span class="kw">let </span>_history_size = runtime_api.history_size(parent_hash).ok()<span class="question-mark">?</span>;
+            <span class="kw">let </span>max_pieces_in_sector = runtime_api.max_pieces_in_sector(parent_hash).ok()<span class="question-mark">?</span>;
+            <span class="kw">let </span>chain_constants = get_chain_constants(<span class="self">self</span>.client.as_ref()).ok()<span class="question-mark">?</span>;
+
             <span class="kw">let </span>segment_index = sector_id
-                .derive_piece_index(solution.piece_offset, solution.history_size)
+                .derive_piece_index(
+                    solution.piece_offset,
+                    solution.history_size,
+                    max_pieces_in_sector,
+                    chain_constants.recent_segments(),
+                    chain_constants.recent_history_fraction(),
+                )
                 .segment_index();
             <span class="kw">let </span><span class="kw-2">mut </span>maybe_segment_commitment = runtime_api
                 .segment_commitment(parent_hash, segment_index)
                 .ok()<span class="question-mark">?</span>;
-            <span class="comment">// TODO: This will be necessary for verifying sector expiration in the future
-            </span><span class="kw">let </span>_history_size = runtime_api.history_size(parent_hash).ok()<span class="question-mark">?</span>;
-            <span class="kw">let </span>max_pieces_in_sector = runtime_api.max_pieces_in_sector(parent_hash).ok()<span class="question-mark">?</span>;
 
             <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced
             // extrinsics with segment headers are not yet in runtime.
@@ -828,6 +851,8 @@
                     piece_check_params: <span class="prelude-val">Some</span>(PieceCheckParams {
                         max_pieces_in_sector,
                         segment_commitment,
+                        recent_segments: chain_constants.recent_segments(),
+                        recent_history_fraction: chain_constants.recent_history_fraction(),
                     }),
                 },
                 <span class="kw-2">&amp;</span><span class="self">self</span>.subspace_link.kzg,
@@ -972,6 +997,7 @@
     Client: ProvideRuntimeApi&lt;Block&gt;
         + HeaderBackend&lt;Block&gt;
         + HeaderMetadata&lt;Block, Error = ClientError&gt;
+        + AuxStore
         + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     E: Environment&lt;Block, Error = Error&gt; + Send + Sync,
