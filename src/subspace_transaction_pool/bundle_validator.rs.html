@@ -354,6 +354,25 @@
 <a href="#354" id="354">354</a>
 <a href="#355" id="355">355</a>
 <a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::Hash;
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
@@ -411,14 +430,22 @@
     <span class="kw">fn </span>successfully_submitted_bundles_at(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_hash: Block::Hash,
+        block_number: NumberFor&lt;Block&gt;,
     ) -&gt; sp_blockchain::Result&lt;HashSet&lt;Hash&gt;&gt; {
-        <span class="kw">let </span>bundle_hashes: HashSet&lt;<span class="kw">_</span>&gt; = <span class="self">self
+        <span class="kw">match </span><span class="self">self
             </span>.client
             .runtime_api()
-            .successful_bundle_hashes(block_hash)<span class="question-mark">?
-            </span>.into_iter()
-            .collect();
-        <span class="prelude-val">Ok</span>(bundle_hashes)
+            .successful_bundle_hashes(block_hash)
+        {
+            <span class="prelude-val">Ok</span>(bundle_hashes) =&gt; <span class="prelude-val">Ok</span>(bundle_hashes.into_iter().collect()),
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">tracing::error!</span>(
+                    %err,
+                    <span class="string">&quot;Failed to calling runtime api bundles at block {block_hash:?}#{block_number:?}&quot;
+                </span>);
+                <span class="prelude-val">Err</span>(err.into())
+            }
+        }
     }
 
     <span class="doccomment">/// Initialize recent stored bundle from the last K block
@@ -452,7 +479,7 @@
             }
         }
         <span class="kw">for </span>(hash, number) <span class="kw">in </span>blocks {
-            <span class="kw">let </span>bundles = <span class="self">self</span>.successfully_submitted_bundles_at(hash)<span class="question-mark">?</span>;
+            <span class="kw">let </span>bundles = <span class="self">self</span>.successfully_submitted_bundles_at(hash, number)<span class="question-mark">?</span>;
             bundle_stored_in_last_k.push_front(BlockBundle::new(hash, number, bundles));
         }
         <span class="prelude-val">Ok</span>(())
@@ -496,9 +523,14 @@
             }
         }
 
-        <span class="comment">// Add bundles from the new block of the best fork
-        </span><span class="kw">for </span>enacted_block <span class="kw">in </span>enacted {
-            <span class="kw">let </span>bundles = <span class="self">self</span>.successfully_submitted_bundles_at(enacted_block.hash)<span class="question-mark">?</span>;
+        <span class="comment">// Add bundles from the new block of the best fork, only need to process at most the last K
+        // blocks as the result of other blocks will be dumpped immediately, this also help to prevent
+        // the bundle validator from stuck on some pruned blocks because these blocks will be skip as
+        // the chain grows.
+        </span><span class="kw">let </span>needless_block = enacted.len().saturating_sub(<span class="self">self</span>.confirm_depth_k);
+        <span class="kw">for </span>enacted_block <span class="kw">in </span>enacted.iter().skip(needless_block) {
+            <span class="kw">let </span>bundles =
+                <span class="self">self</span>.successfully_submitted_bundles_at(enacted_block.hash, enacted_block.number)<span class="question-mark">?</span>;
             bundle_stored_in_last_k.push_front(BlockBundle::new(
                 enacted_block.hash,
                 enacted_block.number,
@@ -626,13 +658,19 @@
         }
     }
 
-    <span class="kw">pub fn </span>update_recent_stored_bundles(<span class="kw-2">&amp;mut </span><span class="self">self</span>, new_best_hash: Block::Hash) {
+    <span class="kw">pub fn </span>update_recent_stored_bundles(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        new_best_hash: Block::Hash,
+        block_number: NumberFor&lt;Block&gt;,
+    ) {
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.bundle_stored_in_last_k.update_with(|bundles| {
             <span class="self">self</span>.bundle_collector
                 .on_new_best_block(new_best_hash, bundles)
         }) {
             <span class="macro">tracing::error!</span>(
                 %err,
+                <span class="question-mark">?</span>new_best_hash,
+                <span class="question-mark">?</span>block_number,
                 <span class="string">&quot;Failed to update recent stored bundles for bundle-validator&quot;
             </span>);
         }
