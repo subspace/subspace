@@ -907,7 +907,6 @@
 <a href="#907" id="907">907</a>
 <a href="#908" id="908">908</a>
 <a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1033,11 +1032,6 @@
     <span class="kw">fn </span>push_item(<span class="kw-2">&amp;mut </span><span class="self">self</span>, segment_item: SegmentItem) {
         <span class="kw">let </span><span class="self">Self</span>::V0 { items } = <span class="self">self</span>;
         items.push(segment_item);
-    }
-
-    <span class="kw">fn </span>pop_item(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SegmentItem&gt; {
-        <span class="kw">let </span><span class="self">Self</span>::V0 { items } = <span class="self">self</span>;
-        items.pop()
     }
 }
 
@@ -1286,17 +1280,25 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>last_archived_block = <span class="self">self</span>.last_archived_block;
 
+        <span class="kw">let </span><span class="kw-2">mut </span>segment_size = segment.encoded_size();
+
         <span class="comment">// `-2` because even the smallest segment item will take 2 bytes to encode, so it makes
         // sense to stop earlier here
-        </span><span class="kw">while </span>segment.encoded_size() &lt; (RecordedHistorySegment::SIZE - <span class="number">2</span>) {
+        </span><span class="kw">while </span>segment_size &lt; (RecordedHistorySegment::SIZE - <span class="number">2</span>) {
             <span class="kw">let </span>segment_item = <span class="kw">match </span><span class="self">self</span>.buffer.pop_front() {
                 <span class="prelude-val">Some</span>(segment_item) =&gt; segment_item,
                 <span class="prelude-val">None </span>=&gt; {
-                    update_record_commitments(
-                        <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
-                        <span class="kw-2">&amp;</span>segment,
-                        <span class="kw-2">&amp;</span><span class="self">self</span>.kzg,
-                    );
+                    <span class="kw">let </span>existing_commitments = <span class="self">self</span>.incremental_record_commitments.len();
+                    <span class="kw">let </span>bytes_committed_to = existing_commitments * RawRecord::SIZE;
+                    <span class="comment">// Run incremental archiver only when there is at least two records to archive,
+                    // otherwise we&#39;re wasting CPU cycles encoding segment over and over again
+                    </span><span class="kw">if </span>segment_size - bytes_committed_to &gt;= RawRecord::SIZE * <span class="number">2 </span>{
+                        update_record_commitments(
+                            <span class="kw-2">&amp;mut </span><span class="self">self</span>.incremental_record_commitments,
+                            <span class="kw-2">&amp;</span>segment,
+                            <span class="kw-2">&amp;</span><span class="self">self</span>.kzg,
+                        );
+                    }
 
                     <span class="kw">let </span>Segment::V0 { items } = segment;
                     <span class="comment">// Push all of the items back into the buffer, we don&#39;t have enough data yet
@@ -1308,18 +1310,14 @@
                 }
             };
 
-            <span class="comment">// Push segment item into the segment temporarily to measure encoded size of resulting
-            // segment
-            </span>segment.push_item(segment_item);
-            <span class="kw">let </span>encoded_segment_length = segment.encoded_size();
-            <span class="comment">// Pop segment item back from segment
-            </span><span class="kw">let </span>segment_item = segment.pop_item().unwrap();
+            <span class="kw">let </span>segment_item_encoded_size = segment_item.encoded_size();
+            segment_size += segment_item_encoded_size;
 
             <span class="comment">// Check if there would be enough data collected with above segment item inserted
-            </span><span class="kw">if </span>encoded_segment_length &gt;= RecordedHistorySegment::SIZE {
+            </span><span class="kw">if </span>segment_size &gt;= RecordedHistorySegment::SIZE {
                 <span class="comment">// Check if there is an excess of data that should be spilled over into the next
                 // segment
-                </span><span class="kw">let </span>spill_over = encoded_segment_length - RecordedHistorySegment::SIZE;
+                </span><span class="kw">let </span>spill_over = segment_size - RecordedHistorySegment::SIZE;
 
                 <span class="comment">// Due to compact vector length encoding in scale codec, spill over might happen to
                 // be the same or even bigger than the inserted segment item bytes, in which case
@@ -1344,6 +1342,7 @@
 
                 <span class="kw">if </span>spill_over &gt; inner_bytes_size {
                     <span class="self">self</span>.buffer.push_front(segment_item);
+                    segment_size -= segment_item_encoded_size;
                     <span class="kw">break</span>;
                 }
             }
@@ -1387,8 +1386,7 @@
         }
 
         <span class="comment">// Check if there is an excess of data that should be spilled over into the next segment
-        </span><span class="kw">let </span>segment_encoded_length = segment.encoded_size();
-        <span class="kw">let </span>spill_over = segment_encoded_length
+        </span><span class="kw">let </span>spill_over = segment_size
             .checked_sub(RecordedHistorySegment::SIZE)
             .unwrap_or_default();
 
