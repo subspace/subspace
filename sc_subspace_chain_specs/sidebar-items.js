@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ChainSpecExtensions","SerializableChainSpec"],"type":["ConsensusChainSpec","ExecutionChainSpec"]};
+window.SIDEBAR_ITEMS = {"struct":["SerializableChainSpec"],"type":["ConsensusChainSpec","ExecutionChainSpec"]};

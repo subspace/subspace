@@ -267,6 +267,23 @@
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
 <a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -293,8 +310,10 @@
 <span class="kw">use </span>sc_service::config::PrometheusConfig;
 <span class="kw">use </span>sc_service::BasePath;
 <span class="kw">use </span>sp_core::crypto::AccountId32;
+<span class="kw">use </span>sp_domains::DomainId;
 <span class="kw">use </span>sp_runtime::traits::Convert;
 <span class="kw">use </span>std::net::SocketAddr;
+<span class="kw">use </span>std::num::ParseIntError;
 <span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::str::FromStr;
 
@@ -313,18 +332,22 @@
     </span>Benchmark(frame_benchmarking_cli::BenchmarkCmd),
 }
 
+<span class="kw">fn </span>parse_domain_id(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;DomainId, ParseIntError&gt; {
+    s.parse::&lt;u32&gt;().map(Into::into)
+}
+
 <span class="attr">#[derive(Debug, Parser)]
 </span><span class="kw">pub struct </span>DomainCli {
-    <span class="doccomment">/// Run a node.
+    <span class="doccomment">/// Run a domain node.
     </span><span class="attr">#[clap(flatten)]
     </span><span class="kw">pub </span>run: SubstrateRunCmd,
+
+    <span class="attr">#[clap(long, value_parser = parse_domain_id)]
+    </span><span class="kw">pub </span>domain_id: DomainId,
 
     <span class="doccomment">/// Optional relayer address to relay messages on behalf.
     </span><span class="attr">#[clap(long)]
     </span><span class="kw">pub </span>relayer_id: <span class="prelude-ty">Option</span>&lt;String&gt;,
-
-    <span class="doccomment">/// The base path that should be used by the domain.
-    </span><span class="kw">pub </span>base_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
 
     <span class="doccomment">/// Additional args for domain.
     </span><span class="attr">#[clap(raw = <span class="bool-val">true</span>)]
@@ -332,15 +355,25 @@
 }
 
 <span class="kw">impl </span>DomainCli {
-    <span class="comment">// TODO: proper base_path
-    </span><span class="doccomment">/// Constructs a new instance of [`DomainCli`].
-    ///
-    /// If no explicit base path for the domain, the default value will be `base_path/system`.
-    </span><span class="kw">pub fn </span>new(_base_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;, domain_args: <span class="kw">impl </span>Iterator&lt;Item = String&gt;) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Constructs a new instance of [`DomainCli`].
+    </span><span class="kw">pub fn </span>new(
+        consensus_base_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
+        domain_args: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>cli =
             DomainCli::parse_from([<span class="self">Self</span>::executable_name()].into_iter().chain(domain_args));
 
-        cli.base_path.as_mut().map(|path| path.join(<span class="string">&quot;system&quot;</span>));
+        <span class="comment">// Use `consensus_base_path/domain-{domain_id}` as the domain base path if it&#39;s not
+        // specified explicitly but there is an explicit consensus base path.
+        </span><span class="kw">match </span>consensus_base_path {
+            <span class="prelude-val">Some</span>(c_path) <span class="kw">if </span>cli.run.shared_params.base_path.is_none() =&gt; {
+                cli.run
+                    .shared_params
+                    .base_path
+                    .replace(c_path.join(<span class="macro">format!</span>(<span class="string">&quot;domain-{}&quot;</span>, u32::from(cli.domain_id))));
+            }
+            <span class="kw">_ </span>=&gt; {}
+        }
 
         cli
     }
@@ -413,12 +446,21 @@
     </span>}
 
     <span class="kw">fn </span>load_spec(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;Box&lt;<span class="kw">dyn </span>ChainSpec&gt;, String&gt; {
-        <span class="comment">// TODO: Load chain spec properly
-        </span>evm_chain_spec::load_chain_spec(id)
+        <span class="comment">// TODO: Fetch the runtime name of `self.domain_id` properly.
+        </span><span class="kw">let </span>runtime_name = <span class="string">&quot;evm&quot;</span>;
+        <span class="kw">match </span>runtime_name {
+            <span class="string">&quot;evm&quot; </span>=&gt; evm_chain_spec::load_chain_spec(id),
+            unknown_name =&gt; <span class="prelude-val">Err</span>(<span class="macro">format!</span>(<span class="string">&quot;Unknown runtime: {unknown_name}&quot;</span>)),
+        }
     }
 
     <span class="kw">fn </span>native_runtime_version(_chain_spec: <span class="kw-2">&amp;</span>Box&lt;<span class="kw">dyn </span>ChainSpec&gt;) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>RuntimeVersion {
-        <span class="kw-2">&amp;</span>evm_domain_runtime::VERSION
+        <span class="comment">// TODO: Fetch the runtime name of `self.domain_id` properly.
+        </span><span class="kw">let </span>runtime_name = <span class="string">&quot;evm&quot;</span>;
+        <span class="kw">match </span>runtime_name {
+            <span class="string">&quot;evm&quot; </span>=&gt; <span class="kw-2">&amp;</span>evm_domain_runtime::VERSION,
+            unknown_name =&gt; <span class="macro">unreachable!</span>(<span class="string">&quot;Unknown runtime: {unknown_name}&quot;</span>),
+        }
     }
 }
 
@@ -454,15 +496,7 @@
     }
 
     <span class="kw">fn </span>base_path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;BasePath&gt;&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self
-            </span>.shared_params()
-            .base_path()<span class="question-mark">?
-            </span>.as_mut()
-            .map(|base_path| {
-                <span class="kw">let </span>path: PathBuf = base_path.path().to_path_buf();
-                BasePath::new(path.join(<span class="string">&quot;system&quot;</span>))
-            })
-            .or_else(|| <span class="self">self</span>.base_path.clone().map(Into::into)))
+        <span class="self">self</span>.shared_params().base_path()
     }
 
     <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, default_listen_port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt; {

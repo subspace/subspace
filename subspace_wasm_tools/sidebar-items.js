@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["create_runtime_bundle_inclusion_file","export_wasm_bundle_path"]};

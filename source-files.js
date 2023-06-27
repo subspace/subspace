@@ -10,7 +10,7 @@ var sourcesIndex = JSON.parse('{\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
 "domain_service":["",[],["domain.rs","domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs"]],\
-"evm_domain_runtime":["",[],["lib.rs","precompiles.rs","runtime.rs"]],\
+"evm_domain_runtime":["",[],["lib.rs","precompiles.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
 "pallet_domains":["",[],["lib.rs","runtime_registry.rs","weights.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
@@ -54,7 +54,6 @@ var sourcesIndex = JSON.parse('{\
 "subspace_test_runtime":["",[],["lib.rs"]],\
 "subspace_test_service":["",[],["lib.rs"]],\
 "subspace_transaction_pool":["",[],["bundle_validator.rs","lib.rs"]],\
-"subspace_verification":["",[],["lib.rs"]],\
-"subspace_wasm_tools":["",[],["lib.rs"]]\
+"subspace_verification":["",[],["lib.rs"]]\
 }');
 createSourceSidebar();
