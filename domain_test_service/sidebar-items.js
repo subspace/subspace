@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Sr25519Keyring"],"fn":["construct_extrinsic_generic","construct_unsigned_extrinsic","node_config"],"mod":["chain_spec","domain","keyring"]};

@@ -1,5 +1,6 @@
 (function() {var implementors = {
 "evm_domain_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"evm_domain_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct evm_domain_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
+"evm_domain_test_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"evm_domain_test_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct evm_domain_test_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
 "sc_subspace_chain_specs":[["impl&lt;GenesisConfig, Extensions&gt; BuildStorage for <a class=\"struct\" href=\"sc_subspace_chain_specs/struct.SerializableChainSpec.html\" title=\"struct sc_subspace_chain_specs::SerializableChainSpec\">SerializableChainSpec</a>&lt;GenesisConfig, Extensions&gt;<span class=\"where fmt-newline\">where\n    GenesisConfig: RuntimeGenesis,</span>"]],
 "subspace_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct subspace_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
 "subspace_test_runtime":[["impl BuildStorage for <a class=\"struct\" href=\"subspace_test_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct subspace_test_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]]
