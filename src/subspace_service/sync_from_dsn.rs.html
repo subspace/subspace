@@ -201,11 +201,28 @@
 <a href="#201" id="201">201</a>
 <a href="#202" id="202">202</a>
 <a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::dsn::import_blocks::import_blocks_from_dsn;
+<span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>sc_client_api::{BlockBackend, BlockchainEvents};
 <span class="kw">use </span>sc_consensus::import_queue::ImportQueueService;
+<span class="kw">use </span>sc_network::config::SyncMode;
 <span class="kw">use </span>sc_network::{NetworkPeers, NetworkService};
 <span class="kw">use </span>sp_api::BlockT;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
@@ -236,6 +253,7 @@
     node: Node,
     client: Arc&lt;Client&gt;,
     <span class="kw-2">mut </span>import_queue_service: Box&lt;<span class="kw">dyn </span>ImportQueueService&lt;Block&gt;&gt;,
+    sync_mode: Arc&lt;Atomic&lt;SyncMode&gt;&gt;,
 ) -&gt; (
     <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">&#39;static</span>,
     <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), sc_service::Error&gt;&gt; + Send + <span class="lifetime">&#39;static</span>,
@@ -257,7 +275,14 @@
         <span class="kw">async move </span>{ create_observer(network_service.as_ref(), <span class="kw-2">&amp;</span>node, client.as_ref(), tx).<span class="kw">await </span>}
     };
     <span class="kw">let </span>worker_fut = <span class="kw">async move </span>{
-        create_worker(<span class="kw-2">&amp;</span>node, client.as_ref(), import_queue_service.as_mut(), rx).<span class="kw">await
+        create_worker(
+            <span class="kw-2">&amp;</span>node,
+            client.as_ref(),
+            import_queue_service.as_mut(),
+            sync_mode,
+            rx,
+        )
+        .<span class="kw">await
     </span>};
     (observer_fut, worker_fut)
 }
@@ -369,6 +394,7 @@
     node: <span class="kw-2">&amp;</span>Node,
     client: <span class="kw-2">&amp;</span>Client,
     import_queue_service: <span class="kw-2">&amp;mut </span>IQS,
+    sync_mode: Arc&lt;Atomic&lt;SyncMode&gt;&gt;,
     <span class="kw-2">mut </span>notifications: mpsc::Receiver&lt;NotificationReason&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sc_service::Error&gt;
 <span class="kw">where
@@ -382,6 +408,8 @@
             <span class="macro">trace!</span>(<span class="string">&quot;Ignoring Subspace networking for DSN sync for now&quot;</span>);
             <span class="kw">continue</span>;
         }
+
+        <span class="kw">let </span>prev_sync_mode = sync_mode.swap(SyncMode::Paused, Ordering::SeqCst);
 
         <span class="kw">while </span>notifications.try_next().is_ok() {
             <span class="comment">// Just drain extra messages if there are any
@@ -400,6 +428,8 @@
         </span>{
             <span class="macro">warn!</span>(%error, <span class="string">&quot;Error when syncing blocks from DSN&quot;</span>);
         }
+
+        sync_mode.store(prev_sync_mode, Ordering::Release);
     }
 
     <span class="prelude-val">Ok</span>(())

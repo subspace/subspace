@@ -461,6 +461,22 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_caching::PieceMemoryCache;
 <span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
@@ -489,7 +505,10 @@
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_proof_of_space::{Quality, Table};
 <span class="kw">use </span>thiserror::Error;
+<span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tracing::{debug, warn};
+
+<span class="kw">const </span>RECONSTRUCTION_CONCURRENCY_LIMIT: usize = <span class="number">1</span>;
 
 <span class="kw">fn </span>default_backoff() -&gt; ExponentialBackoff {
     ExponentialBackoff {
@@ -871,6 +890,10 @@
     piece_indexes: <span class="kw-2">&amp;</span>[PieceIndex],
     piece_memory_cache: PieceMemoryCache,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt; {
+    <span class="comment">// TODO: Make configurable, likely allowing user to specify RAM usage expectations and inferring
+    //  concurrency from there
+    </span><span class="kw">let </span>recovery_semaphore = Semaphore::new(RECONSTRUCTION_CONCURRENCY_LIMIT);
+
     <span class="kw">let </span><span class="kw-2">mut </span>pieces_receiving_futures = piece_indexes
         .iter()
         .map(|piece_index| <span class="kw">async </span>{
@@ -891,6 +914,15 @@
 
             <span class="comment">// all retries failed
             </span><span class="kw">if </span>!succeeded {
+                <span class="kw">let </span>_permit = <span class="kw">match </span>recovery_semaphore.acquire().<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(permit) =&gt; permit,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="kw">return </span>(
+                            piece_index,
+                            <span class="prelude-val">Err</span>(<span class="macro">format!</span>(<span class="string">&quot;Recovery semaphore was closed: {error}&quot;</span>).into()),
+                        );
+                    }
+                };
                 <span class="kw">let </span>recovered_piece =
                     recover_missing_piece(piece_getter, kzg.clone(), piece_index).<span class="kw">await</span>;
 
