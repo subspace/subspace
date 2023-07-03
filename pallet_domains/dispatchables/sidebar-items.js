@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["register_domain_runtime","submit_bundle","submit_fraud_proof","upgrade_domain_runtime"]};
+window.SIDEBAR_ITEMS = {"fn":["instantiate_domain","register_domain_runtime","submit_bundle","submit_fraud_proof","upgrade_domain_runtime"]};

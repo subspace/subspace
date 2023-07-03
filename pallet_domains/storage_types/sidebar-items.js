@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["DomainTxRangeState","NextRuntimeId","RuntimeRegistry","ScheduledRuntimeUpgrades","SuccessfulBundles"]};
+window.SIDEBAR_ITEMS = {"struct":["DomainRegistry","DomainTxRangeState","NextDomainId","NextRuntimeId","RuntimeRegistry","ScheduledRuntimeUpgrades","SuccessfulBundles"]};
