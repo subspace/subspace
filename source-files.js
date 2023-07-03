@@ -23,7 +23,6 @@ var sourcesIndex = JSON.parse('{\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_runtime_configs":["",[],["lib.rs"]],\
-"pallet_settlement":["",[],["lib.rs"]],\
 "pallet_subspace":["",[],["equivocation.rs","lib.rs","weights.rs"]],\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_transporter":["",[],["lib.rs","weights.rs"]],\
@@ -38,7 +37,6 @@ var sourcesIndex = JSON.parse('{\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs","verification.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
-"sp_settlement":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["incremental_record_commitments.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs"]],\
 "subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]],["pieces",[],["serde.rs"]]],["crypto.rs","lib.rs","objects.rs","pieces.rs","segments.rs","serde.rs"]],\
 "subspace_erasure_coding":["",[],["lib.rs"]],\

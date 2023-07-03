@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["relay_core_domain_messages","relay_system_domain_messages"]};
+window.SIDEBAR_ITEMS = {"fn":["relay_system_domain_messages"]};
