@@ -3,9 +3,9 @@ var sourcesIndex = JSON.parse('{\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_block_preprocessor":["",[],["inherents.rs","lib.rs","runtime_api.rs","runtime_api_full.rs","runtime_api_light.rs","xdm_verifier.rs"]],\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
-"domain_client_executor":["",[],["aux_schema.rs","bundle_election_solver.rs","bundle_processor.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","domain_worker_starter.rs","executor.rs","fraud_proof.rs","lib.rs","parent_chain.rs","sortition.rs","utils.rs"]],\
-"domain_client_executor_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
+"domain_client_operator":["",[],["aux_schema.rs","bundle_election_solver.rs","bundle_processor.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","domain_worker_starter.rs","fraud_proof.rs","lib.rs","operator.rs","parent_chain.rs","sortition.rs","utils.rs"]],\
+"domain_client_subnet_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\

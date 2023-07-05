@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Action","GossipMessage"],"fn":["executor_gossip_peers_set_config","start_gossip_worker"],"struct":["ExecutorGossipParams","GossipValidator"],"trait":["GossipMessageHandler"]};

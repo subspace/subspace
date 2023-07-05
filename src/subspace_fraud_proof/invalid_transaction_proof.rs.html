@@ -267,6 +267,8 @@
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
 <a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Invalid transaction proof.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::domain_extrinsics_builder::BuildDomainExtrinsics;
@@ -282,7 +284,7 @@
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::fraud_proof::{InvalidTransactionProof, VerificationError};
-<span class="kw">use </span>sp_domains::{DomainId, ExecutorApi};
+<span class="kw">use </span>sp_domains::{DomainId, DomainsApi};
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>sp_runtime::{OpaqueExtrinsic, Storage};
 <span class="kw">use </span>sp_trie::{read_trie_value, LayoutV1};
@@ -293,24 +295,24 @@
 
 <span class="doccomment">/// Invalid transaction proof verifier.
 </span><span class="kw">pub struct </span>InvalidTransactionProofVerifier&lt;
-    PBlock,
-    PClient,
+    CBlock,
+    CClient,
     Hash,
     Exec,
     VerifierClient,
     DomainExtrinsicsBuilder,
 &gt; {
-    primary_chain_client: Arc&lt;PClient&gt;,
+    consensus_client: Arc&lt;CClient&gt;,
     executor: Arc&lt;Exec&gt;,
     verifier_client: VerifierClient,
     domain_extrinsics_builder: DomainExtrinsicsBuilder,
-    _phantom: PhantomData&lt;(PBlock, Hash)&gt;,
+    _phantom: PhantomData&lt;(CBlock, Hash)&gt;,
 }
 
-<span class="kw">impl</span>&lt;PBlock, PClient, Hash, Exec, VerifierClient, DomainExtrinsicsBuilder&gt; Clone
+<span class="kw">impl</span>&lt;CBlock, CClient, Hash, Exec, VerifierClient, DomainExtrinsicsBuilder&gt; Clone
     <span class="kw">for </span>InvalidTransactionProofVerifier&lt;
-        PBlock,
-        PClient,
+        CBlock,
+        CClient,
         Hash,
         Exec,
         VerifierClient,
@@ -322,7 +324,7 @@
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            primary_chain_client: <span class="self">self</span>.primary_chain_client.clone(),
+            consensus_client: <span class="self">self</span>.consensus_client.clone(),
             executor: <span class="self">self</span>.executor.clone(),
             verifier_client: <span class="self">self</span>.verifier_client.clone(),
             domain_extrinsics_builder: <span class="self">self</span>.domain_extrinsics_builder.clone(),
@@ -385,34 +387,34 @@
     <span class="prelude-val">Ok</span>(runtime_api_light)
 }
 
-<span class="kw">impl</span>&lt;PBlock, PClient, Hash, Exec, VerifierClient, DomainExtrinsicsBuilder&gt;
+<span class="kw">impl</span>&lt;CBlock, CClient, Hash, Exec, VerifierClient, DomainExtrinsicsBuilder&gt;
     InvalidTransactionProofVerifier&lt;
-        PBlock,
-        PClient,
+        CBlock,
+        CClient,
         Hash,
         Exec,
         VerifierClient,
         DomainExtrinsicsBuilder,
     &gt;
 <span class="kw">where
-    </span>PBlock: BlockT,
+    </span>CBlock: BlockT,
     Hash: Encode + Decode,
-    H256: Into&lt;PBlock::Hash&gt;,
-    PClient: HeaderBackend&lt;PBlock&gt; + ProvideRuntimeApi&lt;PBlock&gt; + Send + Sync,
-    PClient::Api: ExecutorApi&lt;PBlock, Hash&gt;,
+    H256: Into&lt;CBlock::Hash&gt;,
+    CClient: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + Send + Sync,
+    CClient::Api: DomainsApi&lt;CBlock, Hash&gt;,
     VerifierClient: VerifierApi,
-    DomainExtrinsicsBuilder: BuildDomainExtrinsics&lt;PBlock&gt;,
+    DomainExtrinsicsBuilder: BuildDomainExtrinsics&lt;CBlock&gt;,
     Exec: CodeExecutor + <span class="lifetime">&#39;static</span>,
 {
     <span class="doccomment">/// Constructs a new instance of [`InvalidTransactionProofVerifier`].
     </span><span class="kw">pub fn </span>new(
-        primary_chain_client: Arc&lt;PClient&gt;,
+        consensus_client: Arc&lt;CClient&gt;,
         executor: Arc&lt;Exec&gt;,
         verifier_client: VerifierClient,
         domain_extrinsics_builder: DomainExtrinsicsBuilder,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            primary_chain_client,
+            consensus_client,
             executor,
             verifier_client,
             domain_extrinsics_builder,
@@ -420,21 +422,23 @@
         }
     }
 
-    <span class="kw">fn </span>fetch_primary_header(
+    <span class="kw">fn </span>fetch_consensus_block_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         domain_id: DomainId,
         block_number: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;PBlock::Header, VerificationError&gt; {
-        <span class="kw">let </span>primary_hash: PBlock::Hash = <span class="self">self
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;CBlock::Header, VerificationError&gt; {
+        <span class="kw">let </span>consensus_block_hash: CBlock::Hash = <span class="self">self
             </span>.verifier_client
             .primary_hash(domain_id, block_number)<span class="question-mark">?
             </span>.into();
 
         <span class="kw">let </span>header = <span class="self">self
-            </span>.primary_chain_client
-            .header(primary_hash)<span class="question-mark">?
+            </span>.consensus_client
+            .header(consensus_block_hash)<span class="question-mark">?
             </span>.ok_or_else(|| {
-                sp_blockchain::Error::Backend(<span class="macro">format!</span>(<span class="string">&quot;Header for {primary_hash} not found&quot;</span>))
+                sp_blockchain::Error::Backend(<span class="macro">format!</span>(
+                    <span class="string">&quot;Header for {consensus_block_hash} not found&quot;
+                </span>))
             })<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(header)
@@ -457,13 +461,13 @@
         // - Bundle is valid and is produced by a legit executor.
         // - Bundle author, who will be slashed, can be extracted in runtime.
 
-        </span><span class="kw">let </span>header = <span class="self">self</span>.fetch_primary_header(<span class="kw-2">*</span>domain_id, <span class="kw-2">*</span>block_number)<span class="question-mark">?</span>;
-        <span class="kw">let </span>primary_parent_hash = <span class="kw-2">*</span>header.parent_hash();
+        </span><span class="kw">let </span>header = <span class="self">self</span>.fetch_consensus_block_header(<span class="kw-2">*</span>domain_id, <span class="kw-2">*</span>block_number)<span class="question-mark">?</span>;
+        <span class="kw">let </span>consensus_parent_hash = <span class="kw-2">*</span>header.parent_hash();
 
         <span class="kw">let </span>domain_runtime_code = retrieve_domain_runtime_code(
             <span class="kw-2">*</span>domain_id,
-            primary_parent_hash,
-            <span class="kw-2">&amp;</span><span class="self">self</span>.primary_chain_client,
+            consensus_parent_hash,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.consensus_client,
         )<span class="question-mark">?</span>;
 
         <span class="comment">// TODO: Verifiable invalid extrinsic.
@@ -509,10 +513,10 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&gt;;
 }
 
-<span class="kw">impl</span>&lt;PBlock, Client, Hash, Exec, VerifierClient, DomainExtrinsicsBuilder&gt;
+<span class="kw">impl</span>&lt;CBlock, Client, Hash, Exec, VerifierClient, DomainExtrinsicsBuilder&gt;
     VerifyInvalidTransactionProof
     <span class="kw">for </span>InvalidTransactionProofVerifier&lt;
-        PBlock,
+        CBlock,
         Client,
         Hash,
         Exec,
@@ -520,13 +524,13 @@
         DomainExtrinsicsBuilder,
     &gt;
 <span class="kw">where
-    </span>PBlock: BlockT,
+    </span>CBlock: BlockT,
     Hash: Encode + Decode,
-    H256: Into&lt;PBlock::Hash&gt;,
-    Client: HeaderBackend&lt;PBlock&gt; + ProvideRuntimeApi&lt;PBlock&gt; + Send + Sync,
-    Client::Api: ExecutorApi&lt;PBlock, Hash&gt;,
+    H256: Into&lt;CBlock::Hash&gt;,
+    Client: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + Send + Sync,
+    Client::Api: DomainsApi&lt;CBlock, Hash&gt;,
     VerifierClient: VerifierApi,
-    DomainExtrinsicsBuilder: BuildDomainExtrinsics&lt;PBlock&gt;,
+    DomainExtrinsicsBuilder: BuildDomainExtrinsics&lt;CBlock&gt;,
     Exec: CodeExecutor + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>verify_invalid_transaction_proof(
