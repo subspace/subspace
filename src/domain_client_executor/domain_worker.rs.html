@@ -256,6 +256,7 @@
 <a href="#256" id="256">256</a>
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Shared domain worker functions.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::utils::{to_number_primitive, BlockInfo, ExecutorSlotInfo};
@@ -324,7 +325,7 @@
     primary_chain_client: <span class="kw-2">&amp;</span>PClient,
     best_domain_number: NumberFor&lt;Block&gt;,
     processor: ProcessorFn,
-    <span class="kw-2">mut </span>leaves: Vec&lt;(PBlock::Hash, NumberFor&lt;PBlock&gt;)&gt;,
+    <span class="kw-2">mut </span>leaves: Vec&lt;(PBlock::Hash, NumberFor&lt;PBlock&gt;, bool)&gt;,
     <span class="kw-2">mut </span>blocks_importing: BlocksImporting,
     <span class="kw-2">mut </span>blocks_imported: BlocksImported,
     primary_block_import_throttling_buffer_size: u32,
@@ -337,7 +338,7 @@
         + BlockchainEvents&lt;PBlock&gt;,
     PClient::Api: ExecutorApi&lt;PBlock, Block::Hash&gt;,
     ProcessorFn: Fn(
-            (PBlock::Hash, NumberFor&lt;PBlock&gt;),
+            (PBlock::Hash, NumberFor&lt;PBlock&gt;, bool),
         ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt;&gt; + Send&gt;&gt;
         + Send
         + Sync
@@ -350,11 +351,11 @@
     <span class="kw">let </span>best_domain_number = to_number_primitive(best_domain_number);
 
     <span class="comment">// Notify about active leaves on startup before starting the loop
-    </span><span class="kw">for </span>(hash, number) <span class="kw">in </span>std::mem::take(<span class="kw-2">&amp;mut </span>leaves) {
+    </span><span class="kw">for </span>(hash, number, is_new_best) <span class="kw">in </span>std::mem::take(<span class="kw-2">&amp;mut </span>leaves) {
         <span class="kw">let _ </span>= active_leaves.insert(hash, number);
         <span class="comment">// Skip the blocks that have been processed by the execution chain.
         </span><span class="kw">if </span>number &gt; best_domain_number.into() {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = processor((hash, number)).<span class="kw">await </span>{
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = processor((hash, number, is_new_best)).<span class="kw">await </span>{
                 <span class="macro">tracing::error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to process primary block on startup&quot;</span>);
                 <span class="comment">// Bring down the service as bundles processor is an essential task.
                 // TODO: more graceful shutdown.
@@ -425,6 +426,7 @@
                     hash: header.hash(),
                     parent_hash: <span class="kw-2">*</span>header.parent_hash(),
                     number: <span class="kw-2">*</span>header.number(),
+                    is_new_best: block_imported.is_new_best,
                 };
                 <span class="kw">let _ </span>= block_info_sender.feed(<span class="prelude-val">Some</span>(block_info)).<span class="kw">await</span>;
             }
@@ -493,7 +495,7 @@
 <span class="kw">where
     </span>PBlock: BlockT,
     ProcessorFn: Fn(
-            (PBlock::Hash, NumberFor&lt;PBlock&gt;),
+            (PBlock::Hash, NumberFor&lt;PBlock&gt;, bool),
         ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt;&gt; + Send&gt;&gt;
         + Send
         + Sync,
@@ -510,7 +512,7 @@
         <span class="macro">debug_assert_eq!</span>(block_info.number.saturating_sub(One::one()), number);
     }
 
-    processor((block_info.hash, block_info.number)).<span class="kw">await</span><span class="question-mark">?</span>;
+    processor((block_info.hash, block_info.number, block_info.is_new_best)).<span class="kw">await</span><span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(())
 }

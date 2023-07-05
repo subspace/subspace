@@ -214,20 +214,63 @@
 <a href="#214" id="214">214</a>
 <a href="#215" id="215">215</a>
 <a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::domain_block_processor::{DomainBlockProcessor, PendingPrimaryBlocks, ReceiptsChecker};
 <span class="kw">use crate</span>::{DomainParentChain, TransactionFor};
 <span class="kw">use </span>domain_block_preprocessor::runtime_api_full::RuntimeApiFull;
 <span class="kw">use </span>domain_block_preprocessor::DomainBlockPreprocessor;
 <span class="kw">use </span>domain_runtime_primitives::{DomainCoreApi, InherentExtrinsicApi};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, Finalizer, StateBackendFor};
-<span class="kw">use </span>sc_consensus::BlockImport;
+<span class="kw">use </span>sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, StateAction};
 <span class="kw">use </span>sp_api::{NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, HeaderMetadata};
+<span class="kw">use </span>sp_consensus::BlockOrigin;
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
 <span class="kw">use </span>sp_domains::{DomainId, ExecutorApi};
 <span class="kw">use </span>sp_keystore::KeystorePtr;
 <span class="kw">use </span>sp_messenger::MessengerApi;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, HashFor, One};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, HashFor};
 <span class="kw">use </span>sp_runtime::Digest;
 <span class="kw">use </span>std::sync::Arc;
 
@@ -340,9 +383,9 @@
     <span class="comment">// TODO: Handle the returned error properly, ref to https://github.com/subspace/subspace/pull/695#discussion_r926721185
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>process_bundles(
         <span class="self">self</span>,
-        primary_info: (PBlock::Hash, NumberFor&lt;PBlock&gt;),
+        primary_info: (PBlock::Hash, NumberFor&lt;PBlock&gt;, bool),
     ) -&gt; sp_blockchain::Result&lt;()&gt; {
-        <span class="kw">let </span>(primary_hash, primary_number) = primary_info;
+        <span class="kw">let </span>(primary_hash, primary_number, is_new_best) = primary_info;
 
         <span class="macro">tracing::debug!</span>(<span class="string">&quot;Processing imported primary block #{primary_number},{primary_hash}&quot;</span>);
 
@@ -364,9 +407,36 @@
             <span class="kw">let </span><span class="kw-2">mut </span>domain_parent = initial_parent;
 
             <span class="kw">for </span>primary_info <span class="kw">in </span>primary_imports {
-                domain_parent = <span class="self">self
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(next_domain_parent) = <span class="self">self
                     </span>.process_bundles_at((primary_info.hash, primary_info.number), domain_parent)
+                    .<span class="kw">await</span><span class="question-mark">?
+                </span>{
+                    domain_parent = next_domain_parent;
+                }
+            }
+
+            <span class="comment">// The domain branch driving from the best primary branch should also be the best domain branch even
+            // if it is no the longest domain branch. Thus re-import the tip of the best domain branch to make it
+            // the new best block if it isn&#39;t.
+            //
+            // Note: this may cause the best domain fork switch to a shorter fork or in some case the best domain
+            // block become the ancestor block of the current best block.
+            </span><span class="kw">let </span>domain_tip = domain_parent.<span class="number">0</span>;
+            <span class="kw">if </span>is_new_best &amp;&amp; <span class="self">self</span>.client.info().best_hash != domain_tip {
+                <span class="kw">let </span>header = <span class="self">self</span>.client.header(domain_tip)<span class="question-mark">?</span>.ok_or_else(|| {
+                    sp_blockchain::Error::Backend(<span class="macro">format!</span>(<span class="string">&quot;Header for #{:?} not found&quot;</span>, domain_tip))
+                })<span class="question-mark">?</span>;
+                <span class="kw">let </span>block_import_params = {
+                    <span class="kw">let </span><span class="kw-2">mut </span>import_block = BlockImportParams::new(BlockOrigin::Own, header);
+                    import_block.import_existing = <span class="bool-val">true</span>;
+                    import_block.fork_choice = <span class="prelude-val">Some</span>(ForkChoiceStrategy::Custom(<span class="bool-val">true</span>));
+                    import_block.state_action = StateAction::Skip;
+                    import_block
+                };
+                <span class="self">self</span>.domain_block_processor
+                    .import_domain_block(block_import_params)
                     .<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="macro">assert_eq!</span>(domain_tip, <span class="self">self</span>.client.info().best_hash);
             }
         }
 
@@ -377,7 +447,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         primary_info: (PBlock::Hash, NumberFor&lt;PBlock&gt;),
         parent_info: (Block::Hash, NumberFor&lt;Block&gt;),
-    ) -&gt; sp_blockchain::Result&lt;(Block::Hash, NumberFor&lt;Block&gt;)&gt; {
+    ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;(Block::Hash, NumberFor&lt;Block&gt;)&gt;&gt; {
         <span class="kw">let </span>(primary_hash, primary_number) = primary_info;
         <span class="kw">let </span>(parent_hash, parent_number) = parent_info;
 
@@ -386,9 +456,31 @@
             on top of parent block #{parent_number},{parent_hash}&quot;
         </span>);
 
-        <span class="kw">let </span>extrinsics = <span class="self">self
+        <span class="comment">// TODO: Retrieve using consensus chain runtime API
+        </span><span class="kw">let </span>head_receipt_number = parent_number;
+        <span class="comment">// let head_receipt_number = self
+        // .primary_chain_client
+        // .runtime_api()
+        // .head_receipt_number(primary_hash, self.domain_id)?
+        // .into();
+
+        </span><span class="kw">let </span>extrinsics = <span class="kw">match </span><span class="self">self
             </span>.domain_block_preprocessor
-            .preprocess_primary_block(primary_hash, parent_hash)<span class="question-mark">?</span>;
+            .preprocess_primary_block(primary_hash, parent_hash)<span class="question-mark">?
+        </span>{
+            <span class="prelude-val">Some</span>(exts) =&gt; exts,
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">tracing::debug!</span>(
+                    <span class="string">&quot;No bundles and runtime upgrade for this domain in primary block {primary_info:?}, skip building domain block&quot;
+                </span>);
+                <span class="self">self</span>.domain_block_processor.on_primary_block_processed(
+                    primary_hash,
+                    <span class="prelude-val">None</span>,
+                    head_receipt_number,
+                )<span class="question-mark">?</span>;
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+            }
+        };
 
         <span class="kw">let </span>domain_block_result = <span class="self">self
             </span>.domain_block_processor
@@ -400,15 +492,7 @@
             )
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// TODO: Retrieve using consensus chain runtime API
-        </span><span class="kw">let </span>head_receipt_number = domain_block_result.header_number - One::one();
-        <span class="comment">// let head_receipt_number = self
-        // .primary_chain_client
-        // .runtime_api()
-        // .head_receipt_number(primary_hash, self.domain_id)?
-        // .into();
-
-        </span><span class="macro">assert!</span>(
+        <span class="macro">assert!</span>(
             domain_block_result.header_number &gt; head_receipt_number,
             <span class="string">&quot;Consensus chain number must larger than execution chain number by at least 1&quot;
         </span>);
@@ -418,16 +502,16 @@
             domain_block_result.header_number,
         );
 
-        <span class="self">self</span>.domain_block_processor.on_domain_block_processed(
+        <span class="self">self</span>.domain_block_processor.on_primary_block_processed(
             primary_hash,
-            domain_block_result,
+            <span class="prelude-val">Some</span>(domain_block_result),
             head_receipt_number,
         )<span class="question-mark">?</span>;
 
         <span class="self">self</span>.domain_receipts_checker
             .check_state_transition(primary_hash)<span class="question-mark">?</span>;
 
-        <span class="prelude-val">Ok</span>(built_block_info)
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(built_block_info))
     }
 }
 </code></pre></div></section></main></body></html>
