@@ -257,7 +257,11 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::bundle_election_solver::BundleElectionSolver;
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::bundle_producer_election_solver::BundleProducerElectionSolver;
 <span class="kw">use </span><span class="kw">crate</span>::domain_bundle_proposer::DomainBundleProposer;
 <span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
 <span class="kw">use </span><span class="kw">crate</span>::sortition::TransactionSelector;
@@ -279,8 +283,12 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::U256;
 
-<span class="kw">type </span>OpaqueBundle&lt;Block, CBlock&gt; =
-    sp_domains::OpaqueBundle&lt;NumberFor&lt;CBlock&gt;, &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;;
+<span class="kw">type </span>OpaqueBundle&lt;Block, CBlock&gt; = sp_domains::OpaqueBundle&lt;
+    NumberFor&lt;CBlock&gt;,
+    &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash,
+    NumberFor&lt;Block&gt;,
+    &lt;Block <span class="kw">as </span>BlockT&gt;::Hash,
+&gt;;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DomainBundleProducer&lt;
     Block,
@@ -300,7 +308,7 @@
     parent_chain: ParentChain,
     bundle_sender: Arc&lt;BundleSender&lt;Block, CBlock&gt;&gt;,
     keystore: KeystorePtr,
-    bundle_election_solver: BundleElectionSolver&lt;Block, CBlock&gt;,
+    bundle_producer_election_solver: BundleProducerElectionSolver&lt;Block, CBlock&gt;,
     domain_bundle_proposer: DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt;,
     _phantom_data: PhantomData&lt;ParentChainBlock&gt;,
 }
@@ -328,7 +336,7 @@
             parent_chain: <span class="self">self</span>.parent_chain.clone(),
             bundle_sender: <span class="self">self</span>.bundle_sender.clone(),
             keystore: <span class="self">self</span>.keystore.clone(),
-            bundle_election_solver: <span class="self">self</span>.bundle_election_solver.clone(),
+            bundle_producer_election_solver: <span class="self">self</span>.bundle_producer_election_solver.clone(),
             domain_bundle_proposer: <span class="self">self</span>.domain_bundle_proposer.clone(),
             _phantom_data: <span class="self">self</span>._phantom_data,
         }
@@ -354,12 +362,11 @@
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + AuxStore + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: BlockBuilder&lt;Block&gt; + DomainCoreApi&lt;Block&gt;,
     CClient: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt;,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Hash&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash&gt;,
     ParentChain: ParentChainInterface&lt;Block, ParentChainBlock&gt; + Clone,
     TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = Block&gt;,
 {
-    <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         domain_id: DomainId,
         consensus_client: Arc&lt;CClient&gt;,
         client: Arc&lt;Client&gt;,
@@ -374,7 +381,8 @@
         bundle_sender: Arc&lt;BundleSender&lt;Block, CBlock&gt;&gt;,
         keystore: KeystorePtr,
     ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>bundle_election_solver = BundleElectionSolver::&lt;Block, CBlock&gt;::new(keystore.clone());
+        <span class="kw">let </span>bundle_producer_election_solver =
+            BundleProducerElectionSolver::&lt;Block, CBlock&gt;::new(keystore.clone());
         <span class="self">Self </span>{
             domain_id,
             consensus_client,
@@ -382,7 +390,7 @@
             parent_chain,
             bundle_sender,
             keystore,
-            bundle_election_solver,
+            bundle_producer_election_solver,
             domain_bundle_proposer,
             _phantom_data: PhantomData,
         }
@@ -427,7 +435,7 @@
 
             // Executor is lagging behind the receipt chain on its parent chain as another executor
             // already processed a block higher than the local best and submitted the receipt to
-            // the parent chain, we ought to catch up with the primary block processing before
+            // the parent chain, we ought to catch up with the consensus block processing before
             // producing new bundle.
             </span>!domain_best_number.is_zero() &amp;&amp; domain_best_number &lt;= head_receipt_number
         };
@@ -441,8 +449,8 @@
         }
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(bundle_solution) = <span class="self">self
-            </span>.bundle_election_solver
-            .solve_bundle_election_challenge(<span class="self">self</span>.domain_id, global_challenge)<span class="question-mark">?
+            </span>.bundle_producer_election_solver
+            .solve_challenge(<span class="self">self</span>.domain_id, global_challenge)<span class="question-mark">?
         </span>{
             <span class="macro">tracing::info!</span>(<span class="string">&quot;📦 Claimed bundle at slot {slot}&quot;</span>);
 

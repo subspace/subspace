@@ -851,12 +851,12 @@
 <a href="#851" id="851">851</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Schema for executor in the aux-db.
 
-</span><span class="kw">use </span>codec::{Decode, Encode};
+</span><span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
+<span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
 <span class="kw">use </span>sc_client_api::HeaderBackend;
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>ClientError, <span class="prelude-ty">Result </span><span class="kw">as </span>ClientResult};
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_domains::ExecutionReceipt;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, NumberFor, One, SaturatedConversion};
 <span class="kw">use </span>subspace_core_primitives::BlockNumber;
 
@@ -880,26 +880,26 @@
 /// Updated only when there is a new domain block produced
 </span><span class="kw">const </span>CONSENSUS_HASH: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;consensus_block_hash&quot;</span>;
 
-<span class="doccomment">/// domain_block_hash =&gt; latest_primary_block_hash
+<span class="doccomment">/// domain_block_hash =&gt; latest_consensus_block_hash
 ///
-/// It&#39;s important to note that a primary block could possibly contain no bundles for a specific domain,
-/// leading to the situation where multiple primary blocks could correspond to the same domain block.
+/// It&#39;s important to note that a consensus block could possibly contain no bundles for a specific domain,
+/// leading to the situation where multiple consensus blocks could correspond to the same domain block.
 ///
-/// PrimaryBlock10 --&gt; DomainBlock5
-/// PrimaryBlock11 --&gt; DomainBlock5
-/// PrimaryBlock12 --&gt; DomainBlock5
+/// ConsensusBlock10 --&gt; DomainBlock5
+/// ConsensusBlock11 --&gt; DomainBlock5
+/// ConsensusBlock12 --&gt; DomainBlock5
 ///
-/// This mapping is designed to track the most recent primary block that derives the domain block
-/// identified by `domain_block_hash`, e.g., Hash(DomainBlock5) =&gt; Hash(PrimaryBlock12).
-</span><span class="kw">const </span>LATEST_PRIMARY_HASH: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;latest_primary_hash&quot;</span>;
+/// This mapping is designed to track the most recent consensus block that derives the domain block
+/// identified by `domain_block_hash`, e.g., Hash(DomainBlock5) =&gt; Hash(ConsensusBlock12).
+</span><span class="kw">const </span>LATEST_CONSENSUS_HASH: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;latest_consensus_hash&quot;</span>;
 
-<span class="doccomment">/// primary_block_hash =&gt; best_domain_block_hash
+<span class="doccomment">/// consensus_block_hash =&gt; best_domain_block_hash
 ///
-/// This mapping tracks the mapping of a primary block and the corresponding domain block derived
-/// until this primary block:
-/// - Hash(PrimaryBlock10) =&gt; Hash(DomainBlock5)
-/// - Hash(PrimaryBlock11) =&gt; Hash(DomainBlock5)
-/// - Hash(PrimaryBlock12) =&gt; Hash(DomainBlock5)
+/// This mapping tracks the mapping of a consensus block and the corresponding domain block derived
+/// until this consensus block:
+/// - Hash(ConsensusBlock10) =&gt; Hash(DomainBlock5)
+/// - Hash(ConsensusBlock11) =&gt; Hash(DomainBlock5)
+/// - Hash(ConsensusBlock12) =&gt; Hash(DomainBlock5)
 </span><span class="kw">const </span>BEST_DOMAIN_HASH: <span class="kw-2">&amp;</span>[u8] = <span class="string">b&quot;best_domain_hash&quot;</span>;
 
 <span class="doccomment">/// Prune the execution receipts when they reach this number.
@@ -932,7 +932,7 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_execution_receipt&lt;Backend, Block, CBlock&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
     head_receipt_number: NumberFor&lt;Block&gt;,
-    execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceipt&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, Block::Hash&gt;,
+    execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceiptFor&lt;Block, CBlock&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt;
 <span class="kw">where
     </span>Backend: AuxStore,
@@ -1007,35 +1007,33 @@
 }
 
 <span class="doccomment">/// Load the execution receipt for given domain block hash.
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_execution_receipt_by_domain_hash&lt;Backend, Hash, Number, PHash&gt;(
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_execution_receipt_by_domain_hash&lt;Backend, Block, CBlock&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
-    domain_hash: Hash,
-) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;ExecutionReceipt&lt;Number, PHash, Hash&gt;&gt;&gt;
+    domain_hash: Block::Hash,
+) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;ExecutionReceiptFor&lt;Block, CBlock&gt;&gt;&gt;
 <span class="kw">where
     </span>Backend: AuxStore,
-    Hash: Encode + Decode,
-    Number: Decode,
-    PHash: Encode + Decode,
+    Block: BlockT,
+    CBlock: BlockT,
 {
-    <span class="kw">match </span>consensus_block_hash_for::&lt;Backend, Hash, PHash&gt;(backend, domain_hash)<span class="question-mark">? </span>{
-        <span class="prelude-val">Some</span>(primary_block_hash) =&gt; load_decode(
+    <span class="kw">match </span>consensus_block_hash_for::&lt;Backend, Block::Hash, CBlock::Hash&gt;(backend, domain_hash)<span class="question-mark">? </span>{
+        <span class="prelude-val">Some</span>(consensus_block_hash) =&gt; load_decode(
             backend,
-            execution_receipt_key(primary_block_hash).as_slice(),
+            execution_receipt_key(consensus_block_hash).as_slice(),
         ),
         <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
     }
 }
 
 <span class="doccomment">/// Load the execution receipt for given consensus block hash.
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_execution_receipt&lt;Backend, Hash, Number, PHash&gt;(
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_execution_receipt&lt;Backend, Block, CBlock&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
-    consensus_block_hash: PHash,
-) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;ExecutionReceipt&lt;Number, PHash, Hash&gt;&gt;&gt;
+    consensus_block_hash: CBlock::Hash,
+) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;ExecutionReceiptFor&lt;Block, CBlock&gt;&gt;&gt;
 <span class="kw">where
     </span>Backend: AuxStore,
-    Hash: Decode,
-    Number: Decode,
-    PHash: Encode + Decode,
+    Block: BlockT,
+    CBlock: BlockT,
 {
     load_decode(
         backend,
@@ -1046,7 +1044,7 @@
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>track_domain_hash_and_consensus_hash&lt;Backend, Hash, PHash&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
     best_domain_hash: Hash,
-    latest_primary_hash: PHash,
+    latest_consensus_hash: PHash,
 ) -&gt; ClientResult&lt;()&gt;
 <span class="kw">where
     </span>Backend: AuxStore,
@@ -1058,13 +1056,15 @@
     </span>backend.insert_aux(
         <span class="kw-2">&amp;</span>[
             (
-                (LATEST_PRIMARY_HASH, best_domain_hash.clone())
+                (LATEST_CONSENSUS_HASH, best_domain_hash.clone())
                     .encode()
                     .as_slice(),
-                latest_primary_hash.encode().as_slice(),
+                latest_consensus_hash.encode().as_slice(),
             ),
             (
-                (BEST_DOMAIN_HASH, latest_primary_hash).encode().as_slice(),
+                (BEST_DOMAIN_HASH, latest_consensus_hash)
+                    .encode()
+                    .as_slice(),
                 best_domain_hash.encode().as_slice(),
             ),
         ],
@@ -1072,33 +1072,33 @@
     )
 }
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>best_domain_hash_for&lt;Backend, Hash, PHash&gt;(
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>best_domain_hash_for&lt;Backend, Hash, CHash&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
-    primary_hash: <span class="kw-2">&amp;</span>PHash,
+    consensus_hash: <span class="kw-2">&amp;</span>CHash,
 ) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;Hash&gt;&gt;
 <span class="kw">where
     </span>Backend: AuxStore,
     Hash: Decode,
-    PHash: Encode,
+    CHash: Encode,
 {
     load_decode(
         backend,
-        (BEST_DOMAIN_HASH, primary_hash).encode().as_slice(),
+        (BEST_DOMAIN_HASH, consensus_hash).encode().as_slice(),
     )
 }
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>latest_consensus_block_hash_for&lt;Backend, Hash, PHash&gt;(
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>latest_consensus_block_hash_for&lt;Backend, Hash, CHash&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
     domain_hash: <span class="kw-2">&amp;</span>Hash,
-) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;PHash&gt;&gt;
+) -&gt; ClientResult&lt;<span class="prelude-ty">Option</span>&lt;CHash&gt;&gt;
 <span class="kw">where
     </span>Backend: AuxStore,
     Hash: Encode,
-    PHash: Decode,
+    CHash: Decode,
 {
     load_decode(
         backend,
-        (LATEST_PRIMARY_HASH, domain_hash).encode().as_slice(),
+        (LATEST_CONSENSUS_HASH, domain_hash).encode().as_slice(),
     )
 }
 
@@ -1344,14 +1344,14 @@
     <span class="comment">// TODO: Remove `substrate_test_runtime_client` dependency for faster build time
     </span><span class="kw">use </span>substrate_test_runtime_client::{DefaultTestClientBuilderExt, TestClientBuilderExt};
 
-    <span class="kw">type </span>ExecutionReceipt = sp_domains::ExecutionReceipt&lt;BlockNumber, Hash, Hash&gt;;
+    <span class="kw">type </span>ExecutionReceipt = sp_domains::ExecutionReceipt&lt;BlockNumber, Hash, BlockNumber, Hash&gt;;
 
     <span class="kw">fn </span>create_execution_receipt(consensus_block_number: BlockNumber) -&gt; ExecutionReceipt {
         ExecutionReceipt {
             consensus_block_number,
             consensus_block_hash: H256::random(),
-            domain_block_number: consensus_block_number <span class="kw">as </span>u64, <span class="comment">// TODO: proper type
-            </span>domain_hash: H256::random(),
+            domain_block_number: consensus_block_number,
+            domain_hash: H256::random(),
             trace: Default::default(),
             trace_root: Default::default(),
         }
@@ -1398,7 +1398,7 @@
         };
 
         <span class="kw">let </span>receipt_at = |consensus_block_hash: Hash| {
-            load_execution_receipt(<span class="kw-2">&amp;</span>client, consensus_block_hash).unwrap()
+            load_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(<span class="kw-2">&amp;</span>client, consensus_block_hash).unwrap()
         };
 
         <span class="kw">let </span>write_receipt_at = |number: BlockNumber, receipt: <span class="kw-2">&amp;</span>ExecutionReceipt| {
@@ -1487,7 +1487,7 @@
         };
 
         <span class="kw">let </span>receipt_at = |consensus_block_hash: Hash| {
-            load_execution_receipt(<span class="kw-2">&amp;</span>client, consensus_block_hash).unwrap()
+            load_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(<span class="kw-2">&amp;</span>client, consensus_block_hash).unwrap()
         };
 
         <span class="kw">let </span>write_receipt_at = |head_receipt_number: BlockNumber, receipt: <span class="kw-2">&amp;</span>ExecutionReceipt| {

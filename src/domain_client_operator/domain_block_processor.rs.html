@@ -675,16 +675,9 @@
 <a href="#675" id="675">675</a>
 <a href="#676" id="676">676</a>
 <a href="#677" id="677">677</a>
-<a href="#678" id="678">678</a>
-<a href="#679" id="679">679</a>
-<a href="#680" id="680">680</a>
-<a href="#681" id="681">681</a>
-<a href="#682" id="682">682</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::fraud_proof::{find_trace_mismatch, FraudProofGenerator};
 <span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
-<span class="kw">use </span><span class="kw">crate</span>::utils::{
-    to_number_primitive, DomainBlockImportNotification, DomainImportNotificationSinks,
-};
+<span class="kw">use </span><span class="kw">crate</span>::utils::{DomainBlockImportNotification, DomainImportNotificationSinks};
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>domain_block_builder::{BlockBuilder, BuiltBlock, RecordProof};
@@ -711,7 +704,7 @@
 {
     <span class="kw">pub </span>header_hash: Block::Hash,
     <span class="kw">pub </span>header_number: NumberFor&lt;Block&gt;,
-    <span class="kw">pub </span>execution_receipt: ExecutionReceiptFor&lt;CBlock, Block::Hash&gt;,
+    <span class="kw">pub </span>execution_receipt: ExecutionReceiptFor&lt;Block, CBlock&gt;,
 }
 
 <span class="doccomment">/// An abstracted domain block processor.
@@ -748,7 +741,7 @@
     }
 }
 
-<span class="doccomment">/// A list of consensus blocks waiting to be processed by executor on each imported consensus block
+<span class="doccomment">/// A list of consensus blocks waiting to be processed by operator on each imported consensus block
 /// notification.
 ///
 /// Usually, each new domain block is built on top of the current best domain block, with the block
@@ -787,7 +780,7 @@
         + BlockBackend&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + <span class="lifetime">&#39;static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Hash&gt; + <span class="lifetime">&#39;static</span>,
+    CClient::Api: DomainsApi&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash&gt; + <span class="lifetime">&#39;static</span>,
     Backend: sc_client_api::Backend&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     TransactionFor&lt;Backend, Block&gt;: sp_trie::HashDBT&lt;HashFor&lt;Block&gt;, sp_trie::DBValue&gt;,
 {
@@ -865,7 +858,7 @@
                 <span class="kw">let </span>(common_block_number, common_block_hash) =
                     (route.common_block().number, route.common_block().hash);
 
-                <span class="comment">// Get the domain block that is derived from the common primary block and use it as
+                <span class="comment">// Get the domain block that is derived from the common consensus block and use it as
                 // the initial domain parent block
                 </span><span class="kw">let </span>domain_block_hash: Block::Hash = <span class="kw">crate</span>::aux_schema::best_domain_hash_for(
                     <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
@@ -874,14 +867,13 @@
                 </span>.ok_or_else(
                     || {
                         sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                            <span class="string">&quot;Hash of domain block derived from primary block #{common_block_number},{common_block_hash} not found&quot;
+                            <span class="string">&quot;Hash of domain block derived from consensus block #{common_block_number},{common_block_hash} not found&quot;
                         </span>))
                     },
                 )<span class="question-mark">?</span>;
                 <span class="kw">let </span>parent_header = <span class="self">self</span>.client.header(domain_block_hash)<span class="question-mark">?</span>.ok_or_else(|| {
                     sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                        <span class="string">&quot;Domain block header for #{:?} not found&quot;</span>,
-                        domain_block_hash
+                        <span class="string">&quot;Domain block header for #{domain_block_hash:?} not found&quot;</span>,
                     ))
                 })<span class="question-mark">?</span>;
 
@@ -901,13 +893,13 @@
         digests: Digest,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;DomainBlockResult&lt;Block, CBlock&gt;, sp_blockchain::Error&gt; {
         <span class="comment">// Although the domain block intuitively ought to use the same fork choice
-        // from the corresponding primary block, it&#39;s fine to forcibly always use
+        // from the corresponding consensus block, it&#39;s fine to forcibly always use
         // the longest chain for simplicity as we manually build the domain branches
-        // by following the primary chain branches. Due to the possibility of domain
-        // branch transitioning to a lower fork caused by the change that a primary block
+        // by following the consensus chain branches. Due to the possibility of domain
+        // branch transitioning to a lower fork caused by the change that a consensus block
         // can possibility produce no domain block, it&#39;s important to note that now we
-        // need to ensure the domain block built from the latest primary block is the
-        // new best domain block after processing each imported primary block.
+        // need to ensure the consensus block built from the latest consensus block is the
+        // new best domain block after processing each imported consensus block.
         </span><span class="kw">let </span>fork_choice = ForkChoiceStrategy::LongestChain;
 
         <span class="kw">let </span>(header_hash, header_number, state_root) = <span class="self">self
@@ -915,8 +907,9 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">tracing::debug!</span>(
-            <span class="string">&quot;Built new domain block #{header_number},{header_hash} from consensus block #{consensus_block_number},{consensus_block_hash} \
-            on top of parent block #{parent_number},{parent_hash}&quot;
+            <span class="string">&quot;Built new domain block #{header_number},{header_hash} from \
+            consensus block #{consensus_block_number},{consensus_block_hash} \
+            on top of parent domain block #{parent_number},{parent_hash}&quot;
         </span>);
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(to_finalize_block_number) = consensus_block_number
@@ -965,8 +958,8 @@
         <span class="kw">let </span>execution_receipt = ExecutionReceipt {
             consensus_block_number,
             consensus_block_hash,
-            domain_block_number: to_number_primitive(header_number) <span class="kw">as </span>u64, <span class="comment">// TODO: proper type
-            </span>domain_hash: header_hash,
+            domain_block_number: header_number,
+            domain_hash: header_hash,
             trace,
             trace_root,
         };
@@ -1012,8 +1005,7 @@
             import_block.body = <span class="prelude-val">Some</span>(body);
             import_block.state_action =
                 StateAction::ApplyChanges(StorageChanges::Changes(storage_changes));
-            <span class="comment">// Follow the consensus block&#39;s fork choice.
-            </span>import_block.fork_choice = <span class="prelude-val">Some</span>(fork_choice);
+            import_block.fork_choice = <span class="prelude-val">Some</span>(fork_choice);
             import_block
         };
         <span class="self">self</span>.import_domain_block(block_import_params).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1095,25 +1087,22 @@
                 header_hash
             }
             <span class="prelude-val">None </span>=&gt; {
-                <span class="comment">// No new domain block produced, thus this primary block should map to the same
+                <span class="comment">// No new domain block produced, thus this consensus block should map to the same
                 // domain block as its parent block
-                </span><span class="kw">let </span>primary_header = <span class="self">self
+                </span><span class="kw">let </span>consensus_header = <span class="self">self
                     </span>.consensus_client
                     .header(consensus_block_hash)<span class="question-mark">?
                     </span>.ok_or_else(|| {
                         sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                            <span class="string">&quot;Primary block header for #{consensus_block_hash:?} not found&quot;
+                            <span class="string">&quot;Header for consensus block {consensus_block_hash:?} not found&quot;
                         </span>))
                     })<span class="question-mark">?</span>;
-                <span class="kw">if </span>!primary_header.number().is_one() {
-                    <span class="kw">crate</span>::aux_schema::best_domain_hash_for(
-                        <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
-                        primary_header.parent_hash(),
-                    )<span class="question-mark">?
-                    </span>.ok_or_else(|| {
+                <span class="kw">if </span>!consensus_header.number().is_one() {
+                    <span class="kw">let </span>consensus_parent_hash = consensus_header.parent_hash();
+                    <span class="kw">crate</span>::aux_schema::best_domain_hash_for(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, consensus_parent_hash)<span class="question-mark">?
+                        </span>.ok_or_else(|| {
                         sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                            <span class="string">&quot;Domain hash for #{:?} not found&quot;</span>,
-                            primary_header.parent_hash()
+                            <span class="string">&quot;Domain hash for consensus block {consensus_parent_hash:?} not found&quot;</span>,
                         ))
                     })<span class="question-mark">?
                 </span>} <span class="kw">else </span>{
@@ -1184,7 +1173,7 @@
         + sp_block_builder::BlockBuilder&lt;Block&gt;
         + sp_api::ApiExt&lt;Block, StateBackend = StateBackendFor&lt;Backend, Block&gt;&gt;,
     CClient: HeaderBackend&lt;CBlock&gt; + BlockBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + <span class="lifetime">&#39;static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Hash&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash&gt;,
     Backend: sc_client_api::Backend&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     TransactionFor&lt;Backend, Block&gt;: sp_trie::HashDBT&lt;HashFor&lt;Block&gt;, sp_trie::DBValue&gt;,
     E: CodeExecutor,
@@ -1228,7 +1217,7 @@
 
     <span class="kw">fn </span>check_receipts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        receipts: Vec&lt;ExecutionReceiptFor&lt;ParentChainBlock, Block::Hash&gt;&gt;,
+        receipts: Vec&lt;ExecutionReceiptFor&lt;Block, ParentChainBlock&gt;&gt;,
         fraud_proofs: Vec&lt;FraudProof&lt;NumberFor&lt;ParentChainBlock&gt;, ParentChainBlock::Hash&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>bad_receipts_to_write = <span class="macro">vec!</span>[];
@@ -1244,9 +1233,8 @@
 
             <span class="kw">let </span>local_receipt = <span class="kw">crate</span>::aux_schema::load_execution_receipt::&lt;
                 <span class="kw">_</span>,
-                Block::Hash,
-                NumberFor&lt;Block&gt;,
-                ParentChainBlock::Hash,
+                Block,
+                ParentChainBlock,
             &gt;(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, consensus_block_hash)<span class="question-mark">?
             </span>.ok_or(sp_blockchain::Error::Backend(<span class="macro">format!</span>(
                 <span class="string">&quot;Receipt for consensus block #{},{consensus_block_hash} not found&quot;</span>,
@@ -1334,13 +1322,15 @@
                 },
             )<span class="question-mark">?
         </span>{
-            <span class="kw">let </span>local_receipt =
-                <span class="kw">crate</span>::aux_schema::load_execution_receipt(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, consensus_block_hash)<span class="question-mark">?
-                    </span>.ok_or_else(|| {
-                        sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                            <span class="string">&quot;Receipt for consensus block {consensus_block_hash} not found&quot;
-                        </span>))
-                    })<span class="question-mark">?</span>;
+            <span class="kw">let </span>local_receipt = <span class="kw">crate</span>::aux_schema::load_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(
+                <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
+                consensus_block_hash,
+            )<span class="question-mark">?
+            </span>.ok_or_else(|| {
+                sp_blockchain::Error::Backend(<span class="macro">format!</span>(
+                    <span class="string">&quot;Receipt for consensus block {consensus_block_hash} not found&quot;
+                </span>))
+            })<span class="question-mark">?</span>;
 
             <span class="kw">let </span>fraud_proof = <span class="self">self
                 </span>.fraud_proof_generator
