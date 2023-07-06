@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["auditing","file_ext","piece_caching","plotting","proving","reading","sector"],"struct":["FarmerProtocolInfo"]};
+window.SIDEBAR_ITEMS = {"mod":["auditing","file_ext","plotting","proving","reading","sector"],"struct":["FarmerProtocolInfo"]};

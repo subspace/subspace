@@ -144,6 +144,8 @@
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::{Handlers, PlotMetadataHeader, RESERVED_PLOT_METADATA};
 <span class="kw">use crate</span>::{node_client, NodeClient};
 <span class="kw">use </span>memmap2::{MmapMut, MmapOptions};
@@ -156,7 +158,6 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{PublicKey, SectorIndex};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
-<span class="kw">use </span>subspace_farmer_components::piece_caching::PieceMemoryCache;
 <span class="kw">use </span>subspace_farmer_components::plotting;
 <span class="kw">use </span>subspace_farmer_components::plotting::{plot_sector, PieceGetter, PieceGetterRetryPolicy};
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadata;
@@ -192,22 +193,21 @@
 </span><span class="attr">#[allow(clippy::too_many_arguments)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>plotting&lt;NC, PG, PosTable&gt;(
     public_key: PublicKey,
-    first_sector_index: SectorIndex,
     node_client: NC,
     pieces_in_sector: u16,
     sector_size: usize,
     sector_metadata_size: usize,
-    target_sector_count: usize,
+    target_sector_count: SectorIndex,
     <span class="kw-2">mut </span>metadata_header: PlotMetadataHeader,
     <span class="kw-2">mut </span>metadata_header_mmap: MmapMut,
     plot_file: Arc&lt;File&gt;,
     metadata_file: File,
     sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadata&gt;&gt;&gt;,
     piece_getter: PG,
-    piece_memory_cache: PieceMemoryCache,
     kzg: Kzg,
     erasure_coding: ErasureCoding,
     handlers: Arc&lt;Handlers&gt;,
+    modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     concurrent_plotting_semaphore: Arc&lt;Semaphore&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt;
 <span class="kw">where
@@ -216,22 +216,24 @@
     PosTable: Table,
 {
     <span class="comment">// Some sectors may already be plotted, skip them
-    </span><span class="kw">let </span>sectors_offsets_left_to_plot = metadata_header.sector_count <span class="kw">as </span>usize..target_sector_count;
+    </span><span class="kw">let </span>sectors_indices_left_to_plot = metadata_header.sector_count..target_sector_count;
 
     <span class="comment">// TODO: Concurrency
-    </span><span class="kw">for </span>sector_offset <span class="kw">in </span>sectors_offsets_left_to_plot {
-        <span class="kw">let </span>sector_index = sector_offset <span class="kw">as </span>u64 + first_sector_index;
-        <span class="macro">trace!</span>(%sector_offset, %sector_index, <span class="string">&quot;Preparing to plot sector&quot;</span>);
+    </span><span class="kw">for </span>sector_index <span class="kw">in </span>sectors_indices_left_to_plot {
+        <span class="macro">trace!</span>(%sector_index, <span class="string">&quot;Preparing to plot sector&quot;</span>);
 
         <span class="kw">let </span><span class="kw-2">mut </span>sector = <span class="kw">unsafe </span>{
             MmapOptions::new()
-                .offset((sector_offset * sector_size) <span class="kw">as </span>u64)
+                .offset((sector_index <span class="kw">as </span>usize * sector_size) <span class="kw">as </span>u64)
                 .len(sector_size)
                 .map_mut(<span class="kw-2">&amp;*</span>plot_file)<span class="question-mark">?
         </span>};
         <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata = <span class="kw">unsafe </span>{
             MmapOptions::new()
-                .offset(RESERVED_PLOT_METADATA + (sector_offset * sector_metadata_size) <span class="kw">as </span>u64)
+                .offset(
+                    RESERVED_PLOT_METADATA
+                        + (u64::from(sector_index) * sector_metadata_size <span class="kw">as </span>u64),
+                )
                 .len(sector_metadata_size)
                 .map_mut(<span class="kw-2">&amp;</span>metadata_file)<span class="question-mark">?
         </span>};
@@ -239,7 +241,6 @@
             <span class="prelude-val">Ok</span>(plotting_permit) =&gt; plotting_permit,
             <span class="prelude-val">Err</span>(error) =&gt; {
                 <span class="macro">warn!</span>(
-                    %sector_offset,
                     %sector_index,
                     %error,
                     <span class="string">&quot;Semaphore was closed, interrupting plotting&quot;
@@ -248,7 +249,7 @@
             }
         };
 
-        <span class="macro">debug!</span>(%sector_offset, %sector_index, <span class="string">&quot;Plotting sector&quot;</span>);
+        <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Plotting sector&quot;</span>);
 
         <span class="kw">let </span>farmer_app_info = node_client
             .farmer_app_info()
@@ -257,7 +258,6 @@
 
         <span class="kw">let </span>plot_sector_fut = plot_sector::&lt;<span class="kw">_</span>, PosTable&gt;(
             <span class="kw-2">&amp;</span>public_key,
-            sector_offset,
             sector_index,
             <span class="kw-2">&amp;</span>piece_getter,
             PieceGetterRetryPolicy::Limited(PIECE_GETTER_RETRY_NUMBER.get()),
@@ -267,8 +267,11 @@
             pieces_in_sector,
             <span class="kw-2">&amp;mut </span>sector,
             <span class="kw-2">&amp;mut </span>sector_metadata,
-            piece_memory_cache.clone(),
         );
+
+        <span class="comment">// Inform others that this sector is being modified
+        </span>modifying_sector_index.write().replace(sector_index);
+
         <span class="kw">let </span>plotted_sector = plot_sector_fut.<span class="kw">await</span><span class="question-mark">?</span>;
         sector.flush()<span class="question-mark">?</span>;
         sector_metadata.flush()<span class="question-mark">?</span>;
@@ -279,13 +282,14 @@
             .write()
             .push(plotted_sector.sector_metadata.clone());
 
-        <span class="macro">info!</span>(%sector_offset, %sector_index, <span class="string">&quot;Sector plotted successfully&quot;</span>);
+        <span class="comment">// Inform others that this sector is no longer being modified
+        </span>modifying_sector_index.write().take();
 
-        handlers.sector_plotted.call_simple(<span class="kw-2">&amp;</span>(
-            sector_offset,
-            plotted_sector,
-            Arc::new(plotting_permit),
-        ));
+        <span class="macro">info!</span>(%sector_index, <span class="string">&quot;Sector plotted successfully&quot;</span>);
+
+        handlers
+            .sector_plotted
+            .call_simple(<span class="kw-2">&amp;</span>(plotted_sector, Arc::new(plotting_permit)));
     }
 
     <span class="prelude-val">Ok</span>(())

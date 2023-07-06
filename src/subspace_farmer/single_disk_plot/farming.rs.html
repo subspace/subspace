@@ -166,6 +166,9 @@
 <a href="#166" id="166">166</a>
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::Handlers;
@@ -237,7 +240,6 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>farming&lt;NC, PosTable&gt;(
     public_key: PublicKey,
     reward_address: PublicKey,
-    first_sector_index: SectorIndex,
     node_client: NC,
     sector_size: usize,
     plot_mmap: Mmap,
@@ -245,6 +247,7 @@
     kzg: Kzg,
     erasure_coding: ErasureCoding,
     handlers: Arc&lt;Handlers&gt;,
+    modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw-2">mut </span>slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), FarmingError&gt;
 <span class="kw">where
@@ -258,16 +261,18 @@
 
         <span class="macro">debug!</span>(%slot, %sector_count, <span class="string">&quot;Reading sectors&quot;</span>);
 
+        <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read();
+        <span class="kw">let </span>maybe_sector_being_modified = modifying_sector_guard.as_ref().copied();
         <span class="kw">let </span><span class="kw-2">mut </span>solutions = Vec::&lt;Solution&lt;PublicKey, PublicKey&gt;&gt;::new();
 
-        <span class="kw">for </span>(sector_index, sector_metadata, sector) <span class="kw">in </span>sectors_metadata
-            .iter()
+        <span class="kw">for </span>((sector_index, sector_metadata), sector) <span class="kw">in </span>(<span class="number">0</span>..)
+            .zip(<span class="kw-2">&amp;*</span>sectors_metadata)
             .zip(plot_mmap.chunks_exact(sector_size))
-            .enumerate()
-            .map(|(sector_index, (sector, metadata))| {
-                (sector_index <span class="kw">as </span>u64 + first_sector_index, sector, metadata)
-            })
         {
+            <span class="kw">if </span>maybe_sector_being_modified == <span class="prelude-val">Some</span>(sector_index) {
+                <span class="comment">// Skip sector that is being modified right now
+                </span><span class="kw">continue</span>;
+            }
             <span class="macro">trace!</span>(%slot, %sector_index, <span class="string">&quot;Auditing sector&quot;</span>);
 
             <span class="kw">let </span>maybe_solution_candidates = audit_sector(
@@ -320,6 +325,7 @@
         }
 
         drop(sectors_metadata);
+        drop(modifying_sector_guard);
 
         <span class="kw">let </span>response = SolutionResponse {
             slot_number: slot_info.slot_number,
