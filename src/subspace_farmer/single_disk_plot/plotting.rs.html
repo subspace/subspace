@@ -146,20 +146,62 @@
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
 <a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::{Handlers, PlotMetadataHeader, RESERVED_PLOT_METADATA};
 <span class="kw">use crate</span>::{node_client, NodeClient};
 <span class="kw">use </span>memmap2::{MmapMut, MmapOptions};
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>parking_lot::RwLock;
 <span class="kw">use </span>std::fs::File;
-<span class="kw">use </span>std::io;
 <span class="kw">use </span>std::num::NonZeroU16;
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>std::{io, mem};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
-<span class="kw">use </span>subspace_core_primitives::{PublicKey, SectorIndex};
+<span class="kw">use </span>subspace_core_primitives::{PieceOffset, PublicKey, SectorIndex};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_farmer_components::plotting;
-<span class="kw">use </span>subspace_farmer_components::plotting::{plot_sector, PieceGetter, PieceGetterRetryPolicy};
+<span class="kw">use </span>subspace_farmer_components::plotting::{
+    plot_sector, PieceGetter, PieceGetterRetryPolicy, PlottedSector,
+};
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadata;
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>thiserror::Error;
@@ -278,18 +320,56 @@
 
         metadata_header.sector_count += <span class="number">1</span>;
         metadata_header_mmap.copy_from_slice(metadata_header.encode().as_slice());
-        sectors_metadata
-            .write()
-            .push(plotted_sector.sector_metadata.clone());
+        <span class="kw">let </span>maybe_old_sector_metadata = {
+            <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata = sectors_metadata.write();
+            <span class="comment">// If exists then we&#39;re replotting, otherwise we create sector for the first time
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(existing_sector_metadata) = sectors_metadata.get_mut(sector_index <span class="kw">as </span>usize)
+            {
+                <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata_tmp = plotted_sector.sector_metadata.clone();
+                mem::swap(existing_sector_metadata, <span class="kw-2">&amp;mut </span>sector_metadata_tmp);
+                <span class="prelude-val">Some</span>(sector_metadata_tmp)
+            } <span class="kw">else </span>{
+                sectors_metadata.push(plotted_sector.sector_metadata.clone());
+                <span class="prelude-val">None
+            </span>}
+        };
+
+        <span class="kw">let </span>old_plotted_sector = maybe_old_sector_metadata.map(|old_sector_metadata| {
+            <span class="kw">let </span>old_history_size = old_sector_metadata.history_size;
+
+            PlottedSector {
+                sector_id: plotted_sector.sector_id,
+                sector_index: plotted_sector.sector_index,
+                sector_metadata: old_sector_metadata,
+                piece_indexes: {
+                    <span class="kw">let </span><span class="kw-2">mut </span>piece_indexes = Vec::with_capacity(usize::from(pieces_in_sector));
+                    (PieceOffset::ZERO..)
+                        .take(usize::from(pieces_in_sector))
+                        .map(|piece_offset| {
+                            plotted_sector.sector_id.derive_piece_index(
+                                piece_offset,
+                                old_history_size,
+                                farmer_app_info.protocol_info.max_pieces_in_sector,
+                                farmer_app_info.protocol_info.recent_segments,
+                                farmer_app_info.protocol_info.recent_history_fraction,
+                            )
+                        })
+                        .collect_into(<span class="kw-2">&amp;mut </span>piece_indexes);
+                    piece_indexes
+                },
+            }
+        });
 
         <span class="comment">// Inform others that this sector is no longer being modified
         </span>modifying_sector_index.write().take();
 
         <span class="macro">info!</span>(%sector_index, <span class="string">&quot;Sector plotted successfully&quot;</span>);
 
-        handlers
-            .sector_plotted
-            .call_simple(<span class="kw-2">&amp;</span>(plotted_sector, Arc::new(plotting_permit)));
+        handlers.sector_plotted.call_simple(<span class="kw-2">&amp;</span>(
+            plotted_sector,
+            old_plotted_sector,
+            Arc::new(plotting_permit),
+        ));
     }
 
     <span class="prelude-val">Ok</span>(())
