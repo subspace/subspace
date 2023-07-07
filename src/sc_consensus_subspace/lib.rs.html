@@ -1356,6 +1356,41 @@
 <a href="#1356" id="1356">1356</a>
 <a href="#1357" id="1357">1357</a>
 <a href="#1358" id="1358">1358</a>
+<a href="#1359" id="1359">1359</a>
+<a href="#1360" id="1360">1360</a>
+<a href="#1361" id="1361">1361</a>
+<a href="#1362" id="1362">1362</a>
+<a href="#1363" id="1363">1363</a>
+<a href="#1364" id="1364">1364</a>
+<a href="#1365" id="1365">1365</a>
+<a href="#1366" id="1366">1366</a>
+<a href="#1367" id="1367">1367</a>
+<a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a>
+<a href="#1371" id="1371">1371</a>
+<a href="#1372" id="1372">1372</a>
+<a href="#1373" id="1373">1373</a>
+<a href="#1374" id="1374">1374</a>
+<a href="#1375" id="1375">1375</a>
+<a href="#1376" id="1376">1376</a>
+<a href="#1377" id="1377">1377</a>
+<a href="#1378" id="1378">1378</a>
+<a href="#1379" id="1379">1379</a>
+<a href="#1380" id="1380">1380</a>
+<a href="#1381" id="1381">1381</a>
+<a href="#1382" id="1382">1382</a>
+<a href="#1383" id="1383">1383</a>
+<a href="#1384" id="1384">1384</a>
+<a href="#1385" id="1385">1385</a>
+<a href="#1386" id="1386">1386</a>
+<a href="#1387" id="1387">1387</a>
+<a href="#1388" id="1388">1388</a>
+<a href="#1389" id="1389">1389</a>
+<a href="#1390" id="1390">1390</a>
+<a href="#1391" id="1391">1391</a>
+<a href="#1392" id="1392">1392</a>
+<a href="#1393" id="1393">1393</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1437,8 +1472,8 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
 <span class="kw">use </span>subspace_core_primitives::{
-    Blake2b256Hash, PublicKey, SectorId, SegmentCommitment, SegmentHeader, SegmentIndex, Solution,
-    SolutionRange,
+    Blake2b256Hash, HistorySize, PublicKey, SectorId, SegmentCommitment, SegmentHeader,
+    SegmentIndex, Solution, SolutionRange,
 };
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
@@ -1599,6 +1634,17 @@
     <span class="doccomment">/// Segment commitment not found
     </span><span class="attr">#[error(<span class="string">&quot;Segment commitment for segment index {0} not found&quot;</span>)]
     </span>SegmentCommitmentNotFound(SegmentIndex),
+    <span class="doccomment">/// Sector expired
+    </span><span class="attr">#[error(<span class="string">&quot;Sector expired&quot;</span>)]
+    </span>SectorExpired {
+        <span class="doccomment">/// Expiration history size
+        </span>expiration_history_size: HistorySize,
+        <span class="doccomment">/// Current history size
+        </span>current_history_size: HistorySize,
+    },
+    <span class="doccomment">/// Invalid history size
+    </span><span class="attr">#[error(<span class="string">&quot;Invalid history size&quot;</span>)]
+    </span>InvalidHistorySize,
     <span class="doccomment">/// Only root plot public key is allowed
     </span><span class="attr">#[error(<span class="string">&quot;Only root plot public key is allowed&quot;</span>)]
     </span>OnlyRootPlotPublicKeyAllowed,
@@ -1655,6 +1701,14 @@
                     Error::InvalidAuditChunkOffset
                 }
                 VerificationPrimitiveError::InvalidChunkWitness =&gt; Error::InvalidChunkWitness,
+                VerificationPrimitiveError::SectorExpired {
+                    expiration_history_size,
+                    current_history_size,
+                } =&gt; Error::SectorExpired {
+                    expiration_history_size,
+                    current_history_size,
+                },
+                VerificationPrimitiveError::InvalidHistorySize =&gt; Error::InvalidHistorySize,
             },
         }
     }
@@ -2340,6 +2394,16 @@
 
         <span class="kw">let </span>segment_commitment =
             maybe_segment_commitment.ok_or(Error::SegmentCommitmentNotFound(segment_index))<span class="question-mark">?</span>;
+        <span class="kw">let </span>sector_expiration_check_segment_commitment = aux_schema::load_segment_commitment(
+            <span class="self">self</span>.client.as_ref(),
+            subspace_digest_items
+                .pre_digest
+                .solution
+                .history_size
+                .sector_expiration_check(chain_constants.min_sector_lifetime())
+                .ok_or(Error::InvalidHistorySize)<span class="question-mark">?
+                </span>.segment_index(),
+        )<span class="question-mark">?</span>;
 
         <span class="comment">// Piece is not checked during initial block verification because it requires access to
         // segment header and runtime, check it now.
@@ -2355,6 +2419,12 @@
                     segment_commitment,
                     recent_segments: chain_constants.recent_segments(),
                     recent_history_fraction: chain_constants.recent_history_fraction(),
+                    min_sector_lifetime: chain_constants.min_sector_lifetime(),
+                    <span class="comment">// TODO: Below `skip_runtime_access` has no impact on this, but ideally it
+                    //  should (though we don&#39;t support fast sync yet, so doesn&#39;t matter in
+                    //  practice)
+                    </span>current_history_size: <span class="self">self</span>.client.runtime_api().history_size(parent_hash)<span class="question-mark">?</span>,
+                    sector_expiration_check_segment_commitment,
                 }),
             },
             <span class="kw-2">&amp;</span><span class="self">self</span>.subspace_link.kzg,

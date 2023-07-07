@@ -875,6 +875,22 @@
 <a href="#875" id="875">875</a>
 <a href="#876" id="876">876</a>
 <a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -912,6 +928,7 @@
 <span class="kw">use </span>sp_std::cmp::Ordering;
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::marker::PhantomData;
+<span class="kw">use </span>sp_std::num::NonZeroU64;
 <span class="kw">use </span>subspace_core_primitives::{
     ArchivedHistorySegment, BlockWeight, HistorySize, PublicKey, Randomness, RewardSignature,
     SectorId, SegmentCommitment, SegmentIndex, SolutionRange,
@@ -932,34 +949,28 @@
 </span><span class="kw">pub struct </span>ChainConstants&lt;Header: HeaderT&gt; {
     <span class="doccomment">/// K Depth at which we finalize the heads.
     </span><span class="kw">pub </span>k_depth: NumberOf&lt;Header&gt;,
-
     <span class="doccomment">/// Genesis digest items at the start of the chain since the genesis block will not have any
     /// digests to verify the Block #1 digests.
     </span><span class="kw">pub </span>genesis_digest_items: NextDigestItems,
-
     <span class="doccomment">/// Genesis block segment commitments to verify the Block #1 and other block solutions until
     /// Block #1 is finalized.
     /// When Block #1 is finalized, these segment commitments are present in Block #1 are stored in
     /// the storage.
     </span><span class="kw">pub </span>genesis_segment_commitments: BTreeMap&lt;SegmentIndex, SegmentCommitment&gt;,
-
     <span class="doccomment">/// Defines interval at which randomness is updated.
     </span><span class="kw">pub </span>global_randomness_interval: NumberOf&lt;Header&gt;,
-
     <span class="doccomment">/// Era duration at which solution range is updated.
     </span><span class="kw">pub </span>era_duration: NumberOf&lt;Header&gt;,
-
     <span class="doccomment">/// Slot probability.
     </span><span class="kw">pub </span>slot_probability: (u64, u64),
-
     <span class="doccomment">/// Storage bound for the light client store.
     </span><span class="kw">pub </span>storage_bound: StorageBound&lt;NumberOf&lt;Header&gt;&gt;,
-
     <span class="doccomment">/// Number of latest archived segments that are considered &quot;recent history&quot;.
     </span><span class="kw">pub </span>recent_segments: HistorySize,
-
     <span class="doccomment">/// Fraction of pieces from the &quot;recent history&quot; (`recent_segments`) in each sector.
     </span><span class="kw">pub </span>recent_history_fraction: (HistorySize, HistorySize),
+    <span class="doccomment">/// Minimum lifetime of a plotted sector, measured in archived segment.
+    </span><span class="kw">pub </span>min_sector_lifetime: HistorySize,
 }
 
 <span class="doccomment">/// Defines the storage bound for the light client store.
@@ -1142,6 +1153,10 @@
     </span>MissingSegmentCommitment(SegmentIndex),
     <span class="doccomment">/// Incorrect block author.
     </span>IncorrectBlockAuthor(FarmerPublicKey),
+    <span class="doccomment">/// Segment commitment history is empty
+    </span>EmptySegmentCommitmentHistory,
+    <span class="doccomment">/// Invalid history size
+    </span>InvalidHistorySize,
 }
 
 <span class="kw">impl</span>&lt;Header: HeaderT&gt; From&lt;DigestError&gt; <span class="kw">for </span>ImportError&lt;Header&gt; {
@@ -1245,10 +1260,24 @@
             )
             .segment_index();
 
-        <span class="kw">let </span>segment_commitment = <span class="self">self</span>.find_segment_commitment_for_segment_index(
-            segment_index,
-            parent_header.header.hash(),
-        )<span class="question-mark">?</span>;
+        <span class="kw">let </span>segment_commitment = <span class="self">self
+            </span>.find_segment_commitment_for_segment_index(segment_index, parent_header.header.hash())<span class="question-mark">?
+            </span>.ok_or(ImportError::MissingSegmentCommitment(segment_index))<span class="question-mark">?</span>;
+        <span class="kw">let </span>current_history_size = HistorySize::new(
+            NonZeroU64::try_from(<span class="self">self</span>.store.number_of_segments())
+                .map_err(|_error| ImportError::EmptySegmentCommitmentHistory)<span class="question-mark">?</span>,
+        );
+        <span class="kw">let </span>sector_expiration_check_segment_commitment = <span class="self">self
+            </span>.find_segment_commitment_for_segment_index(
+                header_digests
+                    .pre_digest
+                    .solution
+                    .history_size
+                    .sector_expiration_check(constants.min_sector_lifetime)
+                    .ok_or(ImportError::InvalidHistorySize)<span class="question-mark">?
+                    </span>.segment_index(),
+                parent_header.header.hash(),
+            )<span class="question-mark">?</span>;
 
         verify_solution(
             (<span class="kw-2">&amp;</span>header_digests.pre_digest.solution).into(),
@@ -1261,6 +1290,9 @@
                     segment_commitment,
                     recent_segments: constants.recent_segments,
                     recent_history_fraction: constants.recent_history_fraction,
+                    min_sector_lifetime: constants.min_sector_lifetime,
+                    current_history_size,
+                    sector_expiration_check_segment_commitment,
                 }),
             })
                 .into(),
@@ -1545,10 +1577,10 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_index: SegmentIndex,
         chain_tip: HashOf&lt;Header&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;SegmentCommitment, ImportError&lt;Header&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SegmentCommitment&gt;, ImportError&lt;Header&gt;&gt; {
         <span class="comment">// check if the segment commitment is already in the store
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(segment_commitment) = <span class="self">self</span>.store.segment_commitment(segment_index) {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(segment_commitment);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(segment_commitment));
         };
 
         <span class="comment">// special case: check the genesis segment commitments if the Block #1 is not finalized yet
@@ -1558,7 +1590,7 @@
             .genesis_segment_commitments
             .get(<span class="kw-2">&amp;</span>segment_index)
         {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>segment_commitment);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="kw-2">*</span>segment_commitment));
         }
 
         <span class="comment">// find the segment commitment from the headers which are not finalized yet.
@@ -1577,7 +1609,7 @@
             &gt;(<span class="kw-2">&amp;</span>header.header)<span class="question-mark">?</span>;
 
             <span class="kw">if let </span><span class="prelude-val">Some</span>(segment_commitment) = digest_items.segment_commitments.get(<span class="kw-2">&amp;</span>segment_index) {
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>segment_commitment);
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="kw-2">*</span>segment_commitment));
             }
 
             header = <span class="self">self
@@ -1586,7 +1618,7 @@
                 .ok_or_else(|| ImportError::MissingParent(header.header.hash()))<span class="question-mark">?</span>;
         }
 
-        <span class="prelude-val">Err</span>(ImportError::MissingSegmentCommitment(segment_index))
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
     }
 
     <span class="doccomment">/// Stores finalized header and segment commitments present in the header.

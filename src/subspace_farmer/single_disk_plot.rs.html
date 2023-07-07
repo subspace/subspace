@@ -1008,6 +1008,20 @@
 <a href="#1008" id="1008">1008</a>
 <a href="#1009" id="1009">1009</a>
 <a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>farming;
 <span class="kw">pub mod </span>piece_reader;
 <span class="kw">mod </span>plotting;
@@ -1018,8 +1032,8 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::farming::farming;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_plot::farming::FarmingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_reader::PieceReader;
-<span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::plotting::plotting;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_plot::plotting::PlottingError;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::plotting::{plotting, plotting_scheduler};
 <span class="kw">use </span><span class="kw">crate</span>::utils::JoinOnDrop;
 <span class="kw">use </span>bytesize::ByteSize;
 <span class="kw">use </span>derive_more::{Display, From};
@@ -1666,6 +1680,9 @@
         <span class="kw">let </span>(start_sender, <span class="kw-2">mut </span>start_receiver) = broadcast::channel::&lt;()&gt;(<span class="number">1</span>);
         <span class="kw">let </span>(stop_sender, <span class="kw-2">mut </span>stop_receiver) = broadcast::channel::&lt;()&gt;(<span class="number">1</span>);
         <span class="kw">let </span>modifying_sector_index = Arc::&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;::default();
+        <span class="kw">let </span>(sectors_to_plot_sender, sectors_to_plot_receiver) = mpsc::channel(<span class="number">0</span>);
+        <span class="comment">// Some sectors may already be plotted, skip them
+        </span><span class="kw">let </span>sectors_indices_left_to_plot = metadata_header.sector_count..target_sector_count;
 
         <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">&quot;single_disk_plot&quot;</span>, %disk_farm_index);
 
@@ -1700,7 +1717,6 @@
                             pieces_in_sector,
                             sector_size,
                             sector_metadata_size,
-                            target_sector_count,
                             metadata_header,
                             metadata_header_mmap,
                             plot_file,
@@ -1712,6 +1728,7 @@
                             handlers,
                             modifying_sector_index,
                             concurrent_plotting_semaphore,
+                            sectors_to_plot_receiver,
                         )
                         .<span class="kw">await
                     </span>};
@@ -1730,6 +1747,17 @@
                     }
                 }
             })<span class="question-mark">?</span>;
+
+        tasks.push(Box::pin(plotting_scheduler(
+            public_key.hash(),
+            sectors_indices_left_to_plot,
+            target_sector_count,
+            farmer_app_info.protocol_info.history_size.segment_index(),
+            farmer_app_info.protocol_info.min_sector_lifetime,
+            node_client.clone(),
+            Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata),
+            sectors_to_plot_sender,
+        )));
 
         <span class="kw">let </span>(<span class="kw-2">mut </span>slot_info_forwarder_sender, slot_info_forwarder_receiver) = mpsc::channel(<span class="number">0</span>);
 
