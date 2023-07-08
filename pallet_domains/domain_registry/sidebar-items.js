@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["DomainConfig","DomainObject"],"type":["EpochIndex"]};
+window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["DomainConfig","DomainObject"]};
