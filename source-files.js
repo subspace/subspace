@@ -33,7 +33,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
-"sp_domains":["",[],["bundle_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","transaction.rs"]],\
+"sp_domains":["",[],["bundle_producer_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","transaction.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs","verification.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\

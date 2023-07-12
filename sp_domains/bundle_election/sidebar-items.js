@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["VrfProofError"],"fn":["calculate_bundle_election_threshold","derive_bundle_election_solution","is_election_solution_within_threshold","make_local_randomness_input"]};

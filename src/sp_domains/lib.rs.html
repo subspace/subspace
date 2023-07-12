@@ -570,52 +570,6 @@
 <a href="#570" id="570">570</a>
 <a href="#571" id="571">571</a>
 <a href="#572" id="572">572</a>
-<a href="#573" id="573">573</a>
-<a href="#574" id="574">574</a>
-<a href="#575" id="575">575</a>
-<a href="#576" id="576">576</a>
-<a href="#577" id="577">577</a>
-<a href="#578" id="578">578</a>
-<a href="#579" id="579">579</a>
-<a href="#580" id="580">580</a>
-<a href="#581" id="581">581</a>
-<a href="#582" id="582">582</a>
-<a href="#583" id="583">583</a>
-<a href="#584" id="584">584</a>
-<a href="#585" id="585">585</a>
-<a href="#586" id="586">586</a>
-<a href="#587" id="587">587</a>
-<a href="#588" id="588">588</a>
-<a href="#589" id="589">589</a>
-<a href="#590" id="590">590</a>
-<a href="#591" id="591">591</a>
-<a href="#592" id="592">592</a>
-<a href="#593" id="593">593</a>
-<a href="#594" id="594">594</a>
-<a href="#595" id="595">595</a>
-<a href="#596" id="596">596</a>
-<a href="#597" id="597">597</a>
-<a href="#598" id="598">598</a>
-<a href="#599" id="599">599</a>
-<a href="#600" id="600">600</a>
-<a href="#601" id="601">601</a>
-<a href="#602" id="602">602</a>
-<a href="#603" id="603">603</a>
-<a href="#604" id="604">604</a>
-<a href="#605" id="605">605</a>
-<a href="#606" id="606">606</a>
-<a href="#607" id="607">607</a>
-<a href="#608" id="608">608</a>
-<a href="#609" id="609">609</a>
-<a href="#610" id="610">610</a>
-<a href="#611" id="611">611</a>
-<a href="#612" id="612">612</a>
-<a href="#613" id="613">613</a>
-<a href="#614" id="614">614</a>
-<a href="#615" id="615">615</a>
-<a href="#616" id="616">616</a>
-<a href="#617" id="617">617</a>
-<a href="#618" id="618">618</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -635,13 +589,12 @@
 
 </span><span class="attr">#![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
 
-</span><span class="kw">pub mod </span>bundle_election;
+</span><span class="kw">pub mod </span>bundle_producer_election;
 <span class="kw">pub mod </span>fraud_proof;
 <span class="kw">pub mod </span>merkle_tree;
 <span class="kw">pub mod </span>transaction;
 
-<span class="kw">use </span>bundle_election::VrfProofError;
-<span class="kw">use </span>merkle_tree::Witness;
+<span class="kw">use </span>bundle_producer_election::{BundleProducerElectionParams, VrfProofError};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -653,15 +606,14 @@
 <span class="kw">use </span>sp_runtime::traits::{
     BlakeTwo256, Block <span class="kw">as </span>BlockT, CheckedAdd, Hash <span class="kw">as </span>HashT, NumberFor, Zero,
 };
-<span class="kw">use </span>sp_runtime::{DigestItem, OpaqueExtrinsic, RuntimeAppPublic};
+<span class="kw">use </span>sp_runtime::{DigestItem, OpaqueExtrinsic, Percent};
 <span class="kw">use </span>sp_runtime_interface::pass_by::PassBy;
 <span class="kw">use </span>sp_runtime_interface::{pass_by, runtime_interface};
 <span class="kw">use </span>sp_std::vec::Vec;
-<span class="kw">use </span>sp_trie::StorageProof;
 <span class="kw">use </span>sp_weights::Weight;
 <span class="kw">use </span>subspace_core_primitives::crypto::blake2b_256_hash;
-<span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, BlockNumber, Randomness, U256};
-<span class="kw">use </span>subspace_runtime_primitives::Moment;
+<span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, Randomness, U256};
+<span class="kw">use </span>subspace_runtime_primitives::{Balance, Moment};
 
 <span class="doccomment">/// Key type for Operator.
 </span><span class="kw">const </span>KEY_TYPE: KeyTypeId = KeyTypeId(<span class="kw-2">*</span><span class="string">b&quot;oper&quot;</span>);
@@ -774,12 +726,10 @@
     </span><span class="kw">pub </span>consensus_block_number: Number,
     <span class="doccomment">/// The hash of consensus block corresponding to `consensus_block_number`.
     </span><span class="kw">pub </span>consensus_block_hash: Hash,
-    <span class="doccomment">/// The slot number.
-    </span><span class="kw">pub </span>slot_number: u64,
     <span class="doccomment">/// The merkle root of the extrinsics.
     </span><span class="kw">pub </span>extrinsics_root: H256,
-    <span class="doccomment">/// Solution of the bundle election.
-    </span><span class="kw">pub </span>bundle_solution: BundleSolution&lt;DomainHash&gt;,
+    <span class="doccomment">/// Proof of bundle producer election.
+    </span><span class="kw">pub </span>proof_of_election: ProofOfElection&lt;DomainHash&gt;,
 }
 
 <span class="kw">impl</span>&lt;Number: Encode, Hash: Encode, DomainHash: Encode&gt; BundleHeader&lt;Number, Hash, DomainHash&gt; {
@@ -819,13 +769,8 @@
         BlakeTwo256::hash_of(<span class="self">self</span>)
     }
 
-    <span class="doccomment">/// Returns whether the signature is valid.
-    </span><span class="kw">pub fn </span>verify_signature(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.header
-            .bundle_solution
-            .proof_of_election()
-            .operator_public_key
-            .verify(<span class="kw-2">&amp;</span><span class="self">self</span>.pre_hash(), <span class="kw-2">&amp;</span><span class="self">self</span>.signature)
+    <span class="kw">pub fn </span>slot_number(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+        <span class="self">self</span>.header.proof_of_election.slot_number
     }
 }
 
@@ -833,91 +778,56 @@
 </span><span class="kw">pub struct </span>ProofOfElection&lt;DomainHash&gt; {
     <span class="doccomment">/// Domain id.
     </span><span class="kw">pub </span>domain_id: DomainId,
-    <span class="doccomment">/// VRF output.
-    </span><span class="kw">pub </span>vrf_output: VrfOutput,
-    <span class="doccomment">/// VRF proof.
-    </span><span class="kw">pub </span>vrf_proof: VrfProof,
-    <span class="doccomment">/// VRF public key.
-    </span><span class="kw">pub </span>operator_public_key: OperatorPublicKey,
-    <span class="doccomment">/// Global challenge.
+    <span class="doccomment">/// The slot number.
+    </span><span class="kw">pub </span>slot_number: u64,
+    <span class="comment">// TODO: Use global_randomness instead.
+    </span><span class="doccomment">/// Global challenge.
     </span><span class="kw">pub </span>global_challenge: Blake2b256Hash,
-    <span class="doccomment">/// Storage proof containing the partial state for verifying the bundle election.
-    </span><span class="kw">pub </span>storage_proof: StorageProof,
-    <span class="doccomment">/// State root corresponding to the storage proof above.
-    </span><span class="kw">pub </span>system_state_root: DomainHash,
-    <span class="doccomment">/// Number of the system domain block at which the proof of election was created.
-    </span><span class="kw">pub </span>system_block_number: BlockNumber,
-    <span class="doccomment">/// Block hash corresponding to the `block_number` above.
-    </span><span class="kw">pub </span>system_block_hash: DomainHash,
+    <span class="doccomment">/// VRF signature.
+    </span><span class="kw">pub </span>vrf_signature: VrfSignature,
+    <span class="doccomment">/// Operator index in the OperatorRegistry.
+    </span><span class="kw">pub </span>operator_id: OperatorId,
+    <span class="comment">// TODO: added temporarily in order to not change a lot of code to make it compile, remove later.
+    </span><span class="kw">pub </span>_phantom: DomainHash,
 }
 
 <span class="kw">impl</span>&lt;DomainHash&gt; ProofOfElection&lt;DomainHash&gt; {
-    <span class="kw">pub fn </span>verify_vrf_proof(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), VrfProofError&gt; {
-        bundle_election::verify_vrf_proof(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.operator_public_key,
-            <span class="comment">// TODO: Maybe we want to store signature in the struct rather than separate fields,
-            //  such that we don&#39;t need to clone here?
-            </span><span class="kw-2">&amp;</span>VrfSignature {
-                output: <span class="self">self</span>.vrf_output.clone(),
-                proof: <span class="self">self</span>.vrf_proof.clone(),
-            },
+    <span class="kw">pub fn </span>verify_vrf_proof(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        operator_signing_key: <span class="kw-2">&amp;</span>OperatorPublicKey,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VrfProofError&gt; {
+        bundle_producer_election::verify_vrf_proof(
+            <span class="self">self</span>.domain_id,
+            operator_signing_key,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.vrf_signature,
             <span class="kw-2">&amp;</span><span class="self">self</span>.global_challenge,
         )
     }
 
     <span class="doccomment">/// Computes the VRF hash.
     </span><span class="kw">pub fn </span>vrf_hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Blake2b256Hash {
-        <span class="kw">let </span><span class="kw-2">mut </span>bytes = <span class="self">self</span>.vrf_output.encode();
-        bytes.append(<span class="kw-2">&amp;mut </span><span class="self">self</span>.vrf_proof.encode());
+        <span class="kw">let </span><span class="kw-2">mut </span>bytes = <span class="self">self</span>.vrf_signature.output.encode();
+        bytes.append(<span class="kw-2">&amp;mut </span><span class="self">self</span>.vrf_signature.proof.encode());
         blake2b_256_hash(<span class="kw-2">&amp;</span>bytes)
     }
 }
 
 <span class="kw">impl</span>&lt;DomainHash: Default&gt; ProofOfElection&lt;DomainHash&gt; {
     <span class="attr">#[cfg(any(feature = <span class="string">&quot;std&quot;</span>, feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
-    </span><span class="kw">pub fn </span>dummy(domain_id: DomainId, operator_public_key: OperatorPublicKey) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>dummy(domain_id: DomainId, operator_id: OperatorId) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>output_bytes = <span class="macro">vec!</span>[<span class="number">0u8</span>; VrfOutput::max_encoded_len()];
         <span class="kw">let </span>proof_bytes = <span class="macro">vec!</span>[<span class="number">0u8</span>; VrfProof::max_encoded_len()];
+        <span class="kw">let </span>vrf_signature = VrfSignature {
+            output: VrfOutput::decode(<span class="kw-2">&amp;mut </span>output_bytes.as_slice()).unwrap(),
+            proof: VrfProof::decode(<span class="kw-2">&amp;mut </span>proof_bytes.as_slice()).unwrap(),
+        };
         <span class="self">Self </span>{
             domain_id,
-            vrf_output: VrfOutput::decode(<span class="kw-2">&amp;mut </span>output_bytes.as_slice()).unwrap(),
-            vrf_proof: VrfProof::decode(<span class="kw-2">&amp;mut </span>proof_bytes.as_slice()).unwrap(),
-            operator_public_key,
+            slot_number: <span class="number">0u64</span>,
             global_challenge: Blake2b256Hash::default(),
-            storage_proof: StorageProof::empty(),
-            system_state_root: Default::default(),
-            system_block_number: Default::default(),
-            system_block_hash: Default::default(),
-        }
-    }
-}
-
-<span class="doccomment">/// Domain bundle election solution.
-</span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>BundleSolution&lt;DomainHash&gt; {
-    <span class="doccomment">/// Authority&#39;s stake weight.
-    </span>authority_stake_weight: StakeWeight,
-    <span class="doccomment">/// Authority membership witness.
-    </span>authority_witness: Witness,
-    <span class="doccomment">/// Proof of election
-    </span>proof_of_election: ProofOfElection&lt;DomainHash&gt;,
-}
-
-<span class="kw">impl</span>&lt;DomainHash&gt; BundleSolution&lt;DomainHash&gt; {
-    <span class="kw">pub fn </span>proof_of_election(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ProofOfElection&lt;DomainHash&gt; {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.proof_of_election
-    }
-}
-
-<span class="kw">impl</span>&lt;DomainHash: Default&gt; BundleSolution&lt;DomainHash&gt; {
-    <span class="attr">#[cfg(any(feature = <span class="string">&quot;std&quot;</span>, feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
-    </span><span class="kw">pub fn </span>dummy(domain_id: DomainId, operator_public_key: OperatorPublicKey) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>proof_of_election = ProofOfElection::dummy(domain_id, operator_public_key);
-
-        <span class="self">Self </span>{
-            authority_stake_weight: Default::default(),
-            authority_witness: Default::default(),
-            proof_of_election,
+            vrf_signature,
+            operator_id,
+            _phantom: Default::default(),
         }
     }
 }
@@ -944,20 +854,11 @@
 
     <span class="doccomment">/// Returns the domain_id of this bundle.
     </span><span class="kw">pub fn </span>domain_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DomainId {
-        <span class="self">self</span>.sealed_header
-            .header
-            .bundle_solution
-            .proof_of_election()
-            .domain_id
+        <span class="self">self</span>.sealed_header.header.proof_of_election.domain_id
     }
 
-    <span class="doccomment">/// Consumes [`Bundle`] to extract the inner operator public key.
-    </span><span class="kw">pub fn </span>into_operator_public_key(<span class="self">self</span>) -&gt; OperatorPublicKey {
-        <span class="self">self</span>.sealed_header
-            .header
-            .bundle_solution
-            .proof_of_election
-            .operator_public_key
+    <span class="kw">pub fn </span>operator_id(<span class="self">self</span>) -&gt; OperatorId {
+        <span class="self">self</span>.sealed_header.header.proof_of_election.operator_id
     }
 }
 
@@ -1075,12 +976,8 @@
         header: BundleHeader {
             consensus_block_number,
             consensus_block_hash,
-            slot_number: <span class="number">0u64</span>,
             extrinsics_root: Default::default(),
-            bundle_solution: BundleSolution::dummy(
-                domain_id,
-                OperatorPublicKey::unchecked_from([<span class="number">0u8</span>; <span class="number">32</span>]),
-            ),
+            proof_of_election: ProofOfElection::dummy(domain_id, <span class="number">0u64</span>),
         },
         signature: OperatorSignature::unchecked_from([<span class="number">0u8</span>; <span class="number">64</span>]),
     };
@@ -1107,6 +1004,11 @@
     <span class="kw">pub </span>max_block_weight: Weight,
     <span class="kw">pub </span>bundle_slot_probability: (u64, u64),
     <span class="kw">pub </span>target_bundles_per_block: u32,
+
+    <span class="comment">// Genesis operator
+    </span><span class="kw">pub </span>signing_key: OperatorPublicKey,
+    <span class="kw">pub </span>minimum_nominator_stake: Balance,
+    <span class="kw">pub </span>nomination_tax: Percent,
 }
 
 <span class="doccomment">/// Types of runtime pallet domains currently supports
@@ -1232,6 +1134,12 @@
 
         <span class="doccomment">/// Returns the current Tx range for the given domain Id.
         </span><span class="kw">fn </span>domain_tx_range(domain_id: DomainId) -&gt; U256;
+    }
+
+    <span class="kw">pub trait </span>BundleProducerElectionApi&lt;Balance: Encode + Decode&gt; {
+        <span class="kw">fn </span>bundle_producer_election_params(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;BundleProducerElectionParams&lt;Balance&gt;&gt;;
+
+        <span class="kw">fn </span>operator(operator_id: OperatorId) -&gt; <span class="prelude-ty">Option</span>&lt;(OperatorPublicKey, Balance)&gt;;
     }
 }
 </code></pre></div></section></main></body></html>
