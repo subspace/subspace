@@ -1038,6 +1038,41 @@
 <a href="#1038" id="1038">1038</a>
 <a href="#1039" id="1039">1039</a>
 <a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1074,12 +1109,12 @@
 <span class="kw">use </span>frame_system::offchain::SubmitTransaction;
 <span class="kw">pub use </span>pallet::<span class="kw-2">*</span>;
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_domains::bundle_producer_election::BundleProducerElectionParams;
+<span class="kw">use </span>sp_domains::bundle_producer_election::{is_below_threshold, BundleProducerElectionParams};
 <span class="kw">use </span>sp_domains::fraud_proof::FraudProof;
 <span class="kw">use </span>sp_domains::{DomainId, OpaqueBundle, OperatorId, OperatorPublicKey, RuntimeId};
 <span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Zero};
 <span class="kw">use </span>sp_runtime::transaction_validity::TransactionValidityError;
-<span class="kw">use </span>sp_runtime::RuntimeAppPublic;
+<span class="kw">use </span>sp_runtime::{RuntimeAppPublic, SaturatedConversion};
 <span class="kw">use </span>sp_std::vec::Vec;
 <span class="kw">use </span>subspace_core_primitives::U256;
 
@@ -1338,24 +1373,20 @@
     </span><span class="kw">pub enum </span>BundleError {
         <span class="doccomment">/// Can not find the operator for given operator id.
         </span>InvalidOperatorId,
-        <span class="doccomment">/// Invalid bundle signature.
-        </span>BadSignature,
-        <span class="doccomment">/// Invalid vrf proof.
-        </span>BadVrfProof,
-        <span class="doccomment">/// State of a system domain block is missing.
-        </span>StateRootNotFound,
-        <span class="doccomment">/// Invalid state root in the proof of election.
-        </span>BadStateRoot,
-        <span class="doccomment">/// The type of state root is not H256.
-        </span>StateRootNotH256,
-        <span class="doccomment">/// Invalid system bundle election solution.
-        </span>BadElectionSolution,
-        <span class="doccomment">/// An invalid execution receipt found in the bundle.
-        </span>Receipt(ExecutionReceiptError),
+        <span class="doccomment">/// Invalid signature on the bundle header.
+        </span>BadBundleSignature,
+        <span class="doccomment">/// Invalid vrf signature in the proof of election.
+        </span>BadVrfSignature,
+        <span class="doccomment">/// Can not find the domain for given domain id.
+        </span>InvalidDomainId,
+        <span class="doccomment">/// Operator is not allowed to produce bundles in current epoch.
+        </span>BadOperator,
+        <span class="doccomment">/// Failed to pass the threshold check.
+        </span>ThresholdUnsatisfied,
         <span class="doccomment">/// The Bundle is created too long ago.
         </span>StaleBundle,
-        <span class="doccomment">/// Bundle was created on an unknown primary block (probably a fork block).
-        </span>UnknownBlock,
+        <span class="doccomment">/// An invalid execution receipt found in the bundle.
+        </span>Receipt(ExecutionReceiptError),
     }
 
     <span class="kw">impl</span>&lt;T&gt; From&lt;BundleError&gt; <span class="kw">for </span>Error&lt;T&gt; {
@@ -1930,12 +1961,15 @@
             extrinsics: <span class="kw">_</span>,
         }: <span class="kw-2">&amp;</span>OpaqueBundle&lt;T::BlockNumber, T::Hash, T::DomainNumber, T::DomainHash&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BundleError&gt; {
-        <span class="kw">let </span>signing_key = Operators::&lt;T&gt;::get(sealed_header.header.proof_of_election.operator_id)
-            .map(|operator| operator.signing_key)
-            .ok_or(BundleError::InvalidOperatorId)<span class="question-mark">?</span>;
+        <span class="kw">let </span>operator_id = sealed_header.header.proof_of_election.operator_id;
 
-        <span class="kw">if </span>!signing_key.verify(<span class="kw-2">&amp;</span>sealed_header.pre_hash(), <span class="kw-2">&amp;</span>sealed_header.signature) {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::BadSignature);
+        <span class="kw">let </span>operator = Operators::&lt;T&gt;::get(operator_id).ok_or(BundleError::InvalidOperatorId)<span class="question-mark">?</span>;
+
+        <span class="kw">if </span>!operator
+            .signing_key
+            .verify(<span class="kw-2">&amp;</span>sealed_header.pre_hash(), <span class="kw-2">&amp;</span>sealed_header.signature)
+        {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::BadBundleSignature);
         }
 
         <span class="kw">let </span>header = <span class="kw-2">&amp;</span>sealed_header.header;
@@ -1972,9 +2006,45 @@
 
         <span class="comment">// TODO: Implement bundle validation.
 
-        // TODO: Verify ProofOfElection
+        // TODO: The current staking distribution may be unusable when there is an epoch
+        // transition, track the last stake distribution in that case.
+        </span><span class="kw">let </span>proof_of_election = <span class="kw-2">&amp;</span>sealed_header.header.proof_of_election;
 
-        </span><span class="prelude-val">Ok</span>(())
+        proof_of_election
+            .verify_vrf_signature(<span class="kw-2">&amp;</span>operator.signing_key)
+            .map_err(|<span class="kw">_</span>| BundleError::BadVrfSignature)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>domain_id = proof_of_election.domain_id;
+
+        <span class="kw">let </span>domain_stake_summary =
+            DomainStakingSummary::&lt;T&gt;::get(domain_id).ok_or(BundleError::InvalidDomainId)<span class="question-mark">?</span>;
+
+        <span class="kw">if </span>!domain_stake_summary
+            .current_operators
+            .contains(<span class="kw-2">&amp;</span>operator_id)
+        {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::BadOperator);
+        }
+
+        <span class="kw">let </span>bundle_slot_probability = DomainRegistry::&lt;T&gt;::get(domain_id)
+            .ok_or(BundleError::InvalidDomainId)<span class="question-mark">?
+            </span>.domain_config
+            .bundle_slot_probability;
+
+        <span class="kw">let </span>operator_stake = operator.current_total_stake;
+        <span class="kw">let </span>total_domain_stake = domain_stake_summary.current_total_stake;
+
+        <span class="kw">let </span>threshold = sp_domains::bundle_producer_election::calculate_threshold(
+            operator_stake.saturated_into(),
+            total_domain_stake.saturated_into(),
+            bundle_slot_probability,
+        );
+
+        <span class="kw">if </span>!is_below_threshold(<span class="kw-2">&amp;</span>proof_of_election.vrf_signature.output, threshold) {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::ThresholdUnsatisfied);
+        }
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Called when a bundle is added to update the bundle state for tx range
