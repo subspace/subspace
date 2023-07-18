@@ -15,7 +15,7 @@ var sourcesIndex = JSON.parse('{\
 "evm_domain_runtime":["",[],["lib.rs","precompiles.rs"]],\
 "evm_domain_test_runtime":["",[],["lib.rs","precompiles.rs"]],\
 "orml_vesting":["",[],["lib.rs","weights.rs"]],\
-"pallet_domains":["",[],["domain_registry.rs","lib.rs","runtime_registry.rs","staking.rs","staking_epoch.rs","weights.rs"]],\
+"pallet_domains":["",[],["block_tree.rs","domain_registry.rs","lib.rs","runtime_registry.rs","staking.rs","staking_epoch.rs","weights.rs"]],\
 "pallet_feeds":["",[],["feed_processor.rs","lib.rs"]],\
 "pallet_grandpa_finality_verifier":["",[],["chain.rs","grandpa.rs","lib.rs"]],\
 "pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs","weights.rs"]],\
@@ -33,7 +33,7 @@ var sourcesIndex = JSON.parse('{\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
-"sp_domains":["",[],["bundle_producer_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","transaction.rs"]],\
+"sp_domains":["",[],["bundle_producer_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","transaction.rs","v2.rs"]],\
 "sp_lightclient":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs","verification.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\

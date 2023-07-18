@@ -309,11 +309,41 @@
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
 <a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain registry for domains
 
-</span><span class="kw">use </span><span class="kw">crate</span>::pallet::DomainStakingSummary;
+</span><span class="kw">use </span><span class="kw">crate</span>::block_tree::import_genesis_receipt;
+<span class="kw">use </span><span class="kw">crate</span>::pallet::DomainStakingSummary;
 <span class="kw">use </span><span class="kw">crate</span>::staking::StakingSummary;
-<span class="kw">use crate</span>::{Config, DomainRegistry, FreezeIdentifier, NextDomainId, RuntimeRegistry};
+<span class="kw">use crate</span>::{
+    Config, DomainRegistry, ExecutionReceiptOf, FreezeIdentifier, NextDomainId, RuntimeRegistry,
+};
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::traits::fungible::{Inspect, MutateFreeze};
 <span class="kw">use </span>frame_support::traits::tokens::{Fortitude, Preservation};
@@ -321,7 +351,8 @@
 <span class="kw">use </span>frame_support::{ensure, PalletError};
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::Get;
-<span class="kw">use </span>sp_domains::{DomainId, GenesisDomain, RuntimeId};
+<span class="kw">use </span>sp_domains::domain::generate_genesis_state_root;
+<span class="kw">use </span>sp_domains::{DomainId, GenesisDomain, ReceiptHash, RuntimeId, RuntimeType};
 <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, Zero};
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
@@ -339,6 +370,7 @@
     InsufficientFund,
     DomainNameTooLong,
     BalanceFreeze,
+    FailedToGenerateGenesisStateRoot,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -375,13 +407,13 @@
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
-</span><span class="kw">pub struct </span>DomainObject&lt;Number, Hash, AccountId&gt; {
+</span><span class="kw">pub struct </span>DomainObject&lt;Number, AccountId&gt; {
     <span class="doccomment">/// The address of the domain creator, used to validate updating the domain config.
     </span><span class="kw">pub </span>owner_account_id: AccountId,
     <span class="doccomment">/// The consensus chain block number when the domain first instantiated.
     </span><span class="kw">pub </span>created_at: Number,
     <span class="doccomment">/// The hash of the genesis execution receipt for this domain.
-    </span><span class="kw">pub </span>genesis_receipt_hash: Hash,
+    </span><span class="kw">pub </span>genesis_receipt_hash: ReceiptHash,
     <span class="doccomment">/// The domain config.
     </span><span class="kw">pub </span>domain_config: DomainConfig,
 }
@@ -435,11 +467,16 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;DomainId, Error&gt; {
     can_instantiate_domain::&lt;T&gt;(<span class="kw-2">&amp;</span>owner_account_id, <span class="kw-2">&amp;</span>domain_config)<span class="question-mark">?</span>;
 
+    <span class="kw">let </span>runtime_obj = RuntimeRegistry::&lt;T&gt;::get(domain_config.runtime_id)
+        .expect(<span class="string">&quot;Runtime object must exist as checked in `can_instantiate_domain`; qed&quot;</span>);
+    <span class="kw">let </span>genesis_receipt =
+        initialize_genesis_receipt::&lt;T&gt;(runtime_obj.runtime_type, runtime_obj.code)<span class="question-mark">?</span>;
+    <span class="kw">let </span>genesis_receipt_hash = genesis_receipt.hash();
+
     <span class="kw">let </span>domain_obj = DomainObject {
         owner_account_id: owner_account_id.clone(),
         created_at,
-        <span class="comment">// TODO: drive the `genesis_receipt_hash` from genesis config through host function
-        </span>genesis_receipt_hash: T::Hash::default(),
+        genesis_receipt_hash,
         domain_config,
     };
     <span class="kw">let </span>domain_id = NextDomainId::&lt;T&gt;::get();
@@ -466,10 +503,22 @@
         },
     );
 
-    <span class="comment">// TODO: initialize the genesis block in the domain block tree once we can drive the
-    // genesis ER from genesis config through host function
+    import_genesis_receipt::&lt;T&gt;(domain_id, genesis_receipt);
 
-    </span><span class="prelude-val">Ok</span>(domain_id)
+    <span class="prelude-val">Ok</span>(domain_id)
+}
+
+<span class="kw">fn </span>initialize_genesis_receipt&lt;T: Config&gt;(
+    runtime_type: RuntimeType,
+    runtime_code: Vec&lt;u8&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;ExecutionReceiptOf&lt;T&gt;, Error&gt; {
+    <span class="kw">let </span>consensus_genesis_hash = frame_system::Pallet::&lt;T&gt;::block_hash(T::BlockNumber::zero());
+    <span class="kw">let </span>genesis_state_root = generate_genesis_state_root(runtime_type, runtime_code)
+        .ok_or(Error::FailedToGenerateGenesisStateRoot)<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(ExecutionReceiptOf::&lt;T&gt;::genesis(
+        consensus_genesis_hash,
+        genesis_state_root.into(),
+    ))
 }
 
 <span class="attr">#[cfg(test)]
@@ -477,10 +526,12 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::pallet::{DomainRegistry, NextDomainId, RuntimeRegistry};
     <span class="kw">use </span><span class="kw">crate</span>::runtime_registry::RuntimeObject;
-    <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, Test};
+    <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, GenesisStateRootGenerater, Test};
     <span class="kw">use </span>frame_support::traits::Currency;
+    <span class="kw">use </span>sp_domains::GenesisReceiptExtension;
     <span class="kw">use </span>sp_runtime::traits::One;
     <span class="kw">use </span>sp_version::RuntimeVersion;
+    <span class="kw">use </span>std::sync::Arc;
 
     <span class="kw">type </span>Balances = pallet_balances::Pallet&lt;Test&gt;;
 
@@ -499,6 +550,9 @@
         };
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
+        ext.register_extension(GenesisReceiptExtension::new(Arc::new(
+            GenesisStateRootGenerater,
+        )));
         ext.execute_with(|| {
             <span class="macro">assert_eq!</span>(NextDomainId::&lt;Test&gt;::get(), <span class="number">0</span>.into());
 
