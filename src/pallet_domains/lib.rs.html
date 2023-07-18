@@ -1083,6 +1083,41 @@
 <a href="#1083" id="1083">1083</a>
 <a href="#1084" id="1084">1084</a>
 <a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1112,6 +1147,7 @@
 <span class="kw">pub mod </span>domain_registry;
 <span class="kw">pub mod </span>runtime_registry;
 <span class="kw">mod </span>staking;
+<span class="kw">mod </span>staking_epoch;
 <span class="kw">pub mod </span>weights;
 
 <span class="kw">use </span>frame_support::traits::fungible::{Inspect, InspectFreeze};
@@ -1159,11 +1195,14 @@
         do_switch_operator_domain, do_withdraw_stake, Error <span class="kw">as </span>StakingError, Nominator, Operator,
         OperatorConfig, StakingSummary, Withdraw,
     };
+    <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::{
+        do_finalize_domain_current_epoch, do_unlock_pending_withdrawals, PendingNominatorUnlock,
+    };
     <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
     <span class="kw">use crate</span>::{BalanceOf, FreezeIdentifier, NominatorId};
     <span class="kw">use </span>codec::FullCodec;
     <span class="kw">use </span>frame_support::pallet_prelude::{StorageMap, <span class="kw-2">*</span>};
-    <span class="kw">use </span>frame_support::traits::fungible::{InspectFreeze, MutateFreeze};
+    <span class="kw">use </span>frame_support::traits::fungible::{InspectFreeze, Mutate, MutateFreeze};
     <span class="kw">use </span>frame_support::weights::Weight;
     <span class="kw">use </span>frame_support::{Identity, PalletError};
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
@@ -1176,6 +1215,7 @@
         Zero,
     };
     <span class="kw">use </span>sp_runtime::SaturatedConversion;
+    <span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
     <span class="kw">use </span>sp_std::fmt::Debug;
     <span class="kw">use </span>sp_std::vec;
     <span class="kw">use </span>sp_std::vec::Vec;
@@ -1224,7 +1264,9 @@
         </span><span class="kw">type </span>DomainRuntimeUpgradeDelay: Get&lt;<span class="self">Self</span>::BlockNumber&gt;;
 
         <span class="doccomment">/// Currency type used by the domains for staking and other currency related stuff.
-        </span><span class="kw">type </span>Currency: MutateFreeze&lt;<span class="self">Self</span>::AccountId&gt; + InspectFreeze&lt;<span class="self">Self</span>::AccountId&gt;;
+        </span><span class="kw">type </span>Currency: Mutate&lt;<span class="self">Self</span>::AccountId&gt;
+            + MutateFreeze&lt;<span class="self">Self</span>::AccountId&gt;
+            + InspectFreeze&lt;<span class="self">Self</span>::AccountId&gt;;
 
         <span class="doccomment">/// Type representing the shares in the staking protocol.
         </span><span class="kw">type </span>Share: Parameter
@@ -1273,6 +1315,12 @@
 
         <span class="doccomment">/// Minimum operator stake required to become operator of a domain.
         </span><span class="kw">type </span>MinOperatorStake: Get&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
+
+        <span class="doccomment">/// Minimum number of blocks after which any finalized withdrawls are released to nominators.
+        </span><span class="kw">type </span>StakeWithdrawalLockingPeriod: Get&lt;<span class="self">Self</span>::BlockNumber&gt;;
+
+        <span class="doccomment">/// Domain epoch transition interval
+        </span><span class="kw">type </span>StakeEpochDuration: Get&lt;<span class="self">Self</span>::DomainNumber&gt;;
     }
 
     <span class="attr">#[pallet::pallet]
@@ -1313,7 +1361,8 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>DomainStakingSummary&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, StakingSummary&lt;OperatorId, BalanceOf&lt;T&gt;&gt;, OptionQuery&gt;;
 
-    <span class="attr">#[pallet::storage]
+    <span class="doccomment">/// List of all registered operators and their configuration.
+    </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>Operators&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, OperatorId, Operator&lt;BalanceOf&lt;T&gt;, T::Share&gt;, OptionQuery&gt;;
 
@@ -1323,7 +1372,8 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingOperatorSwitches&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, Vec&lt;OperatorId&gt;, OptionQuery&gt;;
 
-    <span class="attr">#[pallet::storage]
+    <span class="doccomment">/// List of all current epoch&#39;s nominators and their shares under a given operator,
+    </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>Nominators&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
         Identity,
@@ -1334,7 +1384,10 @@
         OptionQuery,
     &gt;;
 
-    <span class="attr">#[pallet::storage]
+    <span class="doccomment">/// Deposits initiated a nominator under this operator.
+    /// Will be stored temporarily until the current epoch is complete.
+    /// Once, epoch is complete, these deposits are staked beginning next epoch.
+    </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingDeposits&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
         Identity,
@@ -1345,7 +1398,10 @@
         OptionQuery,
     &gt;;
 
-    <span class="attr">#[pallet::storage]
+    <span class="doccomment">/// Withdrawals initiated a nominator under this operator.
+    /// Will be stored temporarily until the current epoch is complete.
+    /// Once, epoch is complete, these will be moved to PendingNominatorUnlocks.
+    </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingWithdrawals&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
         Identity,
@@ -1360,7 +1416,33 @@
     /// Stored here temporarily until domain epoch is complete.
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingOperatorDeregistrations&lt;T: Config&gt; =
-        StorageValue&lt;<span class="kw">_</span>, Vec&lt;OperatorId&gt;, OptionQuery&gt;;
+        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, Vec&lt;OperatorId&gt;, OptionQuery&gt;;
+
+    <span class="doccomment">/// Stores a list of operators who are unlocking in the coming blocks.
+    /// The operator will be removed when the wait period is over
+    /// or when the operator is slashed.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingOperatorUnlocks&lt;T: Config&gt; =
+        StorageValue&lt;<span class="kw">_</span>, BTreeSet&lt;OperatorId&gt;, ValueQuery&gt;;
+
+    <span class="doccomment">/// All the pending unlocks for the nominators.
+    /// We use this storage to fetch all the pending unlocks under a operator pool at the time of slashing.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingNominatorUnlocks&lt;T: Config&gt; = StorageDoubleMap&lt;
+        <span class="kw">_</span>,
+        Identity,
+        OperatorId,
+        Identity,
+        T::BlockNumber,
+        Vec&lt;PendingNominatorUnlock&lt;NominatorId&lt;T&gt;, BalanceOf&lt;T&gt;&gt;&gt;,
+        OptionQuery,
+    &gt;;
+
+    <span class="doccomment">/// A list of operators that are either unregistering or one more of the nominators
+    /// are withdrawing some staked funds.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingUnlocks&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Identity, T::BlockNumber, BTreeSet&lt;OperatorId&gt;, OptionQuery&gt;;
 
     <span class="doccomment">/// Stores the next domain id.
     </span><span class="attr">#[pallet::storage]
@@ -1783,30 +1865,11 @@
                     nomination_tax: genesis_domain.nomination_tax,
                 };
                 <span class="kw">let </span>operator_stake = T::MinOperatorStake::get();
-                <span class="kw">let </span>operator_id = do_register_operator::&lt;T&gt;(
-                    domain_owner,
-                    domain_id,
-                    operator_stake,
-                    operator_config,
-                )
-                .expect(<span class="string">&quot;Genesis operator registration must succeed&quot;</span>);
+                do_register_operator::&lt;T&gt;(domain_owner, domain_id, operator_stake, operator_config)
+                    .expect(<span class="string">&quot;Genesis operator registration must succeed&quot;</span>);
 
-                <span class="comment">// TODO: Enact the epoch transition logic properly.
-                </span>Operators::&lt;T&gt;::mutate(operator_id, |maybe_operator| {
-                    <span class="kw">let </span>operator = maybe_operator
-                        .as_mut()
-                        .expect(<span class="string">&quot;Genesis operator must exist&quot;</span>);
-                    operator.current_total_stake = operator_stake;
-                });
-                DomainStakingSummary::&lt;T&gt;::insert(
-                    domain_id,
-                    StakingSummary {
-                        current_epoch_index: <span class="number">0</span>,
-                        current_total_stake: operator_stake,
-                        current_operators: <span class="macro">vec!</span>[operator_id],
-                        next_operators: <span class="macro">vec!</span>[],
-                    },
-                );
+                do_finalize_domain_current_epoch::&lt;T&gt;(domain_id, Zero::zero(), Zero::zero())
+                    .expect(<span class="string">&quot;Genesis epoch must succeed&quot;</span>);
             }
         }
     }
@@ -1818,6 +1881,9 @@
             SuccessfulBundles::&lt;T&gt;::kill();
 
             do_upgrade_runtimes::&lt;T&gt;(block_number);
+
+            do_unlock_pending_withdrawals::&lt;T&gt;(block_number)
+                .expect(<span class="string">&quot;Pending unlocks should not fail due to checks at epoch&quot;</span>);
 
             Weight::zero()
         }
@@ -1919,7 +1985,11 @@
             DomainStakingSummary::&lt;T&gt;::get(domain_id),
         ) {
             (<span class="prelude-val">Some</span>(domain_object), <span class="prelude-val">Some</span>(stake_summary)) =&gt; <span class="prelude-val">Some</span>(BundleProducerElectionParams {
-                current_operators: stake_summary.current_operators,
+                current_operators: stake_summary
+                    .current_operators
+                    .keys()
+                    .cloned()
+                    .collect::&lt;Vec&lt;OperatorId&gt;&gt;(),
                 total_domain_stake: stake_summary.current_total_stake,
                 bundle_slot_probability: domain_object.domain_config.bundle_slot_probability,
             }),
@@ -2006,7 +2076,7 @@
 
         <span class="kw">if </span>!domain_stake_summary
             .current_operators
-            .contains(<span class="kw-2">&amp;</span>operator_id)
+            .contains_key(<span class="kw-2">&amp;</span>operator_id)
         {
             <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::BadOperator);
         }
