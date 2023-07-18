@@ -1073,6 +1073,16 @@
 <a href="#1073" id="1073">1073</a>
 <a href="#1074" id="1074">1074</a>
 <a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1150,7 +1160,7 @@
         OperatorConfig, StakingSummary, Withdraw,
     };
     <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
-    <span class="kw">use crate</span>::{calculate_tx_range, BalanceOf, FreezeIdentifier, NominatorId};
+    <span class="kw">use crate</span>::{BalanceOf, FreezeIdentifier, NominatorId};
     <span class="kw">use </span>codec::FullCodec;
     <span class="kw">use </span>frame_support::pallet_prelude::{StorageMap, <span class="kw-2">*</span>};
     <span class="kw">use </span>frame_support::traits::fungible::{InspectFreeze, MutateFreeze};
@@ -1260,9 +1270,6 @@
 
         <span class="doccomment">/// Domain tx range is adjusted after every DomainTxRangeAdjustmentInterval blocks.
         </span><span class="kw">type </span>DomainTxRangeAdjustmentInterval: Get&lt;u64&gt;;
-
-        <span class="doccomment">/// Expected bundles to be produced per adjustment interval.
-        </span><span class="kw">type </span>ExpectedBundlesPerInterval: Get&lt;u64&gt;;
 
         <span class="doccomment">/// Minimum operator stake required to become operator of a domain.
         </span><span class="kw">type </span>MinOperatorStake: Get&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
@@ -1505,28 +1512,6 @@
         <span class="doccomment">/// Called when a bundle is added to the current block.
         </span><span class="kw">pub fn </span>on_bundle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
             <span class="self">self</span>.interval_bundles += <span class="number">1</span>;
-        }
-
-        <span class="doccomment">/// Called when the current block is finalized.
-        </span><span class="kw">pub fn </span>on_finalize(
-            <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-            tx_range_adjustment_interval: u64,
-            expected_bundle_count: u64,
-        ) {
-            <span class="self">self</span>.interval_blocks += <span class="number">1</span>;
-            <span class="kw">if </span><span class="self">self</span>.interval_blocks &lt; tx_range_adjustment_interval {
-                <span class="kw">return</span>;
-            }
-
-            <span class="comment">// End of interval. Recalculate the tx range and reset the state.
-            </span><span class="kw">let </span>prev_tx_range = <span class="self">self</span>.tx_range;
-            <span class="self">self</span>.tx_range =
-                calculate_tx_range(<span class="self">self</span>.tx_range, <span class="self">self</span>.interval_bundles, expected_bundle_count);
-            <span class="macro">log::trace!</span>(target: <span class="string">&quot;runtime::domains&quot;</span>,
-                <span class="string">&quot;tx range update: blocks = {}, bundles = {}, prev = {prev_tx_range}, new = {}&quot;</span>,
-                <span class="self">self</span>.interval_blocks, <span class="self">self</span>.interval_bundles, <span class="self">self</span>.tx_range);
-            <span class="self">self</span>.interval_blocks = <span class="number">0</span>;
-            <span class="self">self</span>.interval_bundles = <span class="number">0</span>;
         }
     }
 
@@ -2068,14 +2053,49 @@
     /// domains with bundles in the block.
     </span><span class="kw">fn </span>update_domain_tx_range() {
         <span class="kw">for </span>domain_id <span class="kw">in </span>DomainTxRangeState::&lt;T&gt;::iter_keys() {
-            DomainTxRangeState::&lt;T&gt;::mutate(domain_id, |maybe_state| {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = maybe_state {
-                    state.on_finalize(
-                        T::DomainTxRangeAdjustmentInterval::get(),
-                        T::ExpectedBundlesPerInterval::get(),
-                    );
-                }
-            })
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(domain_config) =
+                DomainRegistry::&lt;T&gt;::get(domain_id).map(|obj| obj.domain_config)
+            {
+                DomainTxRangeState::&lt;T&gt;::mutate(domain_id, |maybe_tx_range_state| {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(tx_range_state) = maybe_tx_range_state {
+                        <span class="kw">let </span>tx_range_adjustment_interval =
+                            T::DomainTxRangeAdjustmentInterval::get();
+
+                        tx_range_state.interval_blocks += <span class="number">1</span>;
+
+                        <span class="kw">if </span>tx_range_state.interval_blocks &lt; tx_range_adjustment_interval {
+                            <span class="kw">return</span>;
+                        }
+
+                        <span class="comment">// End of interval, calculate the new tx range.
+                        </span><span class="kw">let </span>TxRangeState {
+                            tx_range,
+                            interval_blocks,
+                            interval_bundles,
+                        } = tx_range_state;
+
+                        <span class="kw">let </span>actual_bundle_count = <span class="kw-2">*</span>interval_bundles;
+                        <span class="kw">let </span>expected_bundle_count = tx_range_adjustment_interval
+                            * u64::from(domain_config.target_bundles_per_block);
+
+                        <span class="kw">let </span>new_tx_range = calculate_tx_range(
+                            <span class="kw-2">*</span>tx_range,
+                            actual_bundle_count,
+                            expected_bundle_count,
+                        );
+
+                        <span class="macro">log::trace!</span>(
+                            target: <span class="string">&quot;runtime::domains&quot;</span>,
+                            <span class="string">&quot;tx range update: blocks = {interval_blocks}, bundles = {actual_bundle_count}, prev = {tx_range}, new = {new_tx_range}&quot;
+                        </span>);
+
+                        <span class="comment">// Reset the tx range and start over.
+                        </span>tx_range_state.tx_range = new_tx_range;
+                        tx_range_state.interval_blocks = <span class="number">0</span>;
+                        tx_range_state.interval_bundles = <span class="number">0</span>;
+                    }
+                })
+            }
         }
     }
 
