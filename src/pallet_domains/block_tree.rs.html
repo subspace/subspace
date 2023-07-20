@@ -727,10 +727,63 @@
 <a href="#727" id="727">727</a>
 <a href="#728" id="728">728</a>
 <a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use crate</span>::{
-    BlockTree, Config, DomainBlocks, ExecutionInbox, ExecutionReceiptOf, HeadReceiptNumber,
+    BalanceOf, BlockTree, Config, DomainBlocks, ExecutionInbox, ExecutionReceiptOf,
+    HeadReceiptNumber,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
@@ -753,6 +806,8 @@
     BadGenesisReceipt,
     UnexpectedReceiptType,
     MaxHeadDomainNumber,
+    MultipleERsAfterChallengePeriod,
+    MissingDomainBlock,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -901,13 +956,25 @@
     }
 }
 
+<span class="doccomment">/// Details of the pruned domain block such as operators, rewards they would receive.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>PrunedDomainBlockInfo&lt;DomainNumber, Balance&gt; {
+    <span class="kw">pub </span>domain_block_number: DomainNumber,
+    <span class="kw">pub </span>operator_ids: Vec&lt;OperatorId&gt;,
+    <span class="kw">pub </span>rewards: Balance,
+}
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>ProcessExecutionReceiptResult&lt;T&gt; =
+    <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PrunedDomainBlockInfo&lt;&lt;T <span class="kw">as </span>Config&gt;::DomainNumber, BalanceOf&lt;T&gt;&gt;&gt;, Error&gt;;
+
 <span class="doccomment">/// Process the execution receipt to add it to the block tree
+/// Returns the domain block number that was pruned, if any
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>process_execution_receipt&lt;T: Config&gt;(
     domain_id: DomainId,
     submitter: OperatorId,
     execution_receipt: ExecutionReceiptOf&lt;T&gt;,
     receipt_type: AcceptedReceiptType,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+) -&gt; ProcessExecutionReceiptResult&lt;T&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>pruned_domain_block_info = <span class="prelude-val">None</span>;
     <span class="kw">match </span>receipt_type {
         AcceptedReceiptType::NewBranch =&gt; {
             add_new_receipt_to_block_tree::&lt;T&gt;(domain_id, submitter, execution_receipt);
@@ -924,12 +991,28 @@
             </span><span class="kw">if let </span><span class="prelude-val">Some</span>(to_prune) =
                 domain_block_number.checked_sub(<span class="kw-2">&amp;</span>T::BlockTreePruningDepth::get())
             {
-                <span class="kw">for </span>block <span class="kw">in </span>BlockTree::&lt;T&gt;::take(domain_id, to_prune) {
-                    DomainBlocks::&lt;T&gt;::remove(block);
+                <span class="kw">let </span>receipts_at_number = BlockTree::&lt;T&gt;::take(domain_id, to_prune);
+                <span class="kw">if </span>receipts_at_number.len() != <span class="number">1 </span>{
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::MultipleERsAfterChallengePeriod);
                 }
+
+                <span class="kw">let </span>receipt = receipts_at_number
+                    .first()
+                    .cloned()
+                    .expect(<span class="string">&quot;should always have a value due to check above&quot;</span>);
+
+                <span class="kw">let </span>domain_block =
+                    DomainBlocks::&lt;T&gt;::take(receipt).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
+
                 <span class="comment">// Remove the block&#39;s `ExecutionInbox` as the block is pruned and does not need
                 // to verify its receipt&#39;s `extrinsics_root` anymore
                 </span><span class="kw">let _ </span>= ExecutionInbox::&lt;T&gt;::clear_prefix((domain_id, to_prune), u32::MAX, <span class="prelude-val">None</span>);
+
+                pruned_domain_block_info = <span class="prelude-val">Some</span>(PrunedDomainBlockInfo {
+                    domain_block_number: to_prune,
+                    operator_ids: domain_block.operator_ids,
+                    rewards: domain_block.execution_receipt.total_rewards,
+                })
             }
         }
         AcceptedReceiptType::CurrentHead =&gt; {
@@ -943,7 +1026,7 @@
             });
         }
     }
-    <span class="prelude-val">Ok</span>(())
+    <span class="prelude-val">Ok</span>(pruned_domain_block_info)
 }
 
 <span class="kw">fn </span>add_new_receipt_to_block_tree&lt;T: Config&gt;(
@@ -986,6 +1069,8 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::domain_registry::DomainConfig;
+    <span class="kw">use </span><span class="kw">crate</span>::pallet::Operators;
+    <span class="kw">use </span><span class="kw">crate</span>::staking::Operator;
     <span class="kw">use </span><span class="kw">crate</span>::tests::{
         create_dummy_bundle_with_receipts, create_dummy_receipt, GenesisStateRootGenerater,
         ReadRuntimeVersion, Test,
@@ -996,11 +1081,12 @@
     <span class="kw">use </span>frame_support::weights::Weight;
     <span class="kw">use </span>frame_support::{assert_err, assert_ok};
     <span class="kw">use </span>frame_system::Pallet <span class="kw">as </span>System;
-    <span class="kw">use </span>sp_core::H256;
-    <span class="kw">use </span>sp_domains::{GenesisReceiptExtension, RuntimeType};
+    <span class="kw">use </span>sp_core::{Pair, H256, U256};
+    <span class="kw">use </span>sp_domains::{GenesisReceiptExtension, OperatorPair, RuntimeType};
     <span class="kw">use </span>sp_runtime::traits::BlockNumberProvider;
     <span class="kw">use </span>sp_version::RuntimeVersion;
     <span class="kw">use </span>std::sync::Arc;
+    <span class="kw">use </span>subspace_runtime_primitives::SSC;
 
     <span class="kw">fn </span>run_to_block&lt;T: Config&gt;(block_number: T::BlockNumber, parent_hash: T::Hash) {
         System::&lt;T&gt;::set_block_number(block_number);
@@ -1009,7 +1095,7 @@
         System::&lt;T&gt;::finalize();
     }
 
-    <span class="kw">fn </span>register_genesis_domain(creator: u64) -&gt; DomainId {
+    <span class="kw">fn </span>register_genesis_domain(creator: u64, operator_ids: Vec&lt;OperatorId&gt;) -&gt; DomainId {
         <span class="macro">assert_ok!</span>(<span class="kw">crate</span>::Pallet::&lt;Test&gt;::register_domain_runtime(
             RawOrigin::Root.into(),
             <span class="string">b&quot;evm&quot;</span>.to_vec(),
@@ -1035,6 +1121,24 @@
             },
         )
         .unwrap();
+
+        <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
+        <span class="kw">for </span>operator_id <span class="kw">in </span>operator_ids {
+            Operators::&lt;Test&gt;::insert(
+                operator_id,
+                Operator {
+                    signing_key: pair.public(),
+                    current_domain_id: domain_id,
+                    next_domain_id: domain_id,
+                    minimum_nominator_stake: SSC,
+                    nomination_tax: Default::default(),
+                    current_total_stake: Zero::zero(),
+                    current_epoch_rewards: Zero::zero(),
+                    total_shares: Zero::zero(),
+                    is_frozen: <span class="bool-val">false</span>,
+                },
+            );
+        }
 
         domain_id
     }
@@ -1118,7 +1222,7 @@
     </span><span class="kw">fn </span>test_genesis_receipt() {
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(<span class="number">0u64</span>);
+            <span class="kw">let </span>domain_id = register_genesis_domain(<span class="number">0u64</span>, <span class="macro">vec!</span>[<span class="number">0u64</span>]);
 
             <span class="comment">// The genesis receipt should be added to the block tree
             </span><span class="kw">let </span>block_tree_node_at_0 = BlockTree::&lt;Test&gt;::get(domain_id, <span class="number">0</span>);
@@ -1155,7 +1259,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(creator);
+            <span class="kw">let </span>domain_id = register_genesis_domain(creator, <span class="macro">vec!</span>[operator_id]);
 
             <span class="comment">// The genesis node of the block tree
             </span><span class="kw">let </span>genesis_node = get_block_tree_node_at::&lt;Test&gt;(domain_id, <span class="number">0</span>).unwrap();
@@ -1245,7 +1349,7 @@
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(creator);
+            <span class="kw">let </span>domain_id = register_genesis_domain(creator, <span class="macro">vec!</span>[operator_id1, operator_id2]);
             extend_block_tree(domain_id, operator_id1, <span class="number">3</span>);
 
             <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
@@ -1290,7 +1394,7 @@
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(creator);
+            <span class="kw">let </span>domain_id = register_genesis_domain(creator, <span class="macro">vec!</span>[operator_id1, operator_id2]);
             extend_block_tree(domain_id, operator_id1, <span class="number">3</span>);
 
             <span class="comment">// Receipt that comfirm a non-head receipt is stale receipt
@@ -1336,7 +1440,7 @@
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(creator);
+            <span class="kw">let </span>domain_id = register_genesis_domain(creator, <span class="macro">vec!</span>[operator_id1, operator_id2]);
             extend_block_tree(domain_id, operator_id1, <span class="number">3</span>);
 
             <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
@@ -1399,7 +1503,7 @@
         <span class="kw">let </span>operator_id = <span class="number">1u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(creator);
+            <span class="kw">let </span>domain_id = register_genesis_domain(creator, <span class="macro">vec!</span>[operator_id]);
             extend_block_tree(domain_id, operator_id, <span class="number">3</span>);
 
             <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
