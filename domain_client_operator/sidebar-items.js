@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["DomainBlockImportNotification","DomainParentChain","Operator","OperatorParams","OperatorStreams"],"type":["DomainImportNotifications"]};
+window.SIDEBAR_ITEMS = {"struct":["BootstrapResult","Bootstrapper","DomainBlockImportNotification","DomainParentChain","Operator","OperatorParams","OperatorStreams"],"type":["DomainImportNotifications"]};
