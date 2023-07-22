@@ -1,4 +1,4 @@
-var sourcesIndex = JSON.parse('{\
+var srcIndex = JSON.parse('{\
 "cross_domain_message_gossip":["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]],\
 "domain_block_builder":["",[],["lib.rs"]],\
 "domain_block_preprocessor":["",[],["inherents.rs","lib.rs","runtime_api.rs","runtime_api_full.rs","runtime_api_light.rs","xdm_verifier.rs"]],\
@@ -59,4 +59,4 @@ var sourcesIndex = JSON.parse('{\
 "subspace_transaction_pool":["",[],["bundle_validator.rs","lib.rs"]],\
 "subspace_verification":["",[],["lib.rs"]]\
 }');
-createSourceSidebar();
+createSrcSidebar();
