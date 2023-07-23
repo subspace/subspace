@@ -845,25 +845,6 @@
 <a href="#845" id="845">845</a>
 <a href="#846" id="846">846</a>
 <a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">mod </span>types;
@@ -884,6 +865,8 @@
 </span><span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>seq_macro::seq;
 <span class="kw">use </span>std::simd::SimdUint;
+<span class="attr">#[cfg(any(feature = <span class="string">&quot;parallel&quot;</span>, test))]
+</span><span class="kw">use </span>std::sync::mpsc;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>COMPUTE_F1_SIMD_FACTOR: usize = <span class="number">8</span>;
 
@@ -986,8 +969,7 @@
 <span class="doccomment">/// Caches that can be used to optimize creation of multiple [`Tables`](super::Tables).
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>TablesCache&lt;<span class="kw">const </span>K: u8&gt; {
-    left_bucket: Bucket,
-    right_bucket: Bucket,
+    buckets: Vec&lt;Bucket&gt;,
     rmap_scratch: Vec&lt;RmapItem&gt;,
     left_targets: Vec&lt;Vec&lt;Vec&lt;Position&gt;&gt;&gt;,
 }
@@ -996,8 +978,7 @@
     <span class="doccomment">/// Create new instance
     </span><span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            left_bucket: Bucket::default(),
-            right_bucket: Bucket::default(),
+            buckets: Vec::new(),
             rmap_scratch: Vec::new(),
             left_targets: calculate_left_targets(),
         }
@@ -1011,26 +992,14 @@
     right_position: Position,
 }
 
-<span class="attr">#[derive(Debug, Clone)]
+<span class="attr">#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 </span><span class="kw">struct </span>Bucket {
     <span class="doccomment">/// Bucket index
-    </span>bucket_index: usize,
-    <span class="doccomment">/// `y` values in this bucket
-    </span>ys: Vec&lt;Y&gt;,
+    </span>bucket_index: u32,
     <span class="doccomment">/// Start position of this bucket in the table
     </span>start_position: Position,
-}
-
-<span class="kw">impl </span>Default <span class="kw">for </span>Bucket {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            bucket_index: <span class="number">0</span>,
-            <span class="comment">// TODO: Currently twice the average size (*2), re-consider size in the future if it is
-            //  typically exceeded
-            </span>ys: Vec::with_capacity(usize::from(PARAM_BC) / (<span class="number">1 </span>&lt;&lt; PARAM_EXT) * <span class="number">2</span>),
-            start_position: Position::ZERO,
-        }
-    }
+    <span class="doccomment">/// Size of this bucket
+    </span>size: Position,
 }
 
 <span class="attr">#[derive(Debug, Default, Copy, Clone)]
@@ -1136,8 +1105,10 @@
 ///
 /// Returns `None` if either of buckets is empty.
 </span><span class="kw">fn </span>find_matches&lt;<span class="lifetime">&#39;a</span>&gt;(
-    left_bucket: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Bucket,
-    right_bucket: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Bucket,
+    left_bucket_ys: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>[Y],
+    left_bucket_start_position: Position,
+    right_bucket_ys: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>[Y],
+    right_bucket_start_position: Position,
     rmap_scratch: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>Vec&lt;RmapItem&gt;,
     left_targets: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>[Vec&lt;Vec&lt;Position&gt;&gt;],
 ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = Match&gt; + <span class="lifetime">&#39;a</span>&gt; {
@@ -1147,13 +1118,13 @@
     <span class="kw">let </span>rmap = rmap_scratch;
 
     <span class="comment">// Both left and right buckets can be empty
-    </span><span class="kw">let </span>first_left_bucket_y = <span class="kw-2">*</span>left_bucket.ys.first()<span class="question-mark">?</span>;
-    <span class="kw">let </span>first_right_bucket_y = <span class="kw-2">*</span>right_bucket.ys.first()<span class="question-mark">?</span>;
+    </span><span class="kw">let </span>first_left_bucket_y = <span class="kw-2">*</span>left_bucket_ys.first()<span class="question-mark">?</span>;
+    <span class="kw">let </span>first_right_bucket_y = <span class="kw-2">*</span>right_bucket_ys.first()<span class="question-mark">?</span>;
     <span class="comment">// Since all entries in a bucket are obtained after division by `PARAM_BC`, we can compute
     // quotient more efficiently by subtracting base value rather than computing remainder of
     // division
     </span><span class="kw">let </span>base = (usize::from(first_right_bucket_y) / usize::from(PARAM_BC)) * usize::from(PARAM_BC);
-    <span class="kw">for </span>(<span class="kw-2">&amp;</span>y, right_position) <span class="kw">in </span>right_bucket.ys.iter().zip(right_bucket.start_position..) {
+    <span class="kw">for </span>(<span class="kw-2">&amp;</span>y, right_position) <span class="kw">in </span>right_bucket_ys.iter().zip(right_bucket_start_position..) {
         <span class="kw">let </span>r = usize::from(y) - base;
 
         <span class="comment">// Same `y` and as the result `r` can appear in the table multiple times, in which case
@@ -1173,10 +1144,9 @@
     <span class="kw">let </span>left_targets = <span class="kw-2">&amp;</span>left_targets[parity];
 
     <span class="prelude-val">Some</span>(
-        left_bucket
-            .ys
+        left_bucket_ys
             .iter()
-            .zip(left_bucket.start_position..)
+            .zip(left_bucket_start_position..)
             .flat_map(<span class="kw">move </span>|(<span class="kw-2">&amp;</span>y, left_position)| {
                 <span class="kw">let </span>r = usize::from(y) - base;
                 <span class="kw">let </span>left_targets = <span class="kw-2">&amp;</span>left_targets[r];
@@ -1327,8 +1297,8 @@
 
 <span class="kw">fn </span>match_and_compute_fn&lt;<span class="lifetime">&#39;a</span>, <span class="kw">const </span>K: u8, <span class="kw">const </span>TABLE_NUMBER: u8, <span class="kw">const </span>PARENT_TABLE_NUMBER: u8&gt;(
     last_table: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Table&lt;K, PARENT_TABLE_NUMBER&gt;,
-    left_bucket: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Bucket,
-    right_bucket: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Bucket,
+    left_bucket: Bucket,
+    right_bucket: Bucket,
     rmap_scratch: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>Vec&lt;RmapItem&gt;,
     left_targets: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>[Vec&lt;Vec&lt;Position&gt;&gt;],
     results_table: <span class="kw-2">&amp;mut </span>Vec&lt;(Y, [Position; <span class="number">2</span>], Metadata&lt;K, TABLE_NUMBER&gt;)&gt;,
@@ -1336,7 +1306,16 @@
     </span>EvaluatableUsize&lt;{ metadata_size_bytes(K, PARENT_TABLE_NUMBER) }&gt;: Sized,
     EvaluatableUsize&lt;{ metadata_size_bytes(K, TABLE_NUMBER) }&gt;: Sized,
 {
-    <span class="kw">let </span><span class="prelude-val">Some</span>(matches) = find_matches(left_bucket, right_bucket, rmap_scratch, left_targets) <span class="kw">else </span>{
+    <span class="kw">let </span><span class="prelude-val">Some</span>(matches) = find_matches(
+        <span class="kw-2">&amp;</span>last_table.ys()[usize::from(left_bucket.start_position)..]
+            [..usize::from(left_bucket.size)],
+        left_bucket.start_position,
+        <span class="kw-2">&amp;</span>last_table.ys()[usize::from(right_bucket.start_position)..]
+            [..usize::from(right_bucket.size)],
+        right_bucket.start_position,
+        rmap_scratch,
+        left_targets,
+    ) <span class="kw">else </span>{
         <span class="kw">return</span>;
     };
 
@@ -1502,73 +1481,59 @@
     </span><span class="kw">where
         </span>EvaluatableUsize&lt;{ metadata_size_bytes(K, PARENT_TABLE_NUMBER) }&gt;: Sized,
     {
-        <span class="kw">let </span>left_bucket = <span class="kw-2">&amp;mut </span>cache.left_bucket;
-        <span class="kw">let </span>right_bucket = <span class="kw-2">&amp;mut </span>cache.right_bucket;
+        <span class="kw">let </span>buckets = <span class="kw-2">&amp;mut </span>cache.buckets;
         <span class="kw">let </span>rmap_scratch = <span class="kw-2">&amp;mut </span>cache.rmap_scratch;
         <span class="kw">let </span>left_targets = <span class="kw-2">&amp;</span>cache.left_targets;
 
-        <span class="comment">// Clear input variables just in case
-        </span>left_bucket.bucket_index = <span class="number">0</span>;
-        left_bucket.ys.clear();
-        left_bucket.start_position = Position::ZERO;
-        right_bucket.bucket_index = <span class="number">1</span>;
-        right_bucket.ys.clear();
-        right_bucket.start_position = Position::ZERO;
+        <span class="kw">let </span><span class="kw-2">mut </span>bucket = Bucket {
+            bucket_index: <span class="number">0</span>,
+            start_position: Position::ZERO,
+            size: Position::ZERO,
+        };
+
+        <span class="kw">let </span>last_y = <span class="kw-2">*</span>last_table
+            .ys()
+            .last()
+            .expect(<span class="string">&quot;List of y values is never empty; qed&quot;</span>);
+        buckets.clear();
+        buckets.reserve(<span class="number">1 </span>+ usize::from(last_y) / usize::from(PARAM_BC));
+        last_table
+            .ys()
+            .iter()
+            .zip(Position::ZERO..)
+            .for_each(|(<span class="kw-2">&amp;</span>y, position)| {
+                <span class="kw">let </span>bucket_index = u32::from(y) / u32::from(PARAM_BC);
+
+                <span class="kw">if </span>bucket_index == bucket.bucket_index {
+                    bucket.size += Position::ONE;
+                    <span class="kw">return</span>;
+                }
+
+                buckets.push(bucket);
+
+                bucket = Bucket {
+                    bucket_index,
+                    start_position: position,
+                    size: Position::ONE,
+                };
+            });
+        <span class="comment">// Iteration stopped, but we did not store the last bucket yet
+        </span>buckets.push(bucket);
 
         <span class="kw">let </span>num_values = <span class="number">1 </span>&lt;&lt; K;
         <span class="kw">let </span><span class="kw-2">mut </span>t_n = Vec::with_capacity(num_values);
-        <span class="kw">for </span>(<span class="kw-2">&amp;</span>y, position) <span class="kw">in </span>last_table.ys().iter().zip(Position::ZERO..) {
-            <span class="kw">let </span>bucket_index = usize::from(y) / usize::from(PARAM_BC);
-
-            <span class="kw">if </span>bucket_index == left_bucket.bucket_index {
-                left_bucket.ys.push(y);
-                <span class="kw">continue</span>;
-            } <span class="kw">else if </span>bucket_index == right_bucket.bucket_index {
-                <span class="kw">if </span>right_bucket.ys.is_empty() {
-                    right_bucket.start_position = position;
-                }
-                right_bucket.ys.push(y);
-                <span class="kw">continue</span>;
-            }
-
-            match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
-                last_table,
-                left_bucket,
-                right_bucket,
-                rmap_scratch,
-                left_targets,
-                <span class="kw-2">&amp;mut </span>t_n,
-            );
-
-            <span class="kw">if </span>bucket_index == right_bucket.bucket_index + <span class="number">1 </span>{
-                <span class="comment">// Move right bucket into left bucket while reusing existing allocations
-                </span>mem::swap(left_bucket, right_bucket);
-                right_bucket.bucket_index = bucket_index;
-                right_bucket.ys.clear();
-                right_bucket.start_position = position;
-
-                right_bucket.ys.push(y);
-            } <span class="kw">else </span>{
-                <span class="comment">// We have skipped some buckets, clean up both left and right buckets
-                </span>left_bucket.bucket_index = bucket_index;
-                left_bucket.ys.clear();
-                left_bucket.start_position = position;
-
-                left_bucket.ys.push(y);
-
-                right_bucket.bucket_index = bucket_index + <span class="number">1</span>;
-                right_bucket.ys.clear();
-            }
-        }
-        <span class="comment">// Iteration stopped, but we did not process contents of the last pair of buckets yet
-        </span>match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
-            last_table,
-            left_bucket,
-            right_bucket,
-            rmap_scratch,
-            left_targets,
-            <span class="kw-2">&amp;mut </span>t_n,
-        );
+        buckets
+            .array_windows::&lt;<span class="number">2</span>&gt;()
+            .for_each(|<span class="kw-2">&amp;</span>[left_bucket, right_bucket]| {
+                match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
+                    last_table,
+                    left_bucket,
+                    right_bucket,
+                    rmap_scratch,
+                    left_targets,
+                    <span class="kw-2">&amp;mut </span>t_n,
+                );
+            });
 
         t_n.sort_unstable();
 
@@ -1603,97 +1568,94 @@
     </span><span class="kw">where
         </span>EvaluatableUsize&lt;{ metadata_size_bytes(K, PARENT_TABLE_NUMBER) }&gt;: Sized,
     {
-        <span class="kw">let </span>left_bucket = <span class="kw-2">&amp;mut </span>cache.left_bucket;
-        <span class="kw">let </span>right_bucket = <span class="kw-2">&amp;mut </span>cache.right_bucket;
+        <span class="kw">let </span>buckets = <span class="kw-2">&amp;mut </span>cache.buckets;
         <span class="kw">let </span>left_targets = <span class="kw-2">&amp;</span>cache.left_targets;
 
-        <span class="comment">// Clear input variables just in case
-        </span>left_bucket.bucket_index = <span class="number">0</span>;
-        left_bucket.ys.clear();
-        left_bucket.start_position = Position::ZERO;
-        right_bucket.bucket_index = <span class="number">1</span>;
-        right_bucket.ys.clear();
-        right_bucket.start_position = Position::ZERO;
+        <span class="kw">let </span><span class="kw-2">mut </span>bucket = Bucket {
+            bucket_index: <span class="number">0</span>,
+            start_position: Position::ZERO,
+            size: Position::ZERO,
+        };
 
-        <span class="comment">// Experimentally found that this value seems reasonable
-        </span><span class="kw">let </span><span class="kw-2">mut </span>buckets = Vec::with_capacity(usize::from(PARAM_BC) / (<span class="number">1 </span>&lt;&lt; PARAM_EXT) * <span class="number">3</span>);
-        <span class="kw">for </span>(<span class="kw-2">&amp;</span>y, position) <span class="kw">in </span>last_table.ys().iter().zip(Position::ZERO..) {
-            <span class="kw">let </span>bucket_index = usize::from(y) / usize::from(PARAM_BC);
+        <span class="kw">let </span>last_y = <span class="kw-2">*</span>last_table
+            .ys()
+            .last()
+            .expect(<span class="string">&quot;List of y values is never empty; qed&quot;</span>);
+        buckets.clear();
+        buckets.reserve(<span class="number">1 </span>+ usize::from(last_y) / usize::from(PARAM_BC));
+        last_table
+            .ys()
+            .iter()
+            .zip(Position::ZERO..)
+            .for_each(|(<span class="kw-2">&amp;</span>y, position)| {
+                <span class="kw">let </span>bucket_index = u32::from(y) / u32::from(PARAM_BC);
 
-            <span class="kw">if </span>bucket_index == left_bucket.bucket_index {
-                left_bucket.ys.push(y);
-                <span class="kw">continue</span>;
-            } <span class="kw">else if </span>bucket_index == right_bucket.bucket_index {
-                <span class="kw">if </span>right_bucket.ys.is_empty() {
-                    right_bucket.start_position = position;
+                <span class="kw">if </span>bucket_index == bucket.bucket_index {
+                    bucket.size += Position::ONE;
+                    <span class="kw">return</span>;
                 }
-                right_bucket.ys.push(y);
-                <span class="kw">continue</span>;
+
+                buckets.push(bucket);
+
+                bucket = Bucket {
+                    bucket_index,
+                    start_position: position,
+                    size: Position::ONE,
+                };
+            });
+        <span class="comment">// Iteration stopped, but we did not store the last bucket yet
+        </span>buckets.push(bucket);
+
+        <span class="kw">let </span>(entries_sender, entries_receiver) = mpsc::sync_channel(<span class="number">1</span>);
+
+        <span class="kw">let </span>t_n_handle = std::thread::spawn(<span class="kw">move </span>|| {
+            <span class="kw">let </span>num_values = <span class="number">1 </span>&lt;&lt; K;
+            <span class="kw">let </span><span class="kw-2">mut </span>t_n = Vec::with_capacity(num_values);
+
+            <span class="kw">while let </span><span class="prelude-val">Ok</span>(entries) = entries_receiver.recv() {
+                t_n.extend(entries);
             }
 
-            buckets.push(left_bucket.clone());
+            t_n
+        });
 
-            <span class="kw">if </span>bucket_index == right_bucket.bucket_index + <span class="number">1 </span>{
-                <span class="comment">// Move right bucket into left bucket while reusing existing allocations
-                </span>mem::swap(left_bucket, right_bucket);
-                right_bucket.bucket_index = bucket_index;
-                right_bucket.ys.clear();
-                right_bucket.start_position = position;
+        buckets
+            .par_windows(<span class="number">2</span>)
+            .fold(
+                || (Vec::new(), Vec::new()),
+                |(<span class="kw-2">mut </span>entries, <span class="kw-2">mut </span>rmap_scratch), buckets| {
+                    match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
+                        last_table,
+                        buckets[<span class="number">0</span>],
+                        buckets[<span class="number">1</span>],
+                        <span class="kw-2">&amp;mut </span>rmap_scratch,
+                        left_targets,
+                        <span class="kw-2">&amp;mut </span>entries,
+                    );
+                    (entries, rmap_scratch)
+                },
+            )
+            .for_each(<span class="kw">move </span>|(entries, _rmap_scratch)| {
+                entries_sender
+                    .send(entries)
+                    .expect(<span class="string">&quot;Receiver is waiting until sender is exhausted; qed&quot;</span>);
+            });
 
-                right_bucket.ys.push(y);
-            } <span class="kw">else </span>{
-                <span class="comment">// We have skipped some buckets, clean up both left and right buckets
-                </span>left_bucket.bucket_index = bucket_index;
-                left_bucket.ys.clear();
-                left_bucket.start_position = position;
-
-                left_bucket.ys.push(y);
-
-                right_bucket.bucket_index = bucket_index + <span class="number">1</span>;
-                right_bucket.ys.clear();
-            }
-        }
-        <span class="comment">// Iteration stopped, but we did not store the last two buckets yet
-        </span>buckets.push(left_bucket.clone());
-        buckets.push(right_bucket.clone());
-
-        <span class="kw">let </span>num_values = <span class="number">1 </span>&lt;&lt; K;
-        <span class="kw">let </span><span class="kw-2">mut </span>t_n = Vec::with_capacity(num_values);
-        t_n.par_extend(buckets.par_windows(<span class="number">2</span>).flat_map_iter(|buckets| {
-            <span class="kw">let </span><span class="kw-2">mut </span>results = Vec::new();
-            match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
-                last_table,
-                <span class="kw-2">&amp;</span>buckets[<span class="number">0</span>],
-                <span class="kw-2">&amp;</span>buckets[<span class="number">1</span>],
-                <span class="kw-2">&amp;mut </span>Vec::new(),
-                left_targets,
-                <span class="kw-2">&amp;mut </span>results,
-            );
-            results
-        }));
-
+        <span class="kw">let </span><span class="kw-2">mut </span>t_n = t_n_handle.join().expect(<span class="string">&quot;Not joining itself; qed&quot;</span>);
         t_n.par_sort_unstable();
 
         <span class="kw">let </span><span class="kw-2">mut </span>ys = <span class="macro">vec!</span>[Default::default(); t_n.len()];
         <span class="kw">let </span><span class="kw-2">mut </span>positions = <span class="macro">vec!</span>[Default::default(); t_n.len()];
         <span class="kw">let </span><span class="kw-2">mut </span>metadatas = <span class="macro">vec!</span>[Default::default(); t_n.len()];
 
-        rayon::join(
-            || {
-                <span class="comment">// It is beneficial to drop buckets in parallel with other things
-                </span>drop(buckets);
-            },
-            || {
-                <span class="comment">// Going in parallel saves a bit of time
-                </span>t_n.into_par_iter()
-                    .zip(ys.par_iter_mut().zip(<span class="kw-2">&amp;mut </span>positions).zip(<span class="kw-2">&amp;mut </span>metadatas))
-                    .for_each(|(input, output)| {
-                        <span class="kw-2">*</span>output.<span class="number">0 </span>.<span class="number">0 </span>= input.<span class="number">0</span>;
-                        <span class="kw-2">*</span>output.<span class="number">0 </span>.<span class="number">1 </span>= input.<span class="number">1</span>;
-                        <span class="kw-2">*</span>output.<span class="number">1 </span>= input.<span class="number">2</span>;
-                    });
-            },
-        );
+        <span class="comment">// Going in parallel saves a bit of time
+        </span>t_n.into_par_iter()
+            .zip(ys.par_iter_mut().zip(<span class="kw-2">&amp;mut </span>positions).zip(<span class="kw-2">&amp;mut </span>metadatas))
+            .for_each(|(input, output)| {
+                <span class="kw-2">*</span>output.<span class="number">0 </span>.<span class="number">0 </span>= input.<span class="number">0</span>;
+                <span class="kw-2">*</span>output.<span class="number">0 </span>.<span class="number">1 </span>= input.<span class="number">1</span>;
+                <span class="kw-2">*</span>output.<span class="number">1 </span>= input.<span class="number">2</span>;
+            });
 
         <span class="self">Self</span>::Other {
             ys,
