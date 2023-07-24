@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["Bundle","BundleHeader","ExecutionReceipt","SealedBundleHeader"],"type":["OpaqueBundle"]};

@@ -208,6 +208,32 @@
 <a href="#208" id="208">208</a>
 <a href="#209" id="209">209</a>
 <a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
 <span class="kw">use </span><span class="kw">crate</span>::sortition::{TransactionSelectError, TransactionSelector};
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
@@ -216,14 +242,16 @@
 <span class="kw">use </span>futures::{select, FutureExt};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend};
 <span class="kw">use </span>sc_transaction_pool_api::InPoolTransaction;
-<span class="kw">use </span>sp_api::{NumberFor, ProvideRuntimeApi};
+<span class="kw">use </span>sp_api::{HeaderT, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::{HashAndNumber, HeaderBackend};
 <span class="kw">use </span>sp_domains::{BundleHeader, ExecutionReceipt, ProofOfElection};
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, One, Saturating, Zero};
+<span class="kw">use </span>sp_weights::Weight;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time;
+<span class="kw">use </span>subspace_runtime_primitives::Balance;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt; {
     client: Arc&lt;Client&gt;,
@@ -246,8 +274,13 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>ProposeBundleOutput&lt;Block, CBlock&gt; = (
-    BundleHeader&lt;NumberFor&lt;CBlock&gt;, &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;,
-    ExecutionReceiptFor&lt;Block, CBlock&gt;,
+    BundleHeader&lt;
+        NumberFor&lt;CBlock&gt;,
+        &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash,
+        NumberFor&lt;Block&gt;,
+        &lt;Block <span class="kw">as </span>BlockT&gt;::Hash,
+        Balance,
+    &gt;,
     Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
 );
 
@@ -304,17 +337,11 @@
             }
         };
 
-        <span class="comment">// TODO: proper deadline
-        </span><span class="kw">let </span>pushing_duration = time::Duration::from_micros(<span class="number">500</span>);
-
-        <span class="kw">let </span>start = time::Instant::now();
-
+        <span class="kw">let </span>domain_block_limit = parent_chain.domain_block_limit(parent_chain.best_hash())<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = Vec::new();
-
+        <span class="kw">let </span><span class="kw-2">mut </span>estimated_bundle_weight = Weight::default();
+        <span class="kw">let </span><span class="kw-2">mut </span>bundle_size = <span class="number">0u32</span>;
         <span class="kw">for </span>pending_tx <span class="kw">in </span>pending_iterator {
-            <span class="kw">if </span>start.elapsed() &gt;= pushing_duration {
-                <span class="kw">break</span>;
-            }
             <span class="kw">let </span>pending_tx_data = pending_tx.data().clone();
             <span class="kw">let </span>should_select_this_tx = tx_selector
                 .should_select_tx(parent_hash, pending_tx_data.clone())
@@ -324,6 +351,28 @@
                     <span class="macro">matches!</span>(err, TransactionSelectError::TxSignerNotFound)
                 });
             <span class="kw">if </span>should_select_this_tx {
+                <span class="kw">let </span>tx_weight = <span class="self">self
+                    </span>.client
+                    .runtime_api()
+                    .extrinsic_weight(parent_hash, <span class="kw-2">&amp;</span>pending_tx_data)
+                    .map_err(|error| {
+                        sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                            <span class="string">&quot;Error getting extrinsic weight: {error}&quot;
+                        </span>)))
+                    })<span class="question-mark">?</span>;
+                <span class="kw">let </span>next_estimated_bundle_weight =
+                    estimated_bundle_weight.saturating_add(tx_weight);
+                <span class="kw">if </span>next_estimated_bundle_weight.any_gt(domain_block_limit.max_block_weight) {
+                    <span class="kw">break</span>;
+                }
+
+                <span class="kw">let </span>next_bundle_size = bundle_size + pending_tx_data.encoded_size() <span class="kw">as </span>u32;
+                <span class="kw">if </span>next_bundle_size &gt; domain_block_limit.max_block_size {
+                    <span class="kw">break</span>;
+                }
+
+                estimated_bundle_weight = next_estimated_bundle_weight;
+                bundle_size = next_bundle_size;
                 extrinsics.push(pending_tx_data);
             }
         }
@@ -337,12 +386,14 @@
 
         <span class="kw">let </span>header = BundleHeader {
             consensus_block_number: consensus_block_info.number,
-            consensus_block_hash: consensus_block_info.hash,
-            extrinsics_root,
             proof_of_election,
+            receipt,
+            bundle_size,
+            estimated_bundle_weight,
+            bundle_extrinsics_root: extrinsics_root,
         };
 
-        <span class="prelude-val">Ok</span>((header, receipt, extrinsics))
+        <span class="prelude-val">Ok</span>((header, extrinsics))
     }
 
     <span class="doccomment">/// Returns the receipt in the next domain bundle.
@@ -357,10 +408,8 @@
         ParentChain: ParentChainInterface&lt;Block, ParentChainBlock&gt;,
     {
         <span class="kw">let </span>parent_chain_block_hash = parent_chain.best_hash();
-        <span class="comment">// TODO: Retrieve using consensus chain runtime API
-        </span><span class="kw">let </span>head_receipt_number = header_number.saturating_sub(One::one());
-        <span class="comment">// let head_receipt_number = parent_chain.head_receipt_number(parent_chain_block_hash)?;
-        </span><span class="kw">let </span>max_drift = parent_chain.maximum_receipt_drift(parent_chain_block_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span>head_receipt_number = parent_chain.head_receipt_number(parent_chain_block_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span>max_drift = parent_chain.block_tree_pruning_depth(parent_chain_block_hash)<span class="question-mark">?</span>;
 
         <span class="macro">tracing::trace!</span>(
             <span class="question-mark">?</span>header_number,
@@ -368,18 +417,6 @@
             <span class="question-mark">?</span>max_drift,
             <span class="string">&quot;Collecting receipts at {parent_chain_block_hash:?}&quot;
         </span>);
-
-        <span class="kw">let </span>load_receipt = |domain_hash, block_number| {
-            <span class="kw">crate</span>::aux_schema::load_execution_receipt_by_domain_hash::&lt;<span class="kw">_</span>, Block, CBlock&gt;(
-                <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
-                domain_hash,
-            )<span class="question-mark">?
-            </span>.ok_or_else(|| {
-                sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                    <span class="string">&quot;Receipt of domain block #{block_number},{domain_hash} not found&quot;
-                </span>))
-            })
-        };
 
         <span class="kw">let </span>header_block_receipt_is_written = <span class="kw">crate</span>::aux_schema::consensus_block_hash_for::&lt;
             <span class="kw">_</span>,
@@ -404,8 +441,15 @@
         <span class="kw">let </span>receipt_number = (head_receipt_number + One::one()).min(available_best_receipt_number);
 
         <span class="kw">if </span>receipt_number.is_zero() {
+            <span class="kw">let </span>genesis_hash = <span class="self">self</span>.client.info().genesis_hash;
+            <span class="kw">let </span>genesis_header = <span class="self">self</span>.client.header(genesis_hash)<span class="question-mark">?</span>.ok_or_else(|| {
+                sp_blockchain::Error::Backend(<span class="macro">format!</span>(
+                    <span class="string">&quot;Domain block header for #{genesis_hash:?} not found&quot;</span>,
+                ))
+            })<span class="question-mark">?</span>;
             <span class="kw">return </span><span class="prelude-val">Ok</span>(ExecutionReceipt::genesis(
                 <span class="self">self</span>.consensus_client.info().genesis_hash,
+                <span class="kw-2">*</span>genesis_header.state_root(),
             ));
         }
 
@@ -415,7 +459,15 @@
             </span>))
         })<span class="question-mark">?</span>;
 
-        load_receipt(domain_hash, receipt_number)
+        <span class="kw">crate</span>::aux_schema::load_execution_receipt_by_domain_hash::&lt;<span class="kw">_</span>, Block, CBlock&gt;(
+            <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
+            domain_hash,
+        )<span class="question-mark">?
+        </span>.ok_or_else(|| {
+            sp_blockchain::Error::Backend(<span class="macro">format!</span>(
+                <span class="string">&quot;Receipt of domain block #{receipt_number},{domain_hash} not found&quot;
+            </span>))
+        })
     }
 }
 </code></pre></div></section></main></body></html>

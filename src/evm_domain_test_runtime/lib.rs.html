@@ -1063,6 +1063,11 @@
 <a href="#1063" id="1063">1063</a>
 <a href="#1064" id="1064">1064</a>
 <a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
 </pre></div><pre class="rust"><code><span class="attr">#![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
 </span><span class="comment">// `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 </span><span class="attr">#![recursion_limit = <span class="string">&quot;256&quot;</span>]
@@ -1078,8 +1083,8 @@
 <span class="kw">pub use </span>domain_runtime_primitives::{opaque, Balance, BlockNumber, Hash, Index};
 <span class="kw">use </span>domain_runtime_primitives::{MultiAccountId, TryConvertBack, SLOT_DURATION};
 <span class="kw">use </span>fp_account::EthereumSignature;
-<span class="kw">use </span>fp_self_contained::CheckedSignature;
-<span class="kw">use </span>frame_support::dispatch::DispatchClass;
+<span class="kw">use </span>fp_self_contained::SelfContainedCall;
+<span class="kw">use </span>frame_support::dispatch::{DispatchClass, GetDispatchInfo};
 <span class="kw">use </span>frame_support::traits::{ConstU16, ConstU32, ConstU64, Everything, FindAuthor};
 <span class="kw">use </span>frame_support::weights::constants::{
     BlockExecutionWeight, ExtrinsicBaseWeight, ParityDbWeight, WEIGHT_REF_TIME_PER_MILLIS,
@@ -1105,8 +1110,8 @@
     RelayerMessagesWithStorageKey,
 };
 <span class="kw">use </span>sp_runtime::traits::{
-    BlakeTwo256, Block <span class="kw">as </span>BlockT, Checkable, Convert, DispatchInfoOf, Dispatchable,
-    IdentifyAccount, IdentityLookup, PostDispatchInfoOf, UniqueSaturatedInto, Verify,
+    BlakeTwo256, Block <span class="kw">as </span>BlockT, Convert, DispatchInfoOf, Dispatchable, IdentifyAccount,
+    IdentityLookup, PostDispatchInfoOf, UniqueSaturatedInto, Verify,
 };
 <span class="kw">use </span>sp_runtime::transaction_validity::{
     TransactionSource, TransactionValidity, TransactionValidityError,
@@ -1666,26 +1671,27 @@
     </span>}
 }
 
-<span class="comment">// TODO: this is inconsistent with other domains.
-// Ref https://github.com/subspace/subspace/pull/1434#discussion_r1186633233
-</span><span class="kw">pub fn </span>extract_signers&lt;Lookup&gt;(
+<span class="kw">pub fn </span>extract_signers&lt;Lookup&gt;(
     extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
     lookup: <span class="kw-2">&amp;</span>Lookup,
 ) -&gt; Vec&lt;(<span class="prelude-ty">Option</span>&lt;opaque::AccountId&gt;, UncheckedExtrinsic)&gt;
 <span class="kw">where
     </span>Lookup: sp_runtime::traits::Lookup&lt;Source = Address, Target = AccountId&gt;,
 {
-    <span class="kw">let </span><span class="kw-2">mut </span>signer_extrinsics = <span class="macro">sp_std::vec!</span>[];
-    <span class="kw">for </span>extrinsic <span class="kw">in </span>extrinsics {
-        <span class="kw">if let </span><span class="prelude-val">Ok</span>(checked) = extrinsic.clone().check(lookup) {
-            <span class="kw">let </span>maybe_signer = <span class="kw">match </span>checked.signed {
-                CheckedSignature::SelfContained(account_id) =&gt; <span class="prelude-val">Some</span>(account_id.encode()),
-                CheckedSignature::Signed(account_id, <span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(account_id.encode()),
-                CheckedSignature::Unsigned =&gt; <span class="prelude-val">None</span>,
-            };
-
-            signer_extrinsics.push((maybe_signer, extrinsic))
-        }
+    <span class="kw">let </span><span class="kw-2">mut </span>signer_extrinsics = Vec::with_capacity(extrinsics.len());
+    <span class="kw">for </span>ext <span class="kw">in </span>extrinsics {
+        <span class="kw">let </span>maybe_signer = <span class="kw">if </span>ext.<span class="number">0</span>.function.is_self_contained() {
+            ext.<span class="number">0
+                </span>.function
+                .check_self_contained()
+                .and_then(|signed_info| signed_info.ok())
+                .map(|account| account.encode())
+        } <span class="kw">else </span>{
+            ext.<span class="number">0</span>.signature.as_ref().and_then(|(signed, <span class="kw">_</span>, <span class="kw">_</span>)| {
+                lookup.lookup(<span class="kw-2">*</span>signed).ok().map(|account| account.encode())
+            })
+        };
+        signer_extrinsics.push((maybe_signer, ext));
     }
 
     signer_extrinsics
@@ -1846,6 +1852,10 @@
                 frame_system::Account::&lt;Runtime&gt;::hashed_key_for(sender),
                 pallet_transaction_payment::NextFeeMultiplier::&lt;Runtime&gt;::hashed_key().to_vec(),
             ])
+        }
+
+        <span class="kw">fn </span>extrinsic_weight(ext: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic) -&gt; Weight {
+            ext.get_dispatch_info().weight
         }
     }
 

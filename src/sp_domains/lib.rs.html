@@ -618,6 +618,12 @@
 <a href="#618" id="618">618</a>
 <a href="#619" id="619">619</a>
 <a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -641,7 +647,6 @@
 <span class="kw">pub mod </span>fraud_proof;
 <span class="kw">pub mod </span>merkle_tree;
 <span class="kw">pub mod </span>transaction;
-<span class="kw">pub mod </span>v2;
 
 <span class="kw">use </span>bundle_producer_election::{BundleProducerElectionParams, VrfProofError};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, MaxEncodedLen};
@@ -775,23 +780,28 @@
     }
 }
 
-<span class="doccomment">/// Unsealed header of bundle.
-///
-/// Domain operator needs to sign the hash of [`BundleHeader`] and uses the signature to
-/// assemble the final [`SealedBundleHeader`].
-</span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>BundleHeader&lt;Number, Hash, DomainHash&gt; {
-    <span class="doccomment">/// The block number of consensus block at which the bundle was created.
+<span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
+</span><span class="kw">pub struct </span>BundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+    <span class="doccomment">/// The consensus chain&#39;s best block number when the bundle is created. Used for detect stale
+    /// bundle and prevent attacker from reusing them to occupy the block space without cost.
     </span><span class="kw">pub </span>consensus_block_number: Number,
-    <span class="doccomment">/// The hash of consensus block corresponding to `consensus_block_number`.
-    </span><span class="kw">pub </span>consensus_block_hash: Hash,
-    <span class="doccomment">/// The merkle root of the extrinsics.
-    </span><span class="kw">pub </span>extrinsics_root: H256,
     <span class="doccomment">/// Proof of bundle producer election.
     </span><span class="kw">pub </span>proof_of_election: ProofOfElection&lt;DomainHash&gt;,
+    <span class="doccomment">/// Execution receipt that should extend the receipt chain or add confirmations
+    /// to the head receipt.
+    </span><span class="kw">pub </span>receipt: ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;,
+    <span class="doccomment">/// The size of the bundle body in bytes. Used to calculate the storage cost.
+    </span><span class="kw">pub </span>bundle_size: u32,
+    <span class="doccomment">/// The total (estimated) weight of all extrinsics in the bundle. Used to prevent overloading
+    /// the bundle with compute.
+    </span><span class="kw">pub </span>estimated_bundle_weight: Weight,
+    <span class="doccomment">/// The Merkle root of all new extrinsics included in this bundle.
+    </span><span class="kw">pub </span>bundle_extrinsics_root: ExtrinsicsRoot,
 }
 
-<span class="kw">impl</span>&lt;Number: Encode, Hash: Encode, DomainHash: Encode&gt; BundleHeader&lt;Number, Hash, DomainHash&gt; {
+<span class="kw">impl</span>&lt;Number: Encode, Hash: Encode, DomainNumber: Encode, DomainHash: Encode, Balance: Encode&gt;
+    BundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;
+{
     <span class="doccomment">/// Returns the hash of this header.
     </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; H256 {
         BlakeTwo256::hash_of(<span class="self">self</span>)
@@ -800,19 +810,19 @@
 
 <span class="doccomment">/// Header of bundle.
 </span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>SealedBundleHeader&lt;Number, Hash, DomainHash&gt; {
+</span><span class="kw">pub struct </span>SealedBundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
     <span class="doccomment">/// Unsealed header.
-    </span><span class="kw">pub </span>header: BundleHeader&lt;Number, Hash, DomainHash&gt;,
+    </span><span class="kw">pub </span>header: BundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;,
     <span class="doccomment">/// Signature of the bundle.
     </span><span class="kw">pub </span>signature: OperatorSignature,
 }
 
-<span class="kw">impl</span>&lt;Number: Encode, Hash: Encode, DomainHash: Encode&gt;
-    SealedBundleHeader&lt;Number, Hash, DomainHash&gt;
+<span class="kw">impl</span>&lt;Number: Encode, Hash: Encode, DomainNumber: Encode, DomainHash: Encode, Balance: Encode&gt;
+    SealedBundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;
 {
     <span class="doccomment">/// Constructs a new instance of [`SealedBundleHeader`].
     </span><span class="kw">pub fn </span>new(
-        header: BundleHeader&lt;Number, Hash, DomainHash&gt;,
+        header: BundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;,
         signature: OperatorSignature,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ header, signature }
@@ -830,6 +840,145 @@
 
     <span class="kw">pub fn </span>slot_number(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
         <span class="self">self</span>.header.proof_of_election.slot_number
+    }
+}
+
+<span class="doccomment">/// Domain bundle.
+</span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
+</span><span class="kw">pub struct </span>Bundle&lt;Extrinsic, Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+    <span class="doccomment">/// Sealed bundle header.
+    </span><span class="kw">pub </span>sealed_header: SealedBundleHeader&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;,
+    <span class="doccomment">/// The accompanying extrinsics.
+    </span><span class="kw">pub </span>extrinsics: Vec&lt;Extrinsic&gt;,
+}
+
+<span class="kw">impl</span>&lt;
+        Extrinsic: Encode,
+        Number: Encode,
+        Hash: Encode,
+        DomainNumber: Encode,
+        DomainHash: Encode,
+        Balance: Encode,
+    &gt; Bundle&lt;Extrinsic, Number, Hash, DomainNumber, DomainHash, Balance&gt;
+{
+    <span class="doccomment">/// Returns the hash of this bundle.
+    </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; H256 {
+        BlakeTwo256::hash_of(<span class="self">self</span>)
+    }
+
+    <span class="doccomment">/// Returns the domain_id of this bundle.
+    </span><span class="kw">pub fn </span>domain_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DomainId {
+        <span class="self">self</span>.sealed_header.header.proof_of_election.domain_id
+    }
+
+    <span class="comment">// Return the `bundle_extrinsics_root`
+    </span><span class="kw">pub fn </span>extrinsics_root(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ExtrinsicsRoot {
+        <span class="self">self</span>.sealed_header.header.bundle_extrinsics_root
+    }
+
+    <span class="comment">// Return the `operator_id`
+    </span><span class="kw">pub fn </span>operator_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OperatorId {
+        <span class="self">self</span>.sealed_header.header.proof_of_election.operator_id
+    }
+
+    <span class="doccomment">/// Return a reference of the execution receipt.
+    </span><span class="kw">pub fn </span>receipt(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.sealed_header.header.receipt
+    }
+
+    <span class="doccomment">/// Consumes [`Bundle`] to extract the execution receipt.
+    </span><span class="kw">pub fn </span>into_receipt(<span class="self">self</span>) -&gt; ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+        <span class="self">self</span>.sealed_header.header.receipt
+    }
+}
+
+<span class="doccomment">/// Bundle with opaque extrinsics.
+</span><span class="kw">pub type </span>OpaqueBundle&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; =
+    Bundle&lt;OpaqueExtrinsic, Number, Hash, DomainNumber, DomainHash, Balance&gt;;
+
+<span class="doccomment">/// List of [`OpaqueBundle`].
+</span><span class="kw">pub type </span>OpaqueBundles&lt;Block, DomainNumber, DomainHash, Balance&gt; =
+    Vec&lt;OpaqueBundle&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainNumber, DomainHash, Balance&gt;&gt;;
+
+<span class="kw">impl</span>&lt;Extrinsic: Encode, Number, Hash, DomainNumber, DomainHash, Balance&gt;
+    Bundle&lt;Extrinsic, Number, Hash, DomainNumber, DomainHash, Balance&gt;
+{
+    <span class="doccomment">/// Convert a bundle with generic extrinsic to a bundle with opaque extrinsic.
+    </span><span class="kw">pub fn </span>into_opaque_bundle(
+        <span class="self">self</span>,
+    ) -&gt; OpaqueBundle&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+        <span class="kw">let </span>Bundle {
+            sealed_header,
+            extrinsics,
+        } = <span class="self">self</span>;
+        <span class="kw">let </span>opaque_extrinsics = extrinsics
+            .into_iter()
+            .map(|xt| {
+                OpaqueExtrinsic::from_bytes(<span class="kw-2">&amp;</span>xt.encode())
+                    .expect(<span class="string">&quot;We have just encoded a valid extrinsic; qed&quot;</span>)
+            })
+            .collect();
+        OpaqueBundle {
+            sealed_header,
+            extrinsics: opaque_extrinsics,
+        }
+    }
+}
+
+<span class="doccomment">/// Receipt of a domain block execution.
+</span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
+</span><span class="kw">pub struct </span>ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+    <span class="comment">// The index of the current domain block that forms the basis of this ER.
+    </span><span class="kw">pub </span>domain_block_number: DomainNumber,
+    <span class="comment">// The block hash correspond to `domain_block_number`.
+    </span><span class="kw">pub </span>domain_block_hash: DomainHash,
+    <span class="comment">// A pointer to the hash of the ER for the last domain block.
+    </span><span class="kw">pub </span>parent_domain_block_receipt_hash: ReceiptHash,
+    <span class="comment">// A pointer to the consensus block index which contains all of the bundles that were used to derive and
+    // order all extrinsics executed by the current domain block for this ER.
+    </span><span class="kw">pub </span>consensus_block_number: Number,
+    <span class="comment">// The block hash correspond to `consensus_block_number`.
+    </span><span class="kw">pub </span>consensus_block_hash: Hash,
+    <span class="comment">// All `extrinsics_roots` for all bundles being executed by this block. Used to ensure these are contained
+    // within the state of the `execution_inbox`.
+    </span><span class="kw">pub </span>block_extrinsics_roots: Vec&lt;ExtrinsicsRoot&gt;,
+    <span class="comment">// The final state root for the current domain block reflected by this ER. Used for verifying storage proofs
+    // for domains.
+    </span><span class="kw">pub </span>final_state_root: DomainHash,
+    <span class="doccomment">/// List of storage roots collected during the domain block execution.
+    </span><span class="kw">pub </span>execution_trace: Vec&lt;DomainHash&gt;,
+    <span class="comment">// The Merkle root of the execution trace for the current domain block. Used for verifying fraud proofs.
+    </span><span class="kw">pub </span>execution_trace_root: H256,
+    <span class="comment">// All SSC rewards for this ER to be shared across operators.
+    </span><span class="kw">pub </span>total_rewards: Balance,
+}
+
+<span class="kw">impl</span>&lt;
+        Number: Encode + Zero,
+        Hash: Encode + Default,
+        DomainNumber: Encode + Zero,
+        DomainHash: Clone + Encode + Default,
+        Balance: Encode + Zero,
+    &gt; ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;
+{
+    <span class="doccomment">/// Returns the hash of this execution receipt.
+    </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ReceiptHash {
+        BlakeTwo256::hash_of(<span class="self">self</span>)
+    }
+
+    <span class="kw">pub fn </span>genesis(consensus_genesis_hash: Hash, genesis_state_root: DomainHash) -&gt; <span class="self">Self </span>{
+        ExecutionReceipt {
+            domain_block_number: Zero::zero(),
+            domain_block_hash: Default::default(),
+            parent_domain_block_receipt_hash: Default::default(),
+            consensus_block_hash: consensus_genesis_hash,
+            consensus_block_number: Zero::zero(),
+            block_extrinsics_roots: <span class="macro">sp_std::vec!</span>[],
+            final_state_root: genesis_state_root.clone(),
+            execution_trace: <span class="macro">sp_std::vec!</span>[genesis_state_root],
+            execution_trace_root: Default::default(),
+            total_rewards: Zero::zero(),
+        }
     }
 }
 
@@ -890,163 +1039,6 @@
             operator_id,
             _phantom: Default::default(),
         }
-    }
-}
-
-<span class="doccomment">/// Domain bundle.
-</span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>Bundle&lt;Extrinsic, Number, Hash, DomainNumber, DomainHash&gt; {
-    <span class="doccomment">/// Sealed bundle header.
-    </span><span class="kw">pub </span>sealed_header: SealedBundleHeader&lt;Number, Hash, DomainHash&gt;,
-    <span class="doccomment">/// Execution receipt that should extend the receipt chain or add confirmations
-    /// to the head receipt.
-    </span><span class="kw">pub </span>receipt: ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash&gt;,
-    <span class="doccomment">/// The accompanying extrinsics.
-    </span><span class="kw">pub </span>extrinsics: Vec&lt;Extrinsic&gt;,
-}
-
-<span class="kw">impl</span>&lt;Extrinsic: Encode, Number: Encode, Hash: Encode, DomainNumber: Encode, DomainHash: Encode&gt;
-    Bundle&lt;Extrinsic, Number, Hash, DomainNumber, DomainHash&gt;
-{
-    <span class="doccomment">/// Returns the hash of this bundle.
-    </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; H256 {
-        BlakeTwo256::hash_of(<span class="self">self</span>)
-    }
-
-    <span class="doccomment">/// Returns the domain_id of this bundle.
-    </span><span class="kw">pub fn </span>domain_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DomainId {
-        <span class="self">self</span>.sealed_header.header.proof_of_election.domain_id
-    }
-
-    <span class="kw">pub fn </span>operator_id(<span class="self">self</span>) -&gt; OperatorId {
-        <span class="self">self</span>.sealed_header.header.proof_of_election.operator_id
-    }
-}
-
-<span class="doccomment">/// Bundle with opaque extrinsics.
-</span><span class="kw">pub type </span>OpaqueBundle&lt;Number, Hash, DomainNumber, DomainHash&gt; =
-    Bundle&lt;OpaqueExtrinsic, Number, Hash, DomainNumber, DomainHash&gt;;
-
-<span class="kw">impl</span>&lt;Extrinsic: Encode, Number, Hash, DomainNumber, DomainHash&gt;
-    Bundle&lt;Extrinsic, Number, Hash, DomainNumber, DomainHash&gt;
-{
-    <span class="doccomment">/// Convert a bundle with generic extrinsic to a bundle with opaque extrinsic.
-    </span><span class="kw">pub fn </span>into_opaque_bundle(<span class="self">self</span>) -&gt; OpaqueBundle&lt;Number, Hash, DomainNumber, DomainHash&gt; {
-        <span class="kw">let </span>Bundle {
-            sealed_header,
-            receipt,
-            extrinsics,
-        } = <span class="self">self</span>;
-        <span class="kw">let </span>opaque_extrinsics = extrinsics
-            .into_iter()
-            .map(|xt| {
-                OpaqueExtrinsic::from_bytes(<span class="kw-2">&amp;</span>xt.encode())
-                    .expect(<span class="string">&quot;We have just encoded a valid extrinsic; qed&quot;</span>)
-            })
-            .collect();
-        OpaqueBundle {
-            sealed_header,
-            receipt,
-            extrinsics: opaque_extrinsics,
-        }
-    }
-}
-
-<span class="doccomment">/// Receipt of a domain block execution.
-</span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash&gt; {
-    <span class="doccomment">/// Consensus block number.
-    </span><span class="kw">pub </span>consensus_block_number: Number,
-    <span class="doccomment">/// Hash of the origin consensus block this receipt corresponds to.
-    </span><span class="kw">pub </span>consensus_block_hash: Hash,
-    <span class="doccomment">/// Domain block number.
-    </span><span class="kw">pub </span>domain_block_number: DomainNumber,
-    <span class="doccomment">/// Hash of the domain block this receipt points to.
-    </span><span class="kw">pub </span>domain_hash: DomainHash,
-    <span class="doccomment">/// List of storage roots collected during the domain block execution.
-    </span><span class="kw">pub </span>trace: Vec&lt;DomainHash&gt;,
-    <span class="doccomment">/// The merkle root of `trace`.
-    </span><span class="kw">pub </span>trace_root: Blake2b256Hash,
-}
-
-<span class="kw">impl</span>&lt;Number: Encode, Hash: Encode, DomainNumber: Encode, DomainHash: Encode&gt;
-    ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash&gt;
-{
-    <span class="doccomment">/// Returns the hash of this execution receipt.
-    </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; H256 {
-        BlakeTwo256::hash_of(<span class="self">self</span>)
-    }
-}
-
-<span class="kw">impl</span>&lt;Number: Copy + Zero, Hash, DomainNumber: Zero, DomainHash: Default&gt;
-    ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash&gt;
-{
-    <span class="attr">#[cfg(any(feature = <span class="string">&quot;std&quot;</span>, feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
-    </span><span class="kw">pub fn </span>dummy(
-        consensus_block_number: Number,
-        consensus_block_hash: Hash,
-    ) -&gt; ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash&gt; {
-        <span class="kw">let </span>trace = <span class="kw">if </span>consensus_block_number.is_zero() {
-            Vec::new()
-        } <span class="kw">else </span>{
-            <span class="macro">sp_std::vec!</span>[Default::default(), Default::default()]
-        };
-        ExecutionReceipt {
-            consensus_block_number,
-            consensus_block_hash,
-            domain_block_number: Zero::zero(),
-            domain_hash: Default::default(),
-            trace,
-            trace_root: Default::default(),
-        }
-    }
-
-    <span class="kw">pub fn </span>genesis(
-        consensus_genesis_block_hash: Hash,
-    ) -&gt; ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash&gt; {
-        ExecutionReceipt {
-            consensus_block_number: Zero::zero(),
-            consensus_block_hash: consensus_genesis_block_hash,
-            domain_block_number: Zero::zero(),
-            domain_hash: Default::default(),
-            trace: Default::default(),
-            trace_root: Default::default(),
-        }
-    }
-}
-
-<span class="doccomment">/// List of [`OpaqueBundle`].
-</span><span class="kw">pub type </span>OpaqueBundles&lt;Block, DomainNumber, DomainHash&gt; =
-    Vec&lt;OpaqueBundle&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainNumber, DomainHash&gt;&gt;;
-
-<span class="attr">#[cfg(any(feature = <span class="string">&quot;std&quot;</span>, feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
-</span><span class="kw">pub fn </span>create_dummy_bundle_with_receipts_generic&lt;BlockNumber, Hash, DomainNumber, DomainHash&gt;(
-    domain_id: DomainId,
-    consensus_block_number: BlockNumber,
-    consensus_block_hash: Hash,
-    receipt: ExecutionReceipt&lt;BlockNumber, Hash, DomainNumber, DomainHash&gt;,
-) -&gt; OpaqueBundle&lt;BlockNumber, Hash, DomainNumber, DomainHash&gt;
-<span class="kw">where
-    </span>BlockNumber: Encode + Default,
-    Hash: Encode + Default,
-    DomainHash: Encode + Default,
-{
-    <span class="kw">use </span>sp_core::crypto::UncheckedFrom;
-
-    <span class="kw">let </span>sealed_header = SealedBundleHeader {
-        header: BundleHeader {
-            consensus_block_number,
-            consensus_block_hash,
-            extrinsics_root: Default::default(),
-            proof_of_election: ProofOfElection::dummy(domain_id, <span class="number">0u64</span>),
-        },
-        signature: OperatorSignature::unchecked_from([<span class="number">0u8</span>; <span class="number">64</span>]),
-    };
-
-    OpaqueBundle {
-        sealed_header,
-        receipt,
-        extrinsics: Vec::new(),
     }
 }
 
@@ -1195,17 +1187,25 @@
     }
 }
 
+<span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, Clone)]
+</span><span class="kw">pub struct </span>DomainBlockLimit {
+    <span class="doccomment">/// The max block size for the domain.
+    </span><span class="kw">pub </span>max_block_size: u32,
+    <span class="doccomment">/// The max block weight for the domain.
+    </span><span class="kw">pub </span>max_block_weight: Weight,
+}
+
 <span class="macro">sp_api::decl_runtime_apis! </span>{
     <span class="doccomment">/// API necessary for domains pallet.
     </span><span class="kw">pub trait </span>DomainsApi&lt;DomainNumber: Encode + Decode, DomainHash: Encode + Decode&gt; {
         <span class="doccomment">/// Submits the transaction bundle via an unsigned extrinsic.
-        </span><span class="kw">fn </span>submit_bundle_unsigned(opaque_bundle: OpaqueBundle&lt;NumberFor&lt;Block&gt;, Block::Hash, DomainNumber, DomainHash&gt;);
+        </span><span class="kw">fn </span>submit_bundle_unsigned(opaque_bundle: OpaqueBundle&lt;NumberFor&lt;Block&gt;, Block::Hash, DomainNumber, DomainHash, Balance&gt;);
 
         <span class="doccomment">/// Extract the bundles stored successfully from the given extrinsics.
         </span><span class="kw">fn </span>extract_successful_bundles(
             domain_id: DomainId,
             extrinsics: Vec&lt;Block::Extrinsic&gt;,
-        ) -&gt; OpaqueBundles&lt;Block, DomainNumber, DomainHash&gt;;
+        ) -&gt; OpaqueBundles&lt;Block, DomainNumber, DomainHash, Balance&gt;;
 
         <span class="doccomment">/// Returns the hash of successfully submitted bundles.
         </span><span class="kw">fn </span>successful_bundle_hashes() -&gt; Vec&lt;H256&gt;;
@@ -1230,6 +1230,18 @@
 
         <span class="doccomment">/// Return the genesis state root if not pruned
         </span><span class="kw">fn </span>genesis_state_root(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;H256&gt;;
+
+        <span class="doccomment">/// Returns the best execution chain number.
+        </span><span class="kw">fn </span>head_receipt_number(domain_id: DomainId) -&gt; NumberFor&lt;Block&gt;;
+
+        <span class="doccomment">/// Returns the block number of oldest execution receipt.
+        </span><span class="kw">fn </span>oldest_receipt_number(domain_id: DomainId) -&gt; NumberFor&lt;Block&gt;;
+
+        <span class="doccomment">/// Returns the block tree pruning depth.
+        </span><span class="kw">fn </span>block_tree_pruning_depth() -&gt; NumberFor&lt;Block&gt;;
+
+        <span class="doccomment">/// Returns the domain block limit of the given domain.
+        </span><span class="kw">fn </span>domain_block_limit(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;DomainBlockLimit&gt;;
     }
 
     <span class="kw">pub trait </span>BundleProducerElectionApi&lt;Balance: Encode + Decode&gt; {
