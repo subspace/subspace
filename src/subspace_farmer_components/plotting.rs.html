@@ -459,6 +459,8 @@
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
     SectorMetadata,
@@ -472,7 +474,6 @@
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>parking_lot::Mutex;
-<span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::simd::Simd;
 <span class="kw">use </span>std::sync::Arc;
@@ -484,7 +485,7 @@
     RecordWitness, SBucket, SectorId, SectorIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
-<span class="kw">use </span>subspace_proof_of_space::{Quality, Table};
+<span class="kw">use </span>subspace_proof_of_space::{Quality, Table, TableGenerator};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tracing::{debug, warn};
@@ -630,6 +631,7 @@
     pieces_in_sector: u16,
     sector_output: <span class="kw-2">&amp;mut </span>[u8],
     sector_metadata_output: <span class="kw-2">&amp;mut </span>[u8],
+    table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;PlottedSector, PlottingError&gt;
 <span class="kw">where
     </span>PG: PieceGetter,
@@ -709,11 +711,13 @@
     (PieceOffset::ZERO..)
         .zip(raw_sector.records.iter_mut())
         .zip(sector_contents_map.iter_record_bitfields_mut())
-        <span class="comment">// TODO: Doesn&#39;t work without a bridge: https://github.com/ferrilab/bitvec/issues/143
-        </span>.par_bridge()
-        .for_each(|((piece_offset, record), <span class="kw-2">mut </span>encoded_chunks_used)| {
-            <span class="comment">// Derive PoSpace table
-            </span><span class="kw">let </span>pos_table = PosTable::generate(
+        <span class="comment">// TODO: Ideally, we&#39;d use parallelism here, but using `.par_bridge()` causes Chia table
+        //  derivation to only use a single thread, which slows everything to essentially
+        //  single-threaded
+        </span>.for_each(|((piece_offset, record), <span class="kw-2">mut </span>encoded_chunks_used)| {
+            <span class="comment">// Derive PoSpace table (use parallel mode because multiple tables concurrently will use
+            // too much RAM)
+            </span><span class="kw">let </span>pos_table = table_generator.generate_parallel(
                 <span class="kw-2">&amp;</span>sector_id.derive_evaluation_seed(piece_offset, farmer_protocol_info.history_size),
             );
 

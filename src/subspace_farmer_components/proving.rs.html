@@ -415,18 +415,22 @@
 <a href="#415" id="415">415</a>
 <a href="#416" id="416">416</a>
 <a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::auditing::ChunkCandidate;
 <span class="kw">use </span><span class="kw">crate</span>::reading::{read_record_metadata, read_sector_record_chunks, ReadingError};
 <span class="kw">use </span><span class="kw">crate</span>::sector::{SectorContentsMap, SectorContentsMapFromBytesError, SectorMetadata};
 <span class="kw">use </span>std::collections::VecDeque;
-<span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{Commitment, Kzg, Witness};
 <span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
 <span class="kw">use </span>subspace_core_primitives::{
     PieceOffset, PosProof, PublicKey, Record, SBucket, SectorId, SectorIndex, Solution,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
-<span class="kw">use </span>subspace_proof_of_space::{Quality, Table};
+<span class="kw">use </span>subspace_proof_of_space::{Quality, Table, TableGenerator};
 <span class="kw">use </span>thiserror::Error;
 
 <span class="doccomment">/// Errors that happen during proving
@@ -533,6 +537,7 @@
         reward_address: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>RewardAddress,
         kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
         erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>ErasureCoding,
+        table_generator: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>PosTable::Generator,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;
         <span class="kw">impl </span>ExactSizeIterator&lt;Item = <span class="prelude-ty">Result</span>&lt;Solution&lt;PublicKey, RewardAddress&gt;, ProvingError&gt;&gt; + <span class="lifetime">&#39;a</span>,
         ProvingError,
@@ -552,6 +557,7 @@
             kzg,
             erasure_coding,
             <span class="self">self</span>.chunk_candidates,
+            table_generator,
         )
     }
 }
@@ -565,7 +571,10 @@
     proof_of_space: PosProof,
 }
 
-<span class="kw">struct </span>SolutionCandidatesIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable&gt; {
+<span class="kw">struct </span>SolutionCandidatesIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable&gt;
+<span class="kw">where
+    </span>PosTable: Table,
+{
     public_key: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>PublicKey,
     reward_address: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>RewardAddress,
     sector_index: SectorIndex,
@@ -580,7 +589,7 @@
     winning_chunks: VecDeque&lt;WinningChunk&gt;,
     count: usize,
     chunk_cache: <span class="prelude-ty">Option</span>&lt;ChunkCache&gt;,
-    _pos_table: PhantomData&lt;PosTable&gt;,
+    table_generator: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>PosTable::Generator,
 }
 
 <span class="comment">// TODO: This can be potentially parallelized with rayon
@@ -617,7 +626,7 @@
             }
 
             <span class="comment">// Derive PoSpace table
-            </span><span class="kw">let </span>pos_table = PosTable::generate_parallel(
+            </span><span class="kw">let </span>pos_table = <span class="self">self</span>.table_generator.generate_parallel(
                 <span class="kw-2">&amp;</span><span class="self">self
                     </span>.sector_id
                     .derive_evaluation_seed(piece_offset, <span class="self">self</span>.sector_metadata.history_size),
@@ -768,6 +777,7 @@
         kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
         erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>ErasureCoding,
         chunk_candidates: VecDeque&lt;ChunkCandidate&gt;,
+        table_generator: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>PosTable::Generator,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ProvingError&gt; {
         <span class="kw">if </span>erasure_coding.max_shards() &lt; Record::NUM_S_BUCKETS {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ProvingError::InvalidErasureCodingInstance);
@@ -828,7 +838,7 @@
             winning_chunks,
             count,
             chunk_cache: <span class="prelude-val">None</span>,
-            _pos_table: PhantomData,
+            table_generator,
         })
     }
 }

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_SEGMENT_INDEXES_PER_REQUEST"],"struct":["FarmerAppInfo","RewardSignatureResponse","RewardSigningInfo","SlotInfo","SolutionResponse"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_SEGMENT_INDEXES_PER_REQUEST"],"enum":["NodeSyncStatus"],"struct":["FarmerAppInfo","RewardSignatureResponse","RewardSigningInfo","SlotInfo","SolutionResponse"]};

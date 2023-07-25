@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ChiaQuality","ChiaTable"]};
+window.SIDEBAR_ITEMS = {"struct":["ChiaQuality","ChiaTable","ChiaTableGenerator"]};
