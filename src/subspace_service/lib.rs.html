@@ -1036,7 +1036,6 @@
 <span class="kw">mod </span>metrics;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>rpc;
-<span class="kw">pub mod </span>segment_headers;
 <span class="kw">mod </span>sync_from_dsn;
 <span class="kw">pub mod </span>tx_pre_validator;
 
@@ -1044,7 +1043,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::dsn::{create_dsn_instance, DsnConfigurationError};
 <span class="kw">use </span><span class="kw">crate</span>::metrics::NodeMetrics;
 <span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
-<span class="kw">use </span><span class="kw">crate</span>::segment_headers::{start_segment_header_archiver, SegmentHeaderCache};
 <span class="kw">use </span><span class="kw">crate</span>::tx_pre_validator::ConsensusChainTxPreValidator;
 <span class="kw">use </span>cross_domain_message_gossip::cdm_gossip_peers_set_config;
 <span class="kw">use </span>derive_more::{Deref, DerefMut, Into};
@@ -1065,7 +1063,8 @@
 <span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
 <span class="kw">use </span>sc_consensus_subspace::{
     ArchivedSegmentNotification, BlockImportingNotification, NewSlotNotification,
-    RewardSigningNotification, SubspaceLink, SubspaceParams, SubspaceSyncOracle,
+    RewardSigningNotification, SegmentHeadersStore, SubspaceLink, SubspaceParams,
+    SubspaceSyncOracle,
 };
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_network::NetworkService;
@@ -1281,6 +1280,7 @@
                 Transaction = TransactionFor&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;, Block&gt;,
             &gt;,
             SubspaceLink&lt;Block&gt;,
+            SegmentHeadersStore&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
             <span class="prelude-ty">Option</span>&lt;Telemetry&gt;,
             BundleValidator&lt;Block, FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
         ),
@@ -1386,10 +1386,19 @@
         tx_pre_validator,
     );
 
+    <span class="kw">let </span>segment_headers_store = SegmentHeadersStore::new(client.clone())
+        .map_err(|error| ServiceError::Application(error.into()))<span class="question-mark">?</span>;
     <span class="kw">let </span>fraud_proof_block_import =
         sc_consensus_fraud_proof::block_import(client.clone(), client.clone(), proof_verifier);
 
-    <span class="kw">let </span>(block_import, subspace_link) = sc_consensus_subspace::block_import::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+    <span class="kw">let </span>(block_import, subspace_link) = sc_consensus_subspace::block_import::&lt;
+        PosTable,
+        <span class="kw">_</span>,
+        <span class="kw">_</span>,
+        <span class="kw">_</span>,
+        <span class="kw">_</span>,
+        <span class="kw">_</span>,
+    &gt;(
         sc_consensus_subspace::slot_duration(<span class="kw-2">&amp;*</span>client)<span class="question-mark">?</span>,
         fraud_proof_block_import,
         client.clone(),
@@ -1421,6 +1430,7 @@
                 }
             }
         },
+        segment_headers_store.clone(),
     )<span class="question-mark">?</span>;
 
     <span class="kw">let </span>slot_duration = subspace_link.slot_duration();
@@ -1449,7 +1459,13 @@
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, subspace_link, telemetry, bundle_validator),
+        other: (
+            block_import,
+            subspace_link,
+            segment_headers_store,
+            telemetry,
+            bundle_validator,
+        ),
     })
 }
 
@@ -1529,6 +1545,7 @@
         (
             I,
             SubspaceLink&lt;Block&gt;,
+            SegmentHeadersStore&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
             <span class="prelude-ty">Option</span>&lt;Telemetry&gt;,
             BundleValidator&lt;Block, FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
         ),
@@ -1571,12 +1588,9 @@
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, subspace_link, <span class="kw-2">mut </span>telemetry, <span class="kw-2">mut </span>bundle_validator),
+        other:
+            (block_import, subspace_link, segment_headers_store, <span class="kw-2">mut </span>telemetry, <span class="kw-2">mut </span>bundle_validator),
     } = partial_components;
-
-    <span class="kw">let </span>segment_header_cache = SegmentHeaderCache::new(client.clone()).map_err(|error| {
-        Error::Other(<span class="macro">format!</span>(<span class="string">&quot;Failed to instantiate segment header cache: {error}&quot;</span>).into())
-    })<span class="question-mark">?</span>;
 
     <span class="kw">let </span>(node, bootstrap_nodes, piece_cache) = <span class="kw">match </span>config.subspace_networking.clone() {
         SubspaceNetworking::Reuse {
@@ -1637,7 +1651,7 @@
                 dsn_protocol_version,
                 dsn_config.clone(),
                 piece_cache.clone(),
-                segment_header_cache.clone(),
+                segment_headers_store.clone(),
             )<span class="question-mark">?</span>;
 
             <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
@@ -1670,21 +1684,6 @@
             (node, dsn_config.bootstrap_nodes, <span class="prelude-val">Some</span>(piece_cache))
         }
     };
-
-    <span class="kw">let </span>segment_header_archiving_fut = start_segment_header_archiver(
-        segment_header_cache.clone(),
-        subspace_link
-            .archived_segment_notification_stream()
-            .subscribe(),
-    );
-
-    task_manager
-        .spawn_essential_handle()
-        .spawn_essential_blocking(
-            <span class="string">&quot;segment-header-archiver&quot;</span>,
-            <span class="prelude-val">Some</span>(<span class="string">&quot;subspace-networking&quot;</span>),
-            Box::pin(segment_header_archiving_fut.in_current_span()),
-        );
 
     <span class="kw">let </span>dsn_bootstrap_nodes = {
         <span class="comment">// Fall back to node itself as bootstrap node for DSN so farmer always has someone to
@@ -1734,6 +1733,7 @@
     };
 
     <span class="kw">let </span>subspace_archiver = sc_consensus_subspace::create_subspace_archiver(
+        segment_headers_store.clone(),
         <span class="kw-2">&amp;</span>subspace_link,
         client.clone(),
         telemetry.as_ref().map(|telemetry| telemetry.handle()),
@@ -1948,13 +1948,14 @@
             force_authoring: config.force_authoring,
             backoff_authoring_blocks,
             subspace_link: subspace_link.clone(),
+            segment_headers_store: segment_headers_store.clone(),
             block_proposal_slot_portion,
             max_block_proposal_slot_portion: <span class="prelude-val">None</span>,
             telemetry: <span class="prelude-val">None</span>,
         };
 
         <span class="kw">let </span>subspace =
-            sc_consensus_subspace::start_subspace::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+            sc_consensus_subspace::start_subspace::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
                 subspace_config,
             )<span class="question-mark">?</span>;
 
@@ -1993,8 +1994,7 @@
                     archived_segment_notification_stream: archived_segment_notification_stream
                         .clone(),
                     dsn_bootstrap_nodes: dsn_bootstrap_nodes.clone(),
-                    subspace_link: subspace_link.clone(),
-                    segment_headers_provider: segment_header_cache.clone(),
+                    segment_headers_store: segment_headers_store.clone(),
                     piece_provider: piece_cache.clone(),
                     sync_oracle: subspace_sync_oracle.clone(),
                 };

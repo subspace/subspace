@@ -1369,19 +1369,6 @@
 <a href="#1369" id="1369">1369</a>
 <a href="#1370" id="1370">1370</a>
 <a href="#1371" id="1371">1371</a>
-<a href="#1372" id="1372">1372</a>
-<a href="#1373" id="1373">1373</a>
-<a href="#1374" id="1374">1374</a>
-<a href="#1375" id="1375">1375</a>
-<a href="#1376" id="1376">1376</a>
-<a href="#1377" id="1377">1377</a>
-<a href="#1378" id="1378">1378</a>
-<a href="#1379" id="1379">1379</a>
-<a href="#1380" id="1380">1380</a>
-<a href="#1381" id="1381">1381</a>
-<a href="#1382" id="1382">1382</a>
-<a href="#1383" id="1383">1383</a>
-<a href="#1384" id="1384">1384</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1415,7 +1402,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::notification::{SubspaceNotificationSender, SubspaceNotificationStream};
 <span class="kw">use </span><span class="kw">crate</span>::slot_worker::SubspaceSlotWorker;
 <span class="kw">pub use </span><span class="kw">crate</span>::slot_worker::SubspaceSyncOracle;
-<span class="kw">pub use </span>archiver::create_subspace_archiver;
+<span class="kw">pub use </span>archiver::{create_subspace_archiver, SegmentHeadersStore};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>log::{debug, info, trace, warn};
@@ -1462,8 +1449,8 @@
 <span class="kw">use </span>subspace_archiving::archiver::NewArchivedSegment;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
-    HistorySize, PublicKey, Randomness, SectorId, SegmentCommitment, SegmentHeader, SegmentIndex,
-    Solution, SolutionRange,
+    HistorySize, PublicKey, Randomness, SectorId, SegmentHeader, SegmentIndex, Solution,
+    SolutionRange,
 };
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
@@ -1732,7 +1719,7 @@
 }
 
 <span class="doccomment">/// Parameters for Subspace.
-</span><span class="kw">pub struct </span>SubspaceParams&lt;B: BlockT, C, SC, E, I, SO, L, CIDP, BS&gt;
+</span><span class="kw">pub struct </span>SubspaceParams&lt;B: BlockT, C, SC, E, I, SO, L, CIDP, BS, AS&gt;
 <span class="kw">where
     </span>SO: SyncOracle + Send + Sync,
 {
@@ -1768,6 +1755,9 @@
     <span class="doccomment">/// The source of timestamps for relative slots
     </span><span class="kw">pub </span>subspace_link: SubspaceLink&lt;B&gt;,
 
+    <span class="doccomment">/// Persistent storage of segment headers
+    </span><span class="kw">pub </span>segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
+
     <span class="doccomment">/// The proportion of the slot dedicated to proposing.
     ///
     /// The block proposing will be limited to this proportion of the slot from the starting of the
@@ -1784,7 +1774,7 @@
 }
 
 <span class="doccomment">/// Start the Subspace worker.
-</span><span class="kw">pub fn </span>start_subspace&lt;PosTable, Block, Client, SC, E, I, SO, CIDP, BS, L, Error&gt;(
+</span><span class="kw">pub fn </span>start_subspace&lt;PosTable, Block, Client, SC, E, I, SO, CIDP, BS, L, AS, Error&gt;(
     SubspaceParams {
         client,
         select_chain,
@@ -1796,10 +1786,11 @@
         force_authoring,
         backoff_authoring_blocks,
         subspace_link,
+        segment_headers_store,
         block_proposal_slot_portion,
         max_block_proposal_slot_portion,
         telemetry,
-    }: SubspaceParams&lt;Block, Client, SC, E, I, SO, L, CIDP, BS&gt;,
+    }: SubspaceParams&lt;Block, Client, SC, E, I, SO, L, CIDP, BS, AS&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SubspaceWorker, sp_consensus::Error&gt;
 <span class="kw">where
     </span>PosTable: Table,
@@ -1826,6 +1817,7 @@
     CIDP: CreateInherentDataProviders&lt;Block, ()&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     CIDP::InherentDataProviders: InherentDataProviderExt + Send,
     BS: BackoffAuthoringBlocksStrategy&lt;NumberFor&lt;Block&gt;&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
     Error: std::error::Error + Send + From&lt;ConsensusError&gt; + From&lt;I::Error&gt; + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>worker = SubspaceSlotWorker {
@@ -1841,6 +1833,7 @@
         block_proposal_slot_portion,
         max_block_proposal_slot_portion,
         telemetry,
+        segment_headers_store,
         _pos_table: PhantomData::&lt;PosTable&gt;,
     };
 
@@ -1935,25 +1928,6 @@
             .peek(<span class="kw-2">&amp;</span>block_number)
             .cloned()
             .unwrap_or_default()
-    }
-
-    <span class="doccomment">/// Get the first found segment commitment by segment index.
-    </span><span class="kw">pub fn </span>segment_commitment_by_segment_index(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        segment_index: SegmentIndex,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;SegmentCommitment&gt; {
-        <span class="self">self</span>.segment_headers
-            .lock()
-            .iter()
-            .find_map(|(_block_number, segment_headers)| {
-                segment_headers.iter().find_map(|segment_header| {
-                    <span class="kw">if </span>segment_header.segment_index() == segment_index {
-                        <span class="prelude-val">Some</span>(segment_header.segment_commitment())
-                    } <span class="kw">else </span>{
-                        <span class="prelude-val">None
-                    </span>}
-                })
-            })
     }
 }
 
@@ -2182,18 +2156,22 @@
 }
 
 <span class="doccomment">/// A block-import handler for Subspace.
-</span><span class="kw">pub struct </span>SubspaceBlockImport&lt;PosTable, Block: BlockT, Client, I, CIDP&gt; {
+</span><span class="kw">pub struct </span>SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP, AS&gt;
+<span class="kw">where
+    </span>Block: BlockT,
+{
     inner: I,
     client: Arc&lt;Client&gt;,
     block_importing_notification_sender:
         SubspaceNotificationSender&lt;BlockImportingNotification&lt;Block&gt;&gt;,
     subspace_link: SubspaceLink&lt;Block&gt;,
     create_inherent_data_providers: CIDP,
+    segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     _pos_table: PhantomData&lt;PosTable&gt;,
 }
 
-<span class="kw">impl</span>&lt;PosTable, Block, I, Client, CIDP&gt; Clone
-    <span class="kw">for </span>SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP&gt;
+<span class="kw">impl</span>&lt;PosTable, Block, I, Client, CIDP, AS&gt; Clone
+    <span class="kw">for </span>SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP, AS&gt;
 <span class="kw">where
     </span>Block: BlockT,
     I: Clone,
@@ -2206,18 +2184,20 @@
             block_importing_notification_sender: <span class="self">self</span>.block_importing_notification_sender.clone(),
             subspace_link: <span class="self">self</span>.subspace_link.clone(),
             create_inherent_data_providers: <span class="self">self</span>.create_inherent_data_providers.clone(),
+            segment_headers_store: <span class="self">self</span>.segment_headers_store.clone(),
             _pos_table: PhantomData,
         }
     }
 }
 
-<span class="kw">impl</span>&lt;PosTable, Block, Client, I, CIDP&gt; SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP&gt;
+<span class="kw">impl</span>&lt;PosTable, Block, Client, I, CIDP, AS&gt; SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP, AS&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt; + AuxStore,
     Client::Api: BlockBuilderApi&lt;Block&gt; + SubspaceApi&lt;Block, FarmerPublicKey&gt; + ApiExt&lt;Block&gt;,
     CIDP: CreateInherentDataProviders&lt;Block, SubspaceLink&lt;Block&gt;&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>new(
         client: Arc&lt;Client&gt;,
@@ -2227,6 +2207,7 @@
         &gt;,
         subspace_link: SubspaceLink&lt;Block&gt;,
         create_inherent_data_providers: CIDP,
+        segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     ) -&gt; <span class="self">Self </span>{
         SubspaceBlockImport {
             client,
@@ -2234,6 +2215,7 @@
             block_importing_notification_sender,
             subspace_link,
             create_inherent_data_providers,
+            segment_headers_store,
             _pos_table: PhantomData,
         }
     }
@@ -2358,34 +2340,24 @@
         );
         <span class="kw">let </span>segment_index = piece_index.segment_index();
 
-        <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced
-        // extrinsics with segment headers are not yet in runtime.
-        </span><span class="kw">let </span>maybe_segment_commitment = <span class="kw">if </span>block_number.is_one() {
-            <span class="self">self</span>.subspace_link
-                .segment_headers
-                .lock()
-                .get(<span class="kw-2">&amp;</span>One::one())
-                .and_then(|segment_headers| {
-                    segment_headers
-                        .first()
-                        .map(|segment_header| segment_header.segment_commitment())
-                })
-        } <span class="kw">else </span>{
-            aux_schema::load_segment_commitment(<span class="self">self</span>.client.as_ref(), segment_index)<span class="question-mark">?
-        </span>};
+        <span class="kw">let </span>segment_commitment = <span class="self">self
+            </span>.segment_headers_store
+            .get_segment_header(segment_index)
+            .map(|segment_header| segment_header.segment_commitment())
+            .ok_or(Error::SegmentCommitmentNotFound(segment_index))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>segment_commitment =
-            maybe_segment_commitment.ok_or(Error::SegmentCommitmentNotFound(segment_index))<span class="question-mark">?</span>;
-        <span class="kw">let </span>sector_expiration_check_segment_commitment = aux_schema::load_segment_commitment(
-            <span class="self">self</span>.client.as_ref(),
-            subspace_digest_items
-                .pre_digest
-                .solution
-                .history_size
-                .sector_expiration_check(chain_constants.min_sector_lifetime())
-                .ok_or(Error::InvalidHistorySize)<span class="question-mark">?
-                </span>.segment_index(),
-        )<span class="question-mark">?</span>;
+        <span class="kw">let </span>sector_expiration_check_segment_commitment = <span class="self">self
+            </span>.segment_headers_store
+            .get_segment_header(
+                subspace_digest_items
+                    .pre_digest
+                    .solution
+                    .history_size
+                    .sector_expiration_check(chain_constants.min_sector_lifetime())
+                    .ok_or(Error::InvalidHistorySize)<span class="question-mark">?
+                    </span>.segment_index(),
+            )
+            .map(|segment_header| segment_header.segment_commitment());
 
         <span class="comment">// Piece is not checked during initial block verification because it requires access to
         // segment header and runtime, check it now.
@@ -2462,8 +2434,8 @@
 }
 
 <span class="attr">#[async_trait::async_trait]
-</span><span class="kw">impl</span>&lt;PosTable, Block, Client, Inner, CIDP&gt; BlockImport&lt;Block&gt;
-    <span class="kw">for </span>SubspaceBlockImport&lt;PosTable, Block, Client, Inner, CIDP&gt;
+</span><span class="kw">impl</span>&lt;PosTable, Block, Client, Inner, CIDP, AS&gt; BlockImport&lt;Block&gt;
+    <span class="kw">for </span>SubspaceBlockImport&lt;PosTable, Block, Client, Inner, CIDP, AS&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
@@ -2479,6 +2451,7 @@
         + Sync,
     Client::Api: BlockBuilderApi&lt;Block&gt; + SubspaceApi&lt;Block, FarmerPublicKey&gt; + ApiExt&lt;Block&gt;,
     CIDP: CreateInherentDataProviders&lt;Block, SubspaceLink&lt;Block&gt;&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">type </span>Error = ConsensusError;
     <span class="kw">type </span>Transaction = TransactionFor&lt;Client, Block&gt;;
@@ -2548,23 +2521,21 @@
         });
 
         <span class="kw">for </span>(<span class="kw-2">&amp;</span>segment_index, segment_commitment) <span class="kw">in </span><span class="kw-2">&amp;</span>subspace_digest_items.segment_commitments {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(found_segment_commitment) =
-                aux_schema::load_segment_commitment(<span class="self">self</span>.client.as_ref(), segment_index)
-                    .map_err(|e| ConsensusError::ClientImport(e.to_string()))<span class="question-mark">?
-            </span>{
-                <span class="kw">if </span><span class="kw-2">&amp;</span>found_segment_commitment != segment_commitment {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(ConsensusError::ClientImport(
-                        Error::&lt;Block::Header&gt;::DifferentSegmentCommitment(segment_index)
-                            .to_string(),
-                    ));
-                }
-            }
+            <span class="kw">let </span>found_segment_commitment = <span class="self">self
+                </span>.segment_headers_store
+                .get_segment_header(segment_index)
+                .ok_or_else(|| {
+                    ConsensusError::ClientImport(<span class="macro">format!</span>(
+                        <span class="string">&quot;Segment header for index {segment_index} not found&quot;
+                    </span>))
+                })<span class="question-mark">?
+                </span>.segment_commitment();
 
-            aux_schema::write_segment_commitment(segment_index, segment_commitment, |values| {
-                block
-                    .auxiliary
-                    .extend(values.iter().map(|(k, v)| (k.to_vec(), <span class="prelude-val">Some</span>(v.to_vec()))))
-            });
+            <span class="kw">if </span><span class="kw-2">&amp;</span>found_segment_commitment != segment_commitment {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(ConsensusError::ClientImport(
+                    Error::&lt;Block::Header&gt;::DifferentSegmentCommitment(segment_index).to_string(),
+                ));
+            }
         }
 
         <span class="comment">// The fork choice rule is that we pick the heaviest chain (i.e. smallest solution
@@ -2651,14 +2622,15 @@
 ///
 /// Also returns a link object used to correctly instantiate the import queue and background worker.
 </span><span class="attr">#[allow(clippy::type_complexity)]
-</span><span class="kw">pub fn </span>block_import&lt;PosTable, Client, Block, I, CIDP&gt;(
+</span><span class="kw">pub fn </span>block_import&lt;PosTable, Client, Block, I, CIDP, AS&gt;(
     slot_duration: SlotDuration,
     wrapped_block_import: I,
     client: Arc&lt;Client&gt;,
     kzg: Kzg,
     create_inherent_data_providers: CIDP,
+    segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
 ) -&gt; ClientResult&lt;(
-    SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP&gt;,
+    SubspaceBlockImport&lt;PosTable, Block, Client, I, CIDP, AS&gt;,
     SubspaceLink&lt;Block&gt;,
 )&gt;
 <span class="kw">where
@@ -2667,6 +2639,7 @@
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt; + AuxStore,
     Client::Api: BlockBuilderApi&lt;Block&gt; + SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     CIDP: CreateInherentDataProviders&lt;Block, SubspaceLink&lt;Block&gt;&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>(new_slot_notification_sender, new_slot_notification_stream) =
         notification::channel(<span class="string">&quot;subspace_new_slot_notification_stream&quot;</span>);
@@ -2707,6 +2680,7 @@
         block_importing_notification_sender,
         link.clone(),
         create_inherent_data_providers,
+        segment_headers_store,
     );
 
     <span class="prelude-val">Ok</span>((import, link))

@@ -593,7 +593,6 @@
 <a href="#593" id="593">593</a>
 <a href="#594" id="594">594</a>
 <a href="#595" id="595">595</a>
-<a href="#596" id="596">596</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -613,7 +612,7 @@
 
 </span><span class="kw">use crate</span>::{
     get_chain_constants, BlockImportingNotification, NewSlotInfo, NewSlotNotification,
-    RewardSigningNotification, SubspaceLink,
+    RewardSigningNotification, SegmentHeadersStore, SubspaceLink,
 };
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{StreamExt, TryFutureExt};
@@ -688,7 +687,10 @@
     }
 }
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SubspaceSlotWorker&lt;PosTable, Block: BlockT, Client, E, I, SO, L, BS&gt; {
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SubspaceSlotWorker&lt;PosTable, Block, Client, E, I, SO, L, BS, AS&gt;
+<span class="kw">where
+    </span>Block: BlockT,
+{
     <span class="kw">pub</span>(<span class="kw">super</span>) client: Arc&lt;Client&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) block_import: I,
     <span class="kw">pub</span>(<span class="kw">super</span>) env: E,
@@ -701,12 +703,13 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) block_proposal_slot_portion: SlotProportion,
     <span class="kw">pub</span>(<span class="kw">super</span>) max_block_proposal_slot_portion: <span class="prelude-ty">Option</span>&lt;SlotProportion&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) _pos_table: PhantomData&lt;PosTable&gt;,
 }
 
 <span class="attr">#[async_trait::async_trait]
-</span><span class="kw">impl</span>&lt;PosTable, Block, Client, E, I, Error, SO, L, BS&gt; SimpleSlotWorker&lt;Block&gt;
-    <span class="kw">for </span>SubspaceSlotWorker&lt;PosTable, Block, Client, E, I, SO, L, BS&gt;
+</span><span class="kw">impl</span>&lt;PosTable, Block, Client, E, I, Error, SO, L, BS, AS&gt; SimpleSlotWorker&lt;Block&gt;
+    <span class="kw">for </span>SubspaceSlotWorker&lt;PosTable, Block, Client, E, I, SO, L, BS, AS&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
@@ -723,6 +726,7 @@
     L: JustificationSyncLink&lt;Block&gt;,
     BS: BackoffAuthoringBlocksStrategy&lt;NumberFor&lt;Block&gt;&gt; + Send + Sync,
     Error: std::error::Error + Send + From&lt;ConsensusError&gt; + From&lt;I::Error&gt; + <span class="lifetime">&#39;static</span>,
+    AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">type </span>BlockImport = I;
     <span class="kw">type </span>SyncOracle = SO;
@@ -860,17 +864,10 @@
                     chain_constants.recent_history_fraction(),
                 )
                 .segment_index();
-            <span class="kw">let </span><span class="kw-2">mut </span>maybe_segment_commitment = runtime_api
-                .segment_commitment(parent_hash, segment_index)
-                .ok()<span class="question-mark">?</span>;
-
-            <span class="comment">// This is not a very nice hack due to the fact that at the time first block is produced
-            // extrinsics with segment headers are not yet in runtime.
-            </span><span class="kw">if </span>maybe_segment_commitment.is_none() &amp;&amp; parent_header.number().is_zero() {
-                maybe_segment_commitment = <span class="self">self
-                    </span>.subspace_link
-                    .segment_commitment_by_segment_index(segment_index);
-            }
+            <span class="kw">let </span>maybe_segment_commitment = <span class="self">self
+                </span>.segment_headers_store
+                .get_segment_header(segment_index)
+                .map(|segment_header| segment_header.segment_commitment());
 
             <span class="kw">let </span>segment_commitment = <span class="kw">match </span>maybe_segment_commitment {
                 <span class="prelude-val">Some</span>(segment_commitment) =&gt; segment_commitment,
@@ -1047,8 +1044,8 @@
     }
 }
 
-<span class="kw">impl</span>&lt;PosTable, Block, Client, E, I, Error, SO, L, BS&gt;
-    SubspaceSlotWorker&lt;PosTable, Block, Client, E, I, SO, L, BS&gt;
+<span class="kw">impl</span>&lt;PosTable, Block, Client, E, I, Error, SO, L, BS, AS&gt;
+    SubspaceSlotWorker&lt;PosTable, Block, Client, E, I, SO, L, BS, AS&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
@@ -1065,6 +1062,7 @@
     L: JustificationSyncLink&lt;Block&gt;,
     BS: BackoffAuthoringBlocksStrategy&lt;NumberFor&lt;Block&gt;&gt; + Send + Sync,
     Error: std::error::Error + Send + From&lt;ConsensusError&gt; + From&lt;I::Error&gt; + <span class="lifetime">&#39;static</span>,
+    AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">async fn </span>create_vote(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
