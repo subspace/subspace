@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AuxStoreProviderRecordIterator","PieceCache"]};
+window.SIDEBAR_ITEMS = {"struct":["PieceCache"]};
