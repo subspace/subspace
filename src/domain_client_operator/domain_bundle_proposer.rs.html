@@ -234,8 +234,15 @@
 <a href="#234" id="234">234</a>
 <a href="#235" id="235">235</a>
 <a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
-<span class="kw">use </span><span class="kw">crate</span>::sortition::{TransactionSelectError, TransactionSelector};
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
@@ -251,6 +258,7 @@
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time;
+<span class="kw">use </span>subspace_core_primitives::U256;
 <span class="kw">use </span>subspace_runtime_primitives::Balance;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt; {
@@ -313,7 +321,7 @@
         proof_of_election: ProofOfElection&lt;Block::Hash&gt;,
         consensus_block_info: HashAndNumber&lt;CBlock&gt;,
         parent_chain: ParentChain,
-        tx_selector: TransactionSelector&lt;Block, Client&gt;,
+        tx_range: U256,
     ) -&gt; sp_blockchain::Result&lt;ProposeBundleOutput&lt;Block, CBlock&gt;&gt;
     <span class="kw">where
         </span>ParentChainBlock: BlockT,
@@ -337,24 +345,32 @@
             }
         };
 
+        <span class="kw">let </span>bundle_vrf_hash = U256::from_be_bytes(proof_of_election.vrf_hash());
         <span class="kw">let </span>domain_block_limit = parent_chain.domain_block_limit(parent_chain.best_hash())<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>estimated_bundle_weight = Weight::default();
         <span class="kw">let </span><span class="kw-2">mut </span>bundle_size = <span class="number">0u32</span>;
         <span class="kw">for </span>pending_tx <span class="kw">in </span>pending_iterator {
-            <span class="kw">let </span>pending_tx_data = pending_tx.data().clone();
-            <span class="kw">let </span>should_select_this_tx = tx_selector
-                .should_select_tx(parent_hash, pending_tx_data.clone())
-                .unwrap_or_else(|err| {
-                    <span class="comment">// Accept unsigned transactions like cross domain.
-                    </span><span class="macro">tracing::trace!</span>(<span class="string">&quot;propose bundle: sortition select failed: {err:?}&quot;</span>);
-                    <span class="macro">matches!</span>(err, TransactionSelectError::TxSignerNotFound)
-                });
-            <span class="kw">if </span>should_select_this_tx {
+            <span class="kw">let </span>pending_tx_data = pending_tx.data();
+
+            <span class="kw">let </span>is_within_tx_range = <span class="self">self
+                </span>.client
+                .runtime_api()
+                .is_within_tx_range(parent_hash, pending_tx_data, <span class="kw-2">&amp;</span>bundle_vrf_hash, <span class="kw-2">&amp;</span>tx_range)
+                .map_err(|err| {
+                    <span class="macro">tracing::error!</span>(
+                        <span class="question-mark">?</span>err,
+                        <span class="question-mark">?</span>pending_tx_data,
+                        <span class="string">&quot;Error occurred in locating the tx range&quot;
+                    </span>);
+                })
+                .unwrap_or(<span class="bool-val">false</span>);
+
+            <span class="kw">if </span>is_within_tx_range {
                 <span class="kw">let </span>tx_weight = <span class="self">self
                     </span>.client
                     .runtime_api()
-                    .extrinsic_weight(parent_hash, <span class="kw-2">&amp;</span>pending_tx_data)
+                    .extrinsic_weight(parent_hash, pending_tx_data)
                     .map_err(|error| {
                         sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
                             <span class="string">&quot;Error getting extrinsic weight: {error}&quot;
@@ -373,7 +389,7 @@
 
                 estimated_bundle_weight = next_estimated_bundle_weight;
                 bundle_size = next_bundle_size;
-                extrinsics.push(pending_tx_data);
+                extrinsics.push(pending_tx_data.clone());
             }
         }
 

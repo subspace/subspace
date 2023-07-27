@@ -4,7 +4,7 @@ var srcIndex = JSON.parse('{\
 "domain_block_preprocessor":["",[],["inherents.rs","lib.rs","runtime_api.rs","runtime_api_full.rs","runtime_api_light.rs","xdm_verifier.rs"]],\
 "domain_client_consensus_relay_chain":["",[],["import_queue.rs","lib.rs"]],\
 "domain_client_message_relayer":["",[],["lib.rs","worker.rs"]],\
-"domain_client_operator":["",[],["aux_schema.rs","bootstrapper.rs","bundle_processor.rs","bundle_producer_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","domain_worker_starter.rs","fraud_proof.rs","lib.rs","operator.rs","parent_chain.rs","sortition.rs","utils.rs"]],\
+"domain_client_operator":["",[],["aux_schema.rs","bootstrapper.rs","bundle_processor.rs","bundle_producer_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","domain_worker_starter.rs","fraud_proof.rs","lib.rs","operator.rs","parent_chain.rs","utils.rs"]],\
 "domain_client_subnet_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs"]],\
@@ -43,7 +43,7 @@ var srcIndex = JSON.parse('{\
 "subspace_erasure_coding":["",[],["lib.rs"]],\
 "subspace_farmer":["",[["node_client",[],["node_rpc_client.rs"]],["single_disk_plot",[],["farming.rs","piece_reader.rs","plotting.rs"]],["utils",[],["archival_storage_info.rs","archival_storage_pieces.rs","farmer_piece_cache.rs","farmer_piece_getter.rs","farmer_provider_storage.rs","parity_db_store.rs","piece_cache.rs","piece_validator.rs","readers_and_pieces.rs"]]],["identity.rs","lib.rs","node_client.rs","object_mappings.rs","reward_signing.rs","single_disk_plot.rs","utils.rs","ws_rpc_server.rs"]],\
 "subspace_farmer_components":["",[],["auditing.rs","file_ext.rs","lib.rs","plotting.rs","proving.rs","reading.rs","sector.rs","segment_reconstruction.rs"]],\
-"subspace_fraud_proof":["",[],["domain_extrinsics_builder.rs","domain_runtime_code.rs","invalid_state_transition_proof.rs","invalid_transaction_proof.rs","lib.rs","verifier_api.rs"]],\
+"subspace_fraud_proof":["",[],["domain_runtime_code.rs","invalid_state_transition_proof.rs","invalid_transaction_proof.rs","lib.rs","verifier_api.rs"]],\
 "subspace_networking":["",[["behavior",[["provider_storage",[],["providers.rs"]]],["persistent_parameters.rs","provider_storage.rs"]],["connected_peers",[],["handler.rs"]],["create",[],["temporary_bans.rs","transport.rs"]],["peer_info",[],["handler.rs","protocol.rs"]],["request_handlers",[],["generic_request_handler.rs","object_mappings.rs","piece_announcement.rs","piece_by_key.rs","pieces_by_range.rs","segment_header.rs"]],["reserved_peers",[],["handler.rs"]],["utils",[],["multihash.rs","piece_provider.rs","prometheus.rs","unique_record_binary_heap.rs"]]],["behavior.rs","connected_peers.rs","create.rs","lib.rs","node.rs","node_runner.rs","peer_info.rs","request_handlers.rs","request_responses.rs","reserved_peers.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["domain",[],["cli.rs","domain_instance_starter.rs","evm_chain_spec.rs"]]],["chain_spec.rs","chain_spec_utils.rs","domain.rs","lib.rs"]],\
 "subspace_proof_of_space":["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]],\
