@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PotVerificationError"],"struct":["ProofOfTime"]};
+window.SIDEBAR_ITEMS = {"enum":["PotInitError","PotVerificationError"],"struct":["ProofOfTime"]};

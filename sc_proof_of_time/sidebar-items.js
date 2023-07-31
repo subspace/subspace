@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PotRole"],"fn":["pot_gossip_peers_set_config"],"struct":["BootstrapParams","ClockMaster","PotClient","PotComponents","PotConfig","PotGossip","PotStateSummary"],"trait":["PotConsensusState"]};
