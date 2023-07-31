@@ -1292,6 +1292,23 @@
 <a href="#1292" id="1292">1292</a>
 <a href="#1293" id="1293">1293</a>
 <a href="#1294" id="1294">1294</a>
+<a href="#1295" id="1295">1295</a>
+<a href="#1296" id="1296">1296</a>
+<a href="#1297" id="1297">1297</a>
+<a href="#1298" id="1298">1298</a>
+<a href="#1299" id="1299">1299</a>
+<a href="#1300" id="1300">1300</a>
+<a href="#1301" id="1301">1301</a>
+<a href="#1302" id="1302">1302</a>
+<a href="#1303" id="1303">1303</a>
+<a href="#1304" id="1304">1304</a>
+<a href="#1305" id="1305">1305</a>
+<a href="#1306" id="1306">1306</a>
+<a href="#1307" id="1307">1307</a>
+<a href="#1308" id="1308">1308</a>
+<a href="#1309" id="1309">1309</a>
+<a href="#1310" id="1310">1310</a>
+<a href="#1311" id="1311">1311</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1326,7 +1343,7 @@
 };
 <span class="kw">use </span>frame_support::weights::constants::{RocksDbWeight, WEIGHT_REF_TIME_PER_SECOND};
 <span class="kw">use </span>frame_support::weights::{ConstantMultiplier, IdentityFee, Weight};
-<span class="kw">use </span>frame_support::{construct_runtime, parameter_types};
+<span class="kw">use </span>frame_support::{construct_runtime, parameter_types, PalletId};
 <span class="kw">use </span>frame_system::limits::{BlockLength, BlockWeights};
 <span class="kw">use </span>frame_system::EnsureNever;
 <span class="kw">use </span>pallet_balances::NegativeImbalance;
@@ -1347,11 +1364,12 @@
 <span class="kw">use </span>sp_domains::fraud_proof::FraudProof;
 <span class="kw">use </span>sp_domains::transaction::PreValidationObject;
 <span class="kw">use </span>sp_domains::{
-    DomainId, DomainInstanceData, DomainsFreezeIdentifier, ExecutionReceipt, OpaqueBundle,
-    OpaqueBundles, OperatorId, OperatorPublicKey,
+    DomainId, DomainInstanceData, DomainsHoldIdentifier, ExecutionReceipt, OpaqueBundle,
+    OpaqueBundles, OperatorId, OperatorPublicKey, StakingHoldIdentifier,
 };
 <span class="kw">use </span>sp_runtime::traits::{
-    AccountIdLookup, BlakeTwo256, DispatchInfoOf, NumberFor, PostDispatchInfoOf, Zero,
+    AccountIdConversion, AccountIdLookup, BlakeTwo256, DispatchInfoOf, NumberFor,
+    PostDispatchInfoOf, Zero,
 };
 <span class="kw">use </span>sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionSource, TransactionValidity, TransactionValidityError,
@@ -1583,22 +1601,36 @@
 <span class="attr">#[derive(
     PartialEq, Eq, Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Ord, PartialOrd, Copy, Debug,
 )]
-</span><span class="kw">pub enum </span>FreezeIdentifier {
-    Domains(DomainsFreezeIdentifier),
+</span><span class="kw">pub enum </span>HoldIdentifier {
+    Domains(DomainsHoldIdentifier),
 }
 
-<span class="kw">impl </span>pallet_domains::FreezeIdentifier&lt;Runtime&gt; <span class="kw">for </span>FreezeIdentifier {
-    <span class="kw">fn </span>staking_freeze_id(operator_id: OperatorId) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::Domains(DomainsFreezeIdentifier::Staking(operator_id))
+<span class="kw">impl </span>pallet_domains::HoldIdentifier&lt;Runtime&gt; <span class="kw">for </span>HoldIdentifier {
+    <span class="kw">fn </span>staking_pending_deposit(operator_id: OperatorId) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::Domains(DomainsHoldIdentifier::Staking(
+            StakingHoldIdentifier::PendingDeposit(operator_id),
+        ))
+    }
+
+    <span class="kw">fn </span>staking_staked(operator_id: OperatorId) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::Domains(DomainsHoldIdentifier::Staking(
+            StakingHoldIdentifier::Staked(operator_id),
+        ))
+    }
+
+    <span class="kw">fn </span>staking_pending_unlock(operator_id: OperatorId) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::Domains(DomainsHoldIdentifier::Staking(
+            StakingHoldIdentifier::PendingUnlock(operator_id),
+        ))
     }
 
     <span class="kw">fn </span>domain_instantiation_id(domain_id: DomainId) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::Domains(DomainsFreezeIdentifier::DomainInstantiation(domain_id))
+        <span class="self">Self</span>::Domains(DomainsHoldIdentifier::DomainInstantiation(domain_id))
     }
 }
 
 <span class="macro">parameter_types! </span>{
-    <span class="kw">pub const </span>MaxFreezes: u32 = <span class="number">10</span>;
+    <span class="kw">pub const </span>MaxHolds: u32 = <span class="number">10</span>;
 }
 
 <span class="kw">impl </span>pallet_balances::Config <span class="kw">for </span>Runtime {
@@ -1614,10 +1646,10 @@
     </span><span class="kw">type </span>ExistentialDeposit = ConstU128&lt;{ <span class="number">500 </span>* SHANNON }&gt;;
     <span class="kw">type </span>AccountStore = System;
     <span class="kw">type </span>WeightInfo = pallet_balances::weights::SubstrateWeight&lt;Runtime&gt;;
-    <span class="kw">type </span>FreezeIdentifier = FreezeIdentifier;
-    <span class="kw">type </span>MaxFreezes = MaxFreezes;
-    <span class="kw">type </span>RuntimeHoldReason = ();
-    <span class="kw">type </span>MaxHolds = ();
+    <span class="kw">type </span>FreezeIdentifier = ();
+    <span class="kw">type </span>MaxFreezes = ();
+    <span class="kw">type </span>RuntimeHoldReason = HoldIdentifier;
+    <span class="kw">type </span>MaxHolds = MaxHolds;
 }
 
 <span class="macro">parameter_types! </span>{
@@ -1820,6 +1852,7 @@
     <span class="kw">pub const </span>BlockTreePruningDepth: u32 = <span class="number">256</span>;
     <span class="kw">pub const </span>StakeWithdrawalLockingPeriod: BlockNumber = <span class="number">20</span>;
     <span class="kw">pub const </span>StakeEpochDuration: DomainNumber = <span class="number">5</span>;
+    <span class="kw">pub </span>TreasuryAccount: AccountId = PalletId(<span class="kw-2">*</span><span class="string">b&quot;treasury&quot;</span>).into_account_truncating();
 }
 
 <span class="kw">impl </span>pallet_domains::Config <span class="kw">for </span>Runtime {
@@ -1829,7 +1862,7 @@
     <span class="kw">type </span>ConfirmationDepthK = ConfirmationDepthK;
     <span class="kw">type </span>DomainRuntimeUpgradeDelay = DomainRuntimeUpgradeDelay;
     <span class="kw">type </span>Currency = Balances;
-    <span class="kw">type </span>FreezeIdentifier = FreezeIdentifier;
+    <span class="kw">type </span>HoldIdentifier = HoldIdentifier;
     <span class="kw">type </span>WeightInfo = pallet_domains::weights::SubstrateWeight&lt;Runtime&gt;;
     <span class="kw">type </span>InitialDomainTxRange = InitialDomainTxRange;
     <span class="kw">type </span>DomainTxRangeAdjustmentInterval = DomainTxRangeAdjustmentInterval;
@@ -1843,6 +1876,7 @@
     <span class="kw">type </span>BlockTreePruningDepth = BlockTreePruningDepth;
     <span class="kw">type </span>StakeWithdrawalLockingPeriod = StakeWithdrawalLockingPeriod;
     <span class="kw">type </span>StakeEpochDuration = StakeEpochDuration;
+    <span class="kw">type </span>TreasuryAccount = TreasuryAccount;
 }
 
 <span class="macro">parameter_types! </span>{

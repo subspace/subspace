@@ -1109,40 +1109,6 @@
 <a href="#1109" id="1109">1109</a>
 <a href="#1110" id="1110">1110</a>
 <a href="#1111" id="1111">1111</a>
-<a href="#1112" id="1112">1112</a>
-<a href="#1113" id="1113">1113</a>
-<a href="#1114" id="1114">1114</a>
-<a href="#1115" id="1115">1115</a>
-<a href="#1116" id="1116">1116</a>
-<a href="#1117" id="1117">1117</a>
-<a href="#1118" id="1118">1118</a>
-<a href="#1119" id="1119">1119</a>
-<a href="#1120" id="1120">1120</a>
-<a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a>
-<a href="#1128" id="1128">1128</a>
-<a href="#1129" id="1129">1129</a>
-<a href="#1130" id="1130">1130</a>
-<a href="#1131" id="1131">1131</a>
-<a href="#1132" id="1132">1132</a>
-<a href="#1133" id="1133">1133</a>
-<a href="#1134" id="1134">1134</a>
-<a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a>
-<a href="#1137" id="1137">1137</a>
-<a href="#1138" id="1138">1138</a>
-<a href="#1139" id="1139">1139</a>
-<a href="#1140" id="1140">1140</a>
-<a href="#1141" id="1141">1141</a>
-<a href="#1142" id="1142">1142</a>
-<a href="#1143" id="1143">1143</a>
-<a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking epoch transition for domain
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::{
@@ -1151,14 +1117,14 @@
     PendingOperatorSwitches, PendingOperatorUnlocks, PendingSlashes, PendingUnlocks,
     PendingWithdrawals,
 };
-<span class="kw">use </span><span class="kw">crate</span>::staking::{Error <span class="kw">as </span>TransitionError, Nominator, Withdraw};
+<span class="kw">use </span><span class="kw">crate</span>::staking::{Error <span class="kw">as </span>TransitionError, Nominator, OperatorStatus, Withdraw};
 <span class="kw">use crate</span>::{
-    BalanceOf, Config, ElectionVerificationParams, FreezeIdentifier, FungibleFreezeId, NominatorId,
+    BalanceOf, Config, ElectionVerificationParams, FungibleHoldId, HoldIdentifier, NominatorId,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::dispatch::TypeInfo;
-<span class="kw">use </span>frame_support::traits::fungible::{InspectFreeze, Mutate, MutateFreeze};
-<span class="kw">use </span>frame_support::traits::tokens::{Fortitude, Precision};
+<span class="kw">use </span>frame_support::traits::fungible::{InspectHold, Mutate, MutateHold};
+<span class="kw">use </span>frame_support::traits::tokens::{Fortitude, Precision, Restriction};
 <span class="kw">use </span>frame_support::PalletError;
 <span class="kw">use </span>sp_core::Get;
 <span class="kw">use </span>sp_domains::{DomainId, OperatorId};
@@ -1262,7 +1228,7 @@
                                 .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>,
                         };
 
-                    <span class="kw">crate</span>::staking::freeze_account_balance_to_operator::&lt;T&gt;(
+                    <span class="kw">crate</span>::staking::hold_pending_deposit::&lt;T&gt;(
                         <span class="kw-2">&amp;</span>nominator_id,
                         operator_id,
                         operator_tax,
@@ -1307,8 +1273,8 @@
             .as_mut()
             .ok_or(TransitionError::UnknownOperator)<span class="question-mark">?</span>;
 
-        <span class="comment">// operator is frozen, just no-op
-        </span><span class="kw">if </span>operator.is_frozen {
+        <span class="comment">// operator is not registered, just no-op
+        </span><span class="kw">if </span>operator.status != OperatorStatus::Registered {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
@@ -1366,22 +1332,28 @@
             .checked_add(<span class="kw-2">&amp;</span>operator.current_epoch_rewards)
             .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>freeze_identifier = T::FreezeIdentifier::staking_freeze_id(operator_id);
-
+        <span class="kw">let </span>staked_hold_id = T::HoldIdentifier::staking_staked(operator_id);
         Nominators::&lt;T&gt;::drain_prefix(operator_id).try_for_each(|(nominator_id, nominator)| {
             <span class="kw">let </span>nominator_share = Perbill::from_rational(nominator.shares, total_shares);
-            <span class="kw">let </span>nominator_staked_amount = nominator_share.mul_floor(total_stake);
+            <span class="kw">let </span>current_locked_amount =
+                T::Currency::balance_on_hold(<span class="kw-2">&amp;</span>staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
+            <span class="kw">let </span>nominator_staked_amount = nominator_share
+                .mul_floor(total_stake)
+                .max(current_locked_amount);
 
-            <span class="kw">let </span>locked_amount = T::Currency::balance_frozen(<span class="kw-2">&amp;</span>freeze_identifier, <span class="kw-2">&amp;</span>nominator_id);
             <span class="kw">let </span>amount_to_mint = nominator_staked_amount
-                .checked_sub(<span class="kw-2">&amp;</span>locked_amount)
+                .checked_sub(<span class="kw-2">&amp;</span>current_locked_amount)
                 .unwrap_or(Zero::zero());
 
             <span class="comment">// remove the lock and mint any gains
-            </span>T::Currency::thaw(<span class="kw-2">&amp;</span>freeze_identifier, <span class="kw-2">&amp;</span>nominator_id)
-                .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
-
-            mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>nominator_id, amount_to_mint)<span class="question-mark">?</span>;
+            </span>mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>nominator_id, amount_to_mint)<span class="question-mark">?</span>;
+            T::Currency::release(
+                <span class="kw-2">&amp;</span>staked_hold_id,
+                <span class="kw-2">&amp;</span>nominator_id,
+                current_locked_amount,
+                Precision::Exact,
+            )
+            .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
 
             <span class="comment">// update pool&#39;s remaining shares and stake
             </span>total_shares = total_shares
@@ -1391,23 +1363,18 @@
                 .checked_sub(<span class="kw-2">&amp;</span>nominator_staked_amount)
                 .ok_or(TransitionError::BalanceUnderflow)<span class="question-mark">?</span>;
 
-            <span class="comment">// remove any pending deposits for this nominator and then remove the lock
-            </span>PendingDeposits::&lt;T&gt;::remove(operator_id, nominator_id);
-
             <span class="prelude-val">Ok</span>(())
         })<span class="question-mark">?</span>;
 
-        <span class="comment">// TODO: transfer any remaining amount to treasury
+        <span class="comment">// transfer any remaining amount to treasury
+        </span>mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>T::TreasuryAccount::get(), total_stake)<span class="question-mark">?</span>;
 
-        // remove all of the pending deposits since we initiated withdrawal for all nominators.
+        <span class="comment">// remove all of the pending deposits since we initiated withdrawal for all nominators.
         </span><span class="kw">let _ </span>= PendingWithdrawals::&lt;T&gt;::clear_prefix(operator_id, u32::MAX, <span class="prelude-val">None</span>);
 
-        <span class="comment">// remove lock on any remaining deposits, all these are new nominators recorded after start
+        <span class="comment">// remove lock on any remaining deposits, all these deposits are recorded after start
         // of new epoch and before operator de-registered
-        </span><span class="kw">for </span>(nominator_id, <span class="kw">_</span>) <span class="kw">in </span>PendingDeposits::&lt;T&gt;::drain_prefix(operator_id) {
-            T::Currency::thaw(<span class="kw-2">&amp;</span>freeze_identifier, <span class="kw-2">&amp;</span>nominator_id)
-                .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
-        }
+        </span>release_pending_deposits::&lt;T&gt;(operator_id)<span class="question-mark">?</span>;
 
         <span class="comment">// remove OperatorOwner Details
         </span>OperatorIdOwner::&lt;T&gt;::remove(operator_id);
@@ -1417,25 +1384,47 @@
     .map_err(Error::UnlockOperator)
 }
 
+<span class="kw">fn </span>release_pending_deposits&lt;T: Config&gt;(operator_id: OperatorId) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
+    <span class="kw">let </span>pending_deposit_hold_id = T::HoldIdentifier::staking_pending_deposit(operator_id);
+    <span class="kw">for </span>(nominator_id, deposit) <span class="kw">in </span>PendingDeposits::&lt;T&gt;::drain_prefix(operator_id) {
+        T::Currency::release(
+            <span class="kw-2">&amp;</span>pending_deposit_hold_id,
+            <span class="kw-2">&amp;</span>nominator_id,
+            deposit,
+            Precision::Exact,
+        )
+        .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
+    }
+
+    <span class="prelude-val">Ok</span>(())
+}
+
 <span class="kw">fn </span>unlock_nominator_withdrawals&lt;T: Config&gt;(
     operator_id: OperatorId,
     domain_block_number: T::DomainNumber,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-    <span class="kw">let </span>freeze_identifier = T::FreezeIdentifier::staking_freeze_id(operator_id);
+    <span class="kw">let </span>pending_unlock_hold_id = T::HoldIdentifier::staking_pending_unlock(operator_id);
     <span class="kw">match </span>PendingNominatorUnlocks::&lt;T&gt;::take(operator_id, domain_block_number) {
         <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
         <span class="prelude-val">Some</span>(withdrawals) =&gt; withdrawals.into_iter().try_for_each(|withdrawal| {
-            <span class="kw">let </span>frozen_balance =
-                T::Currency::balance_frozen(<span class="kw-2">&amp;</span>freeze_identifier, <span class="kw-2">&amp;</span>withdrawal.nominator_id);
+            <span class="kw">let </span>total_unlocking_balance =
+                T::Currency::balance_on_hold(<span class="kw-2">&amp;</span>pending_unlock_hold_id, <span class="kw-2">&amp;</span>withdrawal.nominator_id);
+            T::Currency::release(
+                <span class="kw-2">&amp;</span>pending_unlock_hold_id,
+                <span class="kw-2">&amp;</span>withdrawal.nominator_id,
+                total_unlocking_balance,
+                Precision::Exact,
+            )
+            .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>remaining_staked_balance = frozen_balance
+            <span class="kw">let </span>remaining_unlocking_balance = total_unlocking_balance
                 .checked_sub(<span class="kw-2">&amp;</span>withdrawal.balance)
                 .ok_or(TransitionError::BalanceUnderflow)<span class="question-mark">?</span>;
 
-            T::Currency::set_freeze(
-                <span class="kw-2">&amp;</span>freeze_identifier,
+            T::Currency::hold(
+                <span class="kw-2">&amp;</span>pending_unlock_hold_id,
                 <span class="kw-2">&amp;</span>withdrawal.nominator_id,
-                remaining_staked_balance,
+                remaining_unlocking_balance,
             )
             .map_err(|<span class="kw">_</span>| TransitionError::UpdateLock)<span class="question-mark">?</span>;
 
@@ -1502,8 +1491,8 @@
             .as_mut()
             .ok_or(TransitionError::UnknownOperator)<span class="question-mark">?</span>;
 
-        <span class="kw">if </span>operator.is_frozen {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(TransitionError::OperatorFrozen);
+        <span class="kw">if </span>operator.status != OperatorStatus::Registered {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(TransitionError::OperatorNotRegistered);
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>total_stake = operator
@@ -1538,7 +1527,8 @@
     total_shares: <span class="kw-2">&amp;mut </span>T::Share,
     domain_block_number: T::DomainNumber,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
-    <span class="kw">let </span>freeze_identifier = T::FreezeIdentifier::staking_freeze_id(operator_id);
+    <span class="kw">let </span>staked_hold_id = T::HoldIdentifier::staking_staked(operator_id);
+    <span class="kw">let </span>pending_unlock_hold_id = T::HoldIdentifier::staking_pending_unlock(operator_id);
     <span class="kw">let </span>unlock_block_number = domain_block_number
         .checked_add(<span class="kw-2">&amp;</span>T::StakeWithdrawalLockingPeriod::get())
         .ok_or(TransitionError::BlockNumberOverflow)<span class="question-mark">?</span>;
@@ -1546,7 +1536,8 @@
         finalize_nominator_withdrawal::&lt;T&gt;(
             domain_id,
             operator_id,
-            <span class="kw-2">&amp;</span>freeze_identifier,
+            <span class="kw-2">&amp;</span>staked_hold_id,
+            <span class="kw-2">&amp;</span>pending_unlock_hold_id,
             nominator_id,
             withdraw,
             total_stake,
@@ -1556,12 +1547,12 @@
     })
 }
 
-<span class="kw">fn </span>mint_funds&lt;T: Config&gt;(
-    nominator_id: <span class="kw-2">&amp;</span>NominatorId&lt;T&gt;,
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>mint_funds&lt;T: Config&gt;(
+    account_id: <span class="kw-2">&amp;</span>T::AccountId,
     amount_to_mint: BalanceOf&lt;T&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
     <span class="kw">if </span>!amount_to_mint.is_zero() {
-        T::Currency::mint_into(nominator_id, amount_to_mint)
+        T::Currency::mint_into(account_id, amount_to_mint)
             .map_err(|<span class="kw">_</span>| TransitionError::MintBalance)<span class="question-mark">?</span>;
     }
 
@@ -1572,7 +1563,8 @@
 </span><span class="kw">fn </span>finalize_nominator_withdrawal&lt;T: Config&gt;(
     domain_id: DomainId,
     operator_id: OperatorId,
-    freeze_identifier: <span class="kw-2">&amp;</span>FungibleFreezeId&lt;T&gt;,
+    staked_hold_id: <span class="kw-2">&amp;</span>FungibleHoldId&lt;T&gt;,
+    pending_unlock_hold_id: <span class="kw-2">&amp;</span>FungibleHoldId&lt;T&gt;,
     nominator_id: NominatorId&lt;T&gt;,
     withdraw: Withdraw&lt;BalanceOf&lt;T&gt;&gt;,
     total_stake: <span class="kw-2">&amp;mut </span>BalanceOf&lt;T&gt;,
@@ -1585,17 +1577,23 @@
                 .ok_or(TransitionError::UnknownNominator)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>nominator_share = Perbill::from_rational(nominator.shares, <span class="kw-2">*</span>total_shares);
-            <span class="kw">let </span>nominator_staked_amount = nominator_share.mul_floor(<span class="kw-2">*</span>total_stake);
+            <span class="kw">let </span>locked_amount = T::Currency::balance_on_hold(staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
+            <span class="kw">let </span>nominator_staked_amount =
+                nominator_share.mul_floor(<span class="kw-2">*</span>total_stake).max(locked_amount);
 
-            <span class="kw">let </span>locked_amount = T::Currency::balance_frozen(freeze_identifier, <span class="kw-2">&amp;</span>nominator_id);
             <span class="kw">let </span>amount_to_mint = nominator_staked_amount
                 .checked_sub(<span class="kw-2">&amp;</span>locked_amount)
                 .unwrap_or(Zero::zero());
 
-            <span class="comment">// mint any gains and then update the lock
+            <span class="comment">// mint any gains and then remove staked freeze lock
             </span>mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>nominator_id, amount_to_mint)<span class="question-mark">?</span>;
-            T::Currency::set_freeze(freeze_identifier, <span class="kw-2">&amp;</span>nominator_id, nominator_staked_amount)
-                .map_err(|<span class="kw">_</span>| TransitionError::UpdateLock)<span class="question-mark">?</span>;
+            T::Currency::release(
+                staked_hold_id,
+                <span class="kw-2">&amp;</span>nominator_id,
+                locked_amount,
+                Precision::Exact,
+            )
+            .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
             (nominator_staked_amount, nominator.shares)
         }
         Withdraw::Some(withdraw_amount) =&gt; {
@@ -1606,7 +1604,16 @@
 
                 <span class="comment">// calculate nominator total staked value
                 </span><span class="kw">let </span>nominator_share = Perbill::from_rational(nominator.shares, <span class="kw-2">*</span>total_shares);
-                <span class="kw">let </span>nominator_staked_amount = nominator_share.mul_floor(<span class="kw-2">*</span>total_stake);
+                <span class="kw">let </span>old_locked_amount = T::Currency::balance_on_hold(staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
+                <span class="kw">let </span>nominator_staked_amount = nominator_share
+                    .mul_floor(<span class="kw-2">*</span>total_stake)
+                    .max(old_locked_amount);
+
+                <span class="comment">// mint any gains
+                </span><span class="kw">let </span>amount_to_mint = nominator_staked_amount
+                    .checked_sub(<span class="kw-2">&amp;</span>old_locked_amount)
+                    .unwrap_or(Zero::zero());
+                mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>nominator_id, amount_to_mint)<span class="question-mark">?</span>;
 
                 <span class="comment">// calculate the shares to be deducted from the withdraw amount and adjust
                 </span><span class="kw">let </span>share_per_ssc =
@@ -1617,20 +1624,28 @@
                     .checked_sub(<span class="kw-2">&amp;</span>shares_to_withdraw)
                     .ok_or(TransitionError::ShareUnderflow)<span class="question-mark">?</span>;
 
-                <span class="comment">// adjust the locked stake amount with any gains minted
-                </span><span class="kw">let </span>old_locked_amount =
-                    T::Currency::balance_frozen(freeze_identifier, <span class="kw-2">&amp;</span>nominator_id);
-                <span class="kw">let </span>amount_to_mint = nominator_staked_amount
-                    .checked_sub(<span class="kw-2">&amp;</span>old_locked_amount)
-                    .unwrap_or(Zero::zero());
-                mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>nominator_id, amount_to_mint)<span class="question-mark">?</span>;
-                T::Currency::set_freeze(freeze_identifier, <span class="kw-2">&amp;</span>nominator_id, nominator_staked_amount)
+                <span class="comment">// and update the staked lock to hold remaining staked amount
+                </span><span class="kw">let </span>remaining_staked_amount = nominator_staked_amount
+                    .checked_sub(<span class="kw-2">&amp;</span>withdraw_amount)
+                    .ok_or(TransitionError::BalanceUnderflow)<span class="question-mark">?</span>;
+                T::Currency::release(
+                    staked_hold_id,
+                    <span class="kw-2">&amp;</span>nominator_id,
+                    old_locked_amount,
+                    Precision::Exact,
+                )
+                .map_err(|<span class="kw">_</span>| TransitionError::UpdateLock)<span class="question-mark">?</span>;
+                T::Currency::hold(staked_hold_id, <span class="kw-2">&amp;</span>nominator_id, remaining_staked_amount)
                     .map_err(|<span class="kw">_</span>| TransitionError::UpdateLock)<span class="question-mark">?</span>;
 
                 <span class="prelude-val">Ok</span>((withdraw_amount, shares_to_withdraw))
             })<span class="question-mark">?
         </span>}
     };
+
+    <span class="comment">// lock the pending withdrawal under withdrawal lock id
+    </span>T::Currency::hold(pending_unlock_hold_id, <span class="kw-2">&amp;</span>nominator_id, withdrew_stake)
+        .map_err(|<span class="kw">_</span>| TransitionError::BalanceFreeze)<span class="question-mark">?</span>;
 
     PendingNominatorUnlocks::&lt;T&gt;::append(
         operator_id,
@@ -1661,6 +1676,8 @@
     total_stake: <span class="kw-2">&amp;mut </span>BalanceOf&lt;T&gt;,
     total_shares: <span class="kw-2">&amp;mut </span>T::Share,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
+    <span class="kw">let </span>staked_hold_id = T::HoldIdentifier::staking_staked(operator_id);
+    <span class="kw">let </span>pending_deposits_hold_id = T::HoldIdentifier::staking_pending_deposit(operator_id);
     PendingDeposits::&lt;T&gt;::drain_prefix(operator_id).try_for_each(|(nominator_id, deposit)| {
         finalize_nominator_deposit::&lt;T&gt;(
             operator_id,
@@ -1668,6 +1685,8 @@
             deposit,
             total_stake,
             total_shares,
+            <span class="kw-2">&amp;</span>pending_deposits_hold_id,
+            <span class="kw-2">&amp;</span>staked_hold_id,
         )
     })
 }
@@ -1678,9 +1697,17 @@
     deposit: BalanceOf&lt;T&gt;,
     total_stake: <span class="kw-2">&amp;mut </span>BalanceOf&lt;T&gt;,
     total_shares: <span class="kw-2">&amp;mut </span>T::Share,
+    pending_deposit_hold_id: <span class="kw-2">&amp;</span>FungibleHoldId&lt;T&gt;,
+    staked_hold_id: <span class="kw-2">&amp;</span>FungibleHoldId&lt;T&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
     <span class="comment">// calculate the shares to be added to nominator
-    </span><span class="kw">let </span>share_per_ssc = Perbill::from_rational(<span class="kw-2">*</span>total_shares, T::Share::from(<span class="kw-2">*</span>total_stake));
+    </span><span class="kw">let </span>share_per_ssc = <span class="kw">if </span>total_shares.is_zero() {
+        <span class="comment">// share price is 1 for first nominator
+        </span>Perbill::one()
+    } <span class="kw">else </span>{
+        Perbill::from_rational(<span class="kw-2">*</span>total_shares, T::Share::from(<span class="kw-2">*</span>total_stake))
+    };
+
     <span class="kw">let </span>shares_to_deposit = T::Share::from(share_per_ssc.mul_floor(deposit));
     <span class="kw">let </span><span class="kw-2">mut </span>nominator =
         Nominators::&lt;T&gt;::get(operator_id, nominator_id.clone()).unwrap_or(Nominator {
@@ -1692,7 +1719,19 @@
         .checked_add(<span class="kw-2">&amp;</span>shares_to_deposit)
         .ok_or(TransitionError::ShareOverflow)<span class="question-mark">?</span>;
 
-    Nominators::&lt;T&gt;::insert(operator_id, nominator_id, nominator);
+    <span class="comment">// move lock from pending deposit to staked
+    </span>T::Currency::release(
+        pending_deposit_hold_id,
+        <span class="kw-2">&amp;</span>nominator_id,
+        deposit,
+        Precision::Exact,
+    )
+    .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
+    T::Currency::hold(staked_hold_id, <span class="kw-2">&amp;</span>nominator_id, deposit)
+        .map_err(|<span class="kw">_</span>| <span class="kw">crate</span>::staking::Error::BalanceFreeze)<span class="question-mark">?</span>;
+
+    <span class="comment">// Update nominator
+    </span>Nominators::&lt;T&gt;::insert(operator_id, nominator_id, nominator);
 
     <span class="comment">// update operator&#39;s remaining shares and stake
     </span><span class="kw-2">*</span>total_shares = total_shares
@@ -1708,28 +1747,80 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_finalize_slashed_operators&lt;T: Config&gt;(
     domain_id: DomainId,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>total_slashed_amount = BalanceOf::&lt;T&gt;::zero();
     <span class="kw">for </span>(operator_id, slash_info) <span class="kw">in </span>PendingSlashes::&lt;T&gt;::take(domain_id).unwrap_or_default() {
-        <span class="kw">let </span>slashed_amount = slash_operator::&lt;T&gt;(operator_id, slash_info)<span class="question-mark">?</span>;
-        total_slashed_amount = total_slashed_amount
-            .checked_add(<span class="kw-2">&amp;</span>slashed_amount)
-            .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
+        Operators::&lt;T&gt;::try_mutate_exists(operator_id, |maybe_operator| {
+            <span class="comment">// take the operator so this operator info is removed once we slash the operator.
+            </span><span class="kw">let </span>operator = maybe_operator
+                .take()
+                .ok_or(TransitionError::UnknownOperator)<span class="question-mark">?</span>;
+
+            <span class="comment">// remove OperatorOwner Details
+            </span>OperatorIdOwner::&lt;T&gt;::remove(operator_id);
+
+            <span class="kw">let </span>staked_hold_id = T::HoldIdentifier::staking_staked(operator_id);
+            <span class="kw">let </span><span class="kw-2">mut </span>total_stake = operator
+                .current_total_stake
+                .checked_add(<span class="kw-2">&amp;</span>operator.current_epoch_rewards)
+                .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
+
+            <span class="comment">// transfer all the staked funds to the treasury account
+            // any gains will be minted to treasury account
+            </span>Nominators::&lt;T&gt;::drain_prefix(operator_id).try_for_each(|(nominator_id, <span class="kw">_</span>)| {
+                <span class="kw">let </span>locked_amount = T::Currency::balance_on_hold(<span class="kw-2">&amp;</span>staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
+                T::Currency::transfer_on_hold(
+                    <span class="kw-2">&amp;</span>staked_hold_id,
+                    <span class="kw-2">&amp;</span>nominator_id,
+                    <span class="kw-2">&amp;</span>T::TreasuryAccount::get(),
+                    locked_amount,
+                    Precision::Exact,
+                    Restriction::Free,
+                    Fortitude::Force,
+                )
+                .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
+
+                total_stake = total_stake
+                    .checked_sub(<span class="kw-2">&amp;</span>locked_amount)
+                    .ok_or(TransitionError::BalanceUnderflow)<span class="question-mark">?</span>;
+
+                <span class="prelude-val">Ok</span>(())
+            })<span class="question-mark">?</span>;
+
+            <span class="comment">// mint any gains to treasury account
+            </span>mint_funds::&lt;T&gt;(<span class="kw-2">&amp;</span>T::TreasuryAccount::get(), total_stake)<span class="question-mark">?</span>;
+
+            <span class="comment">// remove all of the pending withdrawals as the operator and all its nominators are slashed.
+            </span><span class="kw">let _ </span>= PendingWithdrawals::&lt;T&gt;::clear_prefix(operator_id, u32::MAX, <span class="prelude-val">None</span>);
+
+            <span class="comment">// transfer all the unlocking withdrawals to treasury account
+            </span><span class="kw">let </span>unlocking_nominators = slash_info
+                .unlocking_nominators
+                .into_iter()
+                .map(|pending_unlock| pending_unlock.nominator_id);
+
+            <span class="kw">let </span>pending_withdrawal_freeze_id =
+                T::HoldIdentifier::staking_pending_unlock(operator_id);
+            <span class="kw">for </span>unlocking_nominator <span class="kw">in </span>unlocking_nominators {
+                <span class="kw">let </span>unlocking_balance = T::Currency::balance_on_hold(
+                    <span class="kw-2">&amp;</span>pending_withdrawal_freeze_id,
+                    <span class="kw-2">&amp;</span>unlocking_nominator,
+                );
+                T::Currency::transfer_on_hold(
+                    <span class="kw-2">&amp;</span>pending_withdrawal_freeze_id,
+                    <span class="kw-2">&amp;</span>unlocking_nominator,
+                    <span class="kw-2">&amp;</span>T::TreasuryAccount::get(),
+                    unlocking_balance,
+                    Precision::Exact,
+                    Restriction::Free,
+                    Fortitude::Force,
+                )
+                .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
+            }
+
+            <span class="comment">// remove any nominator deposits
+            // all these are new deposits recorded after start of new epoch and before operator was slashed
+            </span>release_pending_deposits::&lt;T&gt;(operator_id)
+        })<span class="question-mark">?</span>;
     }
-
-    <span class="comment">// TODO: mint the total slashed amount to treasury
-
-    </span><span class="prelude-val">Ok</span>(())
-}
-
-<span class="kw">fn </span>thaw_and_burn_frozen_balance&lt;T: Config&gt;(
-    id: <span class="kw-2">&amp;</span>FungibleFreezeId&lt;T&gt;,
-    from: <span class="kw-2">&amp;</span>T::AccountId,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
-    <span class="comment">// thaw the frozen amount and burn
-    </span><span class="kw">let </span>locked_amount = T::Currency::balance_frozen(id, from);
-    T::Currency::thaw(id, from).map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
-    T::Currency::burn_from(from, locked_amount, Precision::Exact, Fortitude::Force)
-        .map_err(|<span class="kw">_</span>| TransitionError::BalanceBurn)<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(())
 }
@@ -1739,174 +1830,74 @@
     <span class="kw">pub </span>unlocking_nominators: Vec&lt;PendingNominatorUnlock&lt;NominatorId, Balance&gt;&gt;,
 }
 
-<span class="kw">fn </span>slash_operator&lt;T: Config&gt;(
-    operator_id: OperatorId,
-    slash_info: PendingOperatorSlashInfo&lt;NominatorId&lt;T&gt;, BalanceOf&lt;T&gt;&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;BalanceOf&lt;T&gt;, TransitionError&gt; {
-    Operators::&lt;T&gt;::try_mutate_exists(operator_id, |maybe_operator| {
-        <span class="comment">// take the operator so this operator info is removed once we slash the operator.
-        </span><span class="kw">let </span>operator = maybe_operator
-            .take()
-            .ok_or(TransitionError::UnknownOperator)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>freeze_identifier = T::FreezeIdentifier::staking_freeze_id(operator_id);
-
-        <span class="kw">let </span>total_stake = operator
-            .current_total_stake
-            .checked_add(<span class="kw-2">&amp;</span>operator.current_epoch_rewards)
-            .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>unlocking_withdrawals = slash_info
-            .unlocking_nominators
-            .into_iter()
-            .map(|pending_unlock| pending_unlock.balance)
-            .try_fold(BalanceOf::&lt;T&gt;::zero(), |acc, pending_withdrawal| {
-                acc.checked_add(<span class="kw-2">&amp;</span>pending_withdrawal)
-                    .ok_or(TransitionError::BalanceOverflow)
-            })<span class="question-mark">?</span>;
-
-        <span class="kw">let </span><span class="kw-2">mut </span>pending_deposits = BalanceOf::&lt;T&gt;::zero();
-
-        Nominators::&lt;T&gt;::drain_prefix(operator_id).try_for_each(|(nominator_id, <span class="kw">_</span>)| {
-            thaw_and_burn_frozen_balance::&lt;T&gt;(<span class="kw-2">&amp;</span>freeze_identifier, <span class="kw-2">&amp;</span>nominator_id)<span class="question-mark">?</span>;
-
-            <span class="comment">// if there was a pending deposit from this nominator,
-            // then account that deposit in the slashed amount since this new deposit
-            // was burned above
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(deposit) = PendingDeposits::&lt;T&gt;::take(operator_id, nominator_id) {
-                pending_deposits = pending_deposits
-                    .checked_add(<span class="kw-2">&amp;</span>deposit)
-                    .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
-            }
-
-            <span class="prelude-val">Ok</span>(())
-        })<span class="question-mark">?</span>;
-
-        <span class="comment">// remove all of the pending deposits since we burned all nominator stake.
-        </span><span class="kw">let _ </span>= PendingWithdrawals::&lt;T&gt;::clear_prefix(operator_id, u32::MAX, <span class="prelude-val">None</span>);
-
-        <span class="comment">// slash any new nominators as well
-        // all these are new nominators recorded after start
-        // of new epoch and before operator was slashed
-        </span><span class="kw">for </span>(nominator_id, deposit) <span class="kw">in </span>PendingDeposits::&lt;T&gt;::drain_prefix(operator_id) {
-            thaw_and_burn_frozen_balance::&lt;T&gt;(<span class="kw-2">&amp;</span>freeze_identifier, <span class="kw-2">&amp;</span>nominator_id)<span class="question-mark">?</span>;
-            pending_deposits = pending_deposits
-                .checked_add(<span class="kw-2">&amp;</span>deposit)
-                .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
-        }
-
-        <span class="comment">// remove OperatorOwner Details
-        </span>OperatorIdOwner::&lt;T&gt;::remove(operator_id);
-
-        <span class="comment">// slashed_amount = current_total_stake + rewards + unlocking withdrawals + pending deposits
-        </span><span class="kw">let </span>slashed_amount = total_stake
-            .checked_add(<span class="kw-2">&amp;</span>unlocking_withdrawals)
-            .and_then(|acc| acc.checked_add(<span class="kw-2">&amp;</span>pending_deposits))
-            .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(slashed_amount)
-    })
-}
-
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span><span class="kw">crate</span>::pallet::{
         DomainStakingSummary, LastEpochStakingDistribution, Nominators, OperatorIdOwner, Operators,
-        PendingDeposits, PendingOperatorDeregistrations, PendingOperatorSwitches,
-        PendingOperatorUnlocks, PendingUnlocks, PendingWithdrawals,
+        PendingDeposits, PendingOperatorSwitches, PendingOperatorUnlocks, PendingUnlocks,
+        PendingWithdrawals,
     };
+    <span class="kw">use </span><span class="kw">crate</span>::staking::tests::register_operator;
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
-        do_deregister_operator, do_nominate_operator, Nominator, Operator, StakingSummary,
+        do_deregister_operator, do_nominate_operator, do_reward_operators, StakingSummary,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::{
-        do_finalize_domain_pending_transfers, do_finalize_operator_deregistrations,
+        do_finalize_domain_current_epoch, do_finalize_operator_deregistrations,
         do_finalize_switch_operator_domain, do_unlock_pending_withdrawals,
         operator_take_reward_tax_and_stake,
     };
-    <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, Test};
-    <span class="kw">use crate</span>::{BalanceOf, Config, FreezeIdentifier <span class="kw">as </span>FreezeIdentifierT, NominatorId};
+    <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, RuntimeOrigin, Test};
+    <span class="kw">use crate</span>::{BalanceOf, Config, HoldIdentifier <span class="kw">as </span>FreezeIdentifierT, NominatorId};
     <span class="kw">use </span>frame_support::assert_ok;
-    <span class="kw">use </span>frame_support::traits::fungible::{InspectFreeze, MutateFreeze};
-    <span class="kw">use </span>frame_support::traits::Currency;
+    <span class="kw">use </span>frame_support::traits::fungible::InspectHold;
     <span class="kw">use </span>sp_core::{Pair, U256};
-    <span class="kw">use </span>sp_domains::{DomainId, OperatorId, OperatorPair};
+    <span class="kw">use </span>sp_domains::{DomainId, OperatorPair};
     <span class="kw">use </span>sp_runtime::traits::Zero;
     <span class="kw">use </span>sp_runtime::Percent;
     <span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
     <span class="kw">use </span>subspace_runtime_primitives::SSC;
 
     <span class="kw">type </span>Balances = pallet_balances::Pallet&lt;Test&gt;;
-    <span class="kw">type </span>ShareOf&lt;T&gt; = &lt;T <span class="kw">as </span>Config&gt;::Share;
-
-    <span class="kw">struct </span>RequiredStateParams {
-        domain_id: DomainId,
-        total_domain_stake: BalanceOf&lt;Test&gt;,
-        current_operators: Vec&lt;(OperatorId, BalanceOf&lt;Test&gt;)&gt;,
-        next_operators: Vec&lt;OperatorId&gt;,
-        operator_id: OperatorId,
-        operator_account: &lt;Test <span class="kw">as </span>frame_system::Config&gt;::AccountId,
-        operator: Operator&lt;BalanceOf&lt;Test&gt;, ShareOf&lt;Test&gt;&gt;,
-        operator_rewards: Vec&lt;(OperatorId, BalanceOf&lt;Test&gt;)&gt;,
-    }
-
-    <span class="kw">fn </span>create_operator_state(params: RequiredStateParams) {
-        <span class="kw">let </span>RequiredStateParams {
-            domain_id,
-            total_domain_stake,
-            current_operators,
-            next_operators,
-            operator_id,
-            operator_account,
-            operator,
-            operator_rewards,
-        } = params;
-
-        DomainStakingSummary::&lt;Test&gt;::insert(
-            domain_id,
-            StakingSummary {
-                current_epoch_index: <span class="number">0</span>,
-                current_total_stake: total_domain_stake,
-                current_operators: BTreeMap::from_iter(current_operators),
-                next_operators: BTreeSet::from_iter(next_operators),
-                current_epoch_rewards: BTreeMap::from_iter(operator_rewards),
-            },
-        );
-
-        OperatorIdOwner::&lt;Test&gt;::insert(operator_id, operator_account);
-        Operators::&lt;Test&gt;::insert(operator_id, operator);
-    }
+    <span class="kw">type </span>Domains = <span class="kw">crate</span>::Pallet&lt;Test&gt;;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>finalize_operator_domain_switch() {
         <span class="kw">let </span>old_domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>new_domain_id = DomainId::new(<span class="number">1</span>);
         <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_id = <span class="number">1</span>;
+        <span class="kw">let </span>operator_free_balance = <span class="number">200 </span>* SSC;
+        <span class="kw">let </span>operator_stake = <span class="number">100 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            create_operator_state(RequiredStateParams {
-                domain_id: new_domain_id,
-                total_domain_stake: <span class="number">0</span>,
-                current_operators: <span class="macro">vec!</span>[],
-                next_operators: <span class="macro">vec!</span>[],
-                operator_id,
+            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
+                old_domain_id,
                 operator_account,
-                operator: Operator {
-                    signing_key: pair.public(),
-                    current_domain_id: old_domain_id,
-                    next_domain_id: new_domain_id,
-                    minimum_nominator_stake: <span class="number">100 </span>* SSC,
-                    nomination_tax: Default::default(),
-                    current_total_stake: Zero::zero(),
-                    current_epoch_rewards: Zero::zero(),
-                    total_shares: Zero::zero(),
-                    is_frozen: <span class="bool-val">false</span>,
-                },
-                operator_rewards: <span class="macro">vec!</span>[],
-            });
+                operator_free_balance,
+                operator_stake,
+                <span class="number">100 </span>* SSC,
+                pair.public(),
+                BTreeMap::new(),
+            );
 
-            PendingOperatorSwitches::&lt;Test&gt;::append(old_domain_id, operator_id);
+            DomainStakingSummary::&lt;Test&gt;::insert(
+                new_domain_id,
+                StakingSummary {
+                    current_epoch_index: <span class="number">0</span>,
+                    current_total_stake: <span class="number">0</span>,
+                    current_operators: BTreeMap::new(),
+                    next_operators: BTreeSet::new(),
+                    current_epoch_rewards: BTreeMap::new(),
+                },
+            );
+            <span class="kw">let </span>res = Domains::switch_domain(
+                RuntimeOrigin::signed(operator_account),
+                operator_id,
+                new_domain_id,
+            );
+            <span class="macro">assert_ok!</span>(res);
+
             <span class="macro">assert!</span>(do_finalize_switch_operator_domain::&lt;Test&gt;(old_domain_id).is_ok());
 
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
@@ -1926,74 +1917,49 @@
     ) {
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_id = <span class="number">1</span>;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
         <span class="kw">let </span>minimum_free_balance = <span class="number">10 </span>* SSC;
-        <span class="kw">let </span>nominators = BTreeMap::from_iter(nominators);
-        <span class="kw">let </span>pending_deposits = BTreeMap::from_iter(pending_deposits);
-        <span class="kw">let </span><span class="kw-2">mut </span>total_deposits = nominators.clone();
+        <span class="kw">let </span><span class="kw-2">mut </span>nominators = BTreeMap::from_iter(
+            nominators
+                .into_iter()
+                .map(|(id, balance)| (id, (balance + minimum_free_balance, balance)))
+                .collect::&lt;Vec&lt;(NominatorId&lt;Test&gt;, (BalanceOf&lt;Test&gt;, BalanceOf&lt;Test&gt;))&gt;&gt;(),
+        );
+
         <span class="kw">for </span>pending_deposit <span class="kw">in </span><span class="kw-2">&amp;</span>pending_deposits {
             <span class="kw">let </span>staked_deposit = nominators
-                .get(pending_deposit.<span class="number">0</span>)
+                .get(<span class="kw-2">&amp;</span>pending_deposit.<span class="number">0</span>)
                 .cloned()
-                .unwrap_or_default();
-            <span class="kw">let </span>total_balance = staked_deposit + <span class="kw-2">*</span>pending_deposit.<span class="number">1</span>;
-            total_deposits.insert(<span class="kw-2">*</span>pending_deposit.<span class="number">0</span>, total_balance);
+                .unwrap_or((minimum_free_balance, <span class="number">0</span>));
+            <span class="kw">let </span>total_balance = staked_deposit.<span class="number">0 </span>+ pending_deposit.<span class="number">1</span>;
+            nominators.insert(pending_deposit.<span class="number">0</span>, (total_balance, staked_deposit.<span class="number">1</span>));
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">for </span>total_deposit <span class="kw">in </span><span class="kw-2">&amp;</span>total_deposits {
-                Balances::make_free_balance_be(
-                    total_deposit.<span class="number">0</span>,
-                    total_deposit.<span class="number">1 </span>+ minimum_free_balance,
-                );
-            }
-            <span class="kw">let </span><span class="kw-2">mut </span>total_stake = Zero::zero();
-            <span class="kw">let </span><span class="kw-2">mut </span>total_shares = Zero::zero();
-            <span class="kw">let </span>freeze_id = <span class="kw">crate</span>::tests::FreezeIdentifier::staking_freeze_id(operator_id);
-            <span class="kw">for </span>nominator <span class="kw">in </span><span class="kw-2">&amp;</span>nominators {
-                total_stake += nominator.<span class="number">1</span>;
-                total_shares += nominator.<span class="number">1</span>;
-
-                <span class="macro">assert_ok!</span>(Balances::set_freeze(<span class="kw-2">&amp;</span>freeze_id, nominator.<span class="number">0</span>, <span class="kw-2">*</span>nominator.<span class="number">1</span>));
-                <span class="macro">assert_eq!</span>(
-                    Balances::balance_frozen(<span class="kw-2">&amp;</span>freeze_id, nominator.<span class="number">0</span>),
-                    <span class="kw-2">*</span>nominator.<span class="number">1
-                </span>);
-                Nominators::&lt;Test&gt;::insert(
-                    operator_id,
-                    nominator.<span class="number">0</span>,
-                    Nominator {
-                        shares: <span class="kw-2">*</span>nominator.<span class="number">1</span>,
-                    },
-                )
-            }
-            create_operator_state(RequiredStateParams {
+            <span class="kw">let </span>(operator_free_balance, operator_stake) =
+                nominators.remove(<span class="kw-2">&amp;</span>operator_account).unwrap();
+            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
                 domain_id,
-                total_domain_stake: total_stake,
-                current_operators: <span class="macro">vec!</span>[],
-                next_operators: <span class="macro">vec!</span>[],
-                operator_id,
                 operator_account,
-                operator: Operator {
-                    signing_key: pair.public(),
-                    current_domain_id: domain_id,
-                    next_domain_id: domain_id,
-                    minimum_nominator_stake: <span class="number">10 </span>* SSC,
-                    nomination_tax: Default::default(),
-                    current_total_stake: total_stake,
-                    current_epoch_rewards: Zero::zero(),
-                    total_shares,
-                    is_frozen: <span class="bool-val">false</span>,
-                },
-                operator_rewards: <span class="macro">vec!</span>[(operator_account, rewards)],
-            });
+                operator_free_balance,
+                operator_stake,
+                <span class="number">10 </span>* SSC,
+                pair.public(),
+                BTreeMap::from_iter(nominators.clone()),
+            );
+
+            do_finalize_domain_current_epoch::&lt;Test&gt;(domain_id, Zero::zero()).unwrap();
 
             <span class="comment">// add pending deposits
             </span><span class="kw">for </span>pending_deposit <span class="kw">in </span><span class="kw-2">&amp;</span>pending_deposits {
-                do_nominate_operator::&lt;Test&gt;(operator_id, <span class="kw-2">*</span>pending_deposit.<span class="number">0</span>, <span class="kw-2">*</span>pending_deposit.<span class="number">1</span>)
+                do_nominate_operator::&lt;Test&gt;(operator_id, pending_deposit.<span class="number">0</span>, pending_deposit.<span class="number">1</span>)
                     .unwrap();
+            }
+
+            <span class="kw">if </span>!rewards.is_zero() {
+                do_reward_operators::&lt;Test&gt;(domain_id, <span class="macro">vec!</span>[operator_id].into_iter(), rewards)
+                    .unwrap()
             }
 
             <span class="comment">// de-register operator
@@ -2001,22 +1967,19 @@
 
             <span class="comment">// finalize and add to pending operator unlocks
             </span><span class="kw">let </span>domain_block_number = <span class="number">100</span>;
-            do_finalize_operator_deregistrations::&lt;Test&gt;(domain_id, domain_block_number).unwrap();
+            do_finalize_domain_current_epoch::&lt;Test&gt;(domain_id, domain_block_number).unwrap();
 
             <span class="comment">// unlock operator
             </span><span class="kw">let </span>unlock_at = <span class="number">100 </span>+ <span class="kw">crate</span>::tests::StakeWithdrawalLockingPeriod::get();
             <span class="macro">assert!</span>(do_unlock_pending_withdrawals::&lt;Test&gt;(domain_id, unlock_at).is_ok());
 
-            <span class="kw">for </span>nominator <span class="kw">in </span><span class="kw-2">&amp;</span>total_deposits {
-                <span class="kw">let </span><span class="kw-2">mut </span>required_minimum_free_balance = minimum_free_balance + nominator.<span class="number">1</span>;
-                <span class="kw">if </span>rewards.is_zero() {
-                    <span class="comment">// subtracted 1 SSC to account for any rounding errors if there are not rewards
-                    </span>required_minimum_free_balance -= SSC;
-                }
+            <span class="kw">let </span>hold_id = <span class="kw">crate</span>::tests::HoldIdentifier::staking_pending_unlock(operator_id);
+            <span class="kw">for </span>nominator <span class="kw">in </span><span class="kw-2">&amp;</span>nominators {
+                <span class="kw">let </span>required_minimum_free_balance = nominator.<span class="number">1 </span>.<span class="number">0</span>;
                 <span class="macro">assert_eq!</span>(Nominators::&lt;Test&gt;::get(operator_id, nominator.<span class="number">0</span>), <span class="prelude-val">None</span>);
                 <span class="macro">assert!</span>(Balances::usable_balance(nominator.<span class="number">0</span>) &gt;= required_minimum_free_balance);
                 <span class="macro">assert_eq!</span>(
-                    Balances::balance_frozen(<span class="kw-2">&amp;</span>freeze_id, nominator.<span class="number">0</span>),
+                    Balances::balance_on_hold(<span class="kw-2">&amp;</span>hold_id, nominator.<span class="number">0</span>),
                     Zero::zero()
                 );
                 <span class="macro">assert_eq!</span>(
@@ -2057,33 +2020,26 @@
     </span><span class="kw">fn </span>finalize_operator_deregistration() {
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_id = <span class="number">1</span>;
+        <span class="kw">let </span>operator_free_balance = <span class="number">200 </span>* SSC;
+        <span class="kw">let </span>operator_stake = <span class="number">100 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            create_operator_state(RequiredStateParams {
+            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
                 domain_id,
-                total_domain_stake: <span class="number">0</span>,
-                current_operators: <span class="macro">vec!</span>[],
-                next_operators: <span class="macro">vec!</span>[],
-                operator_id,
                 operator_account,
-                operator: Operator {
-                    signing_key: pair.public(),
-                    current_domain_id: domain_id,
-                    next_domain_id: domain_id,
-                    minimum_nominator_stake: <span class="number">100 </span>* SSC,
-                    nomination_tax: Default::default(),
-                    current_total_stake: Zero::zero(),
-                    current_epoch_rewards: Zero::zero(),
-                    total_shares: Zero::zero(),
-                    is_frozen: <span class="bool-val">true</span>,
-                },
-                operator_rewards: <span class="macro">vec!</span>[],
-            });
+                operator_free_balance,
+                operator_stake,
+                <span class="number">10 </span>* SSC,
+                pair.public(),
+                BTreeMap::new(),
+            );
 
-            PendingOperatorDeregistrations::&lt;Test&gt;::append(domain_id, operator_id);
+            do_finalize_domain_current_epoch::&lt;Test&gt;(domain_id, Zero::zero()).unwrap();
+
+            do_deregister_operator::&lt;Test&gt;(operator_account, operator_id).unwrap();
+
             <span class="kw">let </span>current_consensus_block_number = <span class="number">100</span>;
             <span class="macro">assert!</span>(do_finalize_operator_deregistrations::&lt;Test&gt;(
                 domain_id,
@@ -2112,8 +2068,7 @@
 
     <span class="kw">fn </span>finalize_domain_epoch(params: FinalizeDomainParams) {
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
-        <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_id = <span class="number">1</span>;
+        <span class="kw">let </span>operator_account = <span class="number">0</span>;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
 
         <span class="kw">let </span>FinalizeDomainParams {
@@ -2123,54 +2078,62 @@
             deposits,
         } = params;
 
+        <span class="kw">let </span>minimum_free_balance = <span class="number">10 </span>* SSC;
+        <span class="kw">let </span><span class="kw-2">mut </span>nominators = BTreeMap::from_iter(
+            nominators
+                .into_iter()
+                .map(|(id, balance)| (id, (balance + minimum_free_balance, balance)))
+                .collect::&lt;Vec&lt;(NominatorId&lt;Test&gt;, (BalanceOf&lt;Test&gt;, BalanceOf&lt;Test&gt;))&gt;&gt;(),
+        );
+
+        <span class="kw">for </span>deposit <span class="kw">in </span><span class="kw-2">&amp;</span>deposits {
+            <span class="kw">let </span>values = nominators
+                .remove(<span class="kw-2">&amp;</span>deposit.<span class="number">0</span>)
+                .unwrap_or((minimum_free_balance, <span class="number">0</span>));
+            nominators.insert(deposit.<span class="number">0</span>, (deposit.<span class="number">1 </span>+ values.<span class="number">0</span>, values.<span class="number">1</span>));
+        }
+
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span><span class="kw-2">mut </span>total_shares = Zero::zero();
-            <span class="kw">let </span>nominators = BTreeMap::from_iter(nominators);
-            <span class="kw">let </span>operator_stake = nominators.get(<span class="kw-2">&amp;</span>operator_id).cloned().unwrap();
-            <span class="kw">for </span>nominator <span class="kw">in </span>nominators {
-                total_shares += nominator.<span class="number">1</span>;
-                Nominators::&lt;Test&gt;::insert(
-                    operator_id,
-                    nominator.<span class="number">0</span>,
-                    Nominator {
-                        shares: nominator.<span class="number">1</span>,
-                    },
-                );
-            }
-            create_operator_state(RequiredStateParams {
+            <span class="kw">let </span>(operator_free_balance, operator_stake) =
+                nominators.remove(<span class="kw-2">&amp;</span>operator_account).unwrap();
+            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
                 domain_id,
-                total_domain_stake: total_stake,
-                current_operators: <span class="macro">vec!</span>[(operator_id, operator_stake)],
-                next_operators: <span class="macro">vec!</span>[operator_id],
-                operator_id,
                 operator_account,
-                operator: Operator {
-                    signing_key: pair.public(),
-                    current_domain_id: domain_id,
-                    next_domain_id: domain_id,
-                    minimum_nominator_stake: <span class="number">10 </span>* SSC,
-                    nomination_tax: Default::default(),
-                    current_total_stake: total_stake,
-                    current_epoch_rewards: rewards,
-                    total_shares,
-                    is_frozen: <span class="bool-val">false</span>,
-                },
-                operator_rewards: <span class="macro">vec!</span>[],
-            });
+                operator_free_balance,
+                operator_stake,
+                <span class="number">10 </span>* SSC,
+                pair.public(),
+                BTreeMap::from_iter(nominators),
+            );
+
+            do_finalize_domain_current_epoch::&lt;Test&gt;(domain_id, Zero::zero()).unwrap();
 
             <span class="kw">let </span><span class="kw-2">mut </span>total_deposit = BalanceOf::&lt;Test&gt;::zero();
             <span class="kw">for </span>deposit <span class="kw">in </span><span class="kw-2">&amp;</span>deposits {
-                PendingDeposits::&lt;Test&gt;::insert(operator_id, deposit.<span class="number">0</span>, deposit.<span class="number">1</span>);
+                do_nominate_operator::&lt;Test&gt;(operator_id, deposit.<span class="number">0</span>, deposit.<span class="number">1</span>).unwrap();
                 total_deposit += deposit.<span class="number">1</span>;
             }
 
+            <span class="kw">if </span>!rewards.is_zero() {
+                do_reward_operators::&lt;Test&gt;(domain_id, <span class="macro">vec!</span>[operator_id].into_iter(), rewards)
+                    .unwrap();
+            }
+
             <span class="kw">let </span>current_block = <span class="number">100</span>;
-            do_finalize_domain_pending_transfers::&lt;Test&gt;(domain_id, current_block).unwrap();
+            do_finalize_domain_current_epoch::&lt;Test&gt;(domain_id, current_block).unwrap();
             <span class="kw">for </span>deposit <span class="kw">in </span>deposits {
                 <span class="macro">assert_eq!</span>(PendingDeposits::&lt;Test&gt;::get(operator_id, deposit.<span class="number">0</span>), <span class="prelude-val">None</span>);
                 Nominators::&lt;Test&gt;::contains_key(operator_id, deposit.<span class="number">0</span>);
             }
+
+            <span class="comment">// should also store the previous epoch details in-block
+            </span><span class="kw">let </span>election_params = LastEpochStakingDistribution::&lt;Test&gt;::get(domain_id).unwrap();
+            <span class="macro">assert_eq!</span>(
+                election_params.operators,
+                BTreeMap::from_iter(<span class="macro">vec!</span>[(operator_id, total_stake)])
+            );
+            <span class="macro">assert_eq!</span>(election_params.total_domain_stake, total_stake);
 
             <span class="kw">let </span>total_updated_stake = total_stake + total_deposit + rewards;
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
@@ -2182,15 +2145,8 @@
                 domain_stake_summary.current_total_stake,
                 total_updated_stake
             );
-            <span class="macro">assert_eq!</span>(domain_stake_summary.current_epoch_index, <span class="number">1</span>);
-
-            <span class="comment">// should also store the previous epoch details in-block
-            </span><span class="kw">let </span>election_params = LastEpochStakingDistribution::&lt;Test&gt;::get(domain_id).unwrap();
-            <span class="macro">assert_eq!</span>(
-                election_params.operators,
-                BTreeMap::from_iter(<span class="macro">vec!</span>[(operator_id, operator_stake)])
-            );
-            <span class="macro">assert_eq!</span>(election_params.total_domain_stake, total_stake);
+            <span class="comment">// epoch should be 2 since we did 3 epoch transitions
+            </span><span class="macro">assert_eq!</span>(domain_stake_summary.current_epoch_index, <span class="number">2</span>);
         });
     }
 
@@ -2218,60 +2174,36 @@
     </span><span class="kw">fn </span>operator_tax_and_staking() {
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_id = <span class="number">1</span>;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
         <span class="kw">let </span>operator_rewards = <span class="number">10 </span>* SSC;
-        <span class="kw">let </span>nominators = <span class="macro">vec!</span>[(operator_account, <span class="number">100 </span>* SSC)];
-        <span class="kw">let </span>total_stake = <span class="number">100 </span>* SSC;
+        <span class="kw">let </span><span class="kw-2">mut </span>nominators =
+            BTreeMap::from_iter(<span class="macro">vec!</span>[(<span class="number">1</span>, (<span class="number">110 </span>* SSC, <span class="number">100 </span>* SSC)), (<span class="number">2</span>, (<span class="number">60 </span>* SSC, <span class="number">50 </span>* SSC))]);
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span><span class="kw-2">mut </span>total_shares = Zero::zero();
-            <span class="kw">let </span>nominators = BTreeMap::from_iter(nominators);
-            <span class="kw">let </span>operator_stake = nominators.get(<span class="kw-2">&amp;</span>operator_id).cloned().unwrap();
-            <span class="kw">for </span>nominator <span class="kw">in </span>nominators {
-                total_shares += nominator.<span class="number">1</span>;
-                Balances::make_free_balance_be(
-                    <span class="kw-2">&amp;</span>nominator.<span class="number">0</span>,
-                    nominator.<span class="number">1 </span>+ <span class="kw">crate</span>::tests::ExistentialDeposit::get(),
-                );
+            <span class="kw">let </span>(operator_free_balance, operator_stake) =
+                nominators.remove(<span class="kw-2">&amp;</span>operator_account).unwrap();
+            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
+                domain_id,
+                operator_account,
+                operator_free_balance,
+                operator_stake,
+                <span class="number">10 </span>* SSC,
+                pair.public(),
+                BTreeMap::from_iter(nominators),
+            );
 
-                <span class="kw">let </span>freeze_id = <span class="kw">crate</span>::tests::FreezeIdentifier::staking_freeze_id(operator_id);
-                <span class="macro">assert_ok!</span>(Balances::set_freeze(<span class="kw-2">&amp;</span>freeze_id, <span class="kw-2">&amp;</span>nominator.<span class="number">0</span>, nominator.<span class="number">1</span>));
-
-                Nominators::&lt;Test&gt;::insert(
-                    operator_id,
-                    nominator.<span class="number">0</span>,
-                    Nominator {
-                        shares: nominator.<span class="number">1</span>,
-                    },
-                );
-            }
+            do_finalize_domain_current_epoch::&lt;Test&gt;(domain_id, Zero::zero()).unwrap();
 
             <span class="comment">// 10% tax
             </span><span class="kw">let </span>nomination_tax = Percent::from_parts(<span class="number">10</span>);
+            <span class="kw">let </span><span class="kw-2">mut </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
+            operator.nomination_tax = nomination_tax;
+            Operators::&lt;Test&gt;::insert(operator_id, operator);
             <span class="kw">let </span>expected_operator_tax = nomination_tax.mul_ceil(operator_rewards);
 
-            create_operator_state(RequiredStateParams {
-                domain_id,
-                total_domain_stake: total_stake,
-                current_operators: <span class="macro">vec!</span>[(operator_id, operator_stake)],
-                next_operators: <span class="macro">vec!</span>[operator_id],
-                operator_id,
-                operator_account,
-                operator: Operator {
-                    signing_key: pair.public(),
-                    current_domain_id: domain_id,
-                    next_domain_id: domain_id,
-                    minimum_nominator_stake: <span class="number">10 </span>* SSC,
-                    nomination_tax,
-                    current_total_stake: total_stake,
-                    current_epoch_rewards: Zero::zero(),
-                    total_shares,
-                    is_frozen: <span class="bool-val">false</span>,
-                },
-                operator_rewards: <span class="macro">vec!</span>[(operator_account, operator_rewards)],
-            });
+            do_reward_operators::&lt;Test&gt;(domain_id, <span class="macro">vec!</span>[operator_id].into_iter(), operator_rewards)
+                .unwrap();
 
             operator_take_reward_tax_and_stake::&lt;Test&gt;(domain_id).unwrap();
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
