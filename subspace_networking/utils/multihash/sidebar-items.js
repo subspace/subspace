@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["MultihashCode"],"trait":["ToMultihash"]};
+window.SIDEBAR_ITEMS = {"enum":["MultihashCode"],"trait":["ToMultihash"],"type":["Multihash"]};

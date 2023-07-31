@@ -282,19 +282,25 @@
 <a href="#282" id="282">282</a>
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::peer_info::{protocol, PeerInfo};
 <span class="kw">use </span>futures::future::BoxFuture;
 <span class="kw">use </span>futures::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>libp2p::core::upgrade::{NegotiationError, ReadyUpgrade};
-<span class="kw">use </span>libp2p::core::UpgradeError;
+<span class="kw">use </span>libp2p::core::upgrade::ReadyUpgrade;
 <span class="kw">use </span>libp2p::swarm::handler::{
     ConnectionEvent, DialUpgradeError, FullyNegotiatedInbound, FullyNegotiatedOutbound,
-    ListenUpgradeError,
+    ListenUpgradeError, StreamUpgradeError <span class="kw">as </span>ConnectionHandlerUpgrErr,
 };
 <span class="kw">use </span>libp2p::swarm::{
-    ConnectionHandler, ConnectionHandlerEvent, ConnectionHandlerUpgrErr, KeepAlive,
-    NegotiatedSubstream, SubstreamProtocol,
+    ConnectionHandler, ConnectionHandlerEvent, KeepAlive, Stream <span class="kw">as </span>NegotiatedSubstream,
+    SubstreamProtocol,
 };
+<span class="kw">use </span>libp2p::StreamProtocol;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::Arc;
@@ -309,14 +315,14 @@
     </span>timeout: Duration,
 
     <span class="doccomment">/// Protocol name.
-    </span>protocol_name: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>[u8],
+    </span>protocol_name: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str,
 }
 
 <span class="kw">impl </span>Config {
     <span class="doccomment">/// Creates a new [`Config`] with the following default settings:
     ///
     ///   * [`Config::with_timeout`] 20s
-    </span><span class="kw">pub fn </span>new(protocol_name: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>[u8]) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(protocol_name: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             timeout: Duration::from_secs(<span class="number">20</span>),
             protocol_name,
@@ -396,19 +402,22 @@
 }
 
 <span class="kw">impl </span>ConnectionHandler <span class="kw">for </span>Handler {
-    <span class="kw">type </span>InEvent = HandlerInEvent;
-    <span class="kw">type </span>OutEvent = <span class="prelude-ty">Result</span>&lt;PeerInfoSuccess, PeerInfoError&gt;;
+    <span class="kw">type </span>FromBehaviour = HandlerInEvent;
+    <span class="kw">type </span>ToBehaviour = <span class="prelude-ty">Result</span>&lt;PeerInfoSuccess, PeerInfoError&gt;;
     <span class="kw">type </span>Error = PeerInfoError;
-    <span class="kw">type </span>InboundProtocol = ReadyUpgrade&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>[u8]&gt;;
-    <span class="kw">type </span>OutboundProtocol = ReadyUpgrade&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>[u8]&gt;;
+    <span class="kw">type </span>InboundProtocol = ReadyUpgrade&lt;StreamProtocol&gt;;
+    <span class="kw">type </span>OutboundProtocol = ReadyUpgrade&lt;StreamProtocol&gt;;
     <span class="kw">type </span>OutboundOpenInfo = Arc&lt;PeerInfo&gt;;
     <span class="kw">type </span>InboundOpenInfo = ();
 
-    <span class="kw">fn </span>listen_protocol(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SubstreamProtocol&lt;ReadyUpgrade&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>[u8]&gt;, ()&gt; {
-        SubstreamProtocol::new(ReadyUpgrade::new(<span class="self">self</span>.config.protocol_name), ())
+    <span class="kw">fn </span>listen_protocol(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SubstreamProtocol&lt;ReadyUpgrade&lt;StreamProtocol&gt;, ()&gt; {
+        SubstreamProtocol::new(
+            ReadyUpgrade::new(StreamProtocol::new(<span class="self">self</span>.config.protocol_name)),
+            (),
+        )
     }
 
-    <span class="kw">fn </span>on_behaviour_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: <span class="self">Self</span>::InEvent) {
+    <span class="kw">fn </span>on_behaviour_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: <span class="self">Self</span>::FromBehaviour) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(OutboundState::Idle(stream)) = <span class="self">self</span>.outbound.take() {
             <span class="self">self</span>.outbound = <span class="prelude-val">Some</span>(OutboundState::SendingData(
                 protocol::send(stream, event.peer_info).boxed(),
@@ -428,7 +437,7 @@
         cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">&#39;_</span>&gt;,
     ) -&gt; Poll&lt;
         ConnectionHandlerEvent&lt;
-            ReadyUpgrade&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>[u8]&gt;,
+            ReadyUpgrade&lt;StreamProtocol&gt;,
             <span class="self">Self</span>::OutboundOpenInfo,
             <span class="prelude-ty">Result</span>&lt;PeerInfoSuccess, PeerInfoError&gt;,
             <span class="self">Self</span>::Error,
@@ -453,7 +462,7 @@
                     <span class="macro">debug!</span>(<span class="question-mark">?</span>peer_info, <span class="string">&quot;Inbound peer info&quot;</span>);
 
                     <span class="self">self</span>.inbound = <span class="prelude-val">Some</span>(protocol::recv(stream).boxed());
-                    <span class="kw">return </span>Poll::Ready(ConnectionHandlerEvent::Custom(<span class="prelude-val">Ok</span>(
+                    <span class="kw">return </span>Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(<span class="prelude-val">Ok</span>(
                         PeerInfoSuccess::Received(peer_info),
                     )));
                 }
@@ -470,7 +479,7 @@
                     Poll::Ready(<span class="prelude-val">Ok</span>(stream)) =&gt; {
                         <span class="self">self</span>.outbound = <span class="prelude-val">Some</span>(OutboundState::Idle(stream));
 
-                        <span class="kw">return </span>Poll::Ready(ConnectionHandlerEvent::Custom(<span class="prelude-val">Ok</span>(
+                        <span class="kw">return </span>Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(<span class="prelude-val">Ok</span>(
                             PeerInfoSuccess::Sent,
                         )));
                     }
@@ -492,9 +501,11 @@
             }
             <span class="prelude-val">Some</span>(OutboundState::RequestNewStream(peer_info)) =&gt; {
                 <span class="self">self</span>.outbound = <span class="prelude-val">Some</span>(OutboundState::NegotiatingStream);
-                <span class="kw">let </span>protocol =
-                    SubstreamProtocol::new(ReadyUpgrade::new(<span class="self">self</span>.config.protocol_name), peer_info)
-                        .with_timeout(<span class="self">self</span>.config.timeout);
+                <span class="kw">let </span>protocol = SubstreamProtocol::new(
+                    ReadyUpgrade::new(StreamProtocol::new(<span class="self">self</span>.config.protocol_name)),
+                    peer_info,
+                )
+                .with_timeout(<span class="self">self</span>.config.timeout);
                 <span class="kw">return </span>Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest { protocol });
             }
             <span class="prelude-val">None </span>=&gt; {
@@ -532,9 +543,8 @@
             }
             ConnectionEvent::DialUpgradeError(DialUpgradeError { error, .. }) =&gt; {
                 <span class="kw">match </span>error {
-                    ConnectionHandlerUpgrErr::Upgrade(UpgradeError::Select(
-                        NegotiationError::Failed,
-                    )) =&gt; {
+                    ConnectionHandlerUpgrErr::NegotiationFailed
+                    | ConnectionHandlerUpgrErr::Apply(..) =&gt; {
                         <span class="macro">debug!</span>(<span class="string">&quot;Peer-info protocol dial upgrade failed.&quot;</span>);
                     }
                     e =&gt; {
@@ -548,6 +558,8 @@
                 });
             }
             ConnectionEvent::AddressChange(<span class="kw">_</span>) =&gt; {}
+            ConnectionEvent::LocalProtocolsChange(<span class="kw">_</span>) =&gt; {}
+            ConnectionEvent::RemoteProtocolsChange(<span class="kw">_</span>) =&gt; {}
         }
         <span class="self">self</span>.wake();
     }
