@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ObjectMappingError"],"mod":["node_client","reward_signing","single_disk_plot","utils","ws_rpc_server"],"struct":["Identity","NodeRpcClient","ObjectMappings"]};
+window.SIDEBAR_ITEMS = {"mod":["node_client","reward_signing","single_disk_plot","utils"],"struct":["Identity","NodeRpcClient"]};

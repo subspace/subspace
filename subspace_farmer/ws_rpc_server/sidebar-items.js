@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["HexBlake2b256Hash","HexPiece","Object","RpcServerImpl"],"trait":["PieceGetter","RpcClient","RpcServer"]};
