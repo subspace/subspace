@@ -467,7 +467,7 @@
 
 </span><span class="kw">use </span><span class="kw">crate</span>::chain_spec::{domain_instance_genesis_config, load_chain_spec_with};
 <span class="kw">use crate</span>::{construct_extrinsic_generic, node_config, EcdsaKeyring, UncheckedExtrinsicFor};
-<span class="kw">use </span>domain_client_operator::{Bootstrapper, OperatorStreams};
+<span class="kw">use </span>domain_client_operator::{BootstrapResult, Bootstrapper, OperatorStreams};
 <span class="kw">use </span>domain_runtime_primitives::opaque::Block;
 <span class="kw">use </span>domain_runtime_primitives::{Balance, DomainCoreApi, InherentExtrinsicApi};
 <span class="kw">use </span>domain_service::providers::DefaultProvider;
@@ -478,12 +478,12 @@
 <span class="kw">use </span>fp_rpc::EthereumRuntimeRPCApi;
 <span class="kw">use </span>frame_support::dispatch::{DispatchInfo, PostDispatchInfo};
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
-<span class="kw">use </span>sc_client_api::{BlockchainEvents, HeaderBackend, StateBackendFor};
+<span class="kw">use </span>sc_client_api::{HeaderBackend, StateBackendFor};
 <span class="kw">use </span>sc_executor::NativeExecutionDispatch;
 <span class="kw">use </span>sc_network::{NetworkService, NetworkStateInfo};
 <span class="kw">use </span>sc_network_sync::SyncingService;
 <span class="kw">use </span>sc_service::config::MultiaddrWithPeerId;
-<span class="kw">use </span>sc_service::{BasePath, ChainSpec, Role, RpcHandlers, TFullBackend, TaskManager};
+<span class="kw">use </span>sc_service::{BasePath, Role, RpcHandlers, TFullBackend, TaskManager};
 <span class="kw">use </span>sc_utils::mpsc::TracingUnboundedSender;
 <span class="kw">use </span>serde::de::DeserializeOwned;
 <span class="kw">use </span>sp_api::{ApiExt, ConstructRuntimeApi, Metadata, NumberFor, ProvideRuntimeApi};
@@ -633,10 +633,25 @@
         domain_nodes: Vec&lt;MultiaddrWithPeerId&gt;,
         domain_nodes_exclusive: bool,
         run_relayer: bool,
-        chain_spec: Box&lt;<span class="kw">dyn </span>ChainSpec&gt;,
         role: Role,
         mock_consensus_node: <span class="kw-2">&amp;mut </span>MockConsensusNode,
     ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>BootstrapResult {
+            domain_instance_data,
+            domain_created_at,
+            imported_block_notification_stream,
+        } = {
+            <span class="kw">let </span>bootstrapper = Bootstrapper::&lt;Block, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(mock_consensus_node.client.clone());
+            bootstrapper
+                .fetch_domain_bootstrap_info(domain_id)
+                .<span class="kw">await
+                </span>.expect(<span class="string">&quot;Failed to get domain instance data&quot;</span>)
+        };
+        <span class="kw">let </span>chain_spec = {
+            <span class="kw">let </span>genesis_config =
+                domain_instance_genesis_config(domain_id, domain_instance_data.runtime_code);
+            load_chain_spec_with(genesis_config)
+        };
         <span class="kw">let </span>service_config = node_config(
             domain_id,
             tokio_handle.clone(),
@@ -672,9 +687,7 @@
             </span>consensus_block_import_throttling_buffer_size: <span class="number">0</span>,
             block_importing_notification_stream: mock_consensus_node
                 .block_importing_notification_stream(),
-            imported_block_notification_stream: mock_consensus_node
-                .client
-                .every_import_notification_stream(),
+            imported_block_notification_stream,
             new_slot_notification_stream: mock_consensus_node.new_slot_notification_stream(),
             _phantom: Default::default(),
         };
@@ -685,6 +698,7 @@
         <span class="kw">let </span>domain_params = domain_service::DomainParams {
             domain_id,
             domain_config,
+            domain_created_at,
             consensus_client: mock_consensus_node.client.clone(),
             consensus_network_sync_oracle: mock_consensus_node.sync_service.clone(),
             select_chain: mock_consensus_node.select_chain.clone(),
@@ -872,28 +886,14 @@
         domain_id: DomainId,
         mock_consensus_node: <span class="kw-2">&amp;mut </span>MockConsensusNode,
     ) -&gt; EvmDomainNode {
-        <span class="kw">let </span>domain_instance_data = {
-            <span class="kw">let </span>bootstrapper = Bootstrapper::&lt;Block, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(mock_consensus_node.client.clone());
-            bootstrapper
-                .fetch_domain_bootstrap_info(domain_id)
-                .<span class="kw">await
-                </span>.expect(<span class="string">&quot;Failed to get domain instance data&quot;</span>)
-                .domain_instance_data
-        };
-        <span class="kw">let </span>chain_spec = {
-            <span class="kw">let </span>genesis_config =
-                domain_instance_genesis_config(domain_id, domain_instance_data.runtime_code);
-            load_chain_spec_with(genesis_config)
-        };
         DomainNode::build(
-            DomainId::new(<span class="number">0u32</span>),
+            domain_id,
             <span class="self">self</span>.tokio_handle,
             <span class="self">self</span>.key,
             <span class="self">self</span>.base_path,
             <span class="self">self</span>.domain_nodes,
             <span class="self">self</span>.domain_nodes_exclusive,
             <span class="self">self</span>.run_relayer,
-            chain_spec,
             role,
             mock_consensus_node,
         )
