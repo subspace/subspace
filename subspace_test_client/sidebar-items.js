@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["start_farmer"],"mod":["chain_spec"],"struct":["TestExecutorDispatch"],"type":["Backend","Client","FraudProofVerifier"]};
+window.SIDEBAR_ITEMS = {"fn":["start_farmer"],"mod":["chain_spec","domain_chain_spec"],"struct":["TestExecutorDispatch"],"type":["Backend","Client","FraudProofVerifier"]};
