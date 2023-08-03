@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"pallet_rewards":[],
+"subspace_runtime":[["impl <a class=\"trait\" href=\"pallet_rewards/trait.OnReward.html\" title=\"trait pallet_rewards::OnReward\">OnReward</a>&lt;&lt;&lt;MultiSignature as Verify&gt;::Signer as IdentifyAccount&gt;::AccountId, <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u128.html\">u128</a>&gt; for <a class=\"struct\" href=\"subspace_runtime/struct.StakingOnReward.html\" title=\"struct subspace_runtime::StakingOnReward\">StakingOnReward</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

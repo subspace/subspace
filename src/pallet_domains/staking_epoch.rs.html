@@ -1105,13 +1105,45 @@
 <a href="#1105" id="1105">1105</a>
 <a href="#1106" id="1106">1106</a>
 <a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking epoch transition for domain
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::{
     DomainStakingSummary, LastEpochStakingDistribution, Nominators, OperatorIdOwner, Operators,
     PendingDeposits, PendingNominatorUnlocks, PendingOperatorDeregistrations,
     PendingOperatorSwitches, PendingOperatorUnlocks, PendingSlashes, PendingUnlocks,
-    PendingWithdrawals,
+    PendingWithdrawals, PreferredOperator,
 };
 <span class="kw">use </span><span class="kw">crate</span>::staking::{Error <span class="kw">as </span>TransitionError, Nominator, OperatorStatus, Withdraw};
 <span class="kw">use crate</span>::{
@@ -1123,7 +1155,7 @@
 <span class="kw">use </span>frame_support::traits::tokens::{Fortitude, Precision, Restriction};
 <span class="kw">use </span>frame_support::PalletError;
 <span class="kw">use </span>sp_core::Get;
-<span class="kw">use </span>sp_domains::{DomainId, OperatorId};
+<span class="kw">use </span>sp_domains::{DomainId, EpochIndex, OperatorId};
 <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, One, Zero};
 <span class="kw">use </span>sp_runtime::Perbill;
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
@@ -1145,7 +1177,7 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_finalize_domain_current_epoch&lt;T: Config&gt;(
     domain_id: DomainId,
     domain_block_number: T::DomainNumber,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;EpochIndex, Error&gt; {
     <span class="comment">// slash the operators
     </span>do_finalize_slashed_operators::&lt;T&gt;(domain_id).map_err(Error::SlashOperator)<span class="question-mark">?</span>;
 
@@ -1159,8 +1191,7 @@
     </span>do_finalize_operator_deregistrations::&lt;T&gt;(domain_id, domain_block_number)<span class="question-mark">?</span>;
 
     <span class="comment">// finalize any withdrawals and then deposits
-    </span>do_finalize_domain_pending_transfers::&lt;T&gt;(domain_id, domain_block_number)<span class="question-mark">?</span>;
-    <span class="prelude-val">Ok</span>(())
+    </span>do_finalize_domain_staking::&lt;T&gt;(domain_id, domain_block_number)
 }
 
 <span class="doccomment">/// Unlocks any operators who are de-registering or nominators who are withdrawing staked funds.
@@ -1347,6 +1378,8 @@
             )
             .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
 
+            remove_preferred_operator::&lt;T&gt;(nominator_id, <span class="kw-2">&amp;</span>operator_id);
+
             <span class="comment">// update pool&#39;s remaining shares and stake
             </span>total_shares = total_shares
                 .checked_sub(<span class="kw-2">&amp;</span>nominator.shares)
@@ -1432,10 +1465,10 @@
     <span class="kw">pub </span>balance: Balance,
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_finalize_domain_pending_transfers&lt;T: Config&gt;(
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_finalize_domain_staking&lt;T: Config&gt;(
     domain_id: DomainId,
     domain_block_number: T::DomainNumber,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;EpochIndex, Error&gt; {
     DomainStakingSummary::&lt;T&gt;::try_mutate(domain_id, |maybe_stake_summary| {
         <span class="kw">let </span>stake_summary = maybe_stake_summary
             .as_mut()
@@ -1465,11 +1498,12 @@
 
         LastEpochStakingDistribution::&lt;T&gt;::insert(domain_id, election_verification_params);
 
+        <span class="kw">let </span>previous_epoch = stake_summary.current_epoch_index;
         stake_summary.current_epoch_index = next_epoch;
         stake_summary.current_total_stake = total_domain_stake;
         stake_summary.current_operators = current_operators;
 
-        <span class="prelude-val">Ok</span>(())
+        <span class="prelude-val">Ok</span>(previous_epoch)
     })
     .map_err(Error::FinalizeDomainPendingTransfers)
 }
@@ -1551,6 +1585,17 @@
     <span class="prelude-val">Ok</span>(())
 }
 
+<span class="doccomment">/// Remove the preference if the operator id matches
+</span><span class="kw">fn </span>remove_preferred_operator&lt;T: Config&gt;(nominator_id: NominatorId&lt;T&gt;, operator_id: <span class="kw-2">&amp;</span>OperatorId) {
+    PreferredOperator::&lt;T&gt;::mutate_exists(nominator_id, |maybe_preferred_operator| {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(preferred_operator_id) = maybe_preferred_operator {
+            <span class="kw">if </span>preferred_operator_id == operator_id {
+                maybe_preferred_operator.take();
+            }
+        }
+    });
+}
+
 <span class="attr">#[allow(clippy::too_many_arguments)]
 </span><span class="kw">fn </span>finalize_nominator_withdrawal&lt;T: Config&gt;(
     domain_id: DomainId,
@@ -1586,6 +1631,8 @@
                 Precision::Exact,
             )
             .map_err(|<span class="kw">_</span>| TransitionError::RemoveLock)<span class="question-mark">?</span>;
+
+            remove_preferred_operator::&lt;T&gt;(nominator_id.clone(), <span class="kw-2">&amp;</span>operator_id);
             (nominator_staked_amount, nominator.shares)
         }
         Withdraw::Some(withdraw_amount) =&gt; {
@@ -1774,6 +1821,8 @@
                     .checked_sub(<span class="kw-2">&amp;</span>locked_amount)
                     .ok_or(TransitionError::BalanceUnderflow)<span class="question-mark">?</span>;
 
+                remove_preferred_operator::&lt;T&gt;(nominator_id, <span class="kw-2">&amp;</span>operator_id);
+
                 <span class="prelude-val">Ok</span>(())
             })<span class="question-mark">?</span>;
 
@@ -1827,11 +1876,12 @@
     <span class="kw">use </span><span class="kw">crate</span>::pallet::{
         DomainStakingSummary, LastEpochStakingDistribution, Nominators, OperatorIdOwner, Operators,
         PendingDeposits, PendingOperatorSwitches, PendingOperatorUnlocks, PendingUnlocks,
-        PendingWithdrawals,
+        PendingWithdrawals, PreferredOperator,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking::tests::register_operator;
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
-        do_deregister_operator, do_nominate_operator, do_reward_operators, StakingSummary,
+        do_auto_stake_block_rewards, do_deregister_operator, do_nominate_operator,
+        do_reward_operators, StakingSummary,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::{
         do_finalize_domain_current_epoch, do_finalize_operator_deregistrations,
@@ -1954,6 +2004,16 @@
                     .unwrap()
             }
 
+            <span class="kw">for </span>nominator <span class="kw">in </span><span class="kw-2">&amp;</span>nominators {
+                <span class="kw">if </span>!nominator.<span class="number">1 </span>.<span class="number">1</span>.is_zero() {
+                    do_auto_stake_block_rewards::&lt;Test&gt;(<span class="kw-2">*</span>nominator.<span class="number">0</span>, operator_id).unwrap();
+                    <span class="macro">assert_eq!</span>(
+                        operator_id,
+                        PreferredOperator::&lt;Test&gt;::get(nominator.<span class="number">0</span>).unwrap()
+                    )
+                }
+            }
+
             <span class="comment">// de-register operator
             </span>do_deregister_operator::&lt;Test&gt;(operator_account, operator_id).unwrap();
 
@@ -1982,6 +2042,10 @@
                     PendingWithdrawals::&lt;Test&gt;::get(operator_id, <span class="kw-2">*</span>nominator.<span class="number">0</span>),
                     <span class="prelude-val">None
                 </span>);
+
+                <span class="kw">if </span>!nominator.<span class="number">1 </span>.<span class="number">0</span>.is_zero() {
+                    <span class="macro">assert!</span>(!PreferredOperator::&lt;Test&gt;::contains_key(nominator.<span class="number">0</span>))
+                }
             }
 
             <span class="macro">assert_eq!</span>(Operators::&lt;Test&gt;::get(operator_id), <span class="prelude-val">None</span>);
