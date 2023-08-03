@@ -761,6 +761,46 @@
 <a href="#761" id="761">761</a>
 <a href="#762" id="762">762</a>
 <a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -869,8 +909,9 @@
     }
 
     <span class="doccomment">/// Returns last observed segment index
-    </span><span class="kw">pub fn </span>max_segment_index(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SegmentIndex {
-        SegmentIndex::from(<span class="self">self</span>.inner.cache.lock().len().saturating_sub(<span class="number">0</span>) <span class="kw">as </span>u64)
+    </span><span class="kw">pub fn </span>max_segment_index(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SegmentIndex&gt; {
+        <span class="kw">let </span>segment_index = <span class="self">self</span>.inner.cache.lock().len().checked_sub(<span class="number">1</span>)<span class="question-mark">? </span><span class="kw">as </span>u64;
+        <span class="prelude-val">Some</span>(SegmentIndex::from(segment_index))
     }
 
     <span class="doccomment">/// Add segment headers
@@ -878,16 +919,55 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_headers: <span class="kw-2">&amp;</span>[SegmentHeader],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt; {
-        <span class="comment">// TODO: Check that segment headers are inserted sequentially
-        // TODO: Do compaction when we have too many keys: combine multiple segment headers into a
+        <span class="kw">let </span><span class="kw-2">mut </span>maybe_last_segment_index = <span class="self">self</span>.max_segment_index();
+        <span class="kw">let </span><span class="kw-2">mut </span>segment_headers_to_store = Vec::with_capacity(segment_headers.len());
+        <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
+            <span class="kw">let </span>segment_index = segment_header.segment_index();
+            <span class="kw">match </span>maybe_last_segment_index {
+                <span class="prelude-val">Some</span>(last_segment_index) =&gt; {
+                    <span class="kw">if </span>segment_index &lt;= last_segment_index {
+                        <span class="comment">// Skip already stored segment headers
+                        </span><span class="kw">continue</span>;
+                    }
+
+                    <span class="kw">if </span>segment_index != last_segment_index + SegmentIndex::ONE {
+                        <span class="kw">let </span>error = <span class="macro">format!</span>(
+                            <span class="string">&quot;Segment index {} must strictly follow {}, can&#39;t store segment header&quot;</span>,
+                            segment_index, last_segment_index
+                        );
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Application(error.into()));
+                    }
+
+                    segment_headers_to_store.push(segment_header);
+                    maybe_last_segment_index.replace(segment_index);
+                }
+                <span class="prelude-val">None </span>=&gt; {
+                    <span class="kw">if </span>segment_index != SegmentIndex::ZERO {
+                        <span class="kw">let </span>error = <span class="macro">format!</span>(
+                            <span class="string">&quot;First segment header index must be zero, found index {segment_index}&quot;
+                        </span>);
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Application(error.into()));
+                    }
+
+                    segment_headers_to_store.push(segment_header);
+                    maybe_last_segment_index.replace(segment_index);
+                }
+            }
+        }
+
+        <span class="kw">if </span>segment_headers_to_store.is_empty() {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        }
+
+        <span class="comment">// TODO: Do compaction when we have too many keys: combine multiple segment headers into a
         //  single entry for faster retrievals and more compact storage
         </span><span class="kw">let </span>key_index = <span class="self">self</span>.inner.next_key_index.fetch_add(<span class="number">1</span>, Ordering::SeqCst);
         <span class="kw">let </span>key = <span class="self">Self</span>::key(key_index);
-        <span class="kw">let </span>value = segment_headers.encode();
+        <span class="kw">let </span>value = segment_headers_to_store.encode();
         <span class="kw">let </span>insert_data = <span class="macro">vec!</span>[(key.as_slice(), value.as_slice())];
 
         <span class="self">self</span>.inner.aux_store.insert_aux(<span class="kw-2">&amp;</span>insert_data, <span class="kw-2">&amp;</span>[])<span class="question-mark">?</span>;
-        <span class="self">self</span>.inner.cache.lock().extend_from_slice(segment_headers);
+        <span class="self">self</span>.inner.cache.lock().extend(segment_headers_to_store);
 
         <span class="prelude-val">Ok</span>(())
     }
