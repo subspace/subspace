@@ -852,11 +852,33 @@
 <a href="#852" id="852">852</a>
 <a href="#853" id="853">853</a>
 <a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use crate</span>::{
     BalanceOf, BlockTree, Config, DomainBlocks, ExecutionInbox, ExecutionReceiptOf,
-    HeadReceiptNumber,
+    HeadReceiptNumber, InboxedBundle,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
@@ -992,8 +1014,13 @@
     } <span class="kw">else </span>{
         <span class="kw">let </span>execution_inbox =
             ExecutionInbox::&lt;T&gt;::get((domain_id, domain_block_number, consensus_block_number));
+        <span class="kw">let </span>expected_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; = execution_inbox
+            .into_iter()
+            .map(|b| b.extrinsics_root)
+            .collect();
         <span class="macro">ensure!</span>(
-            !block_extrinsics_roots.is_empty() &amp;&amp; <span class="kw-2">*</span>block_extrinsics_roots == execution_inbox,
+            !block_extrinsics_roots.is_empty()
+                &amp;&amp; <span class="kw-2">*</span>block_extrinsics_roots == expected_extrinsics_roots,
             Error::InvalidExtrinsicsRoots
         );
 
@@ -1098,9 +1125,15 @@
                 <span class="kw">let </span>domain_block =
                     DomainBlocks::&lt;T&gt;::take(receipt).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
 
-                <span class="comment">// Remove the block&#39;s `ExecutionInbox` as the block is pruned and does not need
-                // to verify its receipt&#39;s `extrinsics_root` anymore
-                </span><span class="kw">let _ </span>= ExecutionInbox::&lt;T&gt;::clear_prefix((domain_id, to_prune), u32::MAX, <span class="prelude-val">None</span>);
+                <span class="comment">// Remove the block&#39;s `ExecutionInbox` and `InboxedBundle` as the block is pruned and
+                // does not need to verify its receipt&#39;s `extrinsics_root` anymore.
+                </span><span class="kw">for </span>bundle_digests <span class="kw">in </span>ExecutionInbox::&lt;T&gt;::iter_prefix_values((domain_id, to_prune))
+                {
+                    <span class="kw">for </span>bd <span class="kw">in </span>bundle_digests {
+                        InboxedBundle::&lt;T&gt;::remove(bd.header_hash);
+                    }
+                }
+                <span class="kw">let _ </span>= ExecutionInbox::&lt;T&gt;::clear_prefix((domain_id, to_prune), u32::MAX, <span class="prelude-val">None</span>);
 
                 pruned_domain_block_info = <span class="prelude-val">Some</span>(PrunedDomainBlockInfo {
                     domain_block_number: to_prune,
@@ -1176,8 +1209,7 @@
     <span class="kw">use </span>frame_support::{assert_err, assert_ok};
     <span class="kw">use </span>frame_system::Pallet <span class="kw">as </span>System;
     <span class="kw">use </span>sp_core::{Pair, H256, U256};
-    <span class="kw">use </span>sp_domains::{GenesisReceiptExtension, OperatorPair, RuntimeType};
-    <span class="kw">use </span>sp_runtime::traits::BlockNumberProvider;
+    <span class="kw">use </span>sp_domains::{BundleDigest, GenesisReceiptExtension, OperatorPair, RuntimeType};
     <span class="kw">use </span>sp_version::RuntimeVersion;
     <span class="kw">use </span>std::sync::Arc;
     <span class="kw">use </span>subspace_runtime_primitives::SSC;
@@ -1255,7 +1287,6 @@
             </span><span class="kw">let </span>bundle_extrinsics_root = H256::random();
             <span class="kw">let </span>bundle = create_dummy_bundle_with_receipts(
                 domain_id,
-                block_number,
                 operator_id,
                 bundle_extrinsics_root,
                 receipt,
@@ -1359,6 +1390,7 @@
             </span><span class="kw">let </span>genesis_node = get_block_tree_node_at::&lt;Test&gt;(domain_id, <span class="number">0</span>).unwrap();
             <span class="kw">let </span><span class="kw-2">mut </span>receipt = genesis_node.execution_receipt;
             <span class="kw">let </span><span class="kw-2">mut </span>receipt_of_block_1 = <span class="prelude-val">None</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>bundle_header_hash_of_block_1 = <span class="prelude-val">None</span>;
             <span class="kw">for </span>block_number <span class="kw">in </span><span class="number">1</span>..=(block_tree_pruning_depth + <span class="number">3</span>) {
                 <span class="comment">// Run to `block_number`
                 </span>run_to_block::&lt;Test&gt;(
@@ -1370,11 +1402,11 @@
                 </span><span class="kw">let </span>bundle_extrinsics_root = H256::random();
                 <span class="kw">let </span>bundle = create_dummy_bundle_with_receipts(
                     domain_id,
-                    block_number,
                     operator_id,
                     bundle_extrinsics_root,
                     receipt,
                 );
+                <span class="kw">let </span>bundle_header_hash = bundle.sealed_header.pre_hash();
                 <span class="macro">assert_ok!</span>(<span class="kw">crate</span>::Pallet::&lt;Test&gt;::submit_bundle(
                     RawOrigin::None.into(),
                     bundle,
@@ -1382,8 +1414,12 @@
                 <span class="comment">// `bundle_extrinsics_root` should be tracked in `ExecutionInbox`
                 </span><span class="macro">assert_eq!</span>(
                     ExecutionInbox::&lt;Test&gt;::get((domain_id, block_number, block_number)),
-                    <span class="macro">vec!</span>[bundle_extrinsics_root]
+                    <span class="macro">vec!</span>[BundleDigest {
+                        header_hash: bundle_header_hash,
+                        extrinsics_root: bundle_extrinsics_root,
+                    }]
                 );
+                <span class="macro">assert!</span>(InboxedBundle::&lt;Test&gt;::contains_key(bundle_header_hash));
 
                 <span class="comment">// Head receipt number should be updated
                 </span><span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
@@ -1417,14 +1453,17 @@
                 <span class="comment">// Record receipt of block #1 for later use
                 </span><span class="kw">if </span>block_number == <span class="number">1 </span>{
                     receipt_of_block_1.replace(receipt.clone());
+                    bundle_header_hash_of_block_1.replace(bundle_header_hash);
                 }
             }
 
             <span class="comment">// The receipt of the block 1 is pruned at the last iteration, verify it will result in
             // `InvalidExtrinsicsRoots` error as `ExecutionInbox` of block 1 is pruned
             </span><span class="kw">let </span>pruned_receipt = receipt_of_block_1.unwrap();
+            <span class="kw">let </span>pruned_bundle = bundle_header_hash_of_block_1.unwrap();
             <span class="macro">assert!</span>(BlockTree::&lt;Test&gt;::get(domain_id, <span class="number">1</span>).is_empty());
             <span class="macro">assert!</span>(ExecutionInbox::&lt;Test&gt;::get((domain_id, <span class="number">1</span>, <span class="number">1</span>)).is_empty());
+            <span class="macro">assert!</span>(!InboxedBundle::&lt;Test&gt;::contains_key(pruned_bundle));
             <span class="macro">assert_eq!</span>(
                 execution_receipt_type::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>pruned_receipt),
                 ReceiptType::Rejected(RejectedReceiptType::Pruned)
@@ -1467,7 +1506,6 @@
             <span class="comment">// Re-submit the receipt will add confirm to the head receipt
             </span><span class="kw">let </span>bundle = create_dummy_bundle_with_receipts(
                 domain_id,
-                frame_system::Pallet::&lt;Test&gt;::current_block_number(),
                 operator_id2,
                 H256::random(),
                 current_head_receipt,
@@ -1508,7 +1546,6 @@
             <span class="comment">// Stale receipt can be submitted but won&#39;t be added to the block tree
             </span><span class="kw">let </span>bundle = create_dummy_bundle_with_receipts(
                 domain_id,
-                frame_system::Pallet::&lt;Test&gt;::current_block_number(),
                 operator_id2,
                 H256::random(),
                 stale_receipt,
@@ -1568,7 +1605,6 @@
             <span class="comment">// Submit the new branch receipt will create fork in the block tree
             </span><span class="kw">let </span>bundle = create_dummy_bundle_with_receipts(
                 domain_id,
-                frame_system::Pallet::&lt;Test&gt;::current_block_number(),
                 operator_id2,
                 H256::random(),
                 new_branch_receipt,
@@ -1617,7 +1653,15 @@
                     future_receipt.domain_block_number,
                     future_receipt.consensus_block_number,
                 ),
-                future_receipt.block_extrinsics_roots.clone(),
+                future_receipt
+                    .block_extrinsics_roots
+                    .clone()
+                    .into_iter()
+                    .map(|er| BundleDigest {
+                        header_hash: H256::random(),
+                        extrinsics_root: er,
+                    })
+                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
             );
             <span class="macro">assert_eq!</span>(
                 execution_receipt_type::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>future_receipt),

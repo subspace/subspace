@@ -1508,22 +1508,6 @@
 <a href="#1508" id="1508">1508</a>
 <a href="#1509" id="1509">1509</a>
 <a href="#1510" id="1510">1510</a>
-<a href="#1511" id="1511">1511</a>
-<a href="#1512" id="1512">1512</a>
-<a href="#1513" id="1513">1513</a>
-<a href="#1514" id="1514">1514</a>
-<a href="#1515" id="1515">1515</a>
-<a href="#1516" id="1516">1516</a>
-<a href="#1517" id="1517">1517</a>
-<a href="#1518" id="1518">1518</a>
-<a href="#1519" id="1519">1519</a>
-<a href="#1520" id="1520">1520</a>
-<a href="#1521" id="1521">1521</a>
-<a href="#1522" id="1522">1522</a>
-<a href="#1523" id="1523">1523</a>
-<a href="#1524" id="1524">1524</a>
-<a href="#1525" id="1525">1525</a>
-<a href="#1526" id="1526">1526</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1573,7 +1557,7 @@
     DomainBlockLimit, DomainId, DomainInstanceData, ExecutionReceipt, OpaqueBundle, OperatorId,
     OperatorPublicKey, ProofOfElection, RuntimeId,
 };
-<span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, BlockNumberProvider, CheckedSub, Hash, One, Zero};
+<span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Hash, Zero};
 <span class="kw">use </span>sp_runtime::{RuntimeAppPublic, SaturatedConversion, Saturating};
 <span class="kw">use </span>sp_std::boxed::Box;
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
@@ -1657,7 +1641,7 @@
     <span class="kw">use </span>sp_domains::fraud_proof::FraudProof;
     <span class="kw">use </span>sp_domains::transaction::InvalidTransactionCode;
     <span class="kw">use </span>sp_domains::{
-        DomainId, EpochIndex, ExtrinsicsRoot, GenesisDomain, OperatorId, ReceiptHash, RuntimeId,
+        BundleDigest, DomainId, EpochIndex, GenesisDomain, OperatorId, ReceiptHash, RuntimeId,
         RuntimeType,
     };
     <span class="kw">use </span>sp_runtime::traits::{
@@ -1968,9 +1952,11 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>HeadReceiptNumber&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, T::DomainNumber, ValueQuery&gt;;
 
-    <span class="doccomment">/// A set of `bundle_extrinsics_root` from all bundles that successfully submitted to the consensus
-    /// block, these extrinsics will be used to construct the domain block and `ExecutionInbox` is used
-    /// to ensure subsequent ERs of that domain block include all pre-validated extrinsic bundles.
+    <span class="doccomment">/// A set of `BundleDigest` from all bundles that successfully submitted to the consensus block,
+    /// these bundles will be used to construct the domain block and `ExecutionInbox` is used to:
+    ///
+    /// 1. Ensure subsequent ERs of that domain block include all pre-validated extrinsic bundles
+    /// 2. Index the `InboxedBundle` and pruned its value when the corresponding `ExecutionInbox` is pruned
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub type </span>ExecutionInbox&lt;T: Config&gt; = StorageNMap&lt;
         <span class="kw">_</span>,
@@ -1979,9 +1965,16 @@
             NMapKey&lt;Identity, T::DomainNumber&gt;,
             NMapKey&lt;Identity, T::BlockNumber&gt;,
         ),
-        Vec&lt;ExtrinsicsRoot&gt;,
+        Vec&lt;BundleDigest&gt;,
         ValueQuery,
     &gt;;
+
+    <span class="doccomment">/// A mapping of `bundle_header_hash` -&gt; `bundle_author` for all the successfully submitted bundles of
+    /// the last `BlockTreePruningDepth` domain blocks. Used to verify the invalid bundle fraud proof and
+    /// slash malicious operator who have submitted invalid bundle.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>InboxedBundle&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Identity, H256, OperatorId, OptionQuery&gt;;
 
     <span class="doccomment">/// The block number of the best domain block, increase by one when the first bundle of the domain is
     /// successfully submitted to current consensus block, which mean a new domain block with this block
@@ -2033,6 +2026,8 @@
         </span>BundleTooLarge,
         <span class="comment">// Bundle with an invalid extrinsic root
         </span>InvalidExtrinsicRoot,
+        <span class="doccomment">/// This bundle duplicated with an already submitted bundle
+        </span>DuplicatedBundle,
     }
 
     <span class="kw">impl</span>&lt;T&gt; From&lt;RuntimeRegistryError&gt; <span class="kw">for </span>Error&lt;T&gt; {
@@ -2176,6 +2171,7 @@
 
             <span class="kw">let </span>domain_id = opaque_bundle.domain_id();
             <span class="kw">let </span>bundle_hash = opaque_bundle.hash();
+            <span class="kw">let </span>bundle_header_hash = opaque_bundle.sealed_header.pre_hash();
             <span class="kw">let </span>extrinsics_root = opaque_bundle.extrinsics_root();
             <span class="kw">let </span>operator_id = opaque_bundle.operator_id();
             <span class="kw">let </span>receipt = opaque_bundle.into_receipt();
@@ -2249,8 +2245,13 @@
             <span class="kw">let </span>consensus_block_number = frame_system::Pallet::&lt;T&gt;::current_block_number();
             ExecutionInbox::&lt;T&gt;::append(
                 (domain_id, head_domain_number, consensus_block_number),
-                extrinsics_root,
+                BundleDigest {
+                    header_hash: bundle_header_hash,
+                    extrinsics_root,
+                },
             );
+
+            InboxedBundle::&lt;T&gt;::insert(bundle_header_hash, operator_id);
 
             SuccessfulBundles::&lt;T&gt;::append(domain_id, bundle_hash);
 
@@ -2631,14 +2632,6 @@
         SuccessfulBundles::&lt;T&gt;::get(domain_id)
     }
 
-    <span class="kw">pub fn </span>successful_bundles_of_all_domains() -&gt; Vec&lt;H256&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>res = Vec::new();
-        <span class="kw">for </span><span class="kw-2">mut </span>bundles <span class="kw">in </span>SuccessfulBundles::&lt;T&gt;::iter_values() {
-            res.append(<span class="kw-2">&amp;mut </span>bundles);
-        }
-        res
-    }
-
     <span class="kw">pub fn </span>domain_runtime_code(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt; {
         RuntimeRegistry::&lt;T&gt;::get(<span class="self">Self</span>::runtime_id(domain_id)<span class="question-mark">?</span>)
             .map(|runtime_object| runtime_object.code)
@@ -2706,37 +2699,15 @@
             .map(|operator| (operator.signing_key, operator.current_total_stake))
     }
 
-    <span class="comment">// Check if a bundle is stale
-    </span><span class="kw">fn </span>check_stale_bundle(
-        current_block_number: T::BlockNumber,
-        bundle_create_at: T::BlockNumber,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BundleError&gt; {
-        <span class="kw">let </span>confirmation_depth_k = T::ConfirmationDepthK::get();
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(finalized) = current_block_number.checked_sub(<span class="kw-2">&amp;</span>confirmation_depth_k) {
-            {
-                <span class="comment">// Ideally, `bundle_create_at` is `current_block_number - 1`, we need
-                // to handle the edge case that `T::ConfirmationDepthK` happens to be 1.
-                </span><span class="kw">let </span>is_stale_bundle = <span class="kw">if </span>confirmation_depth_k.is_zero() {
-                    <span class="macro">unreachable!</span>(
-                        <span class="string">&quot;ConfirmationDepthK is guaranteed to be non-zero at genesis config&quot;
-                    </span>)
-                } <span class="kw">else if </span>confirmation_depth_k == One::one() {
-                    bundle_create_at &lt; finalized
-                } <span class="kw">else </span>{
-                    bundle_create_at &lt;= finalized
-                };
-
-                <span class="kw">if </span>is_stale_bundle {
-                    <span class="macro">log::debug!</span>(
-                        target: <span class="string">&quot;runtime::domains&quot;</span>,
-                        <span class="string">&quot;Bundle created on an ancient consensus block, current_block_number: {current_block_number:?}, \
-                        ConfirmationDepthK: {confirmation_depth_k:?}, `bundle_create_at`: {:?}, `finalized`: {finalized:?}&quot;</span>,
-                        bundle_create_at,
-                    );
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::StaleBundle);
-                }
-            }
-        }
+    <span class="kw">fn </span>check_bundle_duplication(opaque_bundle: <span class="kw-2">&amp;</span>OpaqueBundleOf&lt;T&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), BundleError&gt; {
+        <span class="comment">// NOTE: it is important to use the hash that not incliude the signature, otherwise
+        // the malicious operator may update its `signing_key` (this may support in the future)
+        // and sign an existing bundle thus creating a duplicated bundle and pass the check.
+        </span><span class="kw">let </span>bundle_header_hash = opaque_bundle.sealed_header.pre_hash();
+        <span class="macro">ensure!</span>(
+            !InboxedBundle::&lt;T&gt;::contains_key(bundle_header_hash),
+            BundleError::DuplicatedBundle
+        );
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -2814,10 +2785,7 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(BundleError::BadBundleSignature);
         }
 
-        <span class="comment">// Reject the stale bundles so that they can&#39;t be used by attacker to occupy the block space without cost.
-        </span><span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;T&gt;::current_block_number();
-        <span class="kw">let </span>bundle_create_at = sealed_header.header.consensus_block_number;
-        <span class="self">Self</span>::check_stale_bundle(current_block_number, bundle_create_at)<span class="question-mark">?</span>;
+        <span class="self">Self</span>::check_bundle_duplication(opaque_bundle)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>domain_config = DomainRegistry::&lt;T&gt;::get(domain_id)
             .ok_or(BundleError::InvalidDomainId)<span class="question-mark">?
