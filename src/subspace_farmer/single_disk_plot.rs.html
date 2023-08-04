@@ -1015,7 +1015,31 @@
 <a href="#1015" id="1015">1015</a>
 <a href="#1016" id="1016">1016</a>
 <a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>farming;
+<span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
 <span class="kw">mod </span>plotting;
 
@@ -1024,6 +1048,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::reward_signing::reward_signing;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::farming::farming;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_plot::farming::FarmingError;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_cache::{DiskPieceCache, DiskPieceCacheError};
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_reader::PieceReader;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_plot::plotting::PlottingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::plotting::{plotting, plotting_scheduler};
@@ -1070,6 +1095,9 @@
 
 <span class="doccomment">/// Reserve 1M of space for plot metadata (for potential future expansion)
 </span><span class="kw">const </span>RESERVED_PLOT_METADATA: u64 = <span class="number">1024 </span>* <span class="number">1024</span>;
+<span class="doccomment">/// Piece cache occupies 1% of allocated space
+</span><span class="comment">// TODO: Allow increasing this with CLI parameter
+</span><span class="kw">const </span>PIECE_CACHE_FRACTION: (usize, usize) = (<span class="number">1</span>, <span class="number">100</span>);
 
 <span class="doccomment">/// Semaphore that limits disk access concurrency in strategic places to the number specified during
 /// initialization
@@ -1290,6 +1318,9 @@
     </span><span class="doccomment">/// I/O error occurred
     </span><span class="attr">#[error(<span class="string">&quot;I/O error: {0}&quot;</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
+    <span class="doccomment">/// Piece cache error
+    </span><span class="attr">#[error(<span class="string">&quot;Piece cache error: {0}&quot;</span>)]
+    </span>PieceCacheError(<span class="attr">#[from] </span>DiskPieceCacheError),
     <span class="doccomment">/// Can&#39;t preallocate plot file, probably not enough space on disk
     </span><span class="attr">#[error(<span class="string">&quot;Can&#39;t preallocate plot file, probably not enough space on disk: {0}&quot;</span>)]
     </span>CantPreallocatePlotFile(io::Error),
@@ -1417,6 +1448,7 @@
     span: Span,
     tasks: FuturesUnordered&lt;BackgroundTask&gt;,
     handlers: Arc&lt;Handlers&gt;,
+    piece_cache: DiskPieceCache,
     piece_reader: PieceReader,
     _plotting_join_handle: JoinOnDrop,
     _farming_join_handle: JoinOnDrop,
@@ -1654,6 +1686,12 @@
             .preallocate(sector_size <span class="kw">as </span>u64 * u64::from(target_sector_count))
             .map_err(SingleDiskPlotError::CantPreallocatePlotFile)<span class="question-mark">?</span>;
 
+        <span class="kw">let </span>piece_cache = DiskPieceCache::open(
+            <span class="kw-2">&amp;</span>directory,
+            allocated_space <span class="kw">as </span>usize / PIECE_CACHE_FRACTION.<span class="number">1 </span>* PIECE_CACHE_FRACTION.<span class="number">0
+                </span>/ DiskPieceCache::element_size(),
+        )<span class="question-mark">?</span>;
+
         <span class="kw">let </span>(error_sender, error_receiver) = oneshot::channel();
         <span class="kw">let </span>error_sender = Arc::new(Mutex::new(<span class="prelude-val">Some</span>(error_sender)));
 
@@ -1878,6 +1916,7 @@
             span,
             tasks,
             handlers,
+            piece_cache,
             piece_reader,
             _plotting_join_handle: JoinOnDrop::new(plotting_join_handle),
             _farming_join_handle: JoinOnDrop::new(farming_join_handle),
@@ -1949,6 +1988,11 @@
                 })
             },
         )
+    }
+
+    <span class="doccomment">/// Get piece cache instance
+    </span><span class="kw">pub fn </span>piece_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DiskPieceCache {
+        <span class="self">self</span>.piece_cache.clone()
     }
 
     <span class="doccomment">/// Get piece reader to read plot pieces later
@@ -2024,6 +2068,8 @@
             <span class="macro">info!</span>(<span class="string">&quot;Deleting identity file at {}&quot;</span>, identity.display());
             fs::remove_file(identity)<span class="question-mark">?</span>;
         }
+
+        DiskPieceCache::wipe(directory)<span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(
             <span class="string">&quot;Deleting info file at {}&quot;</span>,
