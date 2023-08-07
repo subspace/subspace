@@ -1038,6 +1038,19 @@
 <a href="#1038" id="1038">1038</a>
 <a href="#1039" id="1039">1039</a>
 <a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1068,7 +1081,7 @@
 <span class="kw">use </span>std::fs::OpenOptions;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::io::{Seek, SeekFrom};
-<span class="kw">use </span>std::num::NonZeroU16;
+<span class="kw">use </span>std::num::{NonZeroU16, NonZeroU8};
 <span class="kw">use </span>std::path::{Path, PathBuf};
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::Arc;
@@ -1095,9 +1108,6 @@
 
 <span class="doccomment">/// Reserve 1M of space for plot metadata (for potential future expansion)
 </span><span class="kw">const </span>RESERVED_PLOT_METADATA: u64 = <span class="number">1024 </span>* <span class="number">1024</span>;
-<span class="doccomment">/// Piece cache occupies 1% of allocated space
-</span><span class="comment">// TODO: Allow increasing this with CLI parameter
-</span><span class="kw">const </span>PIECE_CACHE_FRACTION: (usize, usize) = (<span class="number">1</span>, <span class="number">100</span>);
 
 <span class="doccomment">/// Semaphore that limits disk access concurrency in strategic places to the number specified during
 /// initialization
@@ -1309,6 +1319,8 @@
     </span><span class="kw">pub </span>kzg: Kzg,
     <span class="doccomment">/// Erasure coding instance to use.
     </span><span class="kw">pub </span>erasure_coding: ErasureCoding,
+    <span class="doccomment">/// Percentage of disk plot dedicated for caching purposes
+    </span><span class="kw">pub </span>cache_percentage: NonZeroU8,
 }
 
 <span class="doccomment">/// Errors happening when trying to create/open single disk plot
@@ -1498,6 +1510,7 @@
             piece_getter,
             kzg,
             erasure_coding,
+            cache_percentage,
         } = options;
         fs::create_dir_all(<span class="kw-2">&amp;</span>directory)<span class="question-mark">?</span>;
 
@@ -1586,7 +1599,21 @@
         <span class="kw">let </span>pieces_in_sector = single_disk_plot_info.pieces_in_sector();
         <span class="kw">let </span>sector_size = sector_size(max_pieces_in_sector);
         <span class="kw">let </span>sector_metadata_size = SectorMetadata::encoded_size();
-        <span class="kw">let </span>target_sector_count = single_disk_plot_info.allocated_space() / sector_size <span class="kw">as </span>u64;
+        <span class="comment">// TODO: Split allocated space into more components once all components are deterministic
+        //  to correctly size everything:
+        //  * plot info
+        //  * identity
+        //  * metadata
+        //  * plot
+        //  * known_addresses
+        </span><span class="kw">let </span>cache_size = allocated_space / <span class="number">100 </span>* u64::from(cache_percentage.get());
+        <span class="comment">// We have a hardcoded value decreasing allocated space to account for things like cache,
+        // don&#39;t change plot size (yet) if cache is under 5% that is assumed to be accounted for,
+        // this will be removed once we have proper static allocation as described in TODO above
+        </span><span class="kw">let </span>cache_size_exceeding_5_percents =
+            allocated_space / <span class="number">100 </span>* u64::from(cache_percentage.get()).saturating_sub(<span class="number">5</span>);
+        <span class="kw">let </span>plot_space = (allocated_space - cache_size_exceeding_5_percents) / sector_size <span class="kw">as </span>u64;
+        <span class="kw">let </span>target_sector_count = plot_space;
         <span class="kw">let </span>target_sector_count = <span class="kw">match </span>SectorIndex::try_from(target_sector_count) {
             <span class="prelude-val">Ok</span>(target_sector_count) <span class="kw">if </span>target_sector_count &lt; SectorIndex::MAX =&gt; {
                 target_sector_count
@@ -1688,8 +1715,7 @@
 
         <span class="kw">let </span>piece_cache = DiskPieceCache::open(
             <span class="kw-2">&amp;</span>directory,
-            allocated_space <span class="kw">as </span>usize / PIECE_CACHE_FRACTION.<span class="number">1 </span>* PIECE_CACHE_FRACTION.<span class="number">0
-                </span>/ DiskPieceCache::element_size(),
+            cache_size <span class="kw">as </span>usize / DiskPieceCache::element_size(),
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(error_sender, error_receiver) = oneshot::channel();
