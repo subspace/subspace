@@ -461,6 +461,31 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
     SectorMetadata,
@@ -470,7 +495,7 @@
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::{Error <span class="kw">as </span>BackoffError, ExponentialBackoff};
-<span class="kw">use </span>futures::stream::FuturesOrdered;
+<span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>parking_lot::Mutex;
@@ -488,7 +513,7 @@
 <span class="kw">use </span>subspace_proof_of_space::{Quality, Table, TableGenerator};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::sync::Semaphore;
-<span class="kw">use </span>tracing::{debug, warn};
+<span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="kw">const </span>RECONSTRUCTION_CONCURRENCY_LIMIT: usize = <span class="number">1</span>;
 
@@ -675,34 +700,45 @@
 
     </span><span class="kw">let </span>raw_sector = Mutex::new(RawSector::new(pieces_in_sector));
 
-    retry(default_backoff(), || <span class="kw">async </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>raw_sector = raw_sector.lock();
-        raw_sector.records.clear();
-        raw_sector.metadata.clear();
+    {
+        <span class="comment">// This list will be mutated, replacing pieces we have already processed with `None`
+        </span><span class="kw">let </span>incremental_piece_indices =
+            Mutex::new(piece_indexes.iter().copied().map(<span class="prelude-val">Some</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = download_sector(
-            <span class="kw-2">&amp;mut </span>raw_sector,
-            piece_getter,
-            piece_getter_retry_policy,
-            kzg,
-            <span class="kw-2">&amp;</span>piece_indexes,
-        )
-        .<span class="kw">await
-        </span>{
-            <span class="macro">warn!</span>(
-                %sector_index,
-                %error,
-                <span class="string">&quot;Sector plotting attempt failed, will retry later&quot;
-            </span>);
+        retry(default_backoff(), || <span class="kw">async </span>{
+            <span class="kw">let </span><span class="kw-2">mut </span>raw_sector = raw_sector.lock();
+            <span class="kw">let </span><span class="kw-2">mut </span>incremental_piece_indices = incremental_piece_indices.lock();
 
-            <span class="kw">return </span><span class="prelude-val">Err</span>(BackoffError::transient(error));
-        }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = download_sector(
+                <span class="kw-2">&amp;mut </span>raw_sector,
+                piece_getter,
+                piece_getter_retry_policy,
+                kzg,
+                <span class="kw-2">&amp;mut </span>incremental_piece_indices,
+            )
+            .<span class="kw">await
+            </span>{
+                <span class="kw">let </span>retrieved_pieces = incremental_piece_indices
+                    .iter()
+                    .filter(|maybe_piece_index| maybe_piece_index.is_some())
+                    .count();
+                <span class="macro">warn!</span>(
+                    %sector_index,
+                    %error,
+                    %pieces_in_sector,
+                    %retrieved_pieces,
+                    <span class="string">&quot;Sector plotting attempt failed, will retry later&quot;
+                </span>);
 
-        <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Sector downloaded successfully&quot;</span>);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(BackoffError::transient(error));
+            }
 
-        <span class="prelude-val">Ok</span>(())
-    })
-    .<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Sector downloaded successfully&quot;</span>);
+
+            <span class="prelude-val">Ok</span>(())
+        })
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+    }
 
     <span class="kw">let </span><span class="kw-2">mut </span>raw_sector = raw_sector.into_inner();
 
@@ -726,7 +762,7 @@
                 .map(|scalar_bytes| {
                     Scalar::try_from(scalar_bytes).expect(
                         <span class="string">&quot;Piece getter must returns valid pieces of history that contain \
-                                proper scalar bytes; qed&quot;</span>,
+                        proper scalar bytes; qed&quot;</span>,
                     )
                 })
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
@@ -864,18 +900,22 @@
     piece_getter: <span class="kw-2">&amp;</span>PG,
     piece_getter_retry_policy: PieceGetterRetryPolicy,
     kzg: <span class="kw-2">&amp;</span>Kzg,
-    piece_indexes: <span class="kw-2">&amp;</span>[PieceIndex],
+    piece_indexes: <span class="kw-2">&amp;mut </span>[<span class="prelude-ty">Option</span>&lt;PieceIndex&gt;],
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt; {
     <span class="comment">// TODO: Make configurable, likely allowing user to specify RAM usage expectations and inferring
     //  concurrency from there
     </span><span class="kw">let </span>recovery_semaphore = Semaphore::new(RECONSTRUCTION_CONCURRENCY_LIMIT);
 
     <span class="kw">let </span><span class="kw-2">mut </span>pieces_receiving_futures = piece_indexes
-        .iter()
-        .map(|piece_index| <span class="kw">async </span>{
-            <span class="kw">let </span>piece_index = <span class="kw-2">*</span>piece_index;
+        .iter_mut()
+        .zip(raw_sector.records.iter_mut().zip(<span class="kw-2">&amp;mut </span>raw_sector.metadata))
+        .map(|(maybe_piece_index, (record, metadata))| <span class="kw">async </span>{
+            <span class="comment">// We skip pieces that we have already processed previously
+            </span><span class="kw">let </span><span class="prelude-val">Some</span>(piece_index) = <span class="kw-2">*</span>maybe_piece_index <span class="kw">else </span>{
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            };
 
-            <span class="kw">let </span>piece_result = piece_getter
+            <span class="kw">let </span><span class="kw-2">mut </span>piece_result = piece_getter
                 .get_piece(piece_index, piece_getter_retry_policy)
                 .<span class="kw">await</span>;
 
@@ -884,44 +924,54 @@
                 .map(|piece| piece.is_some())
                 .unwrap_or_default();
 
-            <span class="comment">// all retries failed
+            <span class="comment">// All retries failed
             </span><span class="kw">if </span>!succeeded {
                 <span class="kw">let </span>_permit = <span class="kw">match </span>recovery_semaphore.acquire().<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(permit) =&gt; permit,
                     <span class="prelude-val">Err</span>(error) =&gt; {
-                        <span class="kw">return </span>(
-                            piece_index,
-                            <span class="prelude-val">Err</span>(<span class="macro">format!</span>(<span class="string">&quot;Recovery semaphore was closed: {error}&quot;</span>).into()),
-                        );
+                        <span class="kw">let </span>error = <span class="macro">format!</span>(<span class="string">&quot;Recovery semaphore was closed: {error}&quot;</span>).into();
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::FailedToRetrievePiece { piece_index, error });
                     }
                 };
                 <span class="kw">let </span>recovered_piece =
                     recover_missing_piece(piece_getter, kzg.clone(), piece_index).<span class="kw">await</span>;
 
-                <span class="kw">return </span>(piece_index, recovered_piece.map(<span class="prelude-val">Some</span>).map_err(Into::into));
+                piece_result = recovered_piece.map(<span class="prelude-val">Some</span>).map_err(Into::into);
             }
 
-            (piece_index, piece_result)
+            <span class="kw">let </span>piece = piece_result
+                .map_err(|error| PlottingError::FailedToRetrievePiece { piece_index, error })<span class="question-mark">?
+                </span>.ok_or(PlottingError::PieceNotFound { piece_index })<span class="question-mark">?</span>;
+
+            <span class="comment">// Fancy way to insert value in order to avoid going through stack (if naive de-referencing
+            // is used) and potentially causing stack overflow as the result
+            </span>record
+                .flatten_mut()
+                .copy_from_slice(piece.record().flatten());
+            <span class="kw-2">*</span>metadata = RecordMetadata {
+                commitment: <span class="kw-2">*</span>piece.commitment(),
+                witness: <span class="kw-2">*</span>piece.witness(),
+            };
+
+            <span class="comment">// We have processed this piece index, clear it
+            </span>maybe_piece_index.take();
+
+            <span class="prelude-val">Ok</span>(())
         })
-        .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;();
+        .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;();
 
-    <span class="kw">while let </span><span class="prelude-val">Some</span>((piece_index, piece_result)) = pieces_receiving_futures.next().<span class="kw">await </span>{
-        <span class="kw">let </span>piece = piece_result
-            .map_err(|error| PlottingError::FailedToRetrievePiece { piece_index, error })<span class="question-mark">?
-            </span>.ok_or(PlottingError::PieceNotFound { piece_index })<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>final_result = <span class="prelude-val">Ok</span>(());
 
-        <span class="kw">let </span>(record, commitment, witness) = piece.split();
-        <span class="comment">// Fancy way to insert value in order to avoid going through stack (if naive de-referencing
-        // is used) and potentially causing stack overflow as the result
-        </span>raw_sector
-            .records
-            .extend_from_slice(std::slice::from_ref(record));
-        raw_sector.metadata.push(RecordMetadata {
-            commitment: <span class="kw-2">*</span>commitment,
-            witness: <span class="kw-2">*</span>witness,
-        });
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(result) = pieces_receiving_futures.next().<span class="kw">await </span>{
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = result {
+            <span class="macro">trace!</span>(%error, <span class="string">&quot;Failed to download piece&quot;</span>);
+
+            <span class="kw">if </span>final_result.is_ok() {
+                final_result = <span class="prelude-val">Err</span>(error);
+            }
+        }
     }
 
-    <span class="prelude-val">Ok</span>(())
+    final_result
 }
 </code></pre></div></section></main></body></html>
