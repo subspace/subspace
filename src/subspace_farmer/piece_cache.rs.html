@@ -663,6 +663,17 @@
 <a href="#663" id="663">663</a>
 <a href="#664" id="664">664</a>
 <a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_cache::{DiskPieceCache, Offset};
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use </span><span class="kw">crate</span>::NodeClient;
@@ -675,10 +686,10 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, SegmentIndex};
 <span class="kw">use </span>subspace_farmer_components::plotting::{PieceGetter, PieceGetterRetryPolicy};
-<span class="kw">use </span>subspace_networking::libp2p::kad::RecordKey;
+<span class="kw">use </span>subspace_networking::libp2p::kad::{ProviderRecord, RecordKey};
 <span class="kw">use </span>subspace_networking::libp2p::PeerId;
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
-<span class="kw">use </span>subspace_networking::{KeyWrapper, UniqueRecordBinaryHeap};
+<span class="kw">use </span>subspace_networking::{KeyWrapper, LocalRecordProvider, UniqueRecordBinaryHeap};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
 
@@ -1224,6 +1235,7 @@
 <span class="doccomment">/// Piece cache that aggregates caches of multiple disks
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>PieceCache {
+    peer_id: PeerId,
     <span class="doccomment">/// Individual disk caches where pieces are stored
     </span>caches: Arc&lt;RwLock&lt;Vec&lt;DiskPieceCacheState&gt;&gt;&gt;,
     <span class="comment">// We do not want to increase capacity unnecessarily on clone
@@ -1243,6 +1255,7 @@
         <span class="kw">let </span>(worker_sender, worker_receiver) = mpsc::channel(WORKER_CHANNEL_CAPACITY);
 
         <span class="kw">let </span>instance = <span class="self">Self </span>{
+            peer_id,
             caches: Arc::clone(<span class="kw-2">&amp;</span>caches),
             worker_sender,
         };
@@ -1255,18 +1268,6 @@
 
         (instance, worker)
     }
-
-    <span class="doccomment">/// Check whether piece exists in cache
-    </span><span class="kw">pub fn </span>contains_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, key: RecordKey) -&gt; bool {
-        <span class="comment">// It is okay to take read lock here, writes locks are very infrequent and very short
-        </span><span class="kw">for </span>cache <span class="kw">in </span><span class="self">self</span>.caches.read().iter() {
-            <span class="kw">if </span>cache.stored_pieces.contains_key(<span class="kw-2">&amp;</span>key) {
-                <span class="kw">return </span><span class="bool-val">true</span>;
-            };
-        }
-
-        <span class="bool-val">false
-    </span>}
 
     <span class="doccomment">/// Get piece from cache
     </span><span class="kw">pub async fn </span>get_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, key: RecordKey) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
@@ -1327,5 +1328,26 @@
             <span class="macro">warn!</span>(%error, <span class="string">&quot;Failed to replace backing caches, worker exited&quot;</span>);
         }
     }
+}
+
+<span class="kw">impl </span>LocalRecordProvider <span class="kw">for </span>PieceCache {
+    <span class="kw">fn </span>record(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>RecordKey) -&gt; <span class="prelude-ty">Option</span>&lt;ProviderRecord&gt; {
+        <span class="comment">// It is okay to take read lock here, writes locks are very infrequent and very short
+        </span><span class="kw">for </span>cache <span class="kw">in </span><span class="self">self</span>.caches.read().iter() {
+            <span class="kw">if </span>cache.stored_pieces.contains_key(key) {
+                <span class="comment">// Note: We store our own provider records locally without local addresses
+                // to avoid redundant storage and outdated addresses. Instead these are
+                // acquired on demand when returning a `ProviderRecord` for the local node.
+                </span><span class="kw">return </span><span class="prelude-val">Some</span>(ProviderRecord {
+                    key: key.clone(),
+                    provider: <span class="self">self</span>.peer_id,
+                    expires: <span class="prelude-val">None</span>,
+                    addresses: Vec::new(),
+                });
+            };
+        }
+
+        <span class="prelude-val">None
+    </span>}
 }
 </code></pre></div></section></main></body></html>
