@@ -1444,8 +1444,54 @@
 <a href="#1444" id="1444">1444</a>
 <a href="#1445" id="1445">1445</a>
 <a href="#1446" id="1446">1446</a>
+<a href="#1447" id="1447">1447</a>
+<a href="#1448" id="1448">1448</a>
+<a href="#1449" id="1449">1449</a>
+<a href="#1450" id="1450">1450</a>
+<a href="#1451" id="1451">1451</a>
+<a href="#1452" id="1452">1452</a>
+<a href="#1453" id="1453">1453</a>
+<a href="#1454" id="1454">1454</a>
+<a href="#1455" id="1455">1455</a>
+<a href="#1456" id="1456">1456</a>
+<a href="#1457" id="1457">1457</a>
+<a href="#1458" id="1458">1458</a>
+<a href="#1459" id="1459">1459</a>
+<a href="#1460" id="1460">1460</a>
+<a href="#1461" id="1461">1461</a>
+<a href="#1462" id="1462">1462</a>
+<a href="#1463" id="1463">1463</a>
+<a href="#1464" id="1464">1464</a>
+<a href="#1465" id="1465">1465</a>
+<a href="#1466" id="1466">1466</a>
+<a href="#1467" id="1467">1467</a>
+<a href="#1468" id="1468">1468</a>
+<a href="#1469" id="1469">1469</a>
+<a href="#1470" id="1470">1470</a>
+<a href="#1471" id="1471">1471</a>
+<a href="#1472" id="1472">1472</a>
+<a href="#1473" id="1473">1473</a>
+<a href="#1474" id="1474">1474</a>
+<a href="#1475" id="1475">1475</a>
+<a href="#1476" id="1476">1476</a>
+<a href="#1477" id="1477">1477</a>
+<a href="#1478" id="1478">1478</a>
+<a href="#1479" id="1479">1479</a>
+<a href="#1480" id="1480">1480</a>
+<a href="#1481" id="1481">1481</a>
+<a href="#1482" id="1482">1482</a>
+<a href="#1483" id="1483">1483</a>
+<a href="#1484" id="1484">1484</a>
+<a href="#1485" id="1485">1485</a>
+<a href="#1486" id="1486">1486</a>
+<a href="#1487" id="1487">1487</a>
+<a href="#1488" id="1488">1488</a>
+<a href="#1489" id="1489">1489</a>
+<a href="#1490" id="1490">1490</a>
+<a href="#1491" id="1491">1491</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::{
-    NetworkingParametersRegistry, PEERS_ADDRESSES_BATCH_SIZE,
+    append_p2p_suffix, remove_p2p_suffix, NetworkingParametersRegistry, PeerAddressRemovedEvent,
+    PEERS_ADDRESSES_BATCH_SIZE,
 };
 <span class="kw">use </span><span class="kw">crate</span>::behavior::{
     Behavior, Event, GeneralConnectedPeersInstance, SpecialConnectedPeersInstance,
@@ -1461,10 +1507,11 @@
 <span class="kw">use </span><span class="kw">crate</span>::request_responses::{Event <span class="kw">as </span>RequestResponseEvent, IfDisconnected};
 <span class="kw">use </span><span class="kw">crate</span>::shared::{Command, CreatedSubscription, NewPeerInfo, Shared};
 <span class="kw">use </span><span class="kw">crate</span>::utils::{
-    convert_multiaddresses, is_global_address_or_dns, PeerAddress, ResizableSemaphorePermit,
+    is_global_address_or_dns, strip_peer_id, PeerAddress, ResizableSemaphorePermit,
 };
 <span class="kw">use </span>async_mutex::Mutex <span class="kw">as </span>AsyncMutex;
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>event_listener_primitives::HandlerId;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::future::Fuse;
 <span class="kw">use </span>futures::{FutureExt, StreamExt};
@@ -1592,6 +1639,11 @@
     <span class="doccomment">/// Known external addresses to the local peer. The addresses are added on the swarm start
     /// and enable peer to notify others about its reachable address.
     </span>external_addresses: Vec&lt;Multiaddr&gt;,
+    <span class="doccomment">/// Receives an event on peer address removal from the persistent storage.
+    </span>removed_addresses_rx: mpsc::UnboundedReceiver&lt;PeerAddressRemovedEvent&gt;,
+    <span class="doccomment">/// Optional storage for the [`HandlerId`] of the address removal task.
+    /// We keep to stop the task along with the rest of the networking.
+    </span>_address_removal_task_handler_id: <span class="prelude-ty">Option</span>&lt;HandlerId&gt;,
 }
 
 <span class="comment">// Helper struct for NodeRunner configuration (clippy requirement).
@@ -1627,7 +1679,7 @@
             swarm,
             shared_weak,
             next_random_query_interval,
-            networking_parameters_registry,
+            <span class="kw-2">mut </span>networking_parameters_registry,
             reserved_peers,
             temporary_bans,
             metrics,
@@ -1639,6 +1691,19 @@
             external_addresses,
         }: NodeRunnerConfig&lt;LocalRecordProvider&gt;,
     ) -&gt; <span class="self">Self </span>{
+        <span class="comment">// Setup the address removal events exchange between persistent params storage and Kademlia.
+        </span><span class="kw">let </span>(removed_addresses_tx, removed_addresses_rx) = mpsc::unbounded();
+        <span class="kw">let </span><span class="kw-2">mut </span>address_removal_task_handler_id = <span class="prelude-val">None</span>;
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(handler_id) = networking_parameters_registry.on_unreachable_address({
+            Arc::new(<span class="kw">move </span>|event| {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = removed_addresses_tx.unbounded_send(event.clone()) {
+                    <span class="macro">debug!</span>(<span class="question-mark">?</span>error, <span class="question-mark">?</span>event, <span class="string">&quot;Cannot send PeerAddressRemovedEvent&quot;</span>)
+                };
+            })
+        }) {
+            address_removal_task_handler_id.replace(handler_id);
+        }
+
         <span class="self">Self </span>{
             allow_non_global_addresses_in_dht,
             command_receiver,
@@ -1665,6 +1730,8 @@
             bootstrap_command_state: Arc::new(AsyncMutex::new(BootstrapCommandState::default())),
             kademlia_mode,
             external_addresses,
+            removed_addresses_rx,
+            _address_removal_task_handler_id: address_removal_task_handler_id,
         }
     }
 
@@ -1705,6 +1772,9 @@
 
                     <span class="self">self</span>.periodical_tasks_interval =
                         Box::pin(tokio::time::sleep(Duration::from_secs(<span class="number">5</span>)).fuse());
+                },
+                event = <span class="self">self</span>.removed_addresses_rx.select_next_some() =&gt; {
+                    <span class="self">self</span>.handle_removed_address_event(event);
                 },
             }
         }
@@ -1805,6 +1875,21 @@
             .behaviour_mut()
             .kademlia
             .get_closest_peers(random_peer_id);
+    }
+
+    <span class="kw">fn </span>handle_removed_address_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: PeerAddressRemovedEvent) {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>event, <span class="string">&quot;Peer addressed removed event.&quot;</span>,);
+
+        <span class="comment">// Remove both versions of the address
+        </span><span class="self">self</span>.swarm.behaviour_mut().kademlia.remove_address(
+            <span class="kw-2">&amp;</span>event.peer_id,
+            <span class="kw-2">&amp;</span>append_p2p_suffix(event.peer_id, event.address.clone()),
+        );
+
+        <span class="self">self</span>.swarm
+            .behaviour_mut()
+            .kademlia
+            .remove_address(<span class="kw-2">&amp;</span>event.peer_id, <span class="kw-2">&amp;</span>remove_p2p_suffix(event.address));
     }
 
     <span class="kw">async fn </span>handle_swarm_event&lt;E: Debug&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, swarm_event: SwarmEvent&lt;Event, E&gt;) {
@@ -2164,6 +2249,11 @@
                 request: InboundRequest::AddProvider { record, .. },
             } =&gt; {
                 <span class="macro">debug!</span>(<span class="string">&quot;Unexpected AddProvider request received: {:?}&quot;</span>, record);
+            }
+            KademliaEvent::UnroutablePeer { peer } =&gt; {
+                <span class="macro">debug!</span>(<span class="string">&quot;Unroutable peer detected: {:?}&quot;</span>, peer);
+
+                <span class="self">self</span>.swarm.behaviour_mut().kademlia.remove_peer(<span class="kw-2">&amp;</span>peer);
             }
             KademliaEvent::OutboundQueryProgressed {
                 step: ProgressStep { last, .. },
@@ -2758,7 +2848,7 @@
             Command::Bootstrap { result_sender } =&gt; {
                 <span class="kw">let </span>kademlia = <span class="kw-2">&amp;mut </span><span class="self">self</span>.swarm.behaviour_mut().kademlia;
 
-                <span class="kw">for </span>(peer_id, address) <span class="kw">in </span>convert_multiaddresses(<span class="self">self</span>.bootstrap_addresses.clone()) {
+                <span class="kw">for </span>(peer_id, address) <span class="kw">in </span>strip_peer_id(<span class="self">self</span>.bootstrap_addresses.clone()) {
                     kademlia.add_address(<span class="kw-2">&amp;</span>peer_id, address);
                 }
 
@@ -2881,7 +2971,7 @@
             result_peers.push((peer_id, addr))
         }
 
-        <span class="kw">let </span>bootstrap_nodes = convert_multiaddresses(<span class="self">self</span>.bootstrap_addresses.clone())
+        <span class="kw">let </span>bootstrap_nodes = strip_peer_id(<span class="self">self</span>.bootstrap_addresses.clone())
             .into_iter()
             .map(|(peer_id, <span class="kw">_</span>)| peer_id)
             .collect::&lt;HashSet&lt;<span class="kw">_</span>&gt;&gt;();
