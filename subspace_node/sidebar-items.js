@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Subcommand"],"mod":["domain"],"struct":["Cli","ExecutorDispatch","PurgeChainCmd"]};
+window.SIDEBAR_ITEMS = {"enum":["CliPotRole","Subcommand"],"mod":["domain"],"struct":["Cli","ExecutorDispatch","PurgeChainCmd"]};

@@ -107,27 +107,33 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Consensus node interface to the clock master network.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::gossip::PotGossip;
 <span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
-<span class="kw">use </span><span class="kw">crate</span>::utils::get_consensus_tip_proofs;
+<span class="kw">use </span><span class="kw">crate</span>::utils::get_consensus_tip;
 <span class="kw">use </span><span class="kw">crate</span>::PotComponents;
-<span class="kw">use </span>futures::{FutureExt, StreamExt};
-<span class="kw">use </span>parity_scale_codec::Decode;
 <span class="kw">use </span>sc_network::PeerId;
+<span class="kw">use </span>sc_network_gossip::{Network <span class="kw">as </span>GossipNetwork, Syncing <span class="kw">as </span>GossipSyncing};
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, Info};
 <span class="kw">use </span>sp_consensus::SyncOracle;
+<span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Instant;
 <span class="kw">use </span>subspace_core_primitives::PotProof;
-<span class="kw">use </span>tracing::{error, trace};
+<span class="kw">use </span>tracing::{error, info, trace};
 
 <span class="doccomment">/// The PoT client implementation
-</span><span class="kw">pub struct </span>PotClient&lt;Block: BlockT, Client, SO&gt; {
-    gossip: PotGossip&lt;Block&gt;,
+</span><span class="kw">pub struct </span>PotClient&lt;Block: BlockT&lt;Hash = H256&gt;, Client, SO&gt; {
     pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
+    gossip: PotGossip&lt;Block&gt;,
     client: Arc&lt;Client&gt;,
     sync_oracle: Arc&lt;SO&gt;,
     chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
@@ -135,78 +141,84 @@
 
 <span class="kw">impl</span>&lt;Block, Client, SO&gt; PotClient&lt;Block, Client, SO&gt;
 <span class="kw">where
-    </span>Block: BlockT,
+    </span>Block: BlockT&lt;Hash = H256&gt;,
     Client: HeaderBackend&lt;Block&gt;,
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
 {
     <span class="doccomment">/// Creates the PoT client instance.
-    </span><span class="kw">pub fn </span>new(
-        components: PotComponents&lt;Block&gt;,
-        gossip: PotGossip&lt;Block&gt;,
+    </span><span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(
+        components: PotComponents,
         client: Arc&lt;Client&gt;,
         sync_oracle: Arc&lt;SO&gt;,
+        network: Network,
+        sync: Arc&lt;GossipSync&gt;,
         chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
-    ) -&gt; <span class="self">Self </span>{
+    ) -&gt; <span class="self">Self
+    </span><span class="kw">where
+        </span>Network: GossipNetwork&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
+        GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
+    {
         <span class="self">Self </span>{
-            gossip,
-            pot_state: components.protocol_state,
+            pot_state: components.protocol_state.clone(),
+            gossip: PotGossip::new(
+                network,
+                sync,
+                components.protocol_state,
+                components.proof_of_time,
+            ),
             client,
             sync_oracle,
             chain_info_fn,
         }
     }
 
-    <span class="doccomment">/// Starts the workers.
+    <span class="doccomment">/// Runs the node client processing loop.
     </span><span class="kw">pub async fn </span>run(<span class="self">self</span>) {
-        <span class="comment">// Wait for sync to complete, get the proof from the tip.
-        </span><span class="kw">let </span>proofs = <span class="kw">match </span>get_consensus_tip_proofs(
-            <span class="self">self</span>.client.clone(),
-            <span class="self">self</span>.sync_oracle.clone(),
-            <span class="self">self</span>.chain_info_fn.clone(),
-        )
-        .<span class="kw">await
-        </span>{
-            <span class="prelude-val">Ok</span>(proofs) =&gt; proofs,
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">error!</span>(<span class="string">&quot;PoT client: Failed to get initial proofs: {err:?}&quot;</span>);
-                <span class="kw">return</span>;
+        <span class="self">self</span>.initialize().<span class="kw">await</span>;
+        <span class="kw">let </span>handle_gossip_message: Arc&lt;<span class="kw">dyn </span>Fn(PeerId, PotProof) + Send + Sync&gt; =
+            Arc::new(|sender, proof| {
+                <span class="self">self</span>.handle_gossip_message(sender, proof);
+            });
+        <span class="self">self</span>.gossip
+            .process_incoming_messages(handle_gossip_message)
+            .<span class="kw">await</span>;
+        <span class="macro">error!</span>(<span class="string">&quot;pot_client: gossip engine has terminated.&quot;</span>);
+    }
+
+    <span class="doccomment">/// Initializes the chain state from the consensus tip info.
+    </span><span class="kw">async fn </span>initialize(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="comment">// Wait for a block with proofs.
+        </span><span class="macro">info!</span>(<span class="string">&quot;pot_client::initialize: waiting for initialization ...&quot;</span>);
+        <span class="kw">let </span>delay = tokio::time::Duration::from_secs(<span class="number">1</span>);
+        <span class="kw">let </span>proofs = <span class="kw">loop </span>{
+            <span class="comment">// TODO: Proper error handling or proof
+            </span><span class="kw">let </span>tip = get_consensus_tip(
+                <span class="self">self</span>.client.clone(),
+                <span class="self">self</span>.sync_oracle.clone(),
+                <span class="self">self</span>.chain_info_fn.clone(),
+            )
+            .<span class="kw">await
+            </span>.expect(<span class="string">&quot;Consensus tip info should be available&quot;</span>);
+
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(proofs) = tip.pot_pre_digest.proofs().cloned() {
+                <span class="macro">info!</span>(
+                    <span class="string">&quot;pot_client::initialization done: block_hash={:?}, block_number={}, slot_number={}, {:?}&quot;</span>,
+                    tip.block_hash, tip.block_number, tip.slot_number, tip.pot_pre_digest
+                );
+                <span class="kw">break </span>proofs;
             }
+
+            <span class="macro">trace!</span>(<span class="string">&quot;pot_client::initialize: {tip:?}, no proofs yet, to wait ...&quot;</span>,);
+            tokio::time::sleep(delay).<span class="kw">await</span>;
         };
+
         <span class="self">self</span>.pot_state.reset(proofs);
-
-        <span class="comment">// Filter out incoming messages without sender_id or that fail to decode.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>incoming_messages = Box::pin(<span class="self">self</span>.gossip.incoming_messages().filter_map(
-            |notification| <span class="kw">async move </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>ret = <span class="prelude-val">None</span>;
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = notification.sender {
-                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(msg) = PotProof::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..]) {
-                        ret = <span class="prelude-val">Some</span>((sender, msg))
-                    }
-                }
-                ret
-            },
-        ));
-
-        <span class="kw">loop </span>{
-            <span class="macro">futures::select! </span>{
-                gossiped = incoming_messages.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>((sender, proof)) = gossiped {
-                        <span class="macro">trace!</span>(<span class="string">&quot;pot_client: got gossiped proof: {sender} =&gt; {proof}&quot;</span>);
-                        <span class="self">self</span>.handle_gossip_message(<span class="self">self</span>.pot_state.as_ref(), sender, proof);
-                    }
-                },
-                <span class="kw">_ </span>= <span class="self">self</span>.gossip.is_terminated().fuse() =&gt; {
-                    <span class="macro">error!</span>(<span class="string">&quot;pot_client: gossip engine has terminated.&quot;</span>);
-                    <span class="kw">return</span>;
-                }
-            }
-        }
     }
 
     <span class="doccomment">/// Handles the incoming gossip message.
-    </span><span class="kw">fn </span>handle_gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, state: <span class="kw-2">&amp;</span><span class="kw">dyn </span>PotProtocolState, sender: PeerId, proof: PotProof) {
+    </span><span class="kw">fn </span>handle_gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: PeerId, proof: PotProof) {
         <span class="kw">let </span>start_ts = Instant::now();
-        <span class="kw">let </span>ret = state.on_proof_from_peer(sender, <span class="kw-2">&amp;</span>proof);
+        <span class="kw">let </span>ret = <span class="self">self</span>.pot_state.on_proof_from_peer(sender, <span class="kw-2">&amp;</span>proof);
         <span class="kw">let </span>elapsed = start_ts.elapsed();
 
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = ret {

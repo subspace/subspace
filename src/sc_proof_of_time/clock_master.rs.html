@@ -228,71 +228,49 @@
 <a href="#228" id="228">228</a>
 <a href="#229" id="229">229</a>
 <a href="#230" id="230">230</a>
-<a href="#231" id="231">231</a>
-<a href="#232" id="232">232</a>
-<a href="#233" id="233">233</a>
-<a href="#234" id="234">234</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Clock master implementation.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::gossip::PotGossip;
 <span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
-<span class="kw">use </span><span class="kw">crate</span>::utils::get_consensus_tip_proofs;
+<span class="kw">use </span><span class="kw">crate</span>::utils::get_consensus_tip;
 <span class="kw">use </span><span class="kw">crate</span>::PotComponents;
-<span class="kw">use </span>futures::{FutureExt, StreamExt};
-<span class="kw">use </span>parity_scale_codec::{Decode, Encode};
+<span class="kw">use </span>futures::FutureExt;
+<span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>sc_network::PeerId;
+<span class="kw">use </span>sc_network_gossip::{Network <span class="kw">as </span>GossipNetwork, Syncing <span class="kw">as </span>GossipSyncing};
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, Info};
 <span class="kw">use </span>sp_consensus::SyncOracle;
-<span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
+<span class="kw">use </span>sp_core::H256;
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Zero};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
-<span class="kw">use </span>std::time::Instant;
-<span class="kw">use </span>subspace_core_primitives::{BlockHash, NonEmptyVec, PotKey, PotProof, PotSeed, SlotNumber};
+<span class="kw">use </span>std::time::{Duration, Instant};
+<span class="kw">use </span>subspace_core_primitives::{NonEmptyVec, PotProof, PotSeed};
 <span class="kw">use </span>subspace_proof_of_time::ProofOfTime;
-<span class="kw">use </span>tokio::sync::mpsc::{channel, Sender};
-<span class="kw">use </span>tracing::{error, trace, warn};
+<span class="kw">use </span>tokio::sync::mpsc::{channel, Receiver, Sender};
+<span class="kw">use </span>tracing::{error, info, trace, warn};
 
 <span class="doccomment">/// Channel size to send the produced proofs.
 /// The proof producer thread will block if the receiver is behind and
 /// the channel fills up.
 </span><span class="kw">const </span>PROOFS_CHANNEL_SIZE: usize = <span class="number">12</span>; <span class="comment">// 2 * reveal lag.
 
-</span><span class="doccomment">/// Inputs for bootstrapping.
-</span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>BootstrapParams {
-    <span class="doccomment">/// Genesis block hash.
-    </span><span class="kw">pub </span>genesis_hash: BlockHash,
-
-    <span class="doccomment">/// The initial key to be used.
-    </span><span class="kw">pub </span>key: PotKey,
-
-    <span class="doccomment">/// Initial slot number.
-    </span><span class="kw">pub </span>slot: SlotNumber,
-}
-
-<span class="kw">impl </span>BootstrapParams {
-    <span class="kw">pub fn </span>new(genesis_hash: BlockHash, key: PotKey, slot: SlotNumber) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            genesis_hash,
-            key,
-            slot,
-        }
-    }
-}
+</span><span class="doccomment">/// Expected time to produce a proof.
+</span><span class="kw">const </span>TARGET_PROOF_TIME_MSEC: u128 = <span class="number">1000</span>;
 
 <span class="doccomment">/// The clock master manages the protocol: periodic proof generation/verification, gossip.
-</span><span class="kw">pub struct </span>ClockMaster&lt;Block: BlockT, Client, SO&gt; {
+</span><span class="kw">pub struct </span>ClockMaster&lt;Block: BlockT&lt;Hash = H256&gt;, Client, SO&gt; {
     proof_of_time: ProofOfTime,
+    pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
     gossip: PotGossip&lt;Block&gt;,
     client: Arc&lt;Client&gt;,
     sync_oracle: Arc&lt;SO&gt;,
-    pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
     chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, Client, SO&gt; ClockMaster&lt;Block, Client, SO&gt;
 <span class="kw">where
-    </span>Block: BlockT,
+    </span>Block: BlockT&lt;Hash = H256&gt;,
     Client: HeaderBackend&lt;Block&gt;,
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
 {
@@ -302,13 +280,18 @@
     /// of unnecessary generics/dependencies. chain_info_fn() tries
     /// to avoid that by using a Fn instead. Follow up with upstream
     /// to include this in the trait.
-    </span><span class="kw">pub fn </span>new(
-        components: PotComponents&lt;Block&gt;,
-        gossip: PotGossip&lt;Block&gt;,
+    </span><span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(
+        components: PotComponents,
         client: Arc&lt;Client&gt;,
         sync_oracle: Arc&lt;SO&gt;,
+        network: Network,
+        sync: Arc&lt;GossipSync&gt;,
         chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
-    ) -&gt; <span class="self">Self </span>{
+    ) -&gt; <span class="self">Self
+    </span><span class="kw">where
+        </span>Network: GossipNetwork&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
+        GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
+    {
         <span class="kw">let </span>PotComponents {
             proof_of_time,
             protocol_state: pot_state,
@@ -316,87 +299,99 @@
         } = components;
 
         <span class="self">Self </span>{
-            proof_of_time,
-            pot_state,
-            gossip,
+            proof_of_time: proof_of_time.clone(),
+            pot_state: pot_state.clone(),
+            gossip: PotGossip::new(network, sync, pot_state, proof_of_time),
             client,
             sync_oracle,
             chain_info_fn,
         }
     }
 
-    <span class="doccomment">/// Starts the workers.
-    </span><span class="kw">pub async fn </span>run(<span class="self">self</span>, bootstrap_params: <span class="prelude-ty">Option</span>&lt;BootstrapParams&gt;) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(params) = bootstrap_params.as_ref() {
-            <span class="comment">// The clock master is responsible for bootstrapping, build/add the
-            // initial proof to the state and start the proof producer.
-            </span><span class="self">self</span>.add_bootstrap_proof(params);
-        } <span class="kw">else </span>{
-            <span class="comment">// Wait for sync to complete, get the proof from the tip.
-            </span><span class="kw">let </span>proofs = <span class="kw">match </span>get_consensus_tip_proofs(
-                <span class="self">self</span>.client.clone(),
-                <span class="self">self</span>.sync_oracle.clone(),
-                <span class="self">self</span>.chain_info_fn.clone(),
-            )
-            .<span class="kw">await
-            </span>{
-                <span class="prelude-val">Ok</span>(proofs) =&gt; proofs,
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">error!</span>(<span class="string">&quot;clock master: Failed to get initial proofs: {err:?}&quot;</span>);
-                    <span class="kw">return</span>;
-                }
-            };
-            <span class="self">self</span>.pot_state.reset(proofs);
-        }
+    <span class="doccomment">/// Runs the clock master processing loop.
+    </span><span class="kw">pub async fn </span>run(<span class="self">self</span>) {
+        <span class="self">self</span>.initialize().<span class="kw">await</span>;
 
-        <span class="kw">let </span>(local_proof_sender, <span class="kw-2">mut </span>local_proof_receiver) = channel(PROOFS_CHANNEL_SIZE);
-
-        <span class="comment">// Filter out incoming messages without sender_id or that fail to decode.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>incoming_messages = Box::pin(<span class="self">self</span>.gossip.incoming_messages().filter_map(
-            |notification| <span class="kw">async move </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>ret = <span class="prelude-val">None</span>;
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = notification.sender {
-                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(msg) = PotProof::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..]) {
-                        ret = <span class="prelude-val">Some</span>((sender, msg))
-                    }
-                }
-                ret
-            },
-        ));
-
-        <span class="kw">let </span>proof_of_time = <span class="self">self</span>.proof_of_time.clone();
-        <span class="kw">let </span>pot_state = <span class="self">self</span>.pot_state.clone();
-        thread::Builder::new()
-            .name(<span class="string">&quot;pot-proof-producer&quot;</span>.to_string())
-            .spawn(<span class="kw">move </span>|| {
-                <span class="self">Self</span>::produce_proofs(proof_of_time, pot_state, local_proof_sender);
-            })
-            <span class="comment">// TODO: Proper error handling or proof
-            </span>.expect(<span class="string">&quot;Failed to spawn PoT proof producer thread&quot;</span>);
-
+        <span class="kw">let </span><span class="kw-2">mut </span>local_proof_receiver = <span class="self">self</span>.spawn_producer_thread();
+        <span class="kw">let </span>handle_gossip_message: Arc&lt;<span class="kw">dyn </span>Fn(PeerId, PotProof) + Send + Sync&gt; =
+            Arc::new(|sender, proof| {
+                <span class="self">self</span>.handle_gossip_message(sender, proof);
+            });
         <span class="kw">loop </span>{
-            <span class="comment">//let engine = self.gossip.engine.clone();
-            //let gossip_engine = futures::future::poll_fn(|cx| engine.lock().poll_unpin(cx));
-
-            </span><span class="macro">futures::select! </span>{
+            <span class="macro">futures::select! </span>{
                 local_proof = local_proof_receiver.recv().fuse() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = local_proof {
                         <span class="macro">trace!</span>(<span class="string">&quot;clock_master: got local proof: {proof}&quot;</span>);
                         <span class="self">self</span>.handle_local_proof(proof);
                     }
                 },
-                gossiped = incoming_messages.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>((sender, proof)) = gossiped {
-                        <span class="macro">trace!</span>(<span class="string">&quot;clock_master: got gossiped proof: {sender} =&gt; {proof}&quot;</span>);
-                        <span class="self">self</span>.handle_gossip_message(<span class="self">self</span>.pot_state.as_ref(), sender, proof);
-                    }
-                },
-                <span class="kw">_ </span>= <span class="self">self</span>.gossip.is_terminated().fuse() =&gt; {
+                <span class="kw">_ </span>= <span class="self">self</span>.gossip.process_incoming_messages(
+                    handle_gossip_message.clone()
+                ).fuse() =&gt; {
                     <span class="macro">error!</span>(<span class="string">&quot;clock_master: gossip engine has terminated.&quot;</span>);
                     <span class="kw">return</span>;
                 }
             }
         }
+    }
+
+    <span class="doccomment">/// Initializes the chain state from the consensus tip info.
+    </span><span class="kw">async fn </span>initialize(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="macro">info!</span>(<span class="string">&quot;clock_master::initialize: waiting for initialization ...&quot;</span>);
+        <span class="kw">let </span>delay = tokio::time::Duration::from_secs(<span class="number">1</span>);
+        <span class="kw">let </span>proofs = <span class="kw">loop </span>{
+            <span class="comment">// TODO: Proper error handling or proof
+            </span><span class="kw">let </span>tip = get_consensus_tip(
+                <span class="self">self</span>.client.clone(),
+                <span class="self">self</span>.sync_oracle.clone(),
+                <span class="self">self</span>.chain_info_fn.clone(),
+            )
+            .<span class="kw">await
+            </span>.expect(<span class="string">&quot;Consensus tip info should be available&quot;</span>);
+
+            <span class="kw">if </span>tip.block_number.is_zero() {
+                <span class="macro">trace!</span>(<span class="string">&quot;clock_master::initialize: {tip:?}, to wait ...&quot;</span>,);
+                tokio::time::sleep(delay).<span class="kw">await</span>;
+                <span class="kw">continue</span>;
+            }
+
+            <span class="macro">info!</span>(
+                <span class="string">&quot;clock_master::initialization done: block_hash={:?}, block_number={}, slot_number={}, {:?}&quot;</span>,
+                tip.block_hash, tip.block_number, tip.slot_number, tip.pot_pre_digest
+            );
+
+            <span class="kw">let </span>proofs = tip.pot_pre_digest.proofs().cloned().unwrap_or_else(|| {
+                <span class="comment">// Producing proofs starting from (genesis_slot + 1).
+                // TODO: Proper error handling or proof
+                </span><span class="kw">let </span>proof = <span class="self">self</span>.proof_of_time.create(
+                    PotSeed::from_block_hash(tip.block_hash),
+                    Default::default(), <span class="comment">// TODO: key from cmd line or BTC
+                    </span>tip.pot_pre_digest
+                        .next_block_initial_slot()
+                        .expect(<span class="string">&quot;Initial slot number should be available for block_number &gt;= 1&quot;</span>),
+                    tip.block_hash,
+                );
+                <span class="macro">info!</span>(<span class="string">&quot;clock_master::initialize: creating first proof: {proof}&quot;</span>);
+                NonEmptyVec::new_with_entry(proof)
+            });
+            <span class="kw">break </span>proofs;
+        };
+        <span class="self">self</span>.pot_state.reset(proofs);
+    }
+
+    <span class="doccomment">/// Starts the thread to produce the proofs.
+    </span><span class="kw">fn </span>spawn_producer_thread(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Receiver&lt;PotProof&gt; {
+        <span class="kw">let </span>(sender, receiver) = channel(PROOFS_CHANNEL_SIZE);
+        <span class="kw">let </span>proof_of_time = <span class="self">self</span>.proof_of_time.clone();
+        <span class="kw">let </span>pot_state = <span class="self">self</span>.pot_state.clone();
+        thread::Builder::new()
+            .name(<span class="string">&quot;pot-proof-producer&quot;</span>.to_string())
+            .spawn(<span class="kw">move </span>|| {
+                <span class="self">Self</span>::produce_proofs(proof_of_time, pot_state, sender);
+            })
+            <span class="comment">// TODO: Proper error handling or proof
+            </span>.expect(<span class="string">&quot;Failed to spawn PoT proof producer thread&quot;</span>);
+        receiver
     }
 
     <span class="doccomment">/// Long running loop to produce the proofs.
@@ -426,11 +421,20 @@
 
             <span class="comment">// Store the new proof back into the chain and gossip to other clock masters.
             </span><span class="kw">if let </span><span class="prelude-val">Err</span>(e) = state.on_proof(<span class="kw-2">&amp;</span>next_proof) {
-                <span class="macro">trace!</span>(<span class="string">&quot;clock_master::produce proofs: failed to extend chain: {e:?}&quot;</span>);
+                <span class="macro">info!</span>(<span class="string">&quot;clock_master::produce proofs: failed to extend chain: {e:?}&quot;</span>);
                 <span class="kw">continue</span>;
             } <span class="kw">else if let </span><span class="prelude-val">Err</span>(e) = proof_sender.blocking_send(next_proof.clone()) {
                 <span class="macro">warn!</span>(<span class="string">&quot;clock_master::produce proofs: send failed: {e:?}&quot;</span>);
                 <span class="kw">return</span>;
+            }
+
+            <span class="comment">// TODO: temporary hack for initial testing.
+            // The pot_iterations is set to take less than 1 sec. Pad the
+            // remaining time so that we produce approximately 1 proof/sec.
+            </span><span class="kw">if </span>elapsed.as_millis() &lt; TARGET_PROOF_TIME_MSEC {
+                <span class="kw">let </span>pad = TARGET_PROOF_TIME_MSEC - elapsed.as_millis();
+                <span class="comment">// Cast should be fine if TARGET_PROOF_TIME_MSEC is small
+                </span>thread::sleep(Duration::from_millis(pad <span class="kw">as </span>u64))
             }
         }
     }
@@ -441,9 +445,9 @@
     }
 
     <span class="doccomment">/// Handles the incoming gossip message.
-    </span><span class="kw">fn </span>handle_gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, state: <span class="kw-2">&amp;</span><span class="kw">dyn </span>PotProtocolState, sender: PeerId, proof: PotProof) {
+    </span><span class="kw">fn </span>handle_gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: PeerId, proof: PotProof) {
         <span class="kw">let </span>start_ts = Instant::now();
-        <span class="kw">let </span>ret = state.on_proof_from_peer(sender, <span class="kw-2">&amp;</span>proof);
+        <span class="kw">let </span>ret = <span class="self">self</span>.pot_state.on_proof_from_peer(sender, <span class="kw-2">&amp;</span>proof);
         <span class="kw">let </span>elapsed = start_ts.elapsed();
 
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = ret {
@@ -452,18 +456,6 @@
             <span class="macro">trace!</span>(<span class="string">&quot;clock_master::on gossip: {proof}, time=[{elapsed:?}], {sender}&quot;</span>);
             <span class="self">self</span>.gossip.gossip_message(proof.encode());
         }
-    }
-
-    <span class="doccomment">/// Builds/adds the bootstrap proof to the state.
-    </span><span class="kw">fn </span>add_bootstrap_proof(<span class="kw-2">&amp;</span><span class="self">self</span>, params: <span class="kw-2">&amp;</span>BootstrapParams) {
-        <span class="kw">let </span>proof = <span class="self">self</span>.proof_of_time.create(
-            PotSeed::from_block_hash(params.genesis_hash),
-            params.key,
-            params.slot,
-            params.genesis_hash,
-        );
-        <span class="kw">let </span>proofs = NonEmptyVec::new(<span class="macro">vec!</span>[proof]).expect(<span class="string">&quot;Vec is non empty; qed&quot;</span>);
-        <span class="self">self</span>.pot_state.reset(proofs);
     }
 }
 </code></pre></div></section></main></body></html>

@@ -57,63 +57,69 @@
 <a href="#57" id="57">57</a>
 <a href="#58" id="58">58</a>
 <a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Common utils.
 
 </span><span class="kw">use </span>sp_blockchain::{HeaderBackend, Info};
 <span class="kw">use </span>sp_consensus::SyncOracle;
-<span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Zero};
+<span class="kw">use </span>sp_consensus_subspace::digests::{extract_pre_digest, PotPreDigest};
+<span class="kw">use </span>sp_core::H256;
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, NumberFor};
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>subspace_core_primitives::{NonEmptyVec, PotProof};
-<span class="kw">use </span>tracing::info;
+<span class="kw">use </span>subspace_core_primitives::{BlockHash, SlotNumber};
+<span class="kw">use </span>tracing::trace;
+
+<span class="doccomment">/// Info extracted from the consensus tip.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ConsensusTipInfo&lt;Block: BlockT&lt;Hash = H256&gt;&gt; {
+    <span class="doccomment">/// Block hash.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) block_hash: BlockHash,
+
+    <span class="doccomment">/// Block number.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) block_number: NumberFor&lt;Block&gt;,
+
+    <span class="doccomment">/// Slot number for the block.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) slot_number: SlotNumber,
+
+    <span class="doccomment">/// The PoT from the pre digest
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) pot_pre_digest: PotPreDigest,
+}
 
 <span class="doccomment">/// Helper to retrieve the PoT state from latest tip.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>get_consensus_tip_proofs&lt;Block, Client, SO&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>get_consensus_tip&lt;Block, Client, SO&gt;(
     client: Arc&lt;Client&gt;,
     sync_oracle: Arc&lt;SO&gt;,
     chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;NonEmptyVec&lt;PotProof&gt;, String&gt;
+) -&gt; <span class="prelude-ty">Result</span>&lt;ConsensusTipInfo&lt;Block&gt;, String&gt;
 <span class="kw">where
-    </span>Block: BlockT,
+    </span>Block: BlockT&lt;Hash = H256&gt;,
     Client: HeaderBackend&lt;Block&gt;,
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
 {
-    <span class="comment">// Wait for sync to complete
-    </span><span class="kw">let </span>delay = tokio::time::Duration::from_secs(<span class="number">1</span>);
-    <span class="macro">info!</span>(<span class="string">&quot;get_consensus_tip_proofs(): waiting for sync to complete ...&quot;</span>);
-    <span class="kw">let </span>info = <span class="kw">loop </span>{
-        <span class="kw">while </span>sync_oracle.is_major_syncing() {
-            tokio::time::sleep(delay).<span class="kw">await</span>;
-        }
-
-        <span class="comment">// Get the hdr of the best block hash
-        </span><span class="kw">let </span>info = (chain_info_fn)();
-        <span class="kw">if </span>!info.best_number.is_zero() {
-            <span class="kw">break </span>info;
-        }
-        <span class="macro">info!</span>(<span class="string">&quot;get_consensus_tip_proofs(): chain_info: {info:?}, to retry ...&quot;</span>);
+    <span class="kw">let </span>delay = tokio::time::Duration::from_secs(<span class="number">1</span>);
+    <span class="macro">trace!</span>(<span class="string">&quot;get_consensus_tip(): waiting for sync to complete ...&quot;</span>);
+    <span class="kw">while </span>sync_oracle.is_major_syncing() {
         tokio::time::sleep(delay).<span class="kw">await</span>;
-    };
+    }
 
+    <span class="kw">let </span>info = (chain_info_fn)();
+    <span class="macro">trace!</span>(<span class="string">&quot;get_consensus_tip(): sync complete. chain_info = {info:?}&quot;</span>);
     <span class="kw">let </span>header = client
         .header(info.best_hash)
-        .map_err(|err| <span class="macro">format!</span>(<span class="string">&quot;get_consensus_tip_proofs(): failed to get hdr: {err:?}, {info:?}&quot;</span>))<span class="question-mark">?
-        </span>.ok_or(<span class="macro">format!</span>(<span class="string">&quot;get_consensus_tip_proofs(): missing hdr: {info:?}&quot;</span>))<span class="question-mark">?</span>;
+        .map_err(|err| <span class="macro">format!</span>(<span class="string">&quot;get_consensus_tip(): failed to get hdr: {err:?}, {info:?}&quot;</span>))<span class="question-mark">?
+        </span>.ok_or(<span class="macro">format!</span>(<span class="string">&quot;get_consensus_tip(): missing hdr: {info:?}&quot;</span>))<span class="question-mark">?</span>;
 
-    <span class="comment">// Get the pre-digest from the block hdr
-    </span><span class="kw">let </span>_pre_digest = extract_pre_digest(<span class="kw-2">&amp;</span>header).map_err(|err| {
+    <span class="kw">let </span>pre_digest = extract_pre_digest(<span class="kw-2">&amp;</span>header).map_err(|err| {
         <span class="macro">format!</span>(<span class="string">&quot;get_consensus_tip_proofs(): failed to get pre digest: {err:?}, {info:?}&quot;</span>)
     })<span class="question-mark">?</span>;
 
-    <span class="comment">// TODO: enable this after adding the proofs to pre-digest.
-    /*
-    info!(
-        &quot;get_consensus_tip_proofs(): {info:?}, pre_digest: slot = {}, num_proofs = {}&quot;,
-        pre_digest.slot,
-        pre_digest.proof_of_time.len()
-    );
-    NonEmptyVec::new(pre_digest.proof_of_time).map_err(|err| format!(&quot;{err:?}&quot;))
-     */
-    </span><span class="prelude-val">Err</span>(<span class="string">&quot;TODO&quot;</span>.to_string())
+    <span class="prelude-val">Ok</span>(ConsensusTipInfo {
+        block_hash: info.best_hash.to_fixed_bytes(),
+        block_number: info.best_number,
+        slot_number: pre_digest.slot.into(),
+        pot_pre_digest: pre_digest.proof_of_time.unwrap_or_default(),
+    })
 }
 </code></pre></div></section></main></body></html>

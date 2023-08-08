@@ -135,23 +135,73 @@
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! PoT gossip functionality.
 
-</span><span class="kw">use </span>futures::channel::mpsc::Receiver;
-<span class="kw">use </span>futures::FutureExt;
+</span><span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
+<span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::Decode;
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
 <span class="kw">use </span>sc_network::config::NonDefaultSetConfig;
 <span class="kw">use </span>sc_network::PeerId;
 <span class="kw">use </span>sc_network_gossip::{
-    GossipEngine, MessageIntent, Syncing <span class="kw">as </span>GossipSyncing, TopicNotification, ValidationResult,
-    Validator, ValidatorContext,
+    GossipEngine, MessageIntent, Syncing <span class="kw">as </span>GossipSyncing, ValidationResult, Validator,
+    ValidatorContext,
 };
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::crypto::blake2b_256_hash;
 <span class="kw">use </span>subspace_core_primitives::PotProof;
+<span class="kw">use </span>subspace_proof_of_time::ProofOfTime;
+<span class="kw">use </span>tracing::{error, trace};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>GOSSIP_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/subspace-proof-of-time&quot;</span>;
 
@@ -159,19 +209,24 @@
 
 <span class="doccomment">/// PoT gossip components.
 </span><span class="attr">#[derive(Clone)]
-</span><span class="kw">pub struct </span>PotGossip&lt;Block: BlockT&gt; {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>PotGossip&lt;Block: BlockT&gt; {
     engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
     validator: Arc&lt;PotGossipValidator&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block: BlockT&gt; PotGossip&lt;Block&gt; {
     <span class="doccomment">/// Creates the gossip components.
-    </span><span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(network: Network, sync: Arc&lt;GossipSync&gt;) -&gt; <span class="self">Self
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new&lt;Network, GossipSync&gt;(
+        network: Network,
+        sync: Arc&lt;GossipSync&gt;,
+        pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
+        proof_of_time: ProofOfTime,
+    ) -&gt; <span class="self">Self
     </span><span class="kw">where
         </span>Network: sc_network_gossip::Network&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
         GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     {
-        <span class="kw">let </span>validator = Arc::new(PotGossipValidator::new());
+        <span class="kw">let </span>validator = Arc::new(PotGossipValidator::new(pot_state, proof_of_time));
         <span class="kw">let </span>engine = Arc::new(Mutex::new(GossipEngine::new(
             network,
             sync,
@@ -183,35 +238,65 @@
     }
 
     <span class="doccomment">/// Gossips the message to the network.
-    </span><span class="kw">pub fn </span>gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, message: Vec&lt;u8&gt;) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, message: Vec&lt;u8&gt;) {
         <span class="self">self</span>.validator.on_broadcast(<span class="kw-2">&amp;</span>message);
         <span class="self">self</span>.engine
             .lock()
             .gossip_message(topic::&lt;Block&gt;(), message, <span class="bool-val">false</span>);
     }
 
-    <span class="doccomment">/// Returns the receiver for the messages.
-    </span><span class="kw">pub fn </span>incoming_messages(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Receiver&lt;TopicNotification&gt; {
-        <span class="self">self</span>.engine.lock().messages_for(topic::&lt;Block&gt;())
-    }
+    <span class="doccomment">/// Runs the loop to process incoming messages.
+    /// Returns when the gossip engine terminates.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>process_incoming_messages&lt;<span class="lifetime">&#39;a</span>&gt;(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        process_fn: Arc&lt;<span class="kw">dyn </span>Fn(PeerId, PotProof) + Send + Sync + <span class="lifetime">&#39;a</span>&gt;,
+    ) {
+        <span class="kw">let </span>message_receiver = <span class="self">self</span>.engine.lock().messages_for(topic::&lt;Block&gt;());
+        <span class="kw">let </span><span class="kw-2">mut </span>incoming_messages = Box::pin(message_receiver.filter_map(
+            <span class="comment">// Filter out messages without sender or fail to decode.
+            // TODO: penalize nodes that send garbled messages.
+            </span>|notification| <span class="kw">async move </span>{
+                <span class="kw">let </span><span class="kw-2">mut </span>ret = <span class="prelude-val">None</span>;
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(sender) = notification.sender {
+                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(msg) = PotProof::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..]) {
+                        ret = <span class="prelude-val">Some</span>((sender, msg))
+                    }
+                }
+                ret
+            },
+        ));
 
-    <span class="doccomment">/// Waits for gossip engine to terminate.
-    </span><span class="kw">pub async fn </span>is_terminated(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span>poll_fn = futures::future::poll_fn(|cx| <span class="self">self</span>.engine.lock().poll_unpin(cx));
-        poll_fn.<span class="kw">await</span>;
+        <span class="kw">loop </span>{
+            <span class="kw">let </span>gossip_engine_poll =
+                futures::future::poll_fn(|cx| <span class="self">self</span>.engine.lock().poll_unpin(cx));
+            <span class="macro">futures::select! </span>{
+                gossiped = incoming_messages.next().fuse() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>((sender, proof)) = gossiped {
+                        (process_fn)(sender, proof);
+                    }
+                },
+                 <span class="kw">_ </span>= gossip_engine_poll.fuse() =&gt; {
+                    <span class="macro">error!</span>(<span class="string">&quot;Gossip engine has terminated.&quot;</span>);
+                    <span class="kw">return</span>;
+                }
+            }
+        }
     }
 }
 
 <span class="doccomment">/// Validator for gossiped messages
-</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>PotGossipValidator {
+    pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
+    proof_of_time: ProofOfTime,
     pending: RwLock&lt;HashSet&lt;MessageHash&gt;&gt;,
 }
 
 <span class="kw">impl </span>PotGossipValidator {
     <span class="doccomment">/// Creates the validator.
-    </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>new(pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;, proof_of_time: ProofOfTime) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
+            pot_state,
+            proof_of_time,
             pending: RwLock::new(HashSet::new()),
         }
     }
@@ -228,11 +313,22 @@
     <span class="kw">fn </span>validate(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _context: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>ValidatorContext&lt;Block&gt;,
-        _sender: <span class="kw-2">&amp;</span>PeerId,
+        sender: <span class="kw-2">&amp;</span>PeerId,
         <span class="kw-2">mut </span>data: <span class="kw-2">&amp;</span>[u8],
     ) -&gt; ValidationResult&lt;Block::Hash&gt; {
         <span class="kw">match </span>PotProof::decode(<span class="kw-2">&amp;mut </span>data) {
-            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; ValidationResult::ProcessAndKeep(topic::&lt;Block&gt;()),
+            <span class="prelude-val">Ok</span>(proof) =&gt; {
+                <span class="comment">// Perform AES verification only if the proof is a candidate.
+                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.pot_state.is_candidate(<span class="kw-2">*</span>sender, <span class="kw-2">&amp;</span>proof) {
+                    <span class="macro">trace!</span>(<span class="string">&quot;gossip::validate: not a candidate: {err:?}&quot;</span>);
+                    ValidationResult::Discard
+                } <span class="kw">else if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.proof_of_time.verify(<span class="kw-2">&amp;</span>proof) {
+                    <span class="macro">trace!</span>(<span class="string">&quot;gossip::validate: verification failed: {err:?}&quot;</span>);
+                    ValidationResult::Discard
+                } <span class="kw">else </span>{
+                    ValidationResult::ProcessAndKeep(topic::&lt;Block&gt;())
+                }
+            }
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; ValidationResult::Discard,
         }
     }
