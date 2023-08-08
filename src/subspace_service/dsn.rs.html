@@ -206,6 +206,7 @@
 <span class="kw">use </span>sc_client_api::AuxStore;
 <span class="kw">use </span>sc_consensus_subspace::SegmentHeadersStore;
 <span class="kw">use </span>std::collections::HashSet;
+<span class="kw">use </span>std::fs;
 <span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{SegmentHeader, SegmentIndex};
@@ -213,7 +214,7 @@
 <span class="kw">use </span>subspace_networking::utils::strip_peer_id;
 <span class="kw">use </span>subspace_networking::{
     CreationError, NetworkParametersPersistenceError, NetworkingParametersManager, Node,
-    NodeRunner, ParityDbError, PeerInfoProvider, PieceByHashRequestHandler, PieceByHashResponse,
+    NodeRunner, PeerInfoProvider, PieceByHashRequestHandler, PieceByHashResponse,
     SegmentHeaderBySegmentIndexesRequestHandler, SegmentHeaderRequest, SegmentHeaderResponse,
     KADEMLIA_PROVIDER_TTL_IN_SECS,
 };
@@ -228,9 +229,6 @@
     <span class="doccomment">/// Can&#39;t instantiate the DSN.
     </span><span class="attr">#[error(<span class="string">&quot;Can&#39;t instantiate the DSN: {0}&quot;</span>)]
     </span>CreationError(<span class="attr">#[from] </span>CreationError),
-    <span class="doccomment">/// ParityDb storage error
-    </span><span class="attr">#[error(<span class="string">&quot;ParityDb storage error: {0}&quot;</span>)]
-    </span>ParityDbStorageError(<span class="attr">#[from] </span>ParityDbError),
     <span class="doccomment">/// Network parameter manager error.
     </span><span class="attr">#[error(<span class="string">&quot;Network parameter manager error: {0}&quot;</span>)]
     </span>NetworkParameterManagerError(<span class="attr">#[from] </span>NetworkParametersPersistenceError),
@@ -287,23 +285,25 @@
 {
     <span class="macro">trace!</span>(<span class="string">&quot;Subspace networking starting.&quot;</span>);
 
-    <span class="kw">let </span>networking_parameters_registry = {
-        dsn_config
-            .base_path
-            .map(|path| {
-                <span class="kw">let </span>db_path = path.join(<span class="string">&quot;known_addresses_db&quot;</span>);
+    <span class="kw">let </span>networking_parameters_registry = dsn_config
+        .base_path
+        .map(|path| {
+            <span class="comment">// TODO: Remove this in the future after enough upgrade time that this no longer exist
+            </span><span class="kw">if </span>path.join(<span class="string">&quot;known_addresses_db&quot;</span>).is_dir() {
+                <span class="kw">let _ </span>= fs::remove_file(path.join(<span class="string">&quot;known_addresses_db&quot;</span>));
+            }
+            <span class="kw">let </span>file_path = path.join(<span class="string">&quot;known_addresses.bin&quot;</span>);
 
-                NetworkingParametersManager::new(
-                    <span class="kw-2">&amp;</span>db_path,
-                    strip_peer_id(dsn_config.bootstrap_nodes.clone())
-                        .into_iter()
-                        .map(|(peer_id, <span class="kw">_</span>)| peer_id)
-                        .collect::&lt;HashSet&lt;<span class="kw">_</span>&gt;&gt;(),
-                )
-                .map(|manager| manager.boxed())
-            })
-            .transpose()<span class="question-mark">?
-    </span>};
+            NetworkingParametersManager::new(
+                <span class="kw-2">&amp;</span>file_path,
+                strip_peer_id(dsn_config.bootstrap_nodes.clone())
+                    .into_iter()
+                    .map(|(peer_id, <span class="kw">_</span>)| peer_id)
+                    .collect::&lt;HashSet&lt;<span class="kw">_</span>&gt;&gt;(),
+            )
+            .map(NetworkingParametersManager::boxed)
+        })
+        .transpose()<span class="question-mark">?</span>;
 
     <span class="kw">let </span>keypair = dsn_config.keypair.clone();
     <span class="kw">let </span><span class="kw-2">mut </span>default_networking_config = subspace_networking::Config::new(
