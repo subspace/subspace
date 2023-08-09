@@ -306,15 +306,11 @@
 <a href="#306" id="306">306</a>
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
-<a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
-    sector_record_chunks_size, sector_size, SectorContentsMap, SectorContentsMapFromBytesError,
-    SectorMetadata,
+    sector_record_chunks_size, sector_size, RecordMetadata, SectorContentsMap,
+    SectorContentsMapFromBytesError, SectorMetadata,
 };
+<span class="kw">use </span>parity_scale_codec::Decode;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::mem::ManuallyDrop;
 <span class="kw">use </span>std::simd::Simd;
@@ -532,11 +528,11 @@
 }
 
 <span class="doccomment">/// Read metadata (commitment and witness) for record
-</span><span class="kw">pub fn </span>read_record_metadata(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_record_metadata(
     piece_offset: PieceOffset,
     pieces_in_sector: u16,
     sector: <span class="kw-2">&amp;</span>[u8],
-) -&gt; <span class="prelude-ty">Result</span>&lt;(RecordCommitment, RecordWitness), ReadingError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;RecordMetadata, ReadingError&gt; {
     <span class="kw">if </span>sector.len() != sector_size(pieces_in_sector) {
         <span class="kw">return </span><span class="prelude-val">Err</span>(ReadingError::WrongSectorSize {
             expected: sector_size(pieces_in_sector),
@@ -546,21 +542,15 @@
 
     <span class="kw">let </span>sector_metadata_start = SectorContentsMap::encoded_size(pieces_in_sector)
         + sector_record_chunks_size(pieces_in_sector);
-    <span class="kw">let </span>commitment_witness_size = RecordCommitment::SIZE + RecordWitness::SIZE;
-    <span class="kw">let </span>(record_commitment, record_witness) = sector[sector_metadata_start..]
-        <span class="comment">// Move to the beginning of the commitment and witness we care about
-        </span>[commitment_witness_size * usize::from(piece_offset)..]
-        <span class="comment">// Take commitment and witness we care about
-        </span>[..commitment_witness_size]
-        <span class="comment">// Separate commitment from witness
-        </span>.split_at(RecordCommitment::SIZE);
+    <span class="comment">// Move to the beginning of the commitment and witness we care about
+    </span><span class="kw">let </span>record_metadata_bytes = <span class="kw-2">&amp;</span>sector[sector_metadata_start..]
+        [RecordMetadata::encoded_size() * usize::from(piece_offset)..];
+    <span class="kw">let </span>record_metadata = RecordMetadata::decode(<span class="kw-2">&amp;mut &amp;*</span>record_metadata_bytes).expect(
+        <span class="string">&quot;Length is correct and checked above, contents doesn&#39;t have specific structure to \
+        it; qed&quot;</span>,
+    );
 
-    <span class="kw">let </span>record_commitment = RecordCommitment::try_from(record_commitment)
-        .expect(<span class="string">&quot;Correctly sliced above from correctly sized plot; qed&quot;</span>);
-    <span class="kw">let </span>record_witness = RecordWitness::try_from(record_witness)
-        .expect(<span class="string">&quot;Correctly sliced above from correctly sized plot; qed&quot;</span>);
-
-    <span class="prelude-val">Ok</span>((record_commitment, record_witness))
+    <span class="prelude-val">Ok</span>(record_metadata)
 }
 
 <span class="doccomment">/// Read piece from sector
@@ -607,7 +597,7 @@
         erasure_coding,
     )<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>(commitment, witness) = read_record_metadata(piece_offset, pieces_in_sector, sector)<span class="question-mark">?</span>;
+    <span class="kw">let </span>record_metadata = read_record_metadata(piece_offset, pieces_in_sector, sector)<span class="question-mark">?</span>;
 
     <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
 
@@ -619,8 +609,8 @@
             <span class="kw-2">*</span>output = input.to_bytes();
         });
 
-    <span class="kw-2">*</span>piece.commitment_mut() = commitment;
-    <span class="kw-2">*</span>piece.witness_mut() = witness;
+    <span class="kw-2">*</span>piece.commitment_mut() = record_metadata.commitment;
+    <span class="kw-2">*</span>piece.witness_mut() = record_metadata.witness;
 
     <span class="prelude-val">Ok</span>(piece)
 }

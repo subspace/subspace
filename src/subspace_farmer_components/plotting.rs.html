@@ -486,6 +486,9 @@
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
     SectorMetadata,
@@ -506,8 +509,8 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
 <span class="kw">use </span>subspace_core_primitives::{
-    ArchivedHistorySegment, Piece, PieceIndex, PieceOffset, PublicKey, Record, RecordCommitment,
-    RecordWitness, SBucket, SectorId, SectorIndex,
+    ArchivedHistorySegment, Piece, PieceIndex, PieceOffset, PublicKey, Record, SBucket, SectorId,
+    SectorIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_proof_of_space::{Quality, Table, TableGenerator};
@@ -826,14 +829,19 @@
                 });
         });
 
-    {
-        <span class="kw">let </span>(sector_contents_map_region, remainder) =
+    <span class="comment">// Write sector to disk in form of following regions:
+    // * sector contents map
+    // * record chunks as s-buckets
+    // * record metadata
+    </span>{
+        <span class="kw">let </span>(sector_contents_map_region, remaining_bytes) =
             sector_output.split_at_mut(SectorContentsMap::encoded_size(pieces_in_sector));
-        <span class="comment">// Write sector contents map so we can decode it later
-        </span>sector_contents_map_region.copy_from_slice(sector_contents_map.as_ref());
         <span class="comment">// Slice remaining memory into belonging to s-buckets and metadata
         </span><span class="kw">let </span>(s_buckets_region, metadata_region) =
-            remainder.split_at_mut(sector_record_chunks_size(pieces_in_sector));
+            remaining_bytes.split_at_mut(sector_record_chunks_size(pieces_in_sector));
+
+        <span class="comment">// Write sector contents map so we can decode it later
+        </span>sector_contents_map_region.copy_from_slice(sector_contents_map.as_ref());
 
         <span class="kw">let </span>num_encoded_record_chunks = sector_contents_map.num_encoded_record_chunks();
         <span class="kw">let </span><span class="kw-2">mut </span>next_encoded_record_chunks_offset = <span class="macro">vec!</span>[<span class="number">0_usize</span>; pieces_in_sector.into()];
@@ -868,12 +876,10 @@
             output.copy_from_slice(<span class="kw-2">&amp;</span>raw_sector.records[usize::from(piece_offset)][chunk_position]);
         }
 
-        <span class="kw">for </span>(record_metadata, output) <span class="kw">in </span>raw_sector.metadata.into_iter().zip(
-            metadata_region.array_chunks_mut::&lt;{ RecordCommitment::SIZE + RecordWitness::SIZE }&gt;(),
-        ) {
-            <span class="kw">let </span>(commitment, witness) = output.split_at_mut(RecordCommitment::SIZE);
-            commitment.copy_from_slice(record_metadata.commitment.as_ref());
-            witness.copy_from_slice(record_metadata.witness.as_ref());
+        <span class="kw">let </span>metadata_chunks =
+            metadata_region.array_chunks_mut::&lt;{ RecordMetadata::encoded_size() }&gt;();
+        <span class="kw">for </span>(record_metadata, output) <span class="kw">in </span>raw_sector.metadata.into_iter().zip(metadata_chunks) {
+            record_metadata.encode_to(<span class="kw-2">&amp;mut </span>output.as_mut_slice());
         }
     }
 
