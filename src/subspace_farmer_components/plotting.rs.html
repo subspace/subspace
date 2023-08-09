@@ -489,9 +489,20 @@
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
-    SectorMetadata,
+    SectorMetadata, SectorMetadataChecksummed,
 };
 <span class="kw">use </span><span class="kw">crate</span>::segment_reconstruction::recover_missing_piece;
 <span class="kw">use </span><span class="kw">crate</span>::FarmerProtocolInfo;
@@ -503,14 +514,15 @@
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::mem;
 <span class="kw">use </span>std::simd::Simd;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
-<span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
+<span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, blake3_hash_parallel, Scalar};
 <span class="kw">use </span>subspace_core_primitives::{
-    ArchivedHistorySegment, Piece, PieceIndex, PieceOffset, PublicKey, Record, SBucket, SectorId,
-    SectorIndex,
+    ArchivedHistorySegment, Blake3Hash, Piece, PieceIndex, PieceOffset, PublicKey, Record, SBucket,
+    SectorId, SectorIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_proof_of_space::{Quality, Table, TableGenerator};
@@ -592,7 +604,7 @@
     <span class="doccomment">/// Sector index
     </span><span class="kw">pub </span>sector_index: SectorIndex,
     <span class="doccomment">/// Sector metadata
-    </span><span class="kw">pub </span>sector_metadata: SectorMetadata,
+    </span><span class="kw">pub </span>sector_metadata: SectorMetadataChecksummed,
     <span class="doccomment">/// Indexes of pieces that were plotted
     </span><span class="kw">pub </span>piece_indexes: Vec&lt;PieceIndex&gt;,
 }
@@ -669,17 +681,19 @@
         <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::InvalidErasureCodingInstance);
     }
 
-    <span class="kw">if </span>sector_output.len() &lt; sector_size(pieces_in_sector) {
+    <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
+
+    <span class="kw">if </span>sector_output.len() != sector_size {
         <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::BadSectorOutputSize {
             provided: sector_output.len(),
-            expected: sector_size(pieces_in_sector),
+            expected: sector_size,
         });
     }
 
-    <span class="kw">if </span>sector_metadata_output.len() &lt; SectorMetadata::encoded_size() {
+    <span class="kw">if </span>sector_metadata_output.len() &lt; SectorMetadataChecksummed::encoded_size() {
         <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::BadSectorMetadataOutputSize {
             provided: sector_metadata_output.len(),
-            expected: SectorMetadata::encoded_size(),
+            expected: SectorMetadataChecksummed::encoded_size(),
         });
     }
 
@@ -841,7 +855,9 @@
             remaining_bytes.split_at_mut(sector_record_chunks_size(pieces_in_sector));
 
         <span class="comment">// Write sector contents map so we can decode it later
-        </span>sector_contents_map_region.copy_from_slice(sector_contents_map.as_ref());
+        </span>sector_contents_map
+            .encode_into(sector_contents_map_region)
+            .expect(<span class="string">&quot;Chunked into correct size above; qed&quot;</span>);
 
         <span class="kw">let </span>num_encoded_record_chunks = sector_contents_map.num_encoded_record_chunks();
         <span class="kw">let </span><span class="kw-2">mut </span>next_encoded_record_chunks_offset = <span class="macro">vec!</span>[<span class="number">0_usize</span>; pieces_in_sector.into()];
@@ -881,15 +897,20 @@
         <span class="kw">for </span>(record_metadata, output) <span class="kw">in </span>raw_sector.metadata.into_iter().zip(metadata_chunks) {
             record_metadata.encode_to(<span class="kw-2">&amp;mut </span>output.as_mut_slice());
         }
+
+        <span class="comment">// It would be more efficient to not re-read the whole sector again, but it makes above code
+        // significantly more convoluted and most likely not worth it
+        </span><span class="kw">let </span>(sector_contents, sector_checksum) =
+            sector_output.split_at_mut(sector_size - mem::size_of::&lt;Blake3Hash&gt;());
+        sector_checksum.copy_from_slice(<span class="kw-2">&amp;</span>blake3_hash_parallel(sector_contents));
     }
 
-    <span class="comment">// TODO: Write commitments and witnesses
-    </span><span class="kw">let </span>sector_metadata = SectorMetadata {
+    <span class="kw">let </span>sector_metadata = SectorMetadataChecksummed::from(SectorMetadata {
         sector_index,
         pieces_in_sector,
         s_bucket_sizes: sector_contents_map.s_bucket_sizes(),
         history_size: farmer_protocol_info.history_size,
-    };
+    });
 
     sector_metadata_output.copy_from_slice(<span class="kw-2">&amp;</span>sector_metadata.encode());
 
@@ -957,6 +978,7 @@
             <span class="kw-2">*</span>metadata = RecordMetadata {
                 commitment: <span class="kw-2">*</span>piece.commitment(),
                 witness: <span class="kw-2">*</span>piece.witness(),
+                piece_checksum: blake3_hash(piece.as_ref()),
             };
 
             <span class="comment">// We have processed this piece index, clear it

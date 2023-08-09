@@ -212,17 +212,27 @@
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
 <a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>derive_more::Display;
 <span class="kw">use </span>memmap2::{Mmap, MmapOptions};
 <span class="kw">use </span>std::fs::{File, OpenOptions};
-<span class="kw">use </span>std::io::{Seek, SeekFrom};
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::{fs, io, mem};
-<span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
+<span class="kw">use </span>subspace_core_primitives::crypto::blake3_hash_list;
+<span class="kw">use </span>subspace_core_primitives::{Blake3Hash, Piece, PieceIndex};
 <span class="kw">use </span>subspace_farmer_components::file_ext::FileExt;
 <span class="kw">use </span>thiserror::Error;
-<span class="kw">use </span>tracing::{info, warn};
+<span class="kw">use </span>tracing::{debug, info, warn};
 
 <span class="doccomment">/// Disk piece cache open error
 </span><span class="attr">#[derive(Debug, Error)]
@@ -244,6 +254,9 @@
     <span class="doccomment">/// Cache size has zero capacity, this is not supported
     </span><span class="attr">#[error(<span class="string">&quot;Cache size has zero capacity, this is not supported&quot;</span>)]
     </span>ZeroCapacity,
+    <span class="doccomment">/// Checksum mismatch
+    </span><span class="attr">#[error(<span class="string">&quot;Checksum mismatch&quot;</span>)]
+    </span>ChecksumMismatch,
 }
 
 <span class="doccomment">/// Offset wrapper for pieces in [`DiskPieceCache`]
@@ -272,26 +285,19 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::ZeroCapacity);
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>file = OpenOptions::new()
+        <span class="kw">let </span>file = OpenOptions::new()
             .read(<span class="bool-val">true</span>)
             .write(<span class="bool-val">true</span>)
             .create(<span class="bool-val">true</span>)
             .open(directory.join(<span class="self">Self</span>::PIECE_CACHE_FILE))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>current_file_size = file.seek(SeekFrom::End(<span class="number">0</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span>expected_size = <span class="self">Self</span>::element_size() * capacity;
-        <span class="kw">if </span>current_file_size == <span class="number">0 </span>{
-            <span class="comment">// Empty file
-            </span>file.preallocate(expected_size <span class="kw">as </span>u64)
-                .map_err(DiskPieceCacheError::CantPreallocateCacheFile)<span class="question-mark">?</span>;
-        } <span class="kw">else if </span>current_file_size == expected_size <span class="kw">as </span>u64 {
-            <span class="comment">// Already correct size
-        </span>} <span class="kw">else </span>{
-            <span class="macro">panic!</span>(
-                <span class="string">&quot;Resizing not supported, single disk plot must have checked this before getting \
-                here&quot;
-            </span>);
-        }
+        <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
+        // writes to fail later)
+        </span>file.preallocate(expected_size <span class="kw">as </span>u64)
+            .map_err(DiskPieceCacheError::CantPreallocateCacheFile)<span class="question-mark">?</span>;
+        <span class="comment">// Truncating file (if necessary)
+        </span>file.set_len(expected_size <span class="kw">as </span>u64)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>read_mmap = <span class="kw">unsafe </span>{ MmapOptions::new().len(expected_size).map(<span class="kw-2">&amp;</span>file)<span class="question-mark">? </span>};
         <span class="attr">#[cfg(unix)]
@@ -309,7 +315,7 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const fn </span>element_size() -&gt; usize {
-        mem::size_of::&lt;PieceIndex&gt;() + Piece::SIZE
+        PieceIndex::SIZE + Piece::SIZE + mem::size_of::&lt;Blake3Hash&gt;()
     }
 
     <span class="doccomment">/// Contents of this disk cache
@@ -368,9 +374,11 @@
                 .map_mut(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.file)<span class="question-mark">?
         </span>};
 
-        <span class="kw">let </span>piece_index_bytes = piece_index.to_bytes();
-        write_mmap[..piece_index_bytes.len()].copy_from_slice(<span class="kw-2">&amp;</span>piece_index_bytes);
-        write_mmap[piece_index_bytes.len()..].copy_from_slice(piece.as_ref());
+        <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = write_mmap.split_at_mut(PieceIndex::SIZE);
+        piece_index_bytes.copy_from_slice(<span class="kw-2">&amp;</span>piece_index.to_bytes());
+        <span class="kw">let </span>(piece_bytes, checksum) = remaining_bytes.split_at_mut(Piece::SIZE);
+        piece_bytes.copy_from_slice(piece.as_ref());
+        checksum.copy_from_slice(<span class="kw-2">&amp;</span>blake3_hash_list(<span class="kw-2">&amp;</span>[piece_index_bytes, piece.as_ref()]));
 
         write_mmap.flush()<span class="question-mark">?</span>;
 
@@ -410,14 +418,26 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         }
 
+        <span class="kw">let </span>piece_element_memory =
+            <span class="kw-2">&amp;</span><span class="self">self</span>.inner.read_mmap[offset * <span class="self">Self</span>::element_size()..][..<span class="self">Self</span>::element_size()];
+        <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = piece_element_memory.split_at(PieceIndex::SIZE);
+        <span class="kw">let </span>(piece_bytes, expected_checksum) = remaining_bytes.split_at(Piece::SIZE);
         <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
-        piece.copy_from_slice(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.inner.read_mmap[offset * <span class="self">Self</span>::element_size() + PieceIndex::SIZE..]
-                [..Piece::SIZE],
-        );
+        piece.copy_from_slice(piece_bytes);
 
-        <span class="comment">// TODO: Verify checksum (when we have them) and return `None` in case it doesn&#39;t match
-        </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece))
+        <span class="comment">// Verify checksum
+        </span><span class="kw">let </span>actual_checksum = blake3_hash_list(<span class="kw-2">&amp;</span>[piece_index_bytes, piece.as_ref()]);
+        <span class="kw">if </span>actual_checksum != expected_checksum {
+            <span class="macro">debug!</span>(
+                actual_checksum = %hex::encode(actual_checksum),
+                expected_checksum = %hex::encode(expected_checksum),
+                <span class="string">&quot;Hash doesn&#39;t match, corrupted piece in cache&quot;
+            </span>);
+
+            <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::ChecksumMismatch);
+        }
+
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece))
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>wipe(directory: <span class="kw-2">&amp;</span>Path) -&gt; io::Result&lt;()&gt; {

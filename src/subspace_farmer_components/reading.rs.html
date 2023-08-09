@@ -306,21 +306,40 @@
 <a href="#306" id="306">306</a>
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, RecordMetadata, SectorContentsMap,
-    SectorContentsMapFromBytesError, SectorMetadata,
+    SectorContentsMapFromBytesError, SectorMetadataChecksummed,
 };
 <span class="kw">use </span>parity_scale_codec::Decode;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::mem::ManuallyDrop;
 <span class="kw">use </span>std::simd::Simd;
-<span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
+<span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, Scalar};
 <span class="kw">use </span>subspace_core_primitives::{
     Piece, PieceOffset, Record, RecordCommitment, RecordWitness, SBucket, SectorId,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_proof_of_space::{Quality, Table, TableGenerator};
 <span class="kw">use </span>thiserror::Error;
+<span class="kw">use </span>tracing::debug;
 
 <span class="doccomment">/// Errors that happen during reading
 </span><span class="attr">#[derive(Debug, Error)]
@@ -376,6 +395,9 @@
     <span class="doccomment">/// Failed to decode sector contents map
     </span><span class="attr">#[error(<span class="string">&quot;Failed to decode sector contents map: {0}&quot;</span>)]
     </span>FailedToDecodeSectorContentsMap(<span class="attr">#[from] </span>SectorContentsMapFromBytesError),
+    <span class="doccomment">/// Checksum mismatch
+    </span><span class="attr">#[error(<span class="string">&quot;Checksum mismatch&quot;</span>)]
+    </span>ChecksumMismatch,
 }
 
 <span class="doccomment">/// Record contained in the plot
@@ -557,7 +579,7 @@
 </span><span class="kw">pub fn </span>read_piece&lt;PosTable&gt;(
     piece_offset: PieceOffset,
     sector_id: <span class="kw-2">&amp;</span>SectorId,
-    sector_metadata: <span class="kw-2">&amp;</span>SectorMetadata,
+    sector_metadata: <span class="kw-2">&amp;</span>SectorMetadataChecksummed,
     sector: <span class="kw-2">&amp;</span>[u8],
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
     table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
@@ -611,6 +633,20 @@
 
     <span class="kw-2">*</span>piece.commitment_mut() = record_metadata.commitment;
     <span class="kw-2">*</span>piece.witness_mut() = record_metadata.witness;
+
+    <span class="comment">// Verify checksum
+    </span><span class="kw">let </span>actual_checksum = blake3_hash(piece.as_ref());
+    <span class="kw">if </span>actual_checksum != record_metadata.piece_checksum {
+        <span class="macro">debug!</span>(
+            <span class="question-mark">?</span>sector_id,
+            %piece_offset,
+            actual_checksum = %hex::encode(actual_checksum),
+            expected_checksum = %hex::encode(record_metadata.piece_checksum),
+            <span class="string">&quot;Hash doesn&#39;t match, plotted piece is corrupted&quot;
+        </span>);
+
+        <span class="kw">return </span><span class="prelude-val">Err</span>(ReadingError::ChecksumMismatch);
+    }
 
     <span class="prelude-val">Ok</span>(piece)
 }

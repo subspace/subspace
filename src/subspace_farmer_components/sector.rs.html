@@ -515,16 +515,94 @@
 <a href="#515" id="515">515</a>
 <a href="#516" id="516">516</a>
 <a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>bitvec::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>std::num::NonZeroU64;
 <span class="kw">use </span>std::ops::{Deref, DerefMut};
 <span class="kw">use </span>std::{mem, slice};
+<span class="kw">use </span>subspace_core_primitives::checksum::Blake3Checksummed;
+<span class="kw">use </span>subspace_core_primitives::crypto::blake3_hash;
 <span class="kw">use </span>subspace_core_primitives::{
-    HistorySize, PieceOffset, Record, RecordCommitment, RecordWitness, SBucket, SectorIndex,
+    Blake3Hash, HistorySize, PieceOffset, Record, RecordCommitment, RecordWitness, SBucket,
+    SectorIndex, SegmentIndex,
 };
 <span class="kw">use </span>thiserror::Error;
+<span class="kw">use </span>tracing::debug;
 
 <span class="doccomment">/// Size of the part of the plot containing record chunks (s-buckets).
 ///
@@ -543,7 +621,7 @@
 <span class="doccomment">/// Exact sector plot size (sector contents map, record chunks, record metadata).
 ///
 /// NOTE: Each sector also has corresponding fixed size metadata whose size can be obtained with
-/// [`SectorMetadata::encoded_size()`], size of the record chunks (s-buckets) with
+/// [`SectorMetadataChecksummed::encoded_size()`], size of the record chunks (s-buckets) with
 /// [`sector_record_chunks_size()`] and size of record commitments and witnesses with
 /// [`sector_record_metadata_size()`]. This function just combines those three together for
 /// convenience.
@@ -551,6 +629,7 @@
     sector_record_chunks_size(pieces_in_sector)
         + sector_record_metadata_size(pieces_in_sector)
         + SectorContentsMap::encoded_size(pieces_in_sector)
+        + mem::size_of::&lt;Blake3Hash&gt;()
 }
 
 <span class="doccomment">/// Metadata of the plotted sector
@@ -588,20 +667,49 @@
 
         s_bucket_offsets
     }
+}
 
-    <span class="doccomment">/// Size of encoded sector metadata.
+<span class="doccomment">/// Same as [`SectorMetadata`], but with checksums verified during SCALE encoding/decoding
+</span><span class="attr">#[derive(Debug, Clone, Encode, Decode)]
+</span><span class="kw">pub struct </span>SectorMetadataChecksummed(Blake3Checksummed&lt;SectorMetadata&gt;);
+
+<span class="kw">impl </span>From&lt;SectorMetadata&gt; <span class="kw">for </span>SectorMetadataChecksummed {
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>from(value: SectorMetadata) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>(Blake3Checksummed(value))
+    }
+}
+
+<span class="kw">impl </span>Deref <span class="kw">for </span>SectorMetadataChecksummed {
+    <span class="kw">type </span>Target = SectorMetadata;
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0 </span>.<span class="number">0
+    </span>}
+}
+
+<span class="kw">impl </span>DerefMut <span class="kw">for </span>SectorMetadataChecksummed {
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>deref_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self</span>::Target {
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>.<span class="number">0 </span>.<span class="number">0
+    </span>}
+}
+
+<span class="kw">impl </span>SectorMetadataChecksummed {
+    <span class="doccomment">/// Size of encoded checksummed sector metadata.
     ///
     /// For sector plot size use [`sector_size()`].
     </span><span class="attr">#[inline]
     </span><span class="kw">pub fn </span>encoded_size() -&gt; usize {
-        <span class="kw">let </span>default = SectorMetadata {
+        <span class="kw">let </span>default = SectorMetadataChecksummed::from(SectorMetadata {
             sector_index: <span class="number">0</span>,
             pieces_in_sector: <span class="number">0</span>,
             <span class="comment">// TODO: Should have been just `::new()`, but https://github.com/rust-lang/rust/issues/53827
             // SAFETY: Data structure filled with zeroes is a valid invariant
             </span>s_bucket_sizes: <span class="kw">unsafe </span>{ Box::new_zeroed().assume_init() },
-            history_size: HistorySize::from(NonZeroU64::new(<span class="number">1</span>).expect(<span class="string">&quot;1 is not 0; qed&quot;</span>)),
-        };
+            history_size: HistorySize::from(SegmentIndex::ZERO),
+        });
 
         default.encoded_size()
     }
@@ -614,11 +722,13 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) commitment: RecordCommitment,
     <span class="doccomment">/// Record witness
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) witness: RecordWitness,
+    <span class="doccomment">/// Checksum (hash) of the whole piece
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) piece_checksum: Blake3Hash,
 }
 
 <span class="kw">impl </span>RecordMetadata {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>encoded_size() -&gt; usize {
-        RecordWitness::SIZE + RecordCommitment::SIZE
+        RecordWitness::SIZE + RecordCommitment::SIZE + mem::size_of::&lt;Blake3Hash&gt;()
     }
 }
 
@@ -702,6 +812,22 @@
         <span class="doccomment">/// Max supported
         </span>max: usize,
     },
+    <span class="doccomment">/// Checksum mismatch
+    </span><span class="attr">#[error(<span class="string">&quot;Checksum mismatch&quot;</span>)]
+    </span>ChecksumMismatch,
+}
+
+<span class="doccomment">/// Error happening when trying to encode [`SectorContentsMap`] into bytes
+</span><span class="attr">#[derive(Debug, Error, Copy, Clone, Eq, PartialEq)]
+</span><span class="kw">pub enum </span>SectorContentsMapEncodeIntoError {
+    <span class="doccomment">/// Invalid bytes length
+    </span><span class="attr">#[error(<span class="string">&quot;Invalid bytes length, expected {expected}, actual {actual}&quot;</span>)]
+    </span>InvalidBytesLength {
+        <span class="doccomment">/// Expected length
+        </span>expected: usize,
+        <span class="doccomment">/// Actual length
+        </span>actual: usize,
+    },
 }
 
 <span class="doccomment">/// Error happening when trying to create [`SectorContentsMap`] from bytes
@@ -730,22 +856,7 @@
     </span>num_encoded_record_chunks: Vec&lt;SBucket&gt;,
     <span class="doccomment">/// Bitfields for each record, each bit is `true` if encoded chunk at corresponding position was
     /// used
-    </span><span class="comment">// TODO: Vector of bit arrays since number of s-buckets is known and fixed
     </span>encoded_record_chunks_used: Vec&lt;SingleRecordBitArray&gt;,
-}
-
-<span class="kw">impl </span>AsRef&lt;[u8]&gt; <span class="kw">for </span>SectorContentsMap {
-    <span class="attr">#[inline]
-    </span><span class="kw">fn </span>as_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8] {
-        <span class="kw">let </span>slice = <span class="self">self</span>.encoded_record_chunks_used.as_slice();
-        <span class="comment">// SAFETY: `BitArray` is a transparent data structure containing array of bytes
-        </span><span class="kw">unsafe </span>{
-            slice::from_raw_parts(
-                slice.as_ptr() <span class="kw">as </span><span class="kw-2">*const </span>u8,
-                slice.len() * SINGLE_RECORD_BIT_ARRAY_SIZE,
-            )
-        }
-    }
 }
 
 <span class="kw">impl </span>SectorContentsMap {
@@ -776,12 +887,26 @@
             });
         }
 
+        <span class="kw">let </span>(single_records_bit_arrays, expected_checksum) =
+            bytes.split_at(bytes.len() - mem::size_of::&lt;Blake3Hash&gt;());
+        <span class="comment">// Verify checksum
+        </span><span class="kw">let </span>actual_checksum = blake3_hash(single_records_bit_arrays);
+        <span class="kw">if </span>actual_checksum != expected_checksum {
+            <span class="macro">debug!</span>(
+                actual_checksum = %hex::encode(actual_checksum),
+                expected_checksum = %hex::encode(expected_checksum),
+                <span class="string">&quot;Hash doesn&#39;t match, corrupted bytes&quot;
+            </span>);
+
+            <span class="kw">return </span><span class="prelude-val">Err</span>(SectorContentsMapFromBytesError::ChecksumMismatch);
+        }
+
         <span class="kw">let </span><span class="kw-2">mut </span>encoded_record_chunks_used =
             <span class="macro">vec!</span>[SingleRecordBitArray::default(); pieces_in_sector.into()];
 
         <span class="kw">let </span>num_encoded_record_chunks = encoded_record_chunks_used
             .iter_mut()
-            .zip(bytes.array_chunks::&lt;{ SINGLE_RECORD_BIT_ARRAY_SIZE }&gt;())
+            .zip(single_records_bit_arrays.array_chunks::&lt;{ SINGLE_RECORD_BIT_ARRAY_SIZE }&gt;())
             .map(|(encoded_record_chunks_used, bytes)| {
                 encoded_record_chunks_used
                     .as_raw_mut_slice()
@@ -795,7 +920,7 @@
                         },
                     );
                 }
-                <span class="prelude-val">Ok</span>(SBucket::try_from(num_encoded_record_chunks).expect(<span class="string">&quot;Verified above ; qed&quot;</span>))
+                <span class="prelude-val">Ok</span>(SBucket::try_from(num_encoded_record_chunks).expect(<span class="string">&quot;Verified above; qed&quot;</span>))
             })
             .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 
@@ -808,7 +933,32 @@
     <span class="doccomment">/// Size of sector contents map when encoded and stored in the plot for specified number of
     /// pieces in sector
     </span><span class="kw">pub const fn </span>encoded_size(pieces_in_sector: u16) -&gt; usize {
-        SINGLE_RECORD_BIT_ARRAY_SIZE * pieces_in_sector <span class="kw">as </span>usize
+        SINGLE_RECORD_BIT_ARRAY_SIZE * pieces_in_sector <span class="kw">as </span>usize + mem::size_of::&lt;Blake3Hash&gt;()
+    }
+
+    <span class="doccomment">/// Encode internal contents into `output`
+    </span><span class="kw">pub fn </span>encode_into(<span class="kw-2">&amp;</span><span class="self">self</span>, output: <span class="kw-2">&amp;mut </span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(), SectorContentsMapEncodeIntoError&gt; {
+        <span class="kw">if </span>output.len() != <span class="self">Self</span>::encoded_size(<span class="self">self</span>.encoded_record_chunks_used.len() <span class="kw">as </span>u16) {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(SectorContentsMapEncodeIntoError::InvalidBytesLength {
+                expected: <span class="self">Self</span>::encoded_size(<span class="self">self</span>.encoded_record_chunks_used.len() <span class="kw">as </span>u16),
+                actual: output.len(),
+            });
+        }
+
+        <span class="kw">let </span>slice = <span class="self">self</span>.encoded_record_chunks_used.as_slice();
+        <span class="comment">// SAFETY: `BitArray` is a transparent data structure containing array of bytes
+        </span><span class="kw">let </span>slice = <span class="kw">unsafe </span>{
+            slice::from_raw_parts(
+                slice.as_ptr() <span class="kw">as </span><span class="kw-2">*const </span>u8,
+                slice.len() * SINGLE_RECORD_BIT_ARRAY_SIZE,
+            )
+        };
+
+        <span class="comment">// Write data and checksum
+        </span>output[..slice.len()].copy_from_slice(slice);
+        output[slice.len()..].copy_from_slice(<span class="kw-2">&amp;</span>blake3_hash(slice));
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Number of encoded chunks in each record

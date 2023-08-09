@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SectorContentsMapFromBytesError","SectorContentsMapIterationError"],"fn":["sector_record_chunks_size","sector_record_metadata_size","sector_size"],"struct":["EncodedChunksUsed","SectorContentsMap","SectorMetadata"]};
+window.SIDEBAR_ITEMS = {"enum":["SectorContentsMapEncodeIntoError","SectorContentsMapFromBytesError","SectorContentsMapIterationError"],"fn":["sector_record_chunks_size","sector_record_metadata_size","sector_size"],"struct":["EncodedChunksUsed","SectorContentsMap","SectorMetadata","SectorMetadataChecksummed"]};
