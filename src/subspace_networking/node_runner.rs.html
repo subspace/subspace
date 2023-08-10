@@ -1487,8 +1487,6 @@
 <a href="#1487" id="1487">1487</a>
 <a href="#1488" id="1488">1488</a>
 <a href="#1489" id="1489">1489</a>
-<a href="#1490" id="1490">1490</a>
-<a href="#1491" id="1491">1491</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::{
     append_p2p_suffix, remove_p2p_suffix, NetworkingParametersRegistry, PeerAddressRemovedEvent,
     PEERS_ADDRESSES_BATCH_SIZE,
@@ -1515,7 +1513,7 @@
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::future::Fuse;
 <span class="kw">use </span>futures::{FutureExt, StreamExt};
-<span class="kw">use </span>libp2p::core::ConnectedPoint;
+<span class="kw">use </span>libp2p::core::{address_translation, ConnectedPoint};
 <span class="kw">use </span>libp2p::gossipsub::{Event <span class="kw">as </span>GossipsubEvent, TopicHash};
 <span class="kw">use </span>libp2p::identify::Event <span class="kw">as </span>IdentifyEvent;
 <span class="kw">use </span>libp2p::kad::store::RecordStore;
@@ -1525,7 +1523,6 @@
     ProgressStep, ProviderRecord, PutRecordOk, QueryId, QueryResult, Quorum, Record,
 };
 <span class="kw">use </span>libp2p::metrics::{Metrics, Recorder};
-<span class="kw">use </span>libp2p::multiaddr::Protocol;
 <span class="kw">use </span>libp2p::swarm::{DialError, SwarmEvent};
 <span class="kw">use </span>libp2p::{futures, Multiaddr, PeerId, Swarm, TransportError};
 <span class="kw">use </span>nohash_hasher::IntMap;
@@ -1541,7 +1538,7 @@
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>tokio::time::Sleep;
-<span class="kw">use </span>tracing::{debug, error, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, info, trace, warn};
 
 <span class="comment">// Defines a batch size for peer addresses from Kademlia buckets.
 </span><span class="kw">const </span>KADEMLIA_PEERS_ADDRESSES_BATCH_SIZE: usize = <span class="number">20</span>;
@@ -2212,33 +2209,32 @@
             <span class="kw">return</span>;
         }
 
-        <span class="comment">// TODO: replace with Autonat
-        // TODO: won&#39;t work with QUIC
-        </span><span class="kw">let </span><span class="kw-2">mut </span>listen_ports = HashSet::new();
-        <span class="kw">for </span><span class="kw-2">mut </span>listen_address <span class="kw">in </span><span class="self">self</span>.swarm.listeners().cloned() {
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(protocol) = listen_address.pop() {
-                <span class="kw">if let </span>Protocol::Tcp(port) = protocol {
-                    listen_ports.insert(port);
-                }
-            }
+        <span class="kw">let </span><span class="prelude-val">Some</span>(listen_addr) = <span class="self">self</span>.swarm.listeners().next() <span class="kw">else </span>{
+            <span class="macro">warn!</span>(<span class="string">&quot;Listener addresses are not specified!&quot;</span>);
+            <span class="kw">return</span>;
+        };
+
+        <span class="kw">let </span><span class="prelude-val">Some</span>(observed_addr) = address_translation(listen_addr, <span class="kw-2">&amp;</span>observed_addr) <span class="kw">else </span>{
+            <span class="macro">warn!</span>(
+                <span class="question-mark">?</span>listen_addr,
+                <span class="question-mark">?</span>observed_addr,
+                <span class="string">&quot;Can&#39;t translate observed address!&quot;
+            </span>);
+            <span class="kw">return</span>;
+        };
+
+        <span class="kw">if </span>!<span class="self">self
+            </span>.swarm
+            .external_addresses()
+            .cloned()
+            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+            .contains(<span class="kw-2">&amp;</span>observed_addr)
+        {
+            <span class="macro">info!</span>(<span class="string">&quot;Added observed address as external: {}&quot;</span>, observed_addr);
+            <span class="self">self</span>.swarm.add_external_address(observed_addr);
+        } <span class="kw">else </span>{
+            <span class="macro">trace!</span>(<span class="string">&quot;Skipping known external address: {}&quot;</span>, observed_addr);
         }
-
-        <span class="kw">let </span><span class="kw-2">mut </span>observed_addr_candidate = observed_addr.clone();
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(protocol) = observed_addr_candidate.pop() {
-            <span class="kw">if let </span>Protocol::Tcp(port) = protocol {
-                <span class="kw">if </span>listen_ports.contains(<span class="kw-2">&amp;</span>port) {
-                    <span class="macro">debug!</span>(<span class="string">&quot;Added observed address as external: {}&quot;</span>, observed_addr);
-                    <span class="self">self</span>.swarm.add_external_address(observed_addr);
-
-                    <span class="kw">return</span>;
-                }
-            }
-        }
-
-        <span class="macro">debug!</span>(
-            <span class="string">&quot;Observed address wasn&#39;t added as external (different port): {}&quot;</span>,
-            observed_addr
-        );
     }
 
     <span class="kw">async fn </span>handle_kademlia_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: KademliaEvent) {
