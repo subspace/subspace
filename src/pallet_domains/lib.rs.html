@@ -1509,10 +1509,6 @@
 <a href="#1509" id="1509">1509</a>
 <a href="#1510" id="1510">1510</a>
 <a href="#1511" id="1511">1511</a>
-<a href="#1512" id="1512">1512</a>
-<a href="#1513" id="1513">1513</a>
-<a href="#1514" id="1514">1514</a>
-<a href="#1515" id="1515">1515</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1790,6 +1786,10 @@
         </span><span class="comment">// TODO: remove once we have operator rewards on client side is available
         </span><span class="attr">#[pallet::constant]
         </span><span class="kw">type </span>DomainBlockReward: Get&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
+
+        <span class="doccomment">/// The maximum number of pending staking operation that can perform upon epoch transition.
+        </span><span class="attr">#[pallet::constant]
+        </span><span class="kw">type </span>MaxPendingStakingOperation: Get&lt;u32&gt;;
     }
 
     <span class="attr">#[pallet::pallet]
@@ -1924,6 +1924,12 @@
         BTreeMap&lt;OperatorId, PendingOperatorSlashInfo&lt;NominatorId&lt;T&gt;, BalanceOf&lt;T&gt;&gt;&gt;,
         OptionQuery,
     &gt;;
+
+    <span class="doccomment">/// The pending staking operation count of the current epoch, it should not larger than
+    /// `MaxPendingStakingOperation` and will be resetted to 0 upon epoch transition.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingStakingOperationCount&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, u32, ValueQuery&gt;;
 
     <span class="doccomment">/// Stores the next domain id.
     </span><span class="attr">#[pallet::storage]
@@ -2169,8 +2175,7 @@
     <span class="attr">#[pallet::call]
     </span><span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
         <span class="attr">#[pallet::call_index(<span class="number">0</span>)]
-        #[pallet::weight(Weight::from_all(<span class="number">10_000</span>))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::submit_bundle().saturating_add(T::WeightInfo::pending_staking_operation()))]
         </span><span class="kw">pub fn </span>submit_bundle(
             origin: OriginFor&lt;T&gt;,
             opaque_bundle: OpaqueBundleOf&lt;T&gt;,
@@ -2206,8 +2211,12 @@
                     )
                     .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
-                    <span class="comment">// if any domain block is pruned, then we have a new head added
+                    <span class="comment">// If any domain block is pruned, then we have a new head added
                     // so distribute the operator rewards and, if required, do epoch transition as well.
+                    //
+                    // NOTE: Skip the following staking related operations when benchmarking the
+                    // `submit_bundle` call, these operations will be benchmarked separately.
+                    </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
                     </span><span class="kw">if let </span><span class="prelude-val">Some</span>(pruned_block_info) = maybe_pruned_domain_block_info {
                         do_reward_operators::&lt;T&gt;(
                             domain_id,
@@ -2277,16 +2286,8 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">1</span>)]
-        #[pallet::weight(
-            <span class="kw">match </span>fraud_proof.as_ref() {
-                FraudProof::InvalidStateTransition(..) =&gt; (
-                    T::WeightInfo::submit_system_domain_invalid_state_transition_proof(),
-                    Pays::No
-                ),
-                <span class="comment">// TODO: proper weight
-                </span><span class="kw">_ </span>=&gt; (Weight::from_all(<span class="number">10_000</span>), Pays::No),
-            }
-        )]
+        </span><span class="comment">// TODO: proper weight
+        </span><span class="attr">#[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::No))]
         </span><span class="kw">pub fn </span>submit_fraud_proof(
             origin: OriginFor&lt;T&gt;,
             fraud_proof: Box&lt;FraudProof&lt;T::BlockNumber, T::Hash&gt;&gt;,
@@ -2301,8 +2302,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">2</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::register_domain_runtime())]
         </span><span class="kw">pub fn </span>register_domain_runtime(
             origin: OriginFor&lt;T&gt;,
             runtime_name: Vec&lt;u8&gt;,
@@ -2325,8 +2325,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">3</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::upgrade_domain_runtime())]
         </span><span class="kw">pub fn </span>upgrade_domain_runtime(
             origin: OriginFor&lt;T&gt;,
             runtime_id: RuntimeId,
@@ -2347,8 +2346,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">4</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::register_operator())]
         </span><span class="kw">pub fn </span>register_operator(
             origin: OriginFor&lt;T&gt;,
             domain_id: DomainId,
@@ -2368,8 +2366,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">5</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::nominate_operator())]
         </span><span class="kw">pub fn </span>nominate_operator(
             origin: OriginFor&lt;T&gt;,
             operator_id: OperatorId,
@@ -2389,8 +2386,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">6</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::instantiate_domain())]
         </span><span class="kw">pub fn </span>instantiate_domain(
             origin: OriginFor&lt;T&gt;,
             domain_config: DomainConfig,
@@ -2407,8 +2403,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">7</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::switch_domain())]
         </span><span class="kw">pub fn </span>switch_domain(
             origin: OriginFor&lt;T&gt;,
             operator_id: OperatorId,
@@ -2428,8 +2423,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">8</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::deregister_operator())]
         </span><span class="kw">pub fn </span>deregister_operator(
             origin: OriginFor&lt;T&gt;,
             operator_id: OperatorId,
@@ -2444,8 +2438,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">9</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::withdraw_stake())]
         </span><span class="kw">pub fn </span>withdraw_stake(
             origin: OriginFor&lt;T&gt;,
             operator_id: OperatorId,
@@ -2464,8 +2457,7 @@
         }
 
         <span class="attr">#[pallet::call_index(<span class="number">10</span>)]
-        #[pallet::weight((Weight::from_all(<span class="number">10_000</span>), Pays::Yes))]
-        </span><span class="comment">// TODO: proper benchmark
+        #[pallet::weight(T::WeightInfo::auto_stake_block_rewards())]
         </span><span class="kw">pub fn </span>auto_stake_block_rewards(
             origin: OriginFor&lt;T&gt;,
             operator_id: OperatorId,
