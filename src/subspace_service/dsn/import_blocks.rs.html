@@ -308,31 +308,6 @@
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a>
-<a href="#333" id="333">333</a>
-<a href="#334" id="334">334</a>
-<a href="#335" id="335">335</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2023 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -354,18 +329,16 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::dsn::import_blocks::piece_validator::SegmentCommitmentPieceValidator;
 <span class="kw">use </span><span class="kw">crate</span>::dsn::import_blocks::segment_headers::SegmentHeaderHandler;
-<span class="kw">use </span>futures::FutureExt;
+<span class="kw">use </span>futures::stream::FuturesUnordered;
+<span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>sc_client_api::{BlockBackend, HeaderBackend};
 <span class="kw">use </span>sc_consensus::import_queue::ImportQueueService;
-<span class="kw">use </span>sc_consensus::{BlockImportError, BlockImportStatus, IncomingBlock, Link};
-<span class="kw">use </span>sc_service::ImportQueue;
-<span class="kw">use </span>sc_tracing::tracing::{debug, info, trace};
+<span class="kw">use </span>sc_consensus::IncomingBlock;
+<span class="kw">use </span>sc_tracing::tracing::{debug, trace};
 <span class="kw">use </span>sp_consensus::BlockOrigin;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header, NumberFor, One};
 <span class="kw">use </span>static_assertions::const_assert;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::Poll;
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_archiving::reconstructor::Reconstructor;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{embedded_kzg_settings, Kzg};
@@ -374,6 +347,8 @@
 };
 <span class="kw">use </span>subspace_networking::utils::piece_provider::{PieceProvider, RetryPolicy};
 <span class="kw">use </span>subspace_networking::Node;
+<span class="kw">use </span>tokio::sync::Semaphore;
+<span class="kw">use </span>tracing::warn;
 
 <span class="comment">// Refuse to compile on non-64-bit platforms, otherwise segment indices will not fit in memory
 </span><span class="macro">const_assert!</span>(std::mem::size_of::&lt;usize&gt;() &gt;= std::mem::size_of::&lt;u64&gt;());
@@ -382,129 +357,6 @@
 </span><span class="kw">const </span>QUEUED_BLOCKS_LIMIT: BlockNumber = <span class="number">2048</span>;
 <span class="doccomment">/// Time to wait for blocks to import if import is too slow
 </span><span class="kw">const </span>WAIT_FOR_BLOCKS_TO_IMPORT: Duration = Duration::from_secs(<span class="number">1</span>);
-
-<span class="kw">struct </span>WaitLinkError&lt;B: BlockT&gt; {
-    error: BlockImportError,
-    hash: B::Hash,
-}
-
-<span class="kw">struct </span>WaitLink&lt;B: BlockT&gt; {
-    imported_blocks: u64,
-    error: <span class="prelude-ty">Option</span>&lt;WaitLinkError&lt;B&gt;&gt;,
-}
-
-<span class="kw">impl</span>&lt;B: BlockT&gt; WaitLink&lt;B&gt; {
-    <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            imported_blocks: <span class="number">0</span>,
-            error: <span class="prelude-val">None</span>,
-        }
-    }
-}
-
-<span class="kw">impl</span>&lt;B: BlockT&gt; Link&lt;B&gt; <span class="kw">for </span>WaitLink&lt;B&gt; {
-    <span class="kw">fn </span>blocks_processed(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        imported: usize,
-        _num_expected_blocks: usize,
-        results: Vec&lt;(
-            <span class="prelude-ty">Result</span>&lt;BlockImportStatus&lt;NumberFor&lt;B&gt;&gt;, BlockImportError&gt;,
-            B::Hash,
-        )&gt;,
-    ) {
-        <span class="macro">debug!</span>(<span class="string">&quot;Imported {imported} blocks&quot;</span>);
-        <span class="self">self</span>.imported_blocks += imported <span class="kw">as </span>u64;
-
-        <span class="kw">for </span>result <span class="kw">in </span>results {
-            <span class="kw">if let </span>(<span class="prelude-val">Err</span>(error), hash) = result {
-                <span class="self">self</span>.error.replace(WaitLinkError { error, hash });
-                <span class="kw">break</span>;
-            }
-        }
-    }
-}
-
-<span class="doccomment">/// Starts the process of importing blocks, used for for initial sync on node startup because it
-/// requires [`ImportQueue`] as a dependency.
-///
-/// Returns number of imported blocks.
-</span><span class="kw">pub async fn </span>initial_block_import_from_dsn&lt;Block, IQ, Client&gt;(
-    node: <span class="kw-2">&amp;</span>Node,
-    client: Arc&lt;Client&gt;,
-    import_queue: <span class="kw-2">&amp;mut </span>IQ,
-    force: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;u64, sc_service::Error&gt;
-<span class="kw">where
-    </span>Block: BlockT,
-    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
-    IQ: ImportQueue&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
-{
-    <span class="kw">let </span><span class="kw-2">mut </span>link = WaitLink::new();
-    <span class="kw">let </span><span class="kw-2">mut </span>import_queue_service = import_queue.service();
-
-    <span class="kw">let </span>import_blocks_fut = import_blocks_from_dsn(
-        node,
-        client.as_ref(),
-        import_queue_service.as_mut(),
-        BlockOrigin::NetworkInitialSync,
-        force,
-    );
-    <span class="kw">let </span>drive_import_queue_fut = <span class="kw">async </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>last_imported_blocks = link.imported_blocks;
-        <span class="kw">loop </span>{
-            futures::future::poll_fn(|ctx| {
-                import_queue.poll_actions(ctx, <span class="kw-2">&amp;mut </span>link);
-
-                <span class="kw">if </span>last_imported_blocks == link.imported_blocks &amp;&amp; link.error.is_none() {
-                    <span class="comment">// Nothing changed yet, wait for waker to be called
-                    </span>Poll::Pending
-                } <span class="kw">else </span>{
-                    last_imported_blocks = link.imported_blocks;
-                    Poll::Ready(())
-                }
-            })
-            .<span class="kw">await</span>;
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(WaitLinkError { error, hash }) = <span class="kw-2">&amp;</span>link.error {
-                <span class="kw">return </span><span class="prelude-val">Err</span>::&lt;(), sc_service::Error&gt;(sc_service::Error::Other(<span class="macro">format!</span>(
-                    <span class="string">&quot;Stopping block import after #{} blocks on {} because of an error: {}&quot;</span>,
-                    link.imported_blocks, hash, error
-                )));
-            }
-        }
-    };
-
-    <span class="kw">let </span>downloaded_blocks = <span class="macro">futures::select! </span>{
-        maybe_downloaded_blocks = import_blocks_fut.fuse() =&gt; {
-            maybe_downloaded_blocks<span class="question-mark">?
-        </span>}
-        result = drive_import_queue_fut.fuse() =&gt; {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = result {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(error);
-            } <span class="kw">else </span>{
-                <span class="macro">unreachable!</span>();
-            }
-        }
-    };
-
-    <span class="kw">while </span>link.imported_blocks &lt; downloaded_blocks {
-        futures::future::poll_fn(|ctx| {
-            import_queue.poll_actions(ctx, <span class="kw-2">&amp;mut </span>link);
-
-            Poll::Ready(())
-        })
-        .<span class="kw">await</span>;
-
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(WaitLinkError { error, hash }) = <span class="kw-2">&amp;</span>link.error {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(sc_service::Error::Other(<span class="macro">format!</span>(
-                <span class="string">&quot;Stopping block import after #{} blocks on {} because of an error: {}&quot;</span>,
-                link.imported_blocks, hash, error
-            )));
-        }
-    }
-
-    <span class="prelude-val">Ok</span>(downloaded_blocks)
-}
 
 <span class="comment">// TODO: Only download segment headers starting with the first segment that node doesn&#39;t have rather
 //  than from genesis
@@ -515,7 +367,6 @@
     node: <span class="kw-2">&amp;</span>Node,
     client: <span class="kw-2">&amp;</span>Client,
     import_queue_service: <span class="kw-2">&amp;mut </span>IQS,
-    block_origin: BlockOrigin,
     force: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;u64, sc_service::Error&gt;
 <span class="kw">where
@@ -542,7 +393,7 @@
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
     <span class="kw">let </span>segments_found = segment_commitments.len();
-    <span class="kw">let </span>piece_provider = PieceProvider::&lt;SegmentCommitmentPieceValidator&gt;::new(
+    <span class="kw">let </span>piece_provider = <span class="kw-2">&amp;</span>PieceProvider::&lt;SegmentCommitmentPieceValidator&gt;::new(
         node.clone(),
         <span class="prelude-val">Some</span>(SegmentCommitmentPieceValidator::new(
             node.clone(),
@@ -553,43 +404,116 @@
 
     <span class="kw">let </span><span class="kw-2">mut </span>downloaded_blocks = <span class="number">0</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>reconstructor = Reconstructor::new().map_err(|error| error.to_string())<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>segment_indices_iter = (SegmentIndex::ZERO..)
+        .take(segments_found)
+        .skip(<span class="number">1</span>)
+        .peekable();
 
     <span class="comment">// Skip the first segment, everyone has it locally
-    </span><span class="kw">for </span>segment_index <span class="kw">in </span>(SegmentIndex::ZERO..).take(segments_found).skip(<span class="number">1</span>) {
-        <span class="kw">let </span>pieces_indices = segment_index.segment_piece_indexes_source_first();
+    </span><span class="kw">while let </span><span class="prelude-val">Some</span>(segment_index) = segment_indices_iter.next() {
+        <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Processing segment&quot;</span>);
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(segment_header) = segment_headers.get(u64::from(segment_index) <span class="kw">as </span>usize) {
+            <span class="macro">trace!</span>(
+                %segment_index,
+                last_archived_block_number = %segment_header.last_archived_block().number,
+                last_archived_block_progress = <span class="question-mark">?</span>segment_header.last_archived_block().archived_progress,
+                <span class="string">&quot;Downloaded segment header&quot;
+            </span>);
+
             <span class="kw">let </span>last_archived_block =
                 NumberFor::&lt;Block&gt;::from(segment_header.last_archived_block().number);
-            <span class="kw">if </span>last_archived_block &lt;= client.info().best_number {
+            <span class="kw">let </span>last_archived_block_partial = segment_header
+                .last_archived_block()
+                .archived_progress
+                .partial()
+                .is_some();
+            <span class="comment">// We already have this block imported or we have only a part of the very next block and
+            // this was the last segment available, so nothing to import
+            </span><span class="kw">if </span>last_archived_block &lt;= client.info().best_number
+                || (last_archived_block == client.info().best_number + One::one()
+                    &amp;&amp; last_archived_block_partial
+                    &amp;&amp; segment_indices_iter.peek().is_none())
+            {
                 <span class="comment">// Reset reconstructor instance
                 </span>reconstructor = Reconstructor::new().map_err(|error| error.to_string())<span class="question-mark">?</span>;
                 <span class="kw">continue</span>;
             }
         }
 
+        <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Retrieving pieces of the segment&quot;</span>);
+
+        <span class="kw">let </span>semaphore = <span class="kw-2">&amp;</span>Semaphore::new(RecordedHistorySegment::NUM_RAW_RECORDS);
+
+        <span class="kw">let </span><span class="kw-2">mut </span>received_segment_pieces = segment_index
+            .segment_piece_indexes_source_first()
+            .into_iter()
+            .map(|piece_index| {
+                <span class="comment">// Source pieces will acquire permit here right away
+                </span><span class="kw">let </span>maybe_permit = semaphore.try_acquire().ok();
+
+                <span class="kw">async move </span>{
+                    <span class="kw">let </span>permit = <span class="kw">match </span>maybe_permit {
+                        <span class="prelude-val">Some</span>(permit) =&gt; permit,
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="comment">// Other pieces will acquire permit here instead
+                            </span><span class="kw">match </span>semaphore.acquire().<span class="kw">await </span>{
+                                <span class="prelude-val">Ok</span>(permit) =&gt; permit,
+                                <span class="prelude-val">Err</span>(error) =&gt; {
+                                    <span class="macro">warn!</span>(
+                                        %piece_index,
+                                        %error,
+                                        <span class="string">&quot;Semaphore was closed, interrupting piece retrieval&quot;
+                                    </span>);
+                                    <span class="kw">return </span><span class="prelude-val">None</span>;
+                                }
+                            }
+                        }
+                    };
+                    <span class="kw">let </span>maybe_piece = <span class="kw">match </span>piece_provider
+                        .get_piece(piece_index, RetryPolicy::Limited(<span class="number">0</span>))
+                        .<span class="kw">await
+                    </span>{
+                        <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
+                        <span class="prelude-val">Err</span>(error) =&gt; {
+                            <span class="macro">trace!</span>(
+                                %error,
+                                <span class="question-mark">?</span>piece_index,
+                                <span class="string">&quot;Piece request failed&quot;</span>,
+                            );
+                            <span class="kw">return </span><span class="prelude-val">None</span>;
+                        }
+                    };
+
+                    <span class="macro">trace!</span>(
+                        <span class="question-mark">?</span>piece_index,
+                        piece_found = maybe_piece.is_some(),
+                        <span class="string">&quot;Piece request succeeded&quot;</span>,
+                    );
+
+                    maybe_piece.map(|received_piece| {
+                        <span class="comment">// Piece was received successfully, &quot;remove&quot; this slot from semaphore
+                        </span>permit.forget();
+                        (piece_index, received_piece)
+                    })
+                }
+            })
+            .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;();
+
         <span class="kw">let </span><span class="kw-2">mut </span>segment_pieces = <span class="macro">vec!</span>[<span class="prelude-val">None</span>::&lt;Piece&gt;; ArchivedHistorySegment::NUM_PIECES];
         <span class="kw">let </span><span class="kw-2">mut </span>pieces_received = <span class="number">0</span>;
 
-        <span class="kw">for </span>piece_index <span class="kw">in </span>pieces_indices {
-            <span class="kw">let </span>maybe_piece = piece_provider
-                .get_piece(piece_index, RetryPolicy::Limited(<span class="number">0</span>))
-                .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_result) = received_segment_pieces.next().<span class="kw">await </span>{
+            <span class="kw">let </span><span class="prelude-val">Some</span>((piece_index, piece)) = maybe_result <span class="kw">else </span>{
+                <span class="kw">continue</span>;
+            };
 
-            <span class="macro">trace!</span>(
-                <span class="question-mark">?</span>piece_index,
-                success = maybe_piece.is_some(),
-                <span class="string">&quot;Piece request completed.&quot;</span>,
-            );
+            segment_pieces
+                .get_mut(piece_index.position() <span class="kw">as </span>usize)
+                .expect(<span class="string">&quot;Piece position is by definition within segment; qed&quot;</span>)
+                .replace(piece);
 
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(received_piece) = maybe_piece {
-                segment_pieces
-                    .get_mut(piece_index.position() <span class="kw">as </span>usize)
-                    .expect(<span class="string">&quot;Piece position is by definition within segment; qed&quot;</span>)
-                    .replace(received_piece);
-
-                pieces_received += <span class="number">1</span>;
-            }
+            pieces_received += <span class="number">1</span>;
 
             <span class="kw">if </span>pieces_received &gt;= RecordedHistorySegment::NUM_RAW_RECORDS {
                 <span class="macro">trace!</span>(%segment_index, <span class="string">&quot;Received half of the segment.&quot;</span>);
@@ -602,9 +526,11 @@
             .map_err(|error| error.to_string())<span class="question-mark">?</span>;
         drop(segment_pieces);
 
-        <span class="kw">let </span><span class="kw-2">mut </span>blocks_to_import = Vec::with_capacity(reconstructed_contents.blocks.len());
+        <span class="macro">trace!</span>(%segment_index, <span class="string">&quot;Segment reconstructed successfully&quot;</span>);
 
-        <span class="kw">let </span>best_block_number = client.info().best_number;
+        <span class="kw">let </span><span class="kw-2">mut </span>blocks_to_import = Vec::with_capacity(QUEUED_BLOCKS_LIMIT <span class="kw">as </span>usize);
+
+        <span class="kw">let </span><span class="kw-2">mut </span>best_block_number = client.info().best_number;
         <span class="kw">for </span>(block_number, block_bytes) <span class="kw">in </span>reconstructed_contents.blocks {
             {
                 <span class="kw">let </span>block_number = block_number.into();
@@ -628,7 +554,21 @@
 
                 <span class="comment">// Limit number of queued blocks for import
                 </span><span class="kw">while </span>block_number - best_block_number &gt;= QUEUED_BLOCKS_LIMIT.into() {
+                    <span class="kw">if </span>!blocks_to_import.is_empty() {
+                        <span class="comment">// Import queue handles verification and importing it into the client
+                        </span>import_queue_service.import_blocks(
+                            BlockOrigin::NetworkInitialSync,
+                            blocks_to_import.clone(),
+                        );
+                        blocks_to_import.clear();
+                    }
+                    <span class="macro">trace!</span>(
+                        %block_number,
+                        %best_block_number,
+                        <span class="string">&quot;Number of importing blocks reached queue limit, waiting before retrying&quot;
+                    </span>);
                     tokio::time::sleep(WAIT_FOR_BLOCKS_TO_IMPORT).<span class="kw">await</span>;
+                    best_block_number = client.info().best_number;
                 }
             }
 
@@ -654,7 +594,7 @@
             downloaded_blocks += <span class="number">1</span>;
 
             <span class="kw">if </span>downloaded_blocks % <span class="number">1000 </span>== <span class="number">0 </span>{
-                <span class="macro">info!</span>(<span class="string">&quot;Imported block {} from DSN&quot;</span>, block_number);
+                <span class="macro">debug!</span>(<span class="string">&quot;Adding block {} from DSN to the import queue&quot;</span>, block_number);
             }
         }
 
@@ -662,8 +602,18 @@
             <span class="kw">break</span>;
         }
 
-        <span class="comment">// import queue handles verification and importing it into the client.
-        </span>import_queue_service.import_blocks(block_origin, blocks_to_import);
+        <span class="comment">// Import queue handles verification and importing it into the client
+        </span><span class="kw">let </span>last_segment = segment_indices_iter.peek().is_none();
+        <span class="kw">if </span>last_segment {
+            <span class="kw">let </span>last_block = blocks_to_import
+                .pop()
+                .expect(<span class="string">&quot;Not empty, checked above; qed&quot;</span>);
+            import_queue_service.import_blocks(BlockOrigin::NetworkInitialSync, blocks_to_import);
+            <span class="comment">// This will notify Substrate&#39;s sync mechanism and allow regular Substrate sync to continue gracefully
+            </span>import_queue_service.import_blocks(BlockOrigin::NetworkBroadcast, <span class="macro">vec!</span>[last_block]);
+        } <span class="kw">else </span>{
+            import_queue_service.import_blocks(BlockOrigin::NetworkInitialSync, blocks_to_import);
+        }
     }
 
     <span class="prelude-val">Ok</span>(downloaded_blocks)

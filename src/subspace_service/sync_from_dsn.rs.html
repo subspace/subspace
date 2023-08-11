@@ -216,6 +216,11 @@
 <a href="#216" id="216">216</a>
 <a href="#217" id="217">217</a>
 <a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::dsn::import_blocks::import_blocks_from_dsn;
 <span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>futures::channel::mpsc;
@@ -226,18 +231,19 @@
 <span class="kw">use </span>sc_network::{NetworkPeers, NetworkService};
 <span class="kw">use </span>sp_api::BlockT;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
-<span class="kw">use </span>sp_consensus::BlockOrigin;
 <span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
+<span class="kw">use </span>std::sync::atomic::Ordering;
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>subspace_networking::Node;
-<span class="kw">use </span>tracing::{info, trace, warn};
+<span class="kw">use </span>tracing::{info, warn};
 
 <span class="doccomment">/// How much time to wait for new block to be imported before timing out and starting sync from DSN.
 </span><span class="kw">const </span>NO_IMPORTED_BLOCKS_TIMEOUT: Duration = Duration::from_secs(<span class="number">10 </span>* <span class="number">60</span>);
 <span class="doccomment">/// Frequency with which to check whether node is online or not
-</span><span class="kw">const </span>CHECK_ONLINE_STATUS_INTERVAL: Duration = Duration::from_secs(<span class="number">10</span>);
+</span><span class="kw">const </span>CHECK_ONLINE_STATUS_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
+<span class="doccomment">/// Period of time during which node should be offline for DSN sync to kick-in
+</span><span class="kw">const </span>MIN_OFFLINE_PERIOD: Duration = Duration::from_secs(<span class="number">60</span>);
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>NotificationReason {
@@ -298,19 +304,26 @@
 {
     <span class="comment">// Separate reactive observer for Subspace networking that is not a future
     </span><span class="kw">let </span>_handler_id = node.on_num_established_peer_connections_change({
-        <span class="comment">// Assuming node is online by default
-        </span><span class="kw">let </span>was_online = AtomicBool::new(<span class="bool-val">false</span>);
+        <span class="comment">// Assuming node is offline by default
+        </span><span class="kw">let </span>last_online = Atomic::new(<span class="prelude-val">None</span>::&lt;Instant&gt;);
         <span class="kw">let </span>notifications_sender = notifications_sender.clone();
 
         Arc::new(<span class="kw">move </span>|<span class="kw-2">&amp;</span>new_connections| {
             <span class="kw">let </span>is_online = new_connections &gt; <span class="number">0</span>;
-            <span class="kw">let </span>was_online = was_online.swap(is_online, Ordering::AcqRel);
+            <span class="kw">let </span>was_online = last_online
+                .load(Ordering::AcqRel)
+                .map(|last_online| last_online.elapsed() &lt; MIN_OFFLINE_PERIOD)
+                .unwrap_or_default();
 
             <span class="kw">if </span>is_online &amp;&amp; !was_online {
                 <span class="comment">// Doesn&#39;t matter if sending failed here
                 </span><span class="kw">let _ </span>= notifications_sender
                     .clone()
                     .try_send(NotificationReason::WentOnlineSubspace);
+            }
+
+            <span class="kw">if </span>is_online {
+                last_online.store(<span class="prelude-val">Some</span>(Instant::now()), Ordering::Release);
             }
         })
     });
@@ -367,14 +380,17 @@
 ) <span class="kw">where
     </span>Block: BlockT,
 {
-    <span class="comment">// Assuming node is online by default
-    </span><span class="kw">let </span><span class="kw-2">mut </span>was_online = <span class="bool-val">false</span>;
+    <span class="comment">// Assuming node is offline by default
+    </span><span class="kw">let </span><span class="kw-2">mut </span>last_online = <span class="prelude-val">None</span>::&lt;Instant&gt;;
 
     <span class="kw">loop </span>{
         tokio::time::sleep(CHECK_ONLINE_STATUS_INTERVAL).<span class="kw">await</span>;
 
         <span class="kw">let </span>is_online = network_service.sync_num_connected() &gt; <span class="number">0</span>;
 
+        <span class="kw">let </span>was_online = last_online
+            .map(|last_online| last_online.elapsed() &lt; MIN_OFFLINE_PERIOD)
+            .unwrap_or_default();
         <span class="kw">if </span>is_online &amp;&amp; !was_online {
             <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
                 notifications_sender.try_send(NotificationReason::WentOnlineSubstrate)
@@ -386,7 +402,9 @@
             }
         }
 
-        was_online = is_online;
+        <span class="kw">if </span>is_online {
+            last_online.replace(Instant::now());
+        }
     }
 }
 
@@ -402,14 +420,10 @@
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     IQS: ImportQueueService&lt;Block&gt; + <span class="question-mark">?</span>Sized,
 {
+    <span class="comment">// Node starts as offline, we&#39;ll wait for it to go online shrtly after
+    </span><span class="kw">let </span><span class="kw-2">mut </span>initial_sync_mode = <span class="prelude-val">Some</span>(sync_mode.swap(SyncMode::Paused, Ordering::AcqRel));
     <span class="kw">while let </span><span class="prelude-val">Some</span>(reason) = notifications.next().<span class="kw">await </span>{
-        <span class="comment">// TODO: Remove this condition once we switch to Subspace networking for everything
-        </span><span class="kw">if </span><span class="macro">matches!</span>(reason, NotificationReason::WentOnlineSubspace) {
-            <span class="macro">trace!</span>(<span class="string">&quot;Ignoring Subspace networking for DSN sync for now&quot;</span>);
-            <span class="kw">continue</span>;
-        }
-
-        <span class="kw">let </span>prev_sync_mode = sync_mode.swap(SyncMode::Paused, Ordering::SeqCst);
+        <span class="kw">let </span>prev_sync_mode = sync_mode.swap(SyncMode::Paused, Ordering::AcqRel);
 
         <span class="kw">while </span>notifications.try_next().is_ok() {
             <span class="comment">// Just drain extra messages if there are any
@@ -417,19 +431,15 @@
 
         <span class="macro">info!</span>(<span class="question-mark">?</span>reason, <span class="string">&quot;Received notification to sync from DSN&quot;</span>);
         <span class="comment">// TODO: Maybe handle failed block imports, additional helpful logging
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = import_blocks_from_dsn(
-            node,
-            client,
-            import_queue_service,
-            BlockOrigin::NetworkBroadcast,
-            <span class="bool-val">false</span>,
-        )
-        .<span class="kw">await
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = import_blocks_from_dsn(node, client, import_queue_service, <span class="bool-val">false</span>).<span class="kw">await
         </span>{
             <span class="macro">warn!</span>(%error, <span class="string">&quot;Error when syncing blocks from DSN&quot;</span>);
         }
 
-        sync_mode.store(prev_sync_mode, Ordering::Release);
+        sync_mode.store(
+            initial_sync_mode.take().unwrap_or(prev_sync_mode),
+            Ordering::Release,
+        );
     }
 
     <span class="prelude-val">Ok</span>(())
