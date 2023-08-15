@@ -186,33 +186,20 @@
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a>
-<a href="#199" id="199">199</a>
-<a href="#200" id="200">200</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
-<span class="kw">use </span>sc_client_api::AuxStore;
-<span class="kw">use </span>sc_consensus_subspace::SegmentHeadersStore;
+</pre></div><pre class="rust"><code><span class="kw">use </span>sc_client_api::AuxStore;
+<span class="kw">use </span>sc_consensus_subspace::archiver::SegmentHeadersStore;
 <span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::fs;
 <span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{SegmentHeader, SegmentIndex};
+<span class="kw">use </span>subspace_networking::libp2p::kad::Mode <span class="kw">as </span>KademliaMode;
 <span class="kw">use </span>subspace_networking::libp2p::{identity, Multiaddr};
 <span class="kw">use </span>subspace_networking::utils::strip_peer_id;
 <span class="kw">use </span>subspace_networking::{
     CreationError, NetworkParametersPersistenceError, NetworkingParametersManager, Node,
-    NodeRunner, PeerInfoProvider, PieceByHashRequestHandler, PieceByHashResponse,
-    SegmentHeaderBySegmentIndexesRequestHandler, SegmentHeaderRequest, SegmentHeaderResponse,
-    KADEMLIA_PROVIDER_TTL_IN_SECS,
+    NodeRunner, PeerInfoProvider, SegmentHeaderBySegmentIndexesRequestHandler,
+    SegmentHeaderRequest, SegmentHeaderResponse, KADEMLIA_PROVIDER_TTL_IN_SECS,
 };
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::{debug, error, trace};
@@ -273,9 +260,8 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_dsn_instance&lt;AS&gt;(
     dsn_protocol_version: String,
     dsn_config: DsnConfig,
-    piece_cache: PieceCache&lt;AS&gt;,
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(Node, NodeRunner&lt;PieceCache&lt;AS&gt;&gt;), DsnConfigurationError&gt;
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Node, NodeRunner&lt;()&gt;), DsnConfigurationError&gt;
 <span class="kw">where
     </span>AS: AuxStore + Sync + Send + <span class="lifetime">&#39;static</span>,
 {
@@ -305,7 +291,7 @@
     <span class="kw">let </span><span class="kw-2">mut </span>default_networking_config = subspace_networking::Config::new(
         dsn_protocol_version,
         keypair,
-        piece_cache.clone(),
+        (),
         <span class="prelude-val">Some</span>(PeerInfoProvider::new_node()),
     );
 
@@ -318,19 +304,8 @@
         listen_on: dsn_config.listen_on,
         allow_non_global_addresses_in_dht: dsn_config.allow_non_global_addresses_in_dht,
         networking_parameters_registry,
-        request_response_protocols: <span class="macro">vec!</span>[
-            PieceByHashRequestHandler::create(<span class="kw">move </span>|<span class="kw">_</span>, req| {
-                <span class="kw">let </span>result = <span class="kw">match </span>piece_cache.get_piece(req.piece_index_hash) {
-                    <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
-                    <span class="prelude-val">Err</span>(error) =&gt; {
-                        <span class="macro">error!</span>(piece_index_hash = <span class="question-mark">?</span>req.piece_index_hash, %error, <span class="string">&quot;Failed to get piece from cache&quot;</span>);
-                        <span class="prelude-val">None
-                    </span>}
-                };
-
-                <span class="kw">async </span>{ <span class="prelude-val">Some</span>(PieceByHashResponse { piece: result }) }
-            }),
-            SegmentHeaderBySegmentIndexesRequestHandler::create(<span class="kw">move </span>|<span class="kw">_</span>, req| {
+        request_response_protocols: <span class="macro">vec!</span>[SegmentHeaderBySegmentIndexesRequestHandler::create(
+            <span class="kw">move </span>|<span class="kw">_</span>, req| {
                 <span class="kw">let </span>segment_indexes = <span class="kw">match </span>req {
                     SegmentHeaderRequest::SegmentIndexes { segment_indexes } =&gt; {
                         segment_indexes.clone()
@@ -379,8 +354,8 @@
                 };
 
                 <span class="kw">async move </span>{ result }
-            }),
-        ],
+            },
+        )],
         max_established_incoming_connections: dsn_config.max_in_connections,
         max_established_outgoing_connections: dsn_config.max_out_connections,
         max_pending_incoming_connections: dsn_config.max_pending_in_connections,
@@ -392,6 +367,7 @@
         </span>general_connected_peers_handler: <span class="prelude-val">Some</span>(Arc::new(|<span class="kw">_</span>| <span class="bool-val">true</span>)),
         bootstrap_addresses: dsn_config.bootstrap_nodes,
         external_addresses: dsn_config.external_addresses,
+        kademlia_mode: <span class="prelude-val">Some</span>(KademliaMode::Client),
 
         ..default_networking_config
     };

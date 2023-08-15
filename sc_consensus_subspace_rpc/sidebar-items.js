@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["SubspaceRpc"],"trait":["SubspaceRpcApiClient","SubspaceRpcApiServer"]};
+window.SIDEBAR_ITEMS = {"struct":["SubspaceRpc","SubspaceRpcConfig"],"trait":["SubspaceRpcApiClient","SubspaceRpcApiServer"]};

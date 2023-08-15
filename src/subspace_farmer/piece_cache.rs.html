@@ -668,16 +668,9 @@
 <a href="#668" id="668">668</a>
 <a href="#669" id="669">669</a>
 <a href="#670" id="670">670</a>
-<a href="#671" id="671">671</a>
-<a href="#672" id="672">672</a>
-<a href="#673" id="673">673</a>
-<a href="#674" id="674">674</a>
-<a href="#675" id="675">675</a>
-<a href="#676" id="676">676</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_cache::{DiskPieceCache, Offset};
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_plot::piece_cache::{DiskPieceCache, Offset};
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
-<span class="kw">use </span><span class="kw">crate</span>::NodeClient;
-<span class="kw">use </span>futures::lock::Mutex;
 <span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>parking_lot::RwLock;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
@@ -722,8 +715,7 @@
 </span><span class="kw">pub struct </span>CacheWorker&lt;NC&gt; {
     peer_id: PeerId,
     node_client: NC,
-    <span class="doccomment">/// It is important to always lock caches AFTER worker state in order to avoid deadlock!
-    </span>caches: Arc&lt;RwLock&lt;Vec&lt;DiskPieceCacheState&gt;&gt;&gt;,
+    caches: Arc&lt;RwLock&lt;Vec&lt;DiskPieceCacheState&gt;&gt;&gt;,
     worker_receiver: <span class="prelude-ty">Option</span>&lt;mpsc::Receiver&lt;WorkerCommand&gt;&gt;,
 }
 
@@ -737,11 +729,10 @@
         </span>PG: PieceGetter,
     {
         <span class="comment">// Limit is dynamically set later
-        // It is important to always lock worker state BEFORE caches in order to avoid deadlock!
-        </span><span class="kw">let </span>worker_state = Mutex::new(CacheWorkerState {
+        </span><span class="kw">let </span><span class="kw-2">mut </span>worker_state = CacheWorkerState {
             heap: UniqueRecordBinaryHeap::new(<span class="self">self</span>.peer_id, <span class="number">0</span>),
             last_segment_index: SegmentIndex::ZERO,
-        });
+        };
 
         <span class="kw">let </span><span class="kw-2">mut </span>worker_receiver = <span class="self">self
             </span>.worker_receiver
@@ -751,7 +742,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(WorkerCommand::ReplaceBackingCaches { new_caches }) =
             worker_receiver.recv().<span class="kw">await
         </span>{
-            <span class="self">self</span>.initialize(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;</span>worker_state, new_caches)
+            <span class="self">self</span>.initialize(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state, new_caches)
                 .<span class="kw">await</span>;
         } <span class="kw">else </span>{
             <span class="comment">// Piece cache is dropped before backing caches were sent
@@ -766,9 +757,9 @@
                         </span><span class="kw">return</span>;
                     };
 
-                    <span class="self">self</span>.handle_command(command, <span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;</span>worker_state).<span class="kw">await</span>;
+                    <span class="self">self</span>.handle_command(command, <span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state).<span class="kw">await</span>;
                 }
-                <span class="kw">_ </span>= <span class="self">self</span>.keep_up_sync(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;</span>worker_state).fuse() =&gt; {
+                <span class="kw">_ </span>= <span class="self">self</span>.keep_up_sync(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state).fuse() =&gt; {
                     <span class="comment">// Keep-up sync only ends with subscription, which lasts for duration of an
                     // instance
                     </span><span class="kw">return</span>;
@@ -781,7 +772,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         command: WorkerCommand,
         piece_getter: <span class="kw-2">&amp;</span>PG,
-        worker_state: <span class="kw-2">&amp;</span>Mutex&lt;CacheWorkerState&gt;,
+        worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState,
     ) <span class="kw">where
         </span>PG: PieceGetter,
     {
@@ -792,7 +783,6 @@
             }
             <span class="comment">// TODO: Consider implementing optional re-sync of the piece instead of just forgetting
             </span>WorkerCommand::ForgetKey { key } =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>worker_state = worker_state.lock().<span class="kw">await</span>;
                 <span class="kw">let </span><span class="kw-2">mut </span>caches = <span class="self">self</span>.caches.write();
 
                 <span class="kw">for </span>(disk_farm_index, cache) <span class="kw">in </span>caches.iter_mut().enumerate() {
@@ -825,13 +815,12 @@
     <span class="kw">async fn </span>initialize&lt;PG&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_getter: <span class="kw-2">&amp;</span>PG,
-        worker_state: <span class="kw-2">&amp;</span>Mutex&lt;CacheWorkerState&gt;,
+        worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState,
         new_caches: Vec&lt;DiskPieceCache&gt;,
     ) <span class="kw">where
         </span>PG: PieceGetter,
     {
         <span class="macro">info!</span>(<span class="string">&quot;Initializing piece cache&quot;</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>worker_state = worker_state.lock().<span class="kw">await</span>;
         <span class="comment">// Pull old cache state since it will be replaced with a new one and reuse its allocations
         </span><span class="kw">let </span>cache_state = mem::take(<span class="kw-2">&amp;mut *</span><span class="self">self</span>.caches.write());
         <span class="kw">let </span><span class="kw-2">mut </span>stored_pieces = Vec::with_capacity(new_caches.len());
@@ -878,7 +867,9 @@
 
         <span class="macro">info!</span>(<span class="string">&quot;Synchronizing cache&quot;</span>);
 
-        <span class="kw">let </span>last_segment_index = <span class="kw">match </span><span class="self">self</span>.node_client.farmer_app_info().<span class="kw">await </span>{
+        <span class="comment">// TODO: Query from the DSN too such that we don&#39;t build outdated cache at start if node is
+        //  not synced fully
+        </span><span class="kw">let </span>last_segment_index = <span class="kw">match </span><span class="self">self</span>.node_client.farmer_app_info().<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(farmer_app_info) =&gt; farmer_app_info.protocol_info.history_size.segment_index(),
             <span class="prelude-val">Err</span>(error) =&gt; {
                 <span class="macro">error!</span>(
@@ -911,7 +902,7 @@
         <span class="comment">// This hashset is faster than `heap`
         // Clippy complains about `RecordKey`, but it is not changing here, so it is fine
         </span><span class="attr">#[allow(clippy::mutable_key_type)]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>inserted_piece_indices = worker_state
+        </span><span class="kw">let </span><span class="kw-2">mut </span>piece_indices_to_store = worker_state
             .heap
             .keys()
             .map(|KeyWrapper(piece_index)| {
@@ -928,14 +919,14 @@
             // still missing in cache
             </span>state
                 .stored_pieces
-                .extract_if(|key, _offset| inserted_piece_indices.remove(key).is_none())
+                .extract_if(|key, _offset| piece_indices_to_store.remove(key).is_none())
                 .for_each(|(_piece_index, offset)| {
                     state.free_offsets.push(offset);
                 });
         });
 
         <span class="comment">// TODO: Can probably do concurrency here
-        </span><span class="kw">for </span>(index, piece_index) <span class="kw">in </span>inserted_piece_indices.into_values().enumerate() {
+        </span><span class="kw">for </span>(index, piece_index) <span class="kw">in </span>piece_indices_to_store.into_values().enumerate() {
             <span class="kw">let </span>result = piece_getter
                 .get_piece(piece_index, PieceGetterRetryPolicy::Limited(<span class="number">1</span>))
                 .<span class="kw">await</span>;
@@ -984,7 +975,7 @@
         <span class="macro">info!</span>(<span class="string">&quot;Finished cache initialization&quot;</span>);
     }
 
-    <span class="kw">async fn </span>keep_up_sync&lt;PG&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_getter: <span class="kw-2">&amp;</span>PG, worker_state: <span class="kw-2">&amp;</span>Mutex&lt;CacheWorkerState&gt;)
+    <span class="kw">async fn </span>keep_up_sync&lt;PG&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_getter: <span class="kw-2">&amp;</span>PG, worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState)
     <span class="kw">where
         </span>PG: PieceGetter,
     {
@@ -1006,8 +997,6 @@
         <span class="kw">while let </span><span class="prelude-val">Some</span>(segment_header) = segment_headers_notifications.next().<span class="kw">await </span>{
             <span class="kw">let </span>segment_index = segment_header.segment_index();
             <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Starting to process newly archived segment&quot;</span>);
-
-            <span class="kw">let </span><span class="kw-2">mut </span>worker_state = worker_state.lock().<span class="kw">await</span>;
 
             <span class="kw">if </span>worker_state.last_segment_index &gt;= segment_index {
                 <span class="kw">continue</span>;
@@ -1050,7 +1039,7 @@
                     <span class="kw">continue</span>;
                 };
 
-                <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, <span class="kw-2">&amp;mut </span>worker_state);
+                <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state);
             }
 
             worker_state.last_segment_index = segment_index;
@@ -1075,11 +1064,10 @@
     <span class="kw">async fn </span>keep_up_after_initial_sync&lt;PG&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_getter: <span class="kw-2">&amp;</span>PG,
-        worker_state: <span class="kw-2">&amp;</span>Mutex&lt;CacheWorkerState&gt;,
+        worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState,
     ) <span class="kw">where
         </span>PG: PieceGetter,
     {
-        <span class="kw">let </span><span class="kw-2">mut </span>worker_state = worker_state.lock().<span class="kw">await</span>;
         <span class="kw">let </span>last_segment_index = <span class="kw">match </span><span class="self">self</span>.node_client.farmer_app_info().<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(farmer_app_info) =&gt; farmer_app_info.protocol_info.history_size.segment_index(),
             <span class="prelude-val">Err</span>(error) =&gt; {
@@ -1136,7 +1124,7 @@
                 }
             };
 
-            <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, <span class="kw-2">&amp;mut </span>worker_state);
+            <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state);
         }
 
         <span class="macro">info!</span>(<span class="string">&quot;Finished syncing piece cache to the latest history size&quot;</span>);

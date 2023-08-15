@@ -811,6 +811,48 @@
 <a href="#811" id="811">811</a>
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -826,6 +868,11 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.
+
+</span><span class="doccomment">//! Consensus archiver module.
+//!
+//! Contains implementation of archiving process in Subspace blockchain that convers blockchain
+//! history (blocks) into archived history (pieces).
 
 </span><span class="kw">use crate</span>::{
     get_chain_constants, ArchivedSegmentNotification, BlockImportingNotification, SubspaceLink,
@@ -847,6 +894,7 @@
 <span class="kw">use </span>sp_objects::ObjectsApi;
 <span class="kw">use </span>sp_runtime::generic::SignedBlock;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedSub, Header, NumberFor, One, Zero};
+<span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::slice;
 <span class="kw">use </span>std::sync::atomic::{AtomicU16, Ordering};
@@ -1143,6 +1191,44 @@
     }
 }
 
+<span class="doccomment">/// Derive genesis segment on demand, returns `Ok(None)` in case genesis block was already pruned
+</span><span class="kw">pub fn </span>recreate_genesis_segment&lt;Block, Client&gt;(
+    client: <span class="kw-2">&amp;</span>Client,
+    kzg: Kzg,
+) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;NewArchivedSegment&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt;
+<span class="kw">where
+    </span>Block: BlockT,
+    Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
+    Client::Api: ObjectsApi&lt;Block&gt;,
+{
+    <span class="kw">let </span>genesis_hash = client.info().genesis_hash;
+    <span class="kw">let </span><span class="prelude-val">Some</span>(block) = client.block(genesis_hash)<span class="question-mark">? </span><span class="kw">else </span>{
+        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+    };
+
+    <span class="kw">let </span>block_object_mappings = client
+        .runtime_api()
+        .validated_object_call_hashes(genesis_hash)
+        .and_then(|calls| {
+            client.runtime_api().extract_block_object_mapping(
+                <span class="kw-2">*</span>block.block.header().parent_hash(),
+                block.block.clone(),
+                calls,
+            )
+        })
+        .unwrap_or_default();
+
+    <span class="kw">let </span>encoded_block = encode_genesis_block(<span class="kw-2">&amp;</span>block);
+
+    <span class="kw">let </span>new_archived_segment = Archiver::new(kzg)<span class="question-mark">?
+        </span>.add_block(encoded_block, block_object_mappings, <span class="bool-val">false</span>)
+        .into_iter()
+        .next()
+        .expect(<span class="string">&quot;Genesis block always results in exactly one archived segment; qed&quot;</span>);
+
+    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(new_archived_segment))
+}
+
 <span class="kw">struct </span>InitializedArchiver&lt;Block&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -1188,7 +1274,6 @@
     segment_headers_store: <span class="kw-2">&amp;</span>SegmentHeadersStore&lt;AS&gt;,
     subspace_link: <span class="kw-2">&amp;</span>SubspaceLink&lt;Block&gt;,
     client: <span class="kw-2">&amp;</span>Client,
-    kzg: Kzg,
 ) -&gt; InitializedArchiver&lt;Block&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -1231,7 +1316,7 @@
                 };
 
             Archiver::with_initial_state(
-                kzg,
+                subspace_link.kzg().clone(),
                 last_segment_header,
                 <span class="kw-2">&amp;</span>last_archived_block_encoded,
                 block_object_mappings,
@@ -1240,7 +1325,7 @@
         } <span class="kw">else </span>{
             <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Starting archiving from genesis&quot;</span>);
 
-            Archiver::new(kzg).expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
+            Archiver::new(subspace_link.kzg().clone()).expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
         };
 
     <span class="kw">let </span><span class="kw-2">mut </span>older_archived_segments = Vec::new();
@@ -1439,7 +1524,6 @@
         <span class="kw-2">&amp;</span>segment_headers_store,
         subspace_link,
         client.as_ref(),
-        subspace_link.kzg.clone(),
     );
 
     <span class="kw">let </span><span class="kw-2">mut </span>block_importing_notification_stream = subspace_link
