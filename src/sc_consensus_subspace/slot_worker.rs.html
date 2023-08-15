@@ -690,6 +690,28 @@
 <a href="#690" id="690">690</a>
 <a href="#691" id="691">691</a>
 <a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -923,8 +945,33 @@
         <span class="kw">let </span>parent_hash = parent_header.hash();
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
 
-        <span class="kw">let </span>global_randomness =
+        <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+        </span><span class="kw">let </span>global_randomness =
             extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
+
+        <span class="comment">// If proof of time is enabled, collect the proofs that go into this
+        // block and derive randomness from the last proof.
+        </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span><span class="kw">let </span>(pot_pre_digest, global_randomness) =
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(proof_of_time) = <span class="self">self</span>.proof_of_time.as_ref() {
+                <span class="kw">let </span>pot_pre_digest = <span class="self">self
+                    </span>.build_block_pot(
+                        proof_of_time.as_ref(),
+                        parent_header,
+                        <span class="kw-2">&amp;</span>parent_pre_digest,
+                        slot.into(),
+                    )
+                    .<span class="kw">await
+                    </span>.ok()<span class="question-mark">?</span>;
+                <span class="kw">let </span>randomness = pot_pre_digest.derive_global_randomness();
+                (<span class="prelude-val">Some</span>(pot_pre_digest), randomness)
+            } <span class="kw">else </span>{
+                (
+                    <span class="prelude-val">None</span>,
+                    extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>,
+                )
+            };
+
         <span class="kw">let </span>(solution_range, voting_solution_range) =
             extract_solution_ranges_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
 
@@ -1050,15 +1097,11 @@
                     // block reward is claimed
                     </span><span class="kw">if </span>maybe_pre_digest.is_none() &amp;&amp; solution_distance &lt;= solution_range / <span class="number">2 </span>{
                         <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;🚜 Claimed block at slot {slot}&quot;</span>);
-                        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-                        </span><span class="kw">let </span>proof_of_time = <span class="self">self
-                            </span>.build_block_pot(parent_header, <span class="kw-2">&amp;</span>parent_pre_digest, slot.into())
-                            .ok()<span class="question-mark">?</span>;
                         maybe_pre_digest.replace(PreDigest {
                             solution,
                             slot,
                             <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-                            </span>proof_of_time,
+                            </span>proof_of_time: pot_pre_digest.clone(),
                         });
                     } <span class="kw">else if </span>!parent_header.number().is_zero() {
                         <span class="comment">// Not sending vote on top of genesis block since segment headers since piece
@@ -1289,24 +1332,18 @@
 
     <span class="doccomment">/// Builds the proof of time for the block being proposed.
     </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-    </span><span class="kw">fn </span>build_block_pot(
+    </span><span class="kw">async fn </span>build_block_pot(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        proof_of_time: <span class="kw-2">&amp;</span><span class="kw">dyn </span>PotConsensusState,
         parent_header: <span class="kw-2">&amp;</span>Block::Header,
         parent_pre_digest: <span class="kw-2">&amp;</span>PreDigest&lt;FarmerPublicKey, FarmerPublicKey&gt;,
         slot_number: SlotNumber,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;, PotCreateError&lt;Block&gt;&gt; {
-        <span class="kw">let </span>proof_of_time = <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.proof_of_time {
-            <span class="prelude-val">Some</span>(proof_of_time) =&gt; proof_of_time.clone(),
-            <span class="kw">_ </span>=&gt; {
-                <span class="comment">// PoT feature disabled.
-                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-            }
-        };
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;PotPreDigest, PotCreateError&lt;Block&gt;&gt; {
         <span class="kw">let </span>block_number = <span class="kw-2">*</span>parent_header.number() + One::one();
 
         <span class="comment">// Block 1 does not have proofs
         </span><span class="kw">if </span>block_number.is_one() {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(PotPreDigest::FirstBlock(slot_number)));
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(PotPreDigest::FirstBlock(slot_number));
         }
 
         <span class="comment">// Block 2 onwards.
@@ -1321,15 +1358,22 @@
         })<span class="question-mark">?</span>;
 
         proof_of_time
-            .get_block_proofs(block_number.into(), slot_number, parent_pot_digest)
-            .map(|proofs| {
-                <span class="kw">let </span>proof_of_time = PotPreDigest::new(proofs);
+            .get_block_proofs(
+                block_number.into(),
+                slot_number,
+                parent_pot_digest,
+                <span class="prelude-val">Some</span>(<span class="self">self</span>.subspace_link.slot_duration().as_duration()),
+            )
+            .<span class="kw">await
+            </span>.map(|proofs| {
+                <span class="kw">let </span>pot_pre_digest = PotPreDigest::new(proofs);
                 <span class="macro">debug!</span>(
                     target: <span class="string">&quot;subspace&quot;</span>,
-                    <span class="string">&quot;build_block_pot: {block_number}/{}/{slot_number}, PoT=[{proof_of_time:?}]&quot;</span>,
-                    parent_pre_digest.slot
+                    <span class="string">&quot;build_block_pot: {block_number}/{}/{slot_number}, PoT=[{pot_pre_digest:?}], \
+                     randomness = {:?}&quot;</span>,
+                    parent_pre_digest.slot, pot_pre_digest.derive_global_randomness()
                 );
-                <span class="prelude-val">Some</span>(proof_of_time)
+                pot_pre_digest
             })
             .map_err(|err| {
                 <span class="macro">debug!</span>(

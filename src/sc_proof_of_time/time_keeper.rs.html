@@ -228,20 +228,25 @@
 <a href="#228" id="228">228</a>
 <a href="#229" id="229">229</a>
 <a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Time keeper implementation.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::gossip::PotGossip;
 <span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
-<span class="kw">use </span><span class="kw">crate</span>::utils::get_consensus_tip;
 <span class="kw">use </span><span class="kw">crate</span>::PotComponents;
-<span class="kw">use </span>futures::FutureExt;
+<span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::Encode;
+<span class="kw">use </span>sc_client_api::BlockchainEvents;
 <span class="kw">use </span>sc_network::PeerId;
 <span class="kw">use </span>sc_network_gossip::{Network <span class="kw">as </span>GossipNetwork, Syncing <span class="kw">as </span>GossipSyncing};
-<span class="kw">use </span>sp_blockchain::{HeaderBackend, Info};
-<span class="kw">use </span>sp_consensus::SyncOracle;
+<span class="kw">use </span>sp_blockchain::HeaderBackend;
+<span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Zero};
+<span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
 <span class="kw">use </span>std::time::{Duration, Instant};
@@ -255,38 +260,30 @@
 /// the channel fills up.
 </span><span class="kw">const </span>PROOFS_CHANNEL_SIZE: usize = <span class="number">12</span>; <span class="comment">// 2 * reveal lag.
 
-</span><span class="doccomment">/// Expected time to produce a proof.
-</span><span class="kw">const </span>TARGET_PROOF_TIME_MSEC: u128 = <span class="number">1000</span>;
-
-<span class="doccomment">/// The time keeper manages the protocol: periodic proof generation/verification, gossip.
-</span><span class="kw">pub struct </span>TimeKeeper&lt;Block: BlockT&lt;Hash = H256&gt;, Client, SO&gt; {
+</span><span class="doccomment">/// The time keeper manages the protocol: periodic proof generation/verification, gossip.
+</span><span class="kw">pub struct </span>TimeKeeper&lt;Block: BlockT&lt;Hash = H256&gt;, Client&gt; {
     proof_of_time: ProofOfTime,
     pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
     gossip: PotGossip&lt;Block&gt;,
     client: Arc&lt;Client&gt;,
-    sync_oracle: Arc&lt;SO&gt;,
-    chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
+    <span class="comment">// Expected time to produce a proof.
+    // TODO: this will be removed after the pot_iterations is set
+    // to produce a proof/sec.
+    </span>target_proof_time: Duration,
 }
 
-<span class="kw">impl</span>&lt;Block, Client, SO&gt; TimeKeeper&lt;Block, Client, SO&gt;
+<span class="kw">impl</span>&lt;Block, Client&gt; TimeKeeper&lt;Block, Client&gt;
 <span class="kw">where
     </span>Block: BlockT&lt;Hash = H256&gt;,
-    Client: HeaderBackend&lt;Block&gt;,
-    SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
+    Client: HeaderBackend&lt;Block&gt; + BlockchainEvents&lt;Block&gt;,
 {
     <span class="doccomment">/// Creates the time keeper instance.
-    /// TODO: chain_info() is not a trait method, but part of the
-    /// client::Client struct itself. Passing it in brings in lot
-    /// of unnecessary generics/dependencies. chain_info_fn() tries
-    /// to avoid that by using a Fn instead. Follow up with upstream
-    /// to include this in the trait.
     </span><span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(
         components: PotComponents,
         client: Arc&lt;Client&gt;,
-        sync_oracle: Arc&lt;SO&gt;,
         network: Network,
         sync: Arc&lt;GossipSync&gt;,
-        chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
+        target_proof_time: Duration,
     ) -&gt; <span class="self">Self
     </span><span class="kw">where
         </span>Network: GossipNetwork&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
@@ -303,8 +300,7 @@
             pot_state: pot_state.clone(),
             gossip: PotGossip::new(network, sync, pot_state, proof_of_time),
             client,
-            sync_oracle,
-            chain_info_fn,
+            target_proof_time,
         }
     }
 
@@ -338,45 +334,55 @@
     <span class="doccomment">/// Initializes the chain state from the consensus tip info.
     </span><span class="kw">async fn </span>initialize(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">info!</span>(<span class="string">&quot;time_keeper::initialize: waiting for initialization ...&quot;</span>);
-        <span class="kw">let </span>delay = tokio::time::Duration::from_secs(<span class="number">1</span>);
-        <span class="kw">let </span>proofs = <span class="kw">loop </span>{
-            <span class="comment">// TODO: Proper error handling or proof
-            </span><span class="kw">let </span>tip = get_consensus_tip(
-                <span class="self">self</span>.client.clone(),
-                <span class="self">self</span>.sync_oracle.clone(),
-                <span class="self">self</span>.chain_info_fn.clone(),
-            )
-            .<span class="kw">await
-            </span>.expect(<span class="string">&quot;Consensus tip info should be available&quot;</span>);
 
-            <span class="kw">if </span>tip.block_number.is_zero() {
-                <span class="macro">trace!</span>(<span class="string">&quot;time_keeper::initialize: {tip:?}, to wait ...&quot;</span>,);
-                tokio::time::sleep(delay).<span class="kw">await</span>;
-                <span class="kw">continue</span>;
-            }
+        <span class="comment">// Wait for the first block import.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>block_import = <span class="self">self</span>.client.import_notification_stream();
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming_block) = block_import.next().<span class="kw">await </span>{
+            <span class="kw">let </span>pre_digest = <span class="kw">match </span>extract_pre_digest(<span class="kw-2">&amp;</span>incoming_block.header) {
+                <span class="prelude-val">Ok</span>(pre_digest) =&gt; pre_digest,
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">warn!</span>(
+                        <span class="string">&quot;time_keeper::initialize: failed to get pre_digest: {}/{:?}/{err:?}&quot;</span>,
+                        incoming_block.hash, incoming_block.origin
+                    );
+                    <span class="kw">continue</span>;
+                }
+            };
+
+            <span class="kw">let </span>pot_pre_digest = <span class="kw">match </span>pre_digest.pot_pre_digest() {
+                <span class="prelude-val">Some</span>(pot_pre_digest) =&gt; pot_pre_digest,
+                <span class="prelude-val">None </span>=&gt; {
+                    <span class="macro">warn!</span>(
+                        <span class="string">&quot;time_keeper::initialize: failed to get pot_pre_digest: {}/{:?}&quot;</span>,
+                        incoming_block.hash, incoming_block.origin
+                    );
+                    <span class="kw">continue</span>;
+                }
+            };
 
             <span class="macro">info!</span>(
-                <span class="string">&quot;time_keeper::initialization done: block_hash={:?}, block_number={}, slot_number={}, {:?}&quot;</span>,
-                tip.block_hash, tip.block_number, tip.slot_number, tip.pot_pre_digest
+                <span class="string">&quot;time_keeper::initialize: initialization complete: {}/{:?}, pot_pre_digest = {:?}&quot;</span>,
+                incoming_block.hash, incoming_block.origin, pot_pre_digest
             );
-
-            <span class="kw">let </span>proofs = tip.pot_pre_digest.proofs().cloned().unwrap_or_else(|| {
+            <span class="kw">let </span>proofs = pot_pre_digest.proofs().cloned().unwrap_or_else(|| {
                 <span class="comment">// Producing proofs starting from (genesis_slot + 1).
                 // TODO: Proper error handling or proof
-                </span><span class="kw">let </span>proof = <span class="self">self</span>.proof_of_time.create(
-                    PotSeed::from_block_hash(tip.block_hash),
+                </span><span class="kw">let </span>block_hash = incoming_block.hash.into();
+                <span class="kw">let </span>proof = <span class="self">self</span>.proof_of_time.create(
+                    PotSeed::from_block_hash(block_hash),
                     Default::default(), <span class="comment">// TODO: key from cmd line or BTC
-                    </span>tip.pot_pre_digest
+                    </span>pot_pre_digest
                         .next_block_initial_slot()
                         .expect(<span class="string">&quot;Initial slot number should be available for block_number &gt;= 1&quot;</span>),
-                    tip.block_hash,
+                    block_hash,
                 );
                 <span class="macro">info!</span>(<span class="string">&quot;time_keeper::initialize: creating first proof: {proof}&quot;</span>);
                 NonEmptyVec::new_with_entry(proof)
             });
-            <span class="kw">break </span>proofs;
-        };
-        <span class="self">self</span>.pot_state.reset(proofs);
+
+            <span class="self">self</span>.pot_state.reset(proofs);
+            <span class="kw">return</span>;
+        }
     }
 
     <span class="doccomment">/// Starts the thread to produce the proofs.
@@ -384,10 +390,11 @@
         <span class="kw">let </span>(sender, receiver) = channel(PROOFS_CHANNEL_SIZE);
         <span class="kw">let </span>proof_of_time = <span class="self">self</span>.proof_of_time.clone();
         <span class="kw">let </span>pot_state = <span class="self">self</span>.pot_state.clone();
+        <span class="kw">let </span>target_proof_time = <span class="self">self</span>.target_proof_time;
         thread::Builder::new()
             .name(<span class="string">&quot;pot-proof-producer&quot;</span>.to_string())
             .spawn(<span class="kw">move </span>|| {
-                <span class="self">Self</span>::produce_proofs(proof_of_time, pot_state, sender);
+                <span class="self">Self</span>::produce_proofs(proof_of_time, pot_state, sender, target_proof_time);
             })
             <span class="comment">// TODO: Proper error handling or proof
             </span>.expect(<span class="string">&quot;Failed to spawn PoT proof producer thread&quot;</span>);
@@ -399,7 +406,9 @@
         proof_of_time: ProofOfTime,
         state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
         proof_sender: Sender&lt;PotProof&gt;,
+        target_proof_time: Duration,
     ) {
+        <span class="kw">let </span>target_proof_time_msec = target_proof_time.as_millis();
         <span class="kw">loop </span>{
             <span class="comment">// Build the next proof on top of the latest tip.
             // TODO: Proper error handling or proof
@@ -431,10 +440,11 @@
             <span class="comment">// TODO: temporary hack for initial testing.
             // The pot_iterations is set to take less than 1 sec. Pad the
             // remaining time so that we produce approximately 1 proof/sec.
-            </span><span class="kw">if </span>elapsed.as_millis() &lt; TARGET_PROOF_TIME_MSEC {
-                <span class="kw">let </span>pad = TARGET_PROOF_TIME_MSEC - elapsed.as_millis();
-                <span class="comment">// Cast should be fine if TARGET_PROOF_TIME_MSEC is small
-                </span>thread::sleep(Duration::from_millis(pad <span class="kw">as </span>u64))
+            </span><span class="kw">let </span>elapsed_msec = elapsed.as_millis();
+            <span class="kw">if </span>elapsed_msec &lt; target_proof_time_msec {
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(pad) = u64::try_from(target_proof_time_msec - elapsed_msec) {
+                    thread::sleep(Duration::from_millis(pad))
+                }
             }
         }
     }

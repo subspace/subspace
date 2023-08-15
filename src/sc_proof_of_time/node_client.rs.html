@@ -113,46 +113,45 @@
 <a href="#113" id="113">113</a>
 <a href="#114" id="114">114</a>
 <a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Consensus node interface to the time keeper network.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::gossip::PotGossip;
 <span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
-<span class="kw">use </span><span class="kw">crate</span>::utils::get_consensus_tip;
 <span class="kw">use </span><span class="kw">crate</span>::PotComponents;
+<span class="kw">use </span>futures::StreamExt;
+<span class="kw">use </span>sc_client_api::BlockchainEvents;
 <span class="kw">use </span>sc_network::PeerId;
 <span class="kw">use </span>sc_network_gossip::{Network <span class="kw">as </span>GossipNetwork, Syncing <span class="kw">as </span>GossipSyncing};
-<span class="kw">use </span>sp_blockchain::{HeaderBackend, Info};
-<span class="kw">use </span>sp_consensus::SyncOracle;
+<span class="kw">use </span>sp_blockchain::HeaderBackend;
+<span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Instant;
 <span class="kw">use </span>subspace_core_primitives::PotProof;
-<span class="kw">use </span>tracing::{error, info, trace};
+<span class="kw">use </span>tracing::{error, info, trace, warn};
 
 <span class="doccomment">/// The PoT client implementation
-</span><span class="kw">pub struct </span>PotClient&lt;Block: BlockT&lt;Hash = H256&gt;, Client, SO&gt; {
+</span><span class="kw">pub struct </span>PotClient&lt;Block: BlockT&lt;Hash = H256&gt;, Client&gt; {
     pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
     gossip: PotGossip&lt;Block&gt;,
     client: Arc&lt;Client&gt;,
-    sync_oracle: Arc&lt;SO&gt;,
-    chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, Client, SO&gt; PotClient&lt;Block, Client, SO&gt;
+<span class="kw">impl</span>&lt;Block, Client&gt; PotClient&lt;Block, Client&gt;
 <span class="kw">where
     </span>Block: BlockT&lt;Hash = H256&gt;,
-    Client: HeaderBackend&lt;Block&gt;,
-    SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
+    Client: HeaderBackend&lt;Block&gt; + BlockchainEvents&lt;Block&gt;,
 {
     <span class="doccomment">/// Creates the PoT client instance.
     </span><span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(
         components: PotComponents,
         client: Arc&lt;Client&gt;,
-        sync_oracle: Arc&lt;SO&gt;,
         network: Network,
         sync: Arc&lt;GossipSync&gt;,
-        chain_info_fn: Arc&lt;<span class="kw">dyn </span>Fn() -&gt; Info&lt;Block&gt; + Send + Sync&gt;,
     ) -&gt; <span class="self">Self
     </span><span class="kw">where
         </span>Network: GossipNetwork&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
@@ -167,8 +166,6 @@
                 components.proof_of_time,
             ),
             client,
-            sync_oracle,
-            chain_info_fn,
         }
     }
 
@@ -187,32 +184,41 @@
 
     <span class="doccomment">/// Initializes the chain state from the consensus tip info.
     </span><span class="kw">async fn </span>initialize(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="macro">info!</span>(<span class="string">&quot;pot_client::initialize: waiting for initialization ...&quot;</span>);
+
         <span class="comment">// Wait for a block with proofs.
-        </span><span class="macro">info!</span>(<span class="string">&quot;pot_client::initialize: waiting for initialization ...&quot;</span>);
-        <span class="kw">let </span>delay = tokio::time::Duration::from_secs(<span class="number">1</span>);
-        <span class="kw">let </span>proofs = <span class="kw">loop </span>{
-            <span class="comment">// TODO: Proper error handling or proof
-            </span><span class="kw">let </span>tip = get_consensus_tip(
-                <span class="self">self</span>.client.clone(),
-                <span class="self">self</span>.sync_oracle.clone(),
-                <span class="self">self</span>.chain_info_fn.clone(),
-            )
-            .<span class="kw">await
-            </span>.expect(<span class="string">&quot;Consensus tip info should be available&quot;</span>);
+        </span><span class="kw">let </span><span class="kw-2">mut </span>block_import = <span class="self">self</span>.client.import_notification_stream();
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming_block) = block_import.next().<span class="kw">await </span>{
+            <span class="kw">let </span>pre_digest = <span class="kw">match </span>extract_pre_digest(<span class="kw-2">&amp;</span>incoming_block.header) {
+                <span class="prelude-val">Ok</span>(pre_digest) =&gt; pre_digest,
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">warn!</span>(
+                        <span class="string">&quot;pot_client::initialize: failed to get pre_digest: {}/{:?}/{err:?}&quot;</span>,
+                        incoming_block.hash, incoming_block.origin
+                    );
+                    <span class="kw">continue</span>;
+                }
+            };
 
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(proofs) = tip.pot_pre_digest.proofs().cloned() {
+            <span class="kw">let </span>pot_pre_digest = <span class="kw">match </span>pre_digest.pot_pre_digest() {
+                <span class="prelude-val">Some</span>(pot_pre_digest) =&gt; pot_pre_digest,
+                <span class="prelude-val">None </span>=&gt; {
+                    <span class="macro">warn!</span>(
+                        <span class="string">&quot;pot_client::initialize: failed to get pot_pre_digest: {}/{:?}&quot;</span>,
+                        incoming_block.hash, incoming_block.origin
+                    );
+                    <span class="kw">continue</span>;
+                }
+            };
+
+            <span class="kw">if </span>pot_pre_digest.proofs().is_some() {
                 <span class="macro">info!</span>(
-                    <span class="string">&quot;pot_client::initialization done: block_hash={:?}, block_number={}, slot_number={}, {:?}&quot;</span>,
-                    tip.block_hash, tip.block_number, tip.slot_number, tip.pot_pre_digest
+                    <span class="string">&quot;pot_client::initialize: initialization complete: {}/{:?}, pot_pre_digest = {:?}&quot;</span>,
+                    incoming_block.hash, incoming_block.origin, pot_pre_digest
                 );
-                <span class="kw">break </span>proofs;
+                <span class="kw">return</span>;
             }
-
-            <span class="macro">trace!</span>(<span class="string">&quot;pot_client::initialize: {tip:?}, no proofs yet, to wait ...&quot;</span>,);
-            tokio::time::sleep(delay).<span class="kw">await</span>;
-        };
-
-        <span class="self">self</span>.pot_state.reset(proofs);
+        }
     }
 
     <span class="doccomment">/// Handles the incoming gossip message.
