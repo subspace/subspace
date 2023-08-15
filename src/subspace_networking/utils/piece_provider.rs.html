@@ -205,13 +205,10 @@
 <a href="#205" id="205">205</a>
 <a href="#206" id="206">206</a>
 <a href="#207" id="207">207</a>
-<a href="#208" id="208">208</a>
-<a href="#209" id="209">209</a>
-<a href="#210" id="210">210</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Provides methods to retrieve pieces from DSN.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::utils::multihash::ToMultihash;
-<span class="kw">use crate</span>::{Node, PieceByHashRequest, PieceByHashResponse};
+<span class="kw">use crate</span>::{Node, PieceByIndexRequest, PieceByIndexResponse};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::ExponentialBackoff;
@@ -221,7 +218,7 @@
 <span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
-<span class="kw">use </span>tracing::{debug, error, trace, warn};
+<span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="doccomment">/// Defines initial duration between get_piece calls.
 </span><span class="kw">const </span>GET_PIECE_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">3</span>);
@@ -284,10 +281,9 @@
         }
     }
 
-    <span class="comment">// Get from piece cache (L2) or archival storage (L1)
-    </span><span class="kw">async fn </span>get_piece_from_storage(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">let </span>piece_index_hash = piece_index.hash();
-        <span class="kw">let </span>key = piece_index_hash.to_multihash();
+    <span class="comment">// Get from piece cache (L2)
+    </span><span class="kw">async fn </span>get_piece_from_cache(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+        <span class="kw">let </span>key = piece_index.to_multihash();
 
         <span class="kw">let </span>get_providers_result = <span class="self">self</span>.node.get_providers(key).<span class="kw">await</span>;
 
@@ -298,11 +294,11 @@
 
                     <span class="kw">let </span>request_result = <span class="self">self
                         </span>.node
-                        .send_generic_request(provider_id, PieceByHashRequest { piece_index_hash })
+                        .send_generic_request(provider_id, PieceByIndexRequest { piece_index })
                         .<span class="kw">await</span>;
 
                     <span class="kw">match </span>request_result {
-                        <span class="prelude-val">Ok</span>(PieceByHashResponse { piece: <span class="prelude-val">Some</span>(piece) }) =&gt; {
+                        <span class="prelude-val">Ok</span>(PieceByIndexResponse { piece: <span class="prelude-val">Some</span>(piece) }) =&gt; {
                             <span class="macro">trace!</span>(%provider_id, %piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece request succeeded.&quot;</span>);
 
                             <span class="kw">if let </span><span class="prelude-val">Some</span>(validator) = <span class="kw-2">&amp;</span><span class="self">self</span>.piece_validator {
@@ -313,7 +309,7 @@
                                 <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
                             }
                         }
-                        <span class="prelude-val">Ok</span>(PieceByHashResponse { piece: <span class="prelude-val">None </span>}) =&gt; {
+                        <span class="prelude-val">Ok</span>(PieceByIndexResponse { piece: <span class="prelude-val">None </span>}) =&gt; {
                             <span class="macro">debug!</span>(%provider_id, %piece_index, <span class="question-mark">?</span>key, <span class="string">&quot;Piece request returned empty piece.&quot;</span>);
                         }
                         <span class="prelude-val">Err</span>(error) =&gt; {
@@ -351,7 +347,7 @@
         retry(backoff, || <span class="kw">async </span>{
             <span class="kw">let </span>current_attempt = retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
 
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_from_storage(piece_index).<span class="kw">await </span>{
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_from_cache(piece_index).<span class="kw">await </span>{
                 <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">&quot;Got piece&quot;</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
             }
@@ -360,11 +356,11 @@
                 RetryPolicy::Limited(max_retries) =&gt; {
                     <span class="kw">if </span>current_attempt &gt;= max_retries.into() {
                         <span class="kw">if </span>max_retries &gt; <span class="number">0 </span>{
-                            <span class="macro">error!</span>(
+                            <span class="macro">debug!</span>(
                                 %piece_index,
                                 current_attempt,
                                 max_retries,
-                                <span class="string">&quot;Couldn&#39;t get a piece from DSN. No retries left.&quot;
+                                <span class="string">&quot;Couldn&#39;t get a piece from DSN L2. No retries left.&quot;
                             </span>);
                         }
                         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
@@ -375,7 +371,7 @@
                 RetryPolicy::Unlimited =&gt; u64::MAX,
             };
 
-            <span class="macro">debug!</span>(%piece_index, current_attempt, <span class="string">&quot;Couldn&#39;t get a piece from DSN. Retrying...&quot;</span>);
+            <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">&quot;Couldn&#39;t get a piece from DSN L2. Retrying...&quot;</span>);
 
             <span class="prelude-val">Err</span>(backoff::Error::transient(
                 <span class="string">&quot;Couldn&#39;t get piece from DSN&quot;</span>.into(),
@@ -390,15 +386,13 @@
         peer_id: PeerId,
         piece_index: PieceIndex,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">let </span>piece_index_hash = piece_index.hash();
-
         <span class="kw">let </span>request_result = <span class="self">self
             </span>.node
-            .send_generic_request(peer_id, PieceByHashRequest { piece_index_hash })
+            .send_generic_request(peer_id, PieceByIndexRequest { piece_index })
             .<span class="kw">await</span>;
 
         <span class="kw">match </span>request_result {
-            <span class="prelude-val">Ok</span>(PieceByHashResponse { piece: <span class="prelude-val">Some</span>(piece) }) =&gt; {
+            <span class="prelude-val">Ok</span>(PieceByIndexResponse { piece: <span class="prelude-val">Some</span>(piece) }) =&gt; {
                 <span class="macro">trace!</span>(%peer_id, %piece_index, <span class="string">&quot;Piece request succeeded.&quot;</span>);
 
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(validator) = <span class="kw-2">&amp;</span><span class="self">self</span>.piece_validator {
@@ -407,7 +401,7 @@
                     <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
                 }
             }
-            <span class="prelude-val">Ok</span>(PieceByHashResponse { piece: <span class="prelude-val">None </span>}) =&gt; {
+            <span class="prelude-val">Ok</span>(PieceByIndexResponse { piece: <span class="prelude-val">None </span>}) =&gt; {
                 <span class="macro">debug!</span>(%peer_id, %piece_index, <span class="string">&quot;Piece request returned empty piece.&quot;</span>);
             }
             <span class="prelude-val">Err</span>(error) =&gt; {

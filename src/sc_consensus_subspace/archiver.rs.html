@@ -853,6 +853,7 @@
 <a href="#853" id="853">853</a>
 <a href="#854" id="854">854</a>
 <a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -892,7 +893,6 @@
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi};
 <span class="kw">use </span>sp_objects::ObjectsApi;
-<span class="kw">use </span>sp_runtime::generic::SignedBlock;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedSub, Header, NumberFor, One, Zero};
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::Future;
@@ -1060,7 +1060,7 @@
 <span class="kw">fn </span>find_last_archived_block&lt;Block, Client&gt;(
     client: <span class="kw-2">&amp;</span>Client,
     best_block_hash: Block::Hash,
-) -&gt; <span class="prelude-ty">Option</span>&lt;(SegmentHeader, SignedBlock&lt;Block&gt;, BlockObjectMapping)&gt;
+) -&gt; <span class="prelude-ty">Option</span>&lt;(SegmentHeader, Block, BlockObjectMapping)&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
@@ -1110,13 +1110,14 @@
         <span class="kw">let </span>block = client
             .block(block_to_check)
             .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>)
-            .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>);
+            .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>)
+            .block;
 
-        <span class="kw">if </span><span class="kw-2">*</span>block.block.header().number() == last_archived_block_number.into() {
+        <span class="kw">if </span><span class="kw-2">*</span>block.header().number() == last_archived_block_number.into() {
             <span class="kw">break </span>block;
         }
 
-        block_to_check = <span class="kw-2">*</span>block.block.header().parent_hash();
+        block_to_check = <span class="kw-2">*</span>block.header().parent_hash();
     };
 
     <span class="kw">let </span>last_archived_block_hash = block_to_check;
@@ -1126,8 +1127,8 @@
         .validated_object_call_hashes(last_archived_block_hash)
         .and_then(|calls| {
             client.runtime_api().extract_block_object_mapping(
-                <span class="kw-2">*</span>last_archived_block.block.header().parent_hash(),
-                last_archived_block.block.clone(),
+                <span class="kw-2">*</span>last_archived_block.header().parent_hash(),
+                last_archived_block.clone(),
                 calls,
             )
         })
@@ -1205,14 +1206,15 @@
     <span class="kw">let </span><span class="prelude-val">Some</span>(block) = client.block(genesis_hash)<span class="question-mark">? </span><span class="kw">else </span>{
         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
     };
+    <span class="kw">let </span>block = block.block;
 
     <span class="kw">let </span>block_object_mappings = client
         .runtime_api()
         .validated_object_call_hashes(genesis_hash)
         .and_then(|calls| {
             client.runtime_api().extract_block_object_mapping(
-                <span class="kw-2">*</span>block.block.header().parent_hash(),
-                block.block.clone(),
+                <span class="kw-2">*</span>block.header().parent_hash(),
+                block.clone(),
                 calls,
             )
         })
@@ -1239,7 +1241,7 @@
     best_archived_block: (Block::Hash, NumberFor&lt;Block&gt;),
 }
 
-<span class="kw">fn </span>encode_genesis_block&lt;Block&gt;(block: <span class="kw-2">&amp;</span>SignedBlock&lt;Block&gt;) -&gt; Vec&lt;u8&gt;
+<span class="kw">fn </span>encode_genesis_block&lt;Block&gt;(block: <span class="kw-2">&amp;</span>Block) -&gt; Vec&lt;u8&gt;
 <span class="kw">where
     </span>Block: BlockT,
 {
@@ -1256,7 +1258,6 @@
     </span>encoded_block.resize(RecordedHistorySegment::SIZE, <span class="number">0</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>rng = ChaCha8Rng::from_seed(
         block
-            .block
             .header()
             .state_root()
             .as_ref()
@@ -1304,16 +1305,15 @@
             <span class="comment">// Set initial value, this is needed in case only genesis block was archived and there
             // is nothing else available
             </span>best_archived_block.replace((
-                last_archived_block.block.hash(),
-                <span class="kw-2">*</span>last_archived_block.block.header().number(),
+                last_archived_block.hash(),
+                <span class="kw-2">*</span>last_archived_block.header().number(),
             ));
 
-            <span class="kw">let </span>last_archived_block_encoded =
-                <span class="kw">if </span>last_archived_block.block.header().number().is_zero() {
-                    encode_genesis_block(<span class="kw-2">&amp;</span>last_archived_block)
-                } <span class="kw">else </span>{
-                    last_archived_block.encode()
-                };
+            <span class="kw">let </span>last_archived_block_encoded = <span class="kw">if </span>last_archived_block.header().number().is_zero() {
+                encode_genesis_block(<span class="kw-2">&amp;</span>last_archived_block)
+            } <span class="kw">else </span>{
+                last_archived_block.encode()
+            };
 
             Archiver::with_initial_state(
                 subspace_link.kzg().clone(),
@@ -1374,16 +1374,17 @@
                 <span class="kw">let </span>block = client
                     .block(block_hash_to_archive)
                     .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
-                    .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>);
-                <span class="kw">let </span>block_number_to_archive = <span class="kw-2">*</span>block.block.header().number();
+                    .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
+                    .block;
+                <span class="kw">let </span>block_number_to_archive = <span class="kw-2">*</span>block.header().number();
 
                 <span class="kw">let </span>block_object_mappings = client
                     .runtime_api()
                     .validated_object_call_hashes(block_hash_to_archive)
                     .and_then(|calls| {
                         client.runtime_api().extract_block_object_mapping(
-                            <span class="kw-2">*</span>block.block.header().parent_hash(),
-                            block.block.clone(),
+                            <span class="kw-2">*</span>block.header().parent_hash(),
+                            block.clone(),
                             calls,
                         )
                     })
@@ -1574,10 +1575,11 @@
                         .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>),
                 )
                 .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
-                .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>);
+                .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
+                .block;
 
-            <span class="kw">let </span>parent_block_hash = <span class="kw-2">*</span>block.block.header().parent_hash();
-            <span class="kw">let </span>block_hash_to_archive = block.block.hash();
+            <span class="kw">let </span>parent_block_hash = <span class="kw-2">*</span>block.header().parent_hash();
+            <span class="kw">let </span>block_hash_to_archive = block.hash();
 
             <span class="macro">debug!</span>(
                 target: <span class="string">&quot;subspace&quot;</span>,
@@ -1605,7 +1607,7 @@
                 .and_then(|calls| {
                     client.runtime_api().extract_block_object_mapping(
                         parent_block_hash,
-                        block.block.clone(),
+                        block.clone(),
                         calls,
                     )
                 }) {
