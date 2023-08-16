@@ -999,11 +999,6 @@
 <a href="#999" id="999">999</a>
 <a href="#1000" id="1000">1000</a>
 <a href="#1001" id="1001">1001</a>
-<a href="#1002" id="1002">1002</a>
-<a href="#1003" id="1003">1003</a>
-<a href="#1004" id="1004">1004</a>
-<a href="#1005" id="1005">1005</a>
-<a href="#1006" id="1006">1006</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1044,15 +1039,16 @@
 <span class="kw">pub use </span>pallet::<span class="kw-2">*</span>;
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::U256;
-<span class="kw">use </span>sp_domains::DomainId;
-<span class="kw">use </span>sp_messenger::messages::{ChannelId, CrossDomainMessage, FeeModel, Message, MessageId, Nonce};
+<span class="kw">use </span>sp_messenger::messages::{
+    ChainId, ChannelId, CrossDomainMessage, FeeModel, Message, MessageId, Nonce,
+};
 <span class="kw">use </span>sp_runtime::traits::{Extrinsic, Hash};
 <span class="kw">use </span>sp_runtime::DispatchError;
 
 <span class="doccomment">/// State of a channel.
 </span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
 </span><span class="kw">pub enum </span>ChannelState {
-    <span class="doccomment">/// Channel between domains is initiated but do not yet send or receive messages in this state.
+    <span class="doccomment">/// Channel between chains is initiated but do not yet send or receive messages in this state.
     </span><span class="attr">#[default]
     </span>Initiated,
     <span class="doccomment">/// Channel is open and can send and receive messages.
@@ -1061,7 +1057,7 @@
     </span>Closed,
 }
 
-<span class="doccomment">/// Channel describes a bridge to exchange messages between two domains.
+<span class="doccomment">/// Channel describes a bridge to exchange messages between two chains.
 </span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
 </span><span class="kw">pub struct </span>Channel&lt;Balance&gt; {
     <span class="doccomment">/// Channel identifier.
@@ -1072,11 +1068,11 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) next_inbox_nonce: Nonce,
     <span class="doccomment">/// Next outbox nonce.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) next_outbox_nonce: Nonce,
-    <span class="doccomment">/// Latest outbox message nonce for which response was received from dst_domain.
+    <span class="doccomment">/// Latest outbox message nonce for which response was received from dst_chain.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) latest_response_received_message_nonce: <span class="prelude-ty">Option</span>&lt;Nonce&gt;,
     <span class="doccomment">/// Maximum outgoing non-delivered messages.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) max_outgoing_messages: u32,
-    <span class="doccomment">/// Fee model for this channel between domains.
+    <span class="doccomment">/// Fee model for this channel between the chains.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) fee: FeeModel&lt;Balance&gt;,
 }
 
@@ -1110,13 +1106,13 @@
     <span class="kw">use </span>frame_support::traits::ReservableCurrency;
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>sp_core::storage::StorageKey;
-    <span class="kw">use </span>sp_domains::DomainId;
     <span class="kw">use </span>sp_messenger::endpoint::{DomainInfo, Endpoint, EndpointHandler, EndpointRequest, Sender};
     <span class="kw">use </span>sp_messenger::messages::{
-        CrossDomainMessage, InitiateChannelParams, Message, MessageId, MessageWeightTag, Payload,
-        ProtocolMessageRequest, RequestResponse, VersionedPayload,
+        ChainId, CrossDomainMessage, InitiateChannelParams, Message, MessageId, MessageWeightTag,
+        Payload, ProtocolMessageRequest, RequestResponse, VersionedPayload,
     };
     <span class="kw">use </span>sp_messenger::verification::{StorageProofVerifier, VerificationError};
+    <span class="kw">use </span>sp_runtime::traits::CheckedSub;
     <span class="kw">use </span>sp_runtime::ArithmeticError;
     <span class="kw">use </span>sp_std::boxed::Box;
     <span class="kw">use </span>sp_std::vec::Vec;
@@ -1124,45 +1120,45 @@
     <span class="attr">#[pallet::config]
     </span><span class="kw">pub trait </span>Config: frame_system::Config {
         <span class="kw">type </span>RuntimeEvent: From&lt;Event&lt;<span class="self">Self</span>&gt;&gt; + IsType&lt;&lt;<span class="self">Self </span><span class="kw">as </span>frame_system::Config&gt;::RuntimeEvent&gt;;
-        <span class="doccomment">/// Gets the domain_id that is treated as src_domain for outgoing messages.
-        </span><span class="kw">type </span>SelfDomainId: Get&lt;DomainId&gt;;
+        <span class="doccomment">/// Gets the chain_id that is treated as src_chain_id for outgoing messages.
+        </span><span class="kw">type </span>SelfChainId: Get&lt;ChainId&gt;;
         <span class="doccomment">/// function to fetch endpoint response handler by Endpoint.
         </span><span class="kw">fn </span>get_endpoint_response_handler(
             endpoint: <span class="kw-2">&amp;</span>Endpoint,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>EndpointHandler&lt;MessageId&gt;&gt;&gt;;
         <span class="doccomment">/// Currency type pallet uses for fees and deposits.
         </span><span class="kw">type </span>Currency: ReservableCurrency&lt;<span class="self">Self</span>::AccountId&gt;;
-        <span class="doccomment">/// Maximum number of relayers that can join this domain.
+        <span class="doccomment">/// Maximum number of relayers that can join this chain.
         </span><span class="kw">type </span>MaximumRelayers: Get&lt;u32&gt;;
-        <span class="doccomment">/// Relayer deposit to become a relayer for this Domain.
+        <span class="doccomment">/// Relayer deposit to become a relayer for this chain.
         </span><span class="kw">type </span>RelayerDeposit: Get&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
-        <span class="doccomment">/// Domain info to verify domain state roots at a confirmation depth.
+        <span class="doccomment">/// Chain info to verify chain state roots at a confirmation depth.
         </span><span class="kw">type </span>DomainInfo: DomainInfo&lt;<span class="self">Self</span>::BlockNumber, <span class="self">Self</span>::Hash, StateRootOf&lt;<span class="self">Self</span>&gt;&gt;;
-        <span class="doccomment">/// Confirmation depth for XDM coming from core domains.
+        <span class="doccomment">/// Confirmation depth for XDM coming from chains.
         </span><span class="kw">type </span>ConfirmationDepth: Get&lt;<span class="self">Self</span>::BlockNumber&gt;;
         <span class="doccomment">/// Weight information for extrinsics in this pallet.
         </span><span class="kw">type </span>WeightInfo: WeightInfo;
     }
 
-    <span class="doccomment">/// Pallet messenger used to communicate between domains and other blockchains.
+    <span class="doccomment">/// Pallet messenger used to communicate between chains and other blockchains.
     </span><span class="attr">#[pallet::pallet]
     #[pallet::without_storage_info]
     </span><span class="kw">pub struct </span>Pallet&lt;T&gt;(<span class="kw">_</span>);
 
-    <span class="doccomment">/// Stores the next channel id for a foreign domain.
+    <span class="doccomment">/// Stores the next channel id for a foreign chain.
     </span><span class="attr">#[pallet::storage]
     #[pallet::getter(<span class="kw">fn </span>next_channel_id)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>NextChannelId&lt;T: Config&gt; =
-        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, ChannelId, ValueQuery&gt;;
+        StorageMap&lt;<span class="kw">_</span>, Identity, ChainId, ChannelId, ValueQuery&gt;;
 
-    <span class="doccomment">/// Stores channel config between two domains.
-    /// Key points to the foreign domain wrt own domain&#39;s storage name space
+    <span class="doccomment">/// Stores channel config between two chains.
+    /// Key points to the foreign chain wrt own chain&#39;s storage name space
     </span><span class="attr">#[pallet::storage]
     #[pallet::getter(<span class="kw">fn </span>channels)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>Channels&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
         Identity,
-        DomainId,
+        ChainId,
         Identity,
         ChannelId,
         Channel&lt;BalanceOf&lt;T&gt;&gt;,
@@ -1176,25 +1172,25 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>Inbox&lt;T: Config&gt; = StorageValue&lt;<span class="kw">_</span>, Message&lt;BalanceOf&lt;T&gt;&gt;, OptionQuery&gt;;
 
     <span class="doccomment">/// Stores the message responses of the incoming processed responses.
-    /// Used by the dst_domain to verify the message response.
+    /// Used by the dst_chains to verify the message response.
     </span><span class="attr">#[pallet::storage]
     #[pallet::getter(<span class="kw">fn </span>inbox_responses)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>InboxResponses&lt;T: Config&gt; = CountedStorageMap&lt;
         <span class="kw">_</span>,
         Identity,
-        (DomainId, ChannelId, Nonce),
+        (ChainId, ChannelId, Nonce),
         Message&lt;BalanceOf&lt;T&gt;&gt;,
         OptionQuery,
     &gt;;
 
-    <span class="doccomment">/// Stores the outgoing messages that are awaiting message responses from the dst_domain.
-    /// Messages are processed in the outbox nonce order of domain channel.
+    <span class="doccomment">/// Stores the outgoing messages that are awaiting message responses from the dst_chain.
+    /// Messages are processed in the outbox nonce order of chain&#39;s channel.
     </span><span class="attr">#[pallet::storage]
     #[pallet::getter(<span class="kw">fn </span>outbox)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>Outbox&lt;T: Config&gt; = CountedStorageMap&lt;
         <span class="kw">_</span>,
         Identity,
-        (DomainId, ChannelId, Nonce),
+        (ChainId, ChannelId, Nonce),
         Message&lt;BalanceOf&lt;T&gt;&gt;,
         OptionQuery,
     &gt;;
@@ -1229,33 +1225,33 @@
     </span><span class="attr">#[pallet::event]
     #[pallet::generate_deposit(<span class="kw">pub </span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
     </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {
-        <span class="doccomment">/// Emits when a channel between two domains in initiated.
+        <span class="doccomment">/// Emits when a channel between two chains is initiated.
         </span>ChannelInitiated {
-            <span class="doccomment">/// Foreign domain id this channel connects to.
-            </span>domain_id: DomainId,
+            <span class="doccomment">/// Foreign chain id this channel connects to.
+            </span>chain_id: ChainId,
             <span class="doccomment">/// Channel ID of the said channel.
             </span>channel_id: ChannelId,
         },
 
-        <span class="doccomment">/// Emits when a channel between two domains in closed.
+        <span class="doccomment">/// Emits when a channel between two chains is closed.
         </span>ChannelClosed {
-            <span class="doccomment">/// Foreign domain id this channel connects to.
-            </span>domain_id: DomainId,
+            <span class="doccomment">/// Foreign chain id this channel connects to.
+            </span>chain_id: ChainId,
             <span class="doccomment">/// Channel ID of the said channel.
             </span>channel_id: ChannelId,
         },
 
-        <span class="doccomment">/// Emits when a channel between two domains in open.
+        <span class="doccomment">/// Emits when a channel between two chain is open.
         </span>ChannelOpen {
-            <span class="doccomment">/// Foreign domain id this channel connects to.
-            </span>domain_id: DomainId,
+            <span class="doccomment">/// Foreign chain id this channel connects to.
+            </span>chain_id: ChainId,
             <span class="doccomment">/// Channel ID of the said channel.
             </span>channel_id: ChannelId,
         },
 
         <span class="doccomment">/// Emits when a new message is added to the outbox.
         </span>OutboxMessage {
-            domain_id: DomainId,
+            chain_id: ChainId,
             channel_id: ChannelId,
             nonce: Nonce,
             relayer_id: RelayerId&lt;T&gt;,
@@ -1263,8 +1259,8 @@
 
         <span class="doccomment">/// Emits when a message response is available for Outbox message.
         </span>OutboxMessageResponse {
-            <span class="doccomment">/// Destination domain ID.
-            </span>domain_id: DomainId,
+            <span class="doccomment">/// Destination chain ID.
+            </span>chain_id: ChainId,
             <span class="doccomment">/// Channel Is
             </span>channel_id: ChannelId,
             nonce: Nonce,
@@ -1272,7 +1268,7 @@
 
         <span class="doccomment">/// Emits outbox message result.
         </span>OutboxMessageResult {
-            domain_id: DomainId,
+            chain_id: ChainId,
             channel_id: ChannelId,
             nonce: Nonce,
             result: OutboxMessageResult,
@@ -1280,15 +1276,15 @@
 
         <span class="doccomment">/// Emits when a new inbox message is validated and added to Inbox.
         </span>InboxMessage {
-            domain_id: DomainId,
+            chain_id: ChainId,
             channel_id: ChannelId,
             nonce: Nonce,
         },
 
         <span class="doccomment">/// Emits when a message response is available for Inbox message.
         </span>InboxMessageResponse {
-            <span class="doccomment">/// Destination domain ID.
-            </span>domain_id: DomainId,
+            <span class="doccomment">/// Destination chain ID.
+            </span>chain_id: ChainId,
             <span class="doccomment">/// Channel Is
             </span>channel_id: ChannelId,
             nonce: Nonce,
@@ -1398,7 +1394,7 @@
                     <span class="comment">// Only add the requires tag if the msg nonce is in future
                     </span><span class="kw">if </span>msg.nonce &gt; next_nonce {
                         valid_tx_builder = valid_tx_builder.and_requires((
-                            msg.dst_domain_id,
+                            msg.dst_chain_id,
                             msg.channel_id,
                             msg.nonce - Nonce::one(),
                         ));
@@ -1406,7 +1402,7 @@
                     valid_tx_builder
                         .priority(TransactionPriority::MAX)
                         .longevity(TransactionLongevity::MAX)
-                        .and_provides((msg.dst_domain_id, msg.channel_id, msg.nonce))
+                        .and_provides((msg.dst_chain_id, msg.channel_id, msg.nonce))
                         .propagate(<span class="bool-val">true</span>)
                         .build()
                 }
@@ -1418,7 +1414,7 @@
                     <span class="comment">// Only add the requires tag if the msg nonce is in future
                     </span><span class="kw">if </span>msg.nonce &gt; next_nonce {
                         valid_tx_builder = valid_tx_builder.and_requires((
-                            msg.dst_domain_id,
+                            msg.dst_chain_id,
                             msg.channel_id,
                             msg.nonce - Nonce::one(),
                         ));
@@ -1426,7 +1422,7 @@
                     valid_tx_builder
                         .priority(TransactionPriority::MAX)
                         .longevity(TransactionLongevity::MAX)
-                        .and_provides((msg.dst_domain_id, msg.channel_id, msg.nonce))
+                        .and_provides((msg.dst_chain_id, msg.channel_id, msg.nonce))
                         .propagate(<span class="bool-val">true</span>)
                         .build()
                 }
@@ -1438,8 +1434,8 @@
     <span class="doccomment">/// `pallet-messenger` errors
     </span><span class="attr">#[pallet::error]
     </span><span class="kw">pub enum </span>Error&lt;T&gt; {
-        <span class="doccomment">/// Emits when the domain is neither core domain nor a system domain.
-        </span>InvalidDomain,
+        <span class="doccomment">/// Emits when the chain is neither consensus not chain.
+        </span>InvalidChain,
 
         <span class="doccomment">/// Emits when there is no channel for a given Channel ID.
         </span>MissingChannel,
@@ -1447,7 +1443,7 @@
         <span class="doccomment">/// Emits when the said channel is not in an open state.
         </span>InvalidChannelState,
 
-        <span class="doccomment">/// Emits when there are no open channels for a domain
+        <span class="doccomment">/// Emits when there are no open channels for a chain
         </span>NoOpenChannel,
 
         <span class="doccomment">/// Emits when there are not message handler with given endpoint ID.
@@ -1480,7 +1476,7 @@
         <span class="doccomment">/// Emits when a relayer tries to join when total relayers already reached maximum count.
         </span>MaximumRelayerCount,
 
-        <span class="doccomment">/// Emits when there are no relayers to relay messages between domains.
+        <span class="doccomment">/// Emits when there are no relayers to relay messages between chains.
         </span>NoRelayersToAssign,
 
         <span class="doccomment">/// Emits when there is mismatch between the message&#39;s weight tag and the message&#39;s
@@ -1501,7 +1497,7 @@
 
     <span class="attr">#[pallet::call]
     </span><span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
-        <span class="doccomment">/// A new Channel is initiated with a foreign domain.
+        <span class="doccomment">/// A new Channel is initiated with a foreign chain.
         /// Next Channel ID is used to assign the new channel.
         /// Channel is set to initiated and do not accept or receive any messages.
         /// Only a root user can create the channel.
@@ -1509,19 +1505,19 @@
         #[pallet::weight((T::WeightInfo::initiate_channel(), Pays::No))]
         </span><span class="kw">pub fn </span>initiate_channel(
             origin: OriginFor&lt;T&gt;,
-            dst_domain_id: DomainId,
+            dst_chain_id: ChainId,
             params: InitiateChannelParams&lt;BalanceOf&lt;T&gt;&gt;,
         ) -&gt; DispatchResult {
             ensure_root(origin)<span class="question-mark">?</span>;
             <span class="comment">// TODO(ved): fee for channel open
 
             // initiate the channel config
-            </span><span class="kw">let </span>channel_id = <span class="self">Self</span>::do_init_channel(dst_domain_id, params)<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>channel_id = <span class="self">Self</span>::do_init_channel(dst_chain_id, params)<span class="question-mark">?</span>;
 
-            <span class="comment">// send message to dst_domain
+            <span class="comment">// send message to dst_chain
             </span><span class="self">Self</span>::new_outbox_message(
-                T::SelfDomainId::get(),
-                dst_domain_id,
+                T::SelfChainId::get(),
+                dst_chain_id,
                 channel_id,
                 VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(
                     ProtocolMessageRequest::ChannelOpen(params),
@@ -1531,21 +1527,21 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="doccomment">/// An open channel is closed with a foreign domain.
+        <span class="doccomment">/// An open channel is closed with a foreign chain.
         /// Channel is set to Closed and do not accept or receive any messages.
         /// Only a root user can close an open channel.
         </span><span class="attr">#[pallet::call_index(<span class="number">1</span>)]
         #[pallet::weight((T::WeightInfo::close_channel(), Pays::No))]
         </span><span class="kw">pub fn </span>close_channel(
             origin: OriginFor&lt;T&gt;,
-            domain_id: DomainId,
+            chain_id: ChainId,
             channel_id: ChannelId,
         ) -&gt; DispatchResult {
             ensure_root(origin)<span class="question-mark">?</span>;
-            <span class="self">Self</span>::do_close_channel(domain_id, channel_id)<span class="question-mark">?</span>;
+            <span class="self">Self</span>::do_close_channel(chain_id, channel_id)<span class="question-mark">?</span>;
             <span class="self">Self</span>::new_outbox_message(
-                T::SelfDomainId::get(),
-                domain_id,
+                T::SelfChainId::get(),
+                chain_id,
                 channel_id,
                 VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(
                     ProtocolMessageRequest::ChannelClose,
@@ -1557,7 +1553,7 @@
 
         <span class="doccomment">/// Receives an Inbox message that needs to be validated and processed.
         </span><span class="attr">#[pallet::call_index(<span class="number">2</span>)]
-        #[pallet::weight((T::WeightInfo::relay_message().saturating_add(Pallet::&lt;T&gt;::message_weight(<span class="kw-2">&amp;</span>msg.weight_tag)), Pays::No))]
+        #[pallet::weight((T::WeightInfo::relay_message().saturating_add(Pallet::&lt; T &gt;::message_weight(&amp; msg.weight_tag)), Pays::No))]
         </span><span class="kw">pub fn </span>relay_message(
             origin: OriginFor&lt;T&gt;,
             msg: CrossDomainMessage&lt;T::BlockNumber, T::Hash, StateRootOf&lt;T&gt;&gt;,
@@ -1568,9 +1564,9 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="doccomment">/// Receives a response from the dst_domain for a message in Outbox.
+        <span class="doccomment">/// Receives a response from the dst_chain for a message in Outbox.
         </span><span class="attr">#[pallet::call_index(<span class="number">3</span>)]
-        #[pallet::weight((T::WeightInfo::relay_message_response().saturating_add(Pallet::&lt;T&gt;::message_weight(<span class="kw-2">&amp;</span>msg.weight_tag)), Pays::No))]
+        #[pallet::weight((T::WeightInfo::relay_message_response().saturating_add(Pallet::&lt; T &gt;::message_weight(&amp; msg.weight_tag)), Pays::No))]
         </span><span class="kw">pub fn </span>relay_message_response(
             origin: OriginFor&lt;T&gt;,
             msg: CrossDomainMessage&lt;T::BlockNumber, T::Hash, StateRootOf&lt;T&gt;&gt;,
@@ -1581,7 +1577,7 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="doccomment">/// Declare the desire to become a relayer for this domain by reserving the relayer deposit.
+        <span class="doccomment">/// Declare the desire to become a relayer for this chain by reserving the relayer deposit.
         </span><span class="attr">#[pallet::call_index(<span class="number">4</span>)]
         #[pallet::weight(T::WeightInfo::join_relayer_set())]
         </span><span class="kw">pub fn </span>join_relayer_set(origin: OriginFor&lt;T&gt;, relayer_id: RelayerId&lt;T&gt;) -&gt; DispatchResult {
@@ -1590,7 +1586,7 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="doccomment">/// Declare the desire to exit relaying for this domain.
+        <span class="doccomment">/// Declare the desire to exit relaying for this chain.
         </span><span class="attr">#[pallet::call_index(<span class="number">5</span>)]
         #[pallet::weight(T::WeightInfo::exit_relayer_set())]
         </span><span class="kw">pub fn </span>exit_relayer_set(origin: OriginFor&lt;T&gt;, relayer_id: RelayerId&lt;T&gt;) -&gt; DispatchResult {
@@ -1605,18 +1601,18 @@
 
         <span class="kw">fn </span>send_message(
             sender: <span class="kw-2">&amp;</span>T::AccountId,
-            dst_domain_id: DomainId,
+            dst_chain_id: ChainId,
             req: EndpointRequest,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::MessageId, DispatchError&gt; {
-            <span class="kw">let </span>(channel_id, fee_model) = <span class="self">Self</span>::get_open_channel_for_domain(dst_domain_id)
-                .ok_or(Error::&lt;T&gt;::NoOpenChannel)<span class="question-mark">?</span>;
+            <span class="kw">let </span>(channel_id, fee_model) =
+                <span class="self">Self</span>::get_open_channel_for_chain(dst_chain_id).ok_or(Error::&lt;T&gt;::NoOpenChannel)<span class="question-mark">?</span>;
 
             <span class="comment">// ensure fees are paid by the sender
             </span><span class="self">Self</span>::ensure_fees_for_outbox_message(sender, <span class="kw-2">&amp;</span>fee_model)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>nonce = <span class="self">Self</span>::new_outbox_message(
-                T::SelfDomainId::get(),
-                dst_domain_id,
+                T::SelfChainId::get(),
+                dst_chain_id,
                 channel_id,
                 VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))),
             )<span class="question-mark">?</span>;
@@ -1626,7 +1622,7 @@
         <span class="doccomment">/// Only used in benchmark to prepare for a upcoming `send_message` call to
         /// ensure it will succeed.
         </span><span class="attr">#[cfg(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>)]
-        </span><span class="kw">fn </span>unchecked_open_channel(dst_domain_id: DomainId) -&gt; <span class="prelude-ty">Result</span>&lt;(), DispatchError&gt; {
+        </span><span class="kw">fn </span>unchecked_open_channel(dst_chain_id: ChainId) -&gt; <span class="prelude-ty">Result</span>&lt;(), DispatchError&gt; {
             <span class="kw">let </span>fee_model = FeeModel {
                 outbox_fee: Default::default(),
                 inbox_fee: Default::default(),
@@ -1635,8 +1631,8 @@
                 max_outgoing_messages: <span class="number">100</span>,
                 fee_model,
             };
-            <span class="kw">let </span>channel_id = <span class="self">Self</span>::do_init_channel(dst_domain_id, init_params)<span class="question-mark">?</span>;
-            <span class="self">Self</span>::do_open_channel(dst_domain_id, channel_id)<span class="question-mark">?</span>;
+            <span class="kw">let </span>channel_id = <span class="self">Self</span>::do_init_channel(dst_chain_id, init_params)<span class="question-mark">?</span>;
+            <span class="self">Self</span>::do_open_channel(dst_chain_id, channel_id)<span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(())
         }
     }
@@ -1663,16 +1659,16 @@
             }
         }
 
-        <span class="doccomment">/// Returns the last open channel for a given domain.
-        </span><span class="kw">pub fn </span>get_open_channel_for_domain(
-            dst_domain_id: DomainId,
+        <span class="doccomment">/// Returns the last open channel for a given chain.
+        </span><span class="kw">pub fn </span>get_open_channel_for_chain(
+            dst_chain_id: ChainId,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;(ChannelId, FeeModel&lt;BalanceOf&lt;T&gt;&gt;)&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>next_channel_id = NextChannelId::&lt;T&gt;::get(dst_domain_id);
+            <span class="kw">let </span><span class="kw-2">mut </span>next_channel_id = NextChannelId::&lt;T&gt;::get(dst_chain_id);
 
             <span class="comment">// loop through channels in descending order until open channel is found.
             // we always prefer latest opened channel.
             </span><span class="kw">while let </span><span class="prelude-val">Some</span>(channel_id) = next_channel_id.checked_sub(ChannelId::one()) {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(channel) = Channels::&lt;T&gt;::get(dst_domain_id, channel_id) {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(channel) = Channels::&lt;T&gt;::get(dst_chain_id, channel_id) {
                     <span class="kw">if </span>channel.state == ChannelState::Open {
                         <span class="kw">return </span><span class="prelude-val">Some</span>((channel_id, channel.fee));
                     }
@@ -1685,11 +1681,8 @@
         </span>}
 
         <span class="doccomment">/// Opens an initiated channel.
-        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_open_channel(
-            domain_id: DomainId,
-            channel_id: ChannelId,
-        ) -&gt; DispatchResult {
-            Channels::&lt;T&gt;::try_mutate(domain_id, channel_id, |maybe_channel| -&gt; DispatchResult {
+        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_open_channel(chain_id: ChainId, channel_id: ChannelId) -&gt; DispatchResult {
+            Channels::&lt;T&gt;::try_mutate(chain_id, channel_id, |maybe_channel| -&gt; DispatchResult {
                 <span class="kw">let </span>channel = maybe_channel.as_mut().ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
 
                 <span class="macro">ensure!</span>(
@@ -1702,18 +1695,15 @@
             })<span class="question-mark">?</span>;
 
             <span class="self">Self</span>::deposit_event(Event::ChannelOpen {
-                domain_id,
+                chain_id,
                 channel_id,
             });
 
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_close_channel(
-            domain_id: DomainId,
-            channel_id: ChannelId,
-        ) -&gt; DispatchResult {
-            Channels::&lt;T&gt;::try_mutate(domain_id, channel_id, |maybe_channel| -&gt; DispatchResult {
+        <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_close_channel(chain_id: ChainId, channel_id: ChannelId) -&gt; DispatchResult {
+            Channels::&lt;T&gt;::try_mutate(chain_id, channel_id, |maybe_channel| -&gt; DispatchResult {
                 <span class="kw">let </span>channel = maybe_channel.as_mut().ok_or(Error::&lt;T&gt;::MissingChannel)<span class="question-mark">?</span>;
 
                 <span class="macro">ensure!</span>(
@@ -1726,7 +1716,7 @@
             })<span class="question-mark">?</span>;
 
             <span class="self">Self</span>::deposit_event(Event::ChannelClosed {
-                domain_id,
+                chain_id,
                 channel_id,
             });
 
@@ -1734,20 +1724,21 @@
         }
 
         <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_init_channel(
-            dst_domain_id: DomainId,
+            dst_chain_id: ChainId,
             init_params: InitiateChannelParams&lt;BalanceOf&lt;T&gt;&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;ChannelId, DispatchError&gt; {
-            <span class="comment">// TODO: system domain and core domain have been removed.
-            // ensure domain is either system domain or core domain
-            // ensure!(dst_domain_id.is_core(), Error::&lt;T&gt;::InvalidDomain,);
+            <span class="macro">ensure!</span>(
+                T::SelfChainId::get() != dst_chain_id,
+                Error::&lt;T&gt;::InvalidChain,
+            );
 
-            </span><span class="kw">let </span>channel_id = NextChannelId::&lt;T&gt;::get(dst_domain_id);
+            <span class="kw">let </span>channel_id = NextChannelId::&lt;T&gt;::get(dst_chain_id);
             <span class="kw">let </span>next_channel_id = channel_id
                 .checked_add(U256::one())
                 .ok_or(DispatchError::Arithmetic(ArithmeticError::Overflow))<span class="question-mark">?</span>;
 
             Channels::&lt;T&gt;::insert(
-                dst_domain_id,
+                dst_chain_id,
                 channel_id,
                 Channel {
                     channel_id,
@@ -1760,9 +1751,9 @@
                 },
             );
 
-            NextChannelId::&lt;T&gt;::insert(dst_domain_id, next_channel_id);
+            NextChannelId::&lt;T&gt;::insert(dst_chain_id, next_channel_id);
             <span class="self">Self</span>::deposit_event(Event::ChannelInitiated {
-                domain_id: dst_domain_id,
+                chain_id: dst_chain_id,
                 channel_id,
             });
             <span class="prelude-val">Ok</span>(channel_id)
@@ -1772,25 +1763,25 @@
             xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;T::BlockNumber, T::Hash, StateRootOf&lt;T&gt;&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;ValidatedRelayMessage&lt;BalanceOf&lt;T&gt;&gt;, TransactionValidityError&gt; {
             <span class="kw">let </span><span class="kw-2">mut </span>should_init_channel = <span class="bool-val">false</span>;
-            <span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_domain_id, xdm.channel_id) {
+            <span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_chain_id, xdm.channel_id) {
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="comment">// if there is no channel config, this must the Channel open request.
                     // so nonce is 0
                     </span>should_init_channel = <span class="bool-val">true</span>;
                     <span class="comment">// TODO(ved): collect fees to open channel
                     </span><span class="macro">log::debug!</span>(
-                        <span class="string">&quot;Initiating new channel: {:?} to domain: {:?}&quot;</span>,
+                        <span class="string">&quot;Initiating new channel: {:?} to chain: {:?}&quot;</span>,
                         xdm.channel_id,
-                        xdm.src_domain_id
+                        xdm.src_chain_id
                     );
                     Nonce::zero()
                 }
                 <span class="prelude-val">Some</span>(channel) =&gt; {
                     <span class="comment">// Ensure channel is ready to receive messages
                     </span><span class="macro">log::debug!</span>(
-                        <span class="string">&quot;Message to channel: {:?} from domain: {:?}&quot;</span>,
+                        <span class="string">&quot;Message to channel: {:?} from chain: {:?}&quot;</span>,
                         xdm.channel_id,
-                        xdm.src_domain_id
+                        xdm.src_chain_id
                     );
                     <span class="macro">ensure!</span>(
                         channel.state == ChannelState::Open,
@@ -1800,9 +1791,9 @@
                 }
             };
 
-            <span class="comment">// derive the key as stored on the src_domain.
+            <span class="comment">// derive the key as stored on the src_chain.
             </span><span class="kw">let </span>key = StorageKey(Outbox::&lt;T&gt;::hashed_key_for((
-                T::SelfDomainId::get(),
+                T::SelfChainId::get(),
                 xdm.channel_id,
                 xdm.nonce,
             )));
@@ -1839,11 +1830,11 @@
                     ProtocolMessageRequest::ChannelOpen(params),
                 ))) = msg.payload
                 {
-                    <span class="self">Self</span>::do_init_channel(msg.src_domain_id, params).map_err(|err| {
+                    <span class="self">Self</span>::do_init_channel(msg.src_chain_id, params).map_err(|err| {
                         <span class="macro">log::error!</span>(
-                            <span class="string">&quot;Error initiating channel: {:?} with domain: {:?}: {:?}&quot;</span>,
+                            <span class="string">&quot;Error initiating channel: {:?} with chain: {:?}: {:?}&quot;</span>,
                             msg.channel_id,
-                            msg.src_domain_id,
+                            msg.src_chain_id,
                             err
                         );
                         InvalidTransaction::Call
@@ -1854,7 +1845,7 @@
                 }
             }
 
-            <span class="kw">let </span>channel = Channels::&lt;T&gt;::get(msg.src_domain_id, msg.channel_id)
+            <span class="kw">let </span>channel = Channels::&lt;T&gt;::get(msg.src_chain_id, msg.channel_id)
                 .ok_or(InvalidTransaction::Call)<span class="question-mark">?</span>;
 
             <span class="comment">// ensure the fees are deposited to the messenger account to pay
@@ -1863,7 +1854,7 @@
                 .map_err(|<span class="kw">_</span>| TransactionValidityError::Invalid(InvalidTransaction::Payment))<span class="question-mark">?</span>;
 
             <span class="self">Self</span>::deposit_event(Event::InboxMessage {
-                domain_id: msg.src_domain_id,
+                chain_id: msg.src_chain_id,
                 channel_id: msg.channel_id,
                 nonce: msg.nonce,
             });
@@ -1875,7 +1866,7 @@
             xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;T::BlockNumber, T::Hash, StateRootOf&lt;T&gt;&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;(Message&lt;BalanceOf&lt;T&gt;&gt;, Nonce), TransactionValidityError&gt; {
             <span class="comment">// channel should be open and message should be present in outbox
-            </span><span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_domain_id, xdm.channel_id) {
+            </span><span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_chain_id, xdm.channel_id) {
                 <span class="comment">// unknown channel. return
                 </span><span class="prelude-val">None </span>=&gt; {
                     <span class="macro">log::error!</span>(<span class="string">&quot;Unexpected inbox message response: {:?}&quot;</span>, xdm,);
@@ -1888,9 +1879,9 @@
             }
             .ok_or(TransactionValidityError::Invalid(InvalidTransaction::Call))<span class="question-mark">?</span>;
 
-            <span class="comment">// derive the key as stored on the src_domain.
+            <span class="comment">// derive the key as stored on the src_chain.
             </span><span class="kw">let </span>key = StorageKey(InboxResponses::&lt;T&gt;::hashed_key_for((
-                T::SelfDomainId::get(),
+                T::SelfChainId::get(),
                 xdm.channel_id,
                 xdm.nonce,
             )));
@@ -1905,7 +1896,7 @@
             msg: Message&lt;BalanceOf&lt;T&gt;&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
             <span class="self">Self</span>::deposit_event(Event::OutboxMessageResponse {
-                domain_id: msg.src_domain_id,
+                chain_id: msg.src_chain_id,
                 channel_id: msg.channel_id,
                 nonce: msg.nonce,
             });
@@ -1919,8 +1910,8 @@
             storage_key: StorageKey,
             xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;T::BlockNumber, T::Hash, StateRootOf&lt;T&gt;&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;Message&lt;BalanceOf&lt;T&gt;&gt;, TransactionValidityError&gt; {
-            <span class="comment">// channel should be either already be created or match the next channelId for domain.
-            </span><span class="kw">let </span>next_channel_id = NextChannelId::&lt;T&gt;::get(xdm.src_domain_id);
+            <span class="comment">// channel should be either already be created or match the next channelId for chain.
+            </span><span class="kw">let </span>next_channel_id = NextChannelId::&lt;T&gt;::get(xdm.src_chain_id);
             <span class="macro">ensure!</span>(xdm.channel_id &lt;= next_channel_id, InvalidTransaction::Call);
 
             <span class="comment">// verify nonce
@@ -1931,38 +1922,37 @@
                 TransactionValidityError::Invalid(InvalidTransaction::BadProof),
             )<span class="question-mark">?</span>;
 
-            <span class="comment">// TODO: system domain has been removed
-            // on system domain, ensure the core domain info is at K-depth and state root matches
-            // if T::SelfDomainId::get().is_system() {
-            // if let Some((domain_id, block_info, state_root)) =
-            // extracted_state_roots.core_domain_info.clone()
-            // {
-            // // ensure the block is at-least k-deep
-            // let confirmed = T::DomainInfo::domain_best_number(domain_id)
-            // .and_then(|best_number| {
-            // best_number
-            // .checked_sub(&amp;T::ConfirmationDepth::get())
-            // .map(|confirmed_number| confirmed_number &gt;= block_info.block_number)
-            // })
-            // .unwrap_or(false);
-            // ensure!(confirmed, InvalidTransaction::BadMandatory);
+            <span class="comment">// on consensus, ensure the domain info is at K-depth and state root matches
+            </span><span class="kw">if </span>T::SelfChainId::get().is_consensus_chain() {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, block_info, state_root)) =
+                    extracted_state_roots.domain_info.clone()
+                {
+                    <span class="comment">// ensure the block is at-least k-deep
+                    </span><span class="kw">let </span>confirmed = T::DomainInfo::domain_best_number(domain_id)
+                        .and_then(|best_number| {
+                            best_number
+                                .checked_sub(<span class="kw-2">&amp;</span>T::ConfirmationDepth::get())
+                                .map(|confirmed_number| confirmed_number &gt;= block_info.block_number)
+                        })
+                        .unwrap_or(<span class="bool-val">false</span>);
+                    <span class="macro">ensure!</span>(confirmed, InvalidTransaction::BadMandatory);
 
-            // // verify state root of the block
-            // let valid_state_root = T::DomainInfo::domain_state_root(
-            // domain_id,
-            // block_info.block_number,
-            // block_info.block_hash,
-            // )
-            // .map(|got_state_root| got_state_root == state_root)
-            // .unwrap_or(false);
-            // ensure!(valid_state_root, InvalidTransaction::BadMandatory)
-            // }
-            // }
+                    <span class="comment">// verify state root of the block
+                    </span><span class="kw">let </span>valid_state_root = T::DomainInfo::domain_state_root(
+                        domain_id,
+                        block_info.block_number,
+                        block_info.block_hash,
+                    )
+                    .map(|got_state_root| got_state_root == state_root)
+                    .unwrap_or(<span class="bool-val">false</span>);
+                    <span class="macro">ensure!</span>(valid_state_root, InvalidTransaction::BadMandatory)
+                }
+            }
 
-            </span><span class="kw">let </span>state_root = extracted_state_roots
-                .core_domain_info
-                .map(|(_domain_id, _info, state_root)| state_root)
-                .unwrap_or(extracted_state_roots.system_domain_state_root);
+            <span class="kw">let </span>state_root = extracted_state_roots
+                .domain_info
+                .map(|(_chain_id, _info, state_root)| state_root)
+                .unwrap_or(extracted_state_roots.consensus_chain_state_root);
 
             <span class="comment">// verify and decode the message
             </span><span class="kw">let </span>msg = StorageProofVerifier::&lt;T::Hashing&gt;::verify_and_get_value::&lt;
@@ -2001,13 +1991,13 @@
     }
 
     <span class="doccomment">/// Returns true if the outbox message has not received the response yet.
-    </span><span class="kw">pub fn </span>should_relay_outbox_message(dst_domain: DomainId, msg_id: MessageId) -&gt; bool {
-        Outbox::&lt;T&gt;::contains_key((dst_domain, msg_id.<span class="number">0</span>, msg_id.<span class="number">1</span>))
+    </span><span class="kw">pub fn </span>should_relay_outbox_message(dst_chain_id: ChainId, msg_id: MessageId) -&gt; bool {
+        Outbox::&lt;T&gt;::contains_key((dst_chain_id, msg_id.<span class="number">0</span>, msg_id.<span class="number">1</span>))
     }
 
     <span class="doccomment">/// Returns true if the inbox message response has not received acknowledgement yet.
-    </span><span class="kw">pub fn </span>should_relay_inbox_message_response(dst_domain: DomainId, msg_id: MessageId) -&gt; bool {
-        InboxResponses::&lt;T&gt;::contains_key((dst_domain, msg_id.<span class="number">0</span>, msg_id.<span class="number">1</span>))
+    </span><span class="kw">pub fn </span>should_relay_inbox_message_response(dst_chain_id: ChainId, msg_id: MessageId) -&gt; bool {
+        InboxResponses::&lt;T&gt;::contains_key((dst_chain_id, msg_id.<span class="number">0</span>, msg_id.<span class="number">1</span>))
     }
 }
 </code></pre></div></section></main></body></html>

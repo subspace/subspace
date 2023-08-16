@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"sp_messenger":[["impl&lt;Number, Hash, StateRoot&gt; StorageNMap&lt;(Key&lt;Twox64Concat, DomainId&gt;, Key&lt;Twox64Concat, Number&gt;, Key&lt;Twox64Concat, Hash&gt;), StateRoot&gt; for <a class=\"struct\" href=\"sp_messenger/messages/struct.CoreDomainStateRootStorage.html\" title=\"struct sp_messenger::messages::CoreDomainStateRootStorage\">CoreDomainStateRootStorage</a>&lt;Number, Hash, StateRoot&gt;<span class=\"where fmt-newline\">where\n    Number: FullCodec + TypeInfo + 'static,\n    Hash: FullCodec + TypeInfo + 'static,\n    StateRoot: FullCodec + TypeInfo + 'static,</span>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

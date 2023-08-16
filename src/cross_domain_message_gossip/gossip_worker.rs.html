@@ -242,10 +242,6 @@
 <a href="#242" id="242">242</a>
 <a href="#243" id="243">243</a>
 <a href="#244" id="244">244</a>
-<a href="#245" id="245">245</a>
-<a href="#246" id="246">246</a>
-<a href="#247" id="247">247</a>
-<a href="#248" id="248">248</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
@@ -257,22 +253,22 @@
 };
 <span class="kw">use </span>sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 <span class="kw">use </span>sp_core::twox_256;
-<span class="kw">use </span>sp_domains::DomainId;
+<span class="kw">use </span>sp_messenger::messages::ChainId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>std::collections::{BTreeMap, HashSet};
 <span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span>str = <span class="string">&quot;cross_domain_gossip_worker&quot;</span>;
-<span class="kw">const </span>PROTOCOL_NAME: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/cross-domain-messages&quot;</span>;
+<span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span>str = <span class="string">&quot;cross_chain_gossip_worker&quot;</span>;
+<span class="kw">const </span>PROTOCOL_NAME: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/cross-chain-messages&quot;</span>;
 
 <span class="doccomment">/// Unbounded sender to send encoded ext to listeners.
-</span><span class="kw">pub type </span>DomainTxPoolSink = TracingUnboundedSender&lt;Vec&lt;u8&gt;&gt;;
+</span><span class="kw">pub type </span>ChainTxPoolSink = TracingUnboundedSender&lt;Vec&lt;u8&gt;&gt;;
 <span class="kw">type </span>MessageHash = [u8; <span class="number">32</span>];
 
-<span class="doccomment">/// A cross domain message with encoded data.
+<span class="doccomment">/// A cross chain message with encoded data.
 </span><span class="attr">#[derive(Debug, Encode, Decode)]
 </span><span class="kw">pub struct </span>Message {
-    <span class="kw">pub </span>domain_id: DomainId,
+    <span class="kw">pub </span>chain_id: ChainId,
     <span class="kw">pub </span>encoded_data: Vec&lt;u8&gt;,
 }
 
@@ -280,7 +276,7 @@
 </span><span class="kw">pub struct </span>GossipWorkerBuilder {
     gossip_msg_stream: TracingUnboundedReceiver&lt;Message&gt;,
     gossip_msg_sink: TracingUnboundedSender&lt;Message&gt;,
-    domain_tx_pool_sinks: BTreeMap&lt;DomainId, DomainTxPoolSink&gt;,
+    chain_tx_pool_sinks: BTreeMap&lt;ChainId, ChainTxPoolSink&gt;,
 }
 
 <span class="kw">impl </span>GossipWorkerBuilder {
@@ -288,21 +284,17 @@
     </span><span class="attr">#[allow(clippy::new_without_default)]
     </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(gossip_msg_sink, gossip_msg_stream) =
-            tracing_unbounded(<span class="string">&quot;cross_domain_gossip_messages&quot;</span>, <span class="number">100</span>);
+            tracing_unbounded(<span class="string">&quot;cross_chain_gossip_messages&quot;</span>, <span class="number">100</span>);
         <span class="self">Self </span>{
             gossip_msg_stream,
             gossip_msg_sink,
-            domain_tx_pool_sinks: BTreeMap::new(),
+            chain_tx_pool_sinks: BTreeMap::new(),
         }
     }
 
-    <span class="doccomment">/// Collect the domain tx pool sink that will be used by the gossip message worker later.
-    </span><span class="kw">pub fn </span>push_domain_tx_pool_sink(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        domain_id: DomainId,
-        tx_pool_sink: DomainTxPoolSink,
-    ) {
-        <span class="self">self</span>.domain_tx_pool_sinks.insert(domain_id, tx_pool_sink);
+    <span class="doccomment">/// Collect the chain tx pool sink that will be used by the gossip message worker later.
+    </span><span class="kw">pub fn </span>push_chain_tx_pool_sink(<span class="kw-2">&amp;mut </span><span class="self">self</span>, chain_id: ChainId, tx_pool_sink: ChainTxPoolSink) {
+        <span class="self">self</span>.chain_tx_pool_sinks.insert(chain_id, tx_pool_sink);
     }
 
     <span class="doccomment">/// Get the gossip message sink
@@ -323,7 +315,7 @@
     {
         <span class="kw">let </span><span class="self">Self </span>{
             gossip_msg_stream,
-            domain_tx_pool_sinks,
+            chain_tx_pool_sinks,
             ..
         } = <span class="self">self</span>;
 
@@ -340,36 +332,36 @@
             gossip_engine,
             gossip_validator,
             gossip_msg_stream,
-            domain_tx_pool_sinks,
+            chain_tx_pool_sinks,
         }
     }
 }
 
 <span class="doccomment">/// Gossip worker to gossip incoming and outgoing messages to other peers.
-/// Also, streams the decoded extrinsics to destination domain tx pool if available.
+/// Also, streams the decoded extrinsics to destination chain tx pool if available.
 </span><span class="kw">pub struct </span>GossipWorker&lt;Block: BlockT&gt; {
     gossip_engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
     gossip_validator: Arc&lt;GossipValidator&gt;,
     gossip_msg_stream: TracingUnboundedReceiver&lt;Message&gt;,
-    domain_tx_pool_sinks: BTreeMap&lt;DomainId, DomainTxPoolSink&gt;,
+    chain_tx_pool_sinks: BTreeMap&lt;ChainId, ChainTxPoolSink&gt;,
 }
 
-<span class="doccomment">/// Returns the network configuration for cross domain message gossip.
+<span class="doccomment">/// Returns the network configuration for cross chain message gossip.
 </span><span class="kw">pub fn </span>cdm_gossip_peers_set_config() -&gt; NonDefaultSetConfig {
     <span class="kw">let </span><span class="kw-2">mut </span>cfg = NonDefaultSetConfig::new(PROTOCOL_NAME.into(), <span class="number">5 </span>* <span class="number">1024 </span>* <span class="number">1024</span>);
     cfg.allow_non_reserved(<span class="number">25</span>, <span class="number">25</span>);
     cfg
 }
 
-<span class="doccomment">/// Cross domain message topic.
+<span class="doccomment">/// Cross chain message topic.
 </span><span class="kw">fn </span>topic&lt;Block: BlockT&gt;() -&gt; Block::Hash {
-    &lt;&lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing <span class="kw">as </span>HashT&gt;::hash(<span class="string">b&quot;cross-domain-messages&quot;</span>)
+    &lt;&lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing <span class="kw">as </span>HashT&gt;::hash(<span class="string">b&quot;cross-chain-messages&quot;</span>)
 }
 
 <span class="kw">impl</span>&lt;Block: BlockT&gt; GossipWorker&lt;Block&gt; {
     <span class="doccomment">/// Starts the Gossip message worker.
     </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>incoming_cross_domain_messages = Box::pin(
+        <span class="kw">let </span><span class="kw-2">mut </span>incoming_cross_chain_messages = Box::pin(
             <span class="self">self</span>.gossip_engine
                 .lock()
                 .messages_for(topic::&lt;Block&gt;())
@@ -383,17 +375,17 @@
             <span class="kw">let </span>gossip_engine = futures::future::poll_fn(|cx| engine.lock().poll_unpin(cx));
 
             <span class="macro">futures::select! </span>{
-                cross_domain_message = incoming_cross_domain_messages.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_domain_message {
-                        <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross domain message for domain: {:?}&quot;</span>, msg.domain_id);
-                        <span class="self">self</span>.handle_cross_domain_message(msg);
+                cross_chain_message = incoming_cross_chain_messages.next().fuse() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_chain_message {
+                        <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain: {:?}&quot;</span>, msg.chain_id);
+                        <span class="self">self</span>.handle_cross_chain_message(msg);
                     }
                 },
 
-                cross_domain_message = <span class="self">self</span>.gossip_msg_stream.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_domain_message {
-                        <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross domain message for domain: {:?}&quot;</span>, msg.domain_id);
-                        <span class="self">self</span>.handle_cross_domain_message(msg);
+                cross_chain_message = <span class="self">self</span>.gossip_msg_stream.next().fuse() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_chain_message {
+                        <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain: {:?}&quot;</span>, msg.chain_id);
+                        <span class="self">self</span>.handle_cross_chain_message(msg);
                     }
                 }
 
@@ -405,7 +397,7 @@
         }
     }
 
-    <span class="kw">fn </span>handle_cross_domain_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message) {
+    <span class="kw">fn </span>handle_cross_chain_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message) {
         <span class="comment">// mark and rebroadcast message
         </span><span class="kw">let </span>encoded_msg = msg.encode();
         <span class="self">self</span>.gossip_validator.note_broadcast(<span class="kw-2">&amp;</span>encoded_msg);
@@ -414,10 +406,10 @@
             .gossip_message(topic::&lt;Block&gt;(), encoded_msg, <span class="bool-val">false</span>);
 
         <span class="kw">let </span>Message {
-            domain_id,
+            chain_id,
             encoded_data,
         } = msg;
-        <span class="kw">let </span>sink = <span class="kw">match </span><span class="self">self</span>.domain_tx_pool_sinks.get(<span class="kw-2">&amp;</span>domain_id) {
+        <span class="kw">let </span>sink = <span class="kw">match </span><span class="self">self</span>.chain_tx_pool_sinks.get(<span class="kw-2">&amp;</span>chain_id) {
             <span class="prelude-val">Some</span>(sink) =&gt; sink,
             <span class="prelude-val">None </span>=&gt; <span class="kw">return</span>,
         };
@@ -431,10 +423,10 @@
         // consider it closed and remove the sink.
         </span><span class="macro">tracing::error!</span>(
             target: LOG_TARGET,
-            <span class="string">&quot;Failed to send incoming domain message: {:?}&quot;</span>,
-            domain_id
+            <span class="string">&quot;Failed to send incoming chain message: {:?}&quot;</span>,
+            chain_id
         );
-        <span class="self">self</span>.domain_tx_pool_sinks.remove(<span class="kw-2">&amp;</span>domain_id);
+        <span class="self">self</span>.chain_tx_pool_sinks.remove(<span class="kw-2">&amp;</span>chain_id);
     }
 }
 

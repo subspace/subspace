@@ -205,23 +205,25 @@
 <a href="#205" id="205">205</a>
 <a href="#206" id="206">206</a>
 <a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{BlockT, Error, GossipMessageSink, HeaderBackend, HeaderT, Relayer, LOG_TARGET};
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockchainEvents, ProofProvider};
 <span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_consensus::SyncOracle;
-<span class="kw">use </span>sp_domains::DomainId;
+<span class="kw">use </span>sp_messenger::messages::ChainId;
 <span class="kw">use </span>sp_messenger::RelayerApi;
 <span class="kw">use </span>sp_runtime::traits::{CheckedSub, NumberFor, Zero};
 <span class="kw">use </span>std::sync::Arc;
 
-<span class="doccomment">/// Starts relaying system domain messages to other domains.
+<span class="doccomment">/// Starts relaying consensus chain messages to other domains.
 /// If the node is in major sync, worker waits waits until the sync is finished.
-</span><span class="kw">pub async fn </span>relay_system_domain_messages&lt;Client, Block, SO, RelayerId&gt;(
+</span><span class="kw">pub async fn </span>relay_domain_messages&lt;Client, Block, SO, RelayerId&gt;(
     relayer_id: RelayerId,
-    system_domain_client: Arc&lt;Client&gt;,
-    system_domain_sync_oracle: SO,
+    domain_client: Arc&lt;Client&gt;,
+    domain_sync_oracle: SO,
     gossip_message_sink: GossipMessageSink,
 ) <span class="kw">where
     </span>Block: BlockT,
@@ -236,19 +238,21 @@
 {
     <span class="comment">// there is not confirmation depth for relayer on system domain
     // since all the relayers will haven embed client to known the canonical chain.
-    </span><span class="kw">let </span>result = relay_domain_messages(
+    </span><span class="kw">let </span>result = start_relaying_domain_messages(
         relayer_id,
         NumberFor::&lt;Block&gt;::zero(),
-        system_domain_client,
+        domain_client,
         |relayer_id, client, block_hash| {
-            Relayer::submit_messages_from_system_domain(
+            <span class="comment">// TODO: this is incorrect and should instead expect a primary client.
+            //  Will be fixed in coming prs
+            </span>Relayer::submit_messages_from_system_domain(
                 relayer_id,
                 client,
                 block_hash,
                 <span class="kw-2">&amp;</span>gossip_message_sink,
             )
         },
-        system_domain_sync_oracle,
+        domain_sync_oracle,
         |_domain_id, _block_number| -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt; {
             <span class="comment">// since we just need to provide a storage proof with the state root of system domain
             // proof can always be generated for any system domain block.
@@ -267,7 +271,7 @@
     }
 }
 
-<span class="kw">async fn </span>relay_domain_messages&lt;Client, Block, MP, SO, SRM, RelayerId&gt;(
+<span class="kw">async fn </span>start_relaying_domain_messages&lt;Client, Block, MP, SO, SRM, RelayerId&gt;(
     relayer_id: RelayerId,
     relay_confirmation_depth: NumberFor&lt;Block&gt;,
     domain_client: Arc&lt;Client&gt;,
@@ -285,14 +289,14 @@
     Client::Api: RelayerApi&lt;Block, RelayerId, NumberFor&lt;Block&gt;&gt;,
     MP: Fn(RelayerId, <span class="kw-2">&amp;</span>Arc&lt;Client&gt;, Block::Hash) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;,
     SO: SyncOracle,
-    SRM: Fn(DomainId, NumberFor&lt;Block&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt;,
+    SRM: Fn(ChainId, NumberFor&lt;Block&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt;,
     RelayerId: Encode + Decode + Clone,
 {
-    <span class="kw">let </span>domain_id = Relayer::domain_id(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
+    <span class="kw">let </span>chain_id = Relayer::chain_id(<span class="kw-2">&amp;</span>domain_client)<span class="question-mark">?</span>;
     <span class="macro">tracing::info!</span>(
         target: LOG_TARGET,
         <span class="string">&quot;Starting relayer for domain: {:?}&quot;</span>,
-        domain_id,
+        chain_id,
     );
     <span class="kw">let </span><span class="kw-2">mut </span>domain_block_import = domain_client.import_notification_stream();
 
@@ -314,7 +318,7 @@
                 </span><span class="macro">tracing::info!</span>(
                     target: LOG_TARGET,
                     <span class="string">&quot;Not enough confirmed blocks for domain: {:?}. Skipping...&quot;</span>,
-                    domain_id
+                    chain_id
                 );
                 <span class="kw">continue</span>;
             }
@@ -323,7 +327,7 @@
 
         <span class="kw">let </span>(number, hash) = (<span class="kw-2">*</span>block.header.number(), block.header.hash());
         <span class="kw">let </span>blocks_to_process: Vec&lt;(NumberFor&lt;Block&gt;, Block::Hash)&gt; =
-            Relayer::fetch_unprocessed_blocks_until(<span class="kw-2">&amp;</span>domain_client, domain_id, number, hash)<span class="question-mark">?
+            Relayer::fetch_unprocessed_blocks_until(<span class="kw-2">&amp;</span>domain_client, chain_id, number, hash)<span class="question-mark">?
                 </span>.into_iter()
                 .filter(|(number, <span class="kw">_</span>)| <span class="kw-2">*</span>number &lt;= relay_block_until)
                 .collect();
@@ -331,25 +335,25 @@
         <span class="kw">for </span>(number, hash) <span class="kw">in </span>blocks_to_process {
             <span class="macro">tracing::info!</span>(
                 target: LOG_TARGET,
-                <span class="string">&quot;Checking messages to be submitted from domain: {domain_id:?} at block: ({number:?}, {hash:?})&quot;</span>,
+                <span class="string">&quot;Checking messages to be submitted from chain: {chain_id:?} at block: ({number:?}, {hash:?})&quot;</span>,
             );
 
             <span class="comment">// check if the message is ready to be relayed.
             // if not, the node is lagging behind and/or there is no way to generate a proof.
             // mark this block processed and continue to next one.
-            </span><span class="kw">if </span>!can_relay_message_from_block(domain_id, number)<span class="question-mark">? </span>{
-                Relayer::store_relayed_block(<span class="kw-2">&amp;</span>domain_client, domain_id, number, hash)<span class="question-mark">?</span>;
+            </span><span class="kw">if </span>!can_relay_message_from_block(chain_id, number)<span class="question-mark">? </span>{
+                Relayer::store_relayed_block(<span class="kw-2">&amp;</span>domain_client, chain_id, number, hash)<span class="question-mark">?</span>;
                 <span class="macro">tracing::info!</span>(
                     target: LOG_TARGET,
-                    <span class="string">&quot;Domain({domain_id:?}) messages in the Block ({number:?}, {hash:?}) cannot be relayed. Skipping...&quot;</span>,
+                    <span class="string">&quot;Chain({chain_id:?}) messages in the Block ({number:?}, {hash:?}) cannot be relayed. Skipping...&quot;</span>,
                 );
             } <span class="kw">else </span>{
                 <span class="kw">match </span>message_processor(relayer_id.clone(), <span class="kw-2">&amp;</span>domain_client, hash) {
                     <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                        Relayer::store_relayed_block(<span class="kw-2">&amp;</span>domain_client, domain_id, number, hash)<span class="question-mark">?</span>;
+                        Relayer::store_relayed_block(<span class="kw-2">&amp;</span>domain_client, chain_id, number, hash)<span class="question-mark">?</span>;
                         <span class="macro">tracing::info!</span>(
                             target: LOG_TARGET,
-                            <span class="string">&quot;Messages from {domain_id:?} at block({number:?}, {hash:?}) are processed.&quot;
+                            <span class="string">&quot;Messages from {chain_id:?} at block({number:?}, {hash:?}) are processed.&quot;
                         </span>)
                     }
                     <span class="prelude-val">Err</span>(err) =&gt; {
@@ -357,14 +361,14 @@
                             Error::CoreDomainNonConfirmedOnSystemDomain =&gt; {
                                 <span class="macro">tracing::info!</span>(
                                     target: LOG_TARGET,
-                                    <span class="string">&quot;Waiting for Core Domain[{domain_id:?}] block({number:?}, {hash:?}) to be confirmed on System domain.&quot;
+                                    <span class="string">&quot;Waiting for Domain[{chain_id:?}] block({number:?}, {hash:?}) to be confirmed on Consensus chain.&quot;
                                 </span>)
                             }
                             <span class="kw">_ </span>=&gt; {
                                 <span class="macro">tracing::error!</span>(
                                     target: LOG_TARGET,
                                     <span class="question-mark">?</span>err,
-                                    <span class="string">&quot;Failed to submit messages from the domain {domain_id:?} at the block ({number:?}, {hash:?})&quot;
+                                    <span class="string">&quot;Failed to submit messages from the chain {chain_id:?} at the block ({number:?}, {hash:?})&quot;
                                 </span>);
                             }
                         }
@@ -379,25 +383,25 @@
 }
 
 <span class="doccomment">/// Combines both system and core domain sync oracles into one.
-</span><span class="kw">struct </span>CombinedSyncOracle&lt;SDSO, CDSO&gt; {
-    system_domain_sync_oracle: SDSO,
-    core_domain_sync_oracle: CDSO,
+</span><span class="kw">struct </span>CombinedSyncOracle&lt;CCSO, DSO&gt; {
+    consensus_chain_sync_oracle: CCSO,
+    domain_sync_oracle: DSO,
 }
 
-<span class="kw">impl</span>&lt;SDSO, CDSO&gt; SyncOracle <span class="kw">for </span>CombinedSyncOracle&lt;SDSO, CDSO&gt;
+<span class="kw">impl</span>&lt;CCSO, DSO&gt; SyncOracle <span class="kw">for </span>CombinedSyncOracle&lt;CCSO, DSO&gt;
 <span class="kw">where
-    </span>SDSO: SyncOracle,
-    CDSO: SyncOracle,
+    </span>CCSO: SyncOracle,
+    DSO: SyncOracle,
 {
     <span class="doccomment">/// Returns true if either of the domains are in major sync.
     </span><span class="kw">fn </span>is_major_syncing(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.system_domain_sync_oracle.is_major_syncing()
-            || <span class="self">self</span>.core_domain_sync_oracle.is_major_syncing()
+        <span class="self">self</span>.consensus_chain_sync_oracle.is_major_syncing()
+            || <span class="self">self</span>.domain_sync_oracle.is_major_syncing()
     }
 
     <span class="doccomment">/// Returns true if either of the domains are offline.
     </span><span class="kw">fn </span>is_offline(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.system_domain_sync_oracle.is_offline() || <span class="self">self</span>.core_domain_sync_oracle.is_offline()
+        <span class="self">self</span>.consensus_chain_sync_oracle.is_offline() || <span class="self">self</span>.domain_sync_oracle.is_offline()
     }
 }
 
@@ -405,10 +409,10 @@
     <span class="doccomment">/// Returns a new sync oracle that wraps system domain and core domain sync oracle.
     </span><span class="comment">// TODO: Remove or make use of it.
     </span><span class="attr">#[allow(unused)]
-    </span><span class="kw">fn </span>new(system_domain_sync_oracle: SDSO, core_domain_sync_oracle: CDSO) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>new(consensus_chain_sync_oracle: SDSO, core_domain_sync_oracle: CDSO) -&gt; <span class="self">Self </span>{
         CombinedSyncOracle {
-            system_domain_sync_oracle,
-            core_domain_sync_oracle,
+            consensus_chain_sync_oracle,
+            domain_sync_oracle: core_domain_sync_oracle,
         }
     }
 }
