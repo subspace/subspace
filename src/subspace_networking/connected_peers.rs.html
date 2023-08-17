@@ -501,6 +501,34 @@
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
 <a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! # &#39;Connected peers&#39; protocol
 //!
 //! This module contains a `connected peers` protocol. The main
@@ -522,8 +550,8 @@
 //! capabilities for dialing peers, sending signals about changes in connection states.
 //!
 //! The protocol strives to maintain a certain target number of peers, handles delay between dialing
-//! attempts, and manages a cache for candidates for permanent connections.
-//! Multiple protocol instances could be instantiated.
+//! attempts, and manages a cache for candidates for permanent connections. It maintains
+//! a single connection for each peer. Multiple protocol instances could be instantiated.
 
 </span><span class="kw">mod </span>handler;
 
@@ -547,22 +575,6 @@
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>tracing::{debug, trace};
 
-<span class="doccomment">/// Peer connections number and statuses.
-</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-</span><span class="kw">struct </span>PeerState {
-    connection_state: ConnectionState,
-    connection_counter: usize,
-}
-
-<span class="kw">impl </span>PeerState {
-    <span class="kw">fn </span>new(connection_state: ConnectionState) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            connection_state,
-            connection_counter: <span class="number">0</span>,
-        }
-    }
-}
-
 <span class="doccomment">/// Represents different states of a peer permanent connection.
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">enum </span>ConnectionState {
@@ -571,11 +583,11 @@
 
     <span class="doccomment">/// We&#39;re waiting for a decision for some time. The decision time is limited by the
     /// connection timeout.
-    </span>Deciding,
+    </span>Deciding { connection_id: ConnectionId },
 
     <span class="doccomment">/// Indicates that the decision has been made to maintain a permanent
     /// connection with the peer. No further decision-making is required for this state.
-    </span>Permanent,
+    </span>Permanent { connection_id: ConnectionId },
 
     <span class="doccomment">/// Shows that the system has decided not to connect with the peer.
     /// No further decision-making is required for this state.
@@ -583,12 +595,27 @@
 }
 
 <span class="kw">impl </span>ConnectionState {
+    <span class="doccomment">/// Checks whether we have an active connection.
+    </span><span class="kw">fn </span>connected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.connection_id().is_some()
+    }
+
+    <span class="doccomment">/// Returns active connection ID if any.
+    </span><span class="kw">fn </span>connection_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ConnectionId&gt; {
+        <span class="kw">match </span><span class="self">self </span>{
+            ConnectionState::Connecting { .. } =&gt; <span class="prelude-val">None</span>,
+            ConnectionState::Deciding { connection_id } =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">*</span>connection_id),
+            ConnectionState::Permanent { connection_id } =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">*</span>connection_id),
+            ConnectionState::NotInterested =&gt; <span class="prelude-val">None</span>,
+        }
+    }
+
     <span class="doccomment">/// Converts [`ConnectionState`] to a string with information loss.
     </span><span class="kw">fn </span>stringify(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
         <span class="kw">match </span><span class="self">self </span>{
             ConnectionState::Connecting { .. } =&gt; <span class="string">&quot;Connecting&quot;</span>.to_string(),
-            ConnectionState::Deciding =&gt; <span class="string">&quot;Deciding&quot;</span>.to_string(),
-            ConnectionState::Permanent =&gt; <span class="string">&quot;Permanent&quot;</span>.to_string(),
+            ConnectionState::Deciding { .. } =&gt; <span class="string">&quot;Deciding&quot;</span>.to_string(),
+            ConnectionState::Permanent { .. } =&gt; <span class="string">&quot;Permanent&quot;</span>.to_string(),
             ConnectionState::NotInterested =&gt; <span class="string">&quot;NotInterested&quot;</span>.to_string(),
         }
     }
@@ -638,6 +665,7 @@
 </span><span class="kw">struct </span>PeerConnectionDecisionUpdate {
     peer_id: PeerId,
     keep_alive: KeepAlive,
+    connection_id: ConnectionId,
 }
 
 <span class="attr">#[derive(Debug, Default)]
@@ -654,7 +682,7 @@
     </span>config: Config,
 
     <span class="doccomment">/// Represents current permanent connection decisions for known peers.
-    </span>known_peers: HashMap&lt;PeerId, PeerState&gt;,
+    </span>known_peers: HashMap&lt;PeerId, ConnectionState&gt;,
 
     <span class="doccomment">/// Pending &#39;signals&#39; to connection handlers about recent changes.
     </span>peer_decision_changes: Vec&lt;PeerConnectionDecisionUpdate&gt;,
@@ -693,25 +721,25 @@
     }
 
     <span class="doccomment">/// Create a connection handler for the protocol.
-    </span><span class="kw">fn </span>new_connection_handler(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer_id: <span class="kw-2">&amp;</span>PeerId) -&gt; Handler {
+    </span><span class="kw">fn </span>new_connection_handler(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer_id: <span class="kw-2">&amp;</span>PeerId, connection_id: ConnectionId) -&gt; Handler {
         <span class="kw">let </span>default_until = Instant::now().add(<span class="self">self</span>.config.decision_timeout);
         <span class="kw">let </span>default_keep_alive_until = KeepAlive::Until(default_until);
-        <span class="kw">let </span>keep_alive = <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.known_peers.get_mut(peer_id) {
-            <span class="kw">match </span>state.connection_state {
+        <span class="kw">let </span>keep_alive = <span class="kw">if let </span><span class="prelude-val">Some</span>(connection_state) = <span class="self">self</span>.known_peers.get_mut(peer_id) {
+            <span class="kw">match </span>connection_state {
                 ConnectionState::Connecting { .. } =&gt; {
                     <span class="comment">// Connection attempt was successful.
-                    </span>state.connection_state = ConnectionState::Deciding;
+                    </span><span class="kw-2">*</span>connection_state = ConnectionState::Deciding { connection_id };
 
                     default_keep_alive_until
                 }
-                ConnectionState::Deciding =&gt; KeepAlive::Until(default_until),
-                ConnectionState::Permanent =&gt; KeepAlive::Yes,
-                ConnectionState::NotInterested =&gt; KeepAlive::No,
+                ConnectionState::Deciding { .. } =&gt; KeepAlive::No, <span class="comment">// We&#39;re already have a connection
+                </span>ConnectionState::Permanent { .. } =&gt; KeepAlive::No, <span class="comment">// We&#39;re already have a connection
+                </span>ConnectionState::NotInterested =&gt; KeepAlive::No,
             }
         } <span class="kw">else </span>{
             <span class="comment">// Connection from other protocols.
             </span><span class="self">self</span>.known_peers
-                .insert(<span class="kw-2">*</span>peer_id, PeerState::new(ConnectionState::Deciding));
+                .insert(<span class="kw-2">*</span>peer_id, ConnectionState::Deciding { connection_id });
 
             default_keep_alive_until
         };
@@ -722,41 +750,60 @@
 
     <span class="doccomment">/// Specifies the whether we should keep connections to the peer alive. The decision could
     /// depend on another protocol (e.g.: PeerInfo protocol event handling).
-    /// In case when we had decision timeout it sets up proper keep connection alive anyway.
     </span><span class="kw">pub fn </span>update_keep_alive_status(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer_id: PeerId, keep_alive: bool) {
-        <span class="kw">let </span>(connection_state, keep_alive) = <span class="kw">if </span>keep_alive {
-            <span class="kw">if </span><span class="self">self</span>.permanently_connected_peers() &lt; <span class="self">self</span>.config.target_connected_peers {
-                <span class="macro">trace!</span>(%peer_id, %keep_alive, <span class="string">&quot;Insufficient number of connected peers.&quot;</span>);
+        <span class="kw">let </span>not_enough_connected_peers =
+            <span class="self">self</span>.permanently_connected_peers() &lt; <span class="self">self</span>.config.target_connected_peers;
 
-                (ConnectionState::Permanent, KeepAlive::Yes)
+        <span class="comment">// It&#39;s a known peer.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(connection_state) = <span class="self">self</span>.known_peers.get_mut(<span class="kw-2">&amp;</span>peer_id) {
+            <span class="comment">// We&#39;re connected
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(connection_id) = connection_state.connection_id() {
+                <span class="kw">if </span>not_enough_connected_peers {
+                    <span class="macro">trace!</span>(%peer_id, %keep_alive, <span class="string">&quot;Insufficient number of connected peers detected.&quot;</span>);
+                } <span class="kw">else </span>{
+                    <span class="macro">trace!</span>(%peer_id, %keep_alive, <span class="string">&quot;Target number of connected peers reached.&quot;</span>);
+                }
+
+                <span class="comment">// Check whether we have enough connected peers already and a positive decision
+                </span><span class="kw">let </span>(new_connection_state, keep_alive_handler) =
+                    <span class="kw">if </span>not_enough_connected_peers &amp;&amp; keep_alive {
+                        (ConnectionState::Permanent { connection_id }, KeepAlive::Yes)
+                    } <span class="kw">else </span>{
+                        (ConnectionState::NotInterested, KeepAlive::No)
+                    };
+
+                <span class="kw-2">*</span>connection_state = new_connection_state;
+
+                <span class="self">self</span>.peer_decision_changes
+                    .push(PeerConnectionDecisionUpdate {
+                        peer_id,
+                        keep_alive: keep_alive_handler,
+                        connection_id,
+                    });
+                <span class="self">self</span>.wake();
             } <span class="kw">else </span>{
-                <span class="macro">trace!</span>(%peer_id, %keep_alive, <span class="string">&quot;Target number of connected peers reached.&quot;</span>);
-
-                (ConnectionState::NotInterested, KeepAlive::No)
+                <span class="macro">debug!</span>(
+                    <span class="question-mark">?</span>peer_id,
+                    <span class="question-mark">?</span>keep_alive,
+                    <span class="string">&quot;Detected an attempt to update status of non-existing connection.&quot;
+                </span>);
             }
         } <span class="kw">else </span>{
-            (ConnectionState::NotInterested, KeepAlive::No)
-        };
-
-        <span class="self">self</span>.known_peers
-            .entry(peer_id)
-            .and_modify(|state| {
-                state.connection_state = connection_state.clone();
-            })
-            .or_insert(PeerState::new(connection_state));
-        <span class="self">self</span>.peer_decision_changes
-            .push(PeerConnectionDecisionUpdate {
-                peer_id,
-                keep_alive,
-            });
-        <span class="self">self</span>.wake();
+            <span class="macro">debug!</span>(
+                <span class="question-mark">?</span>peer_id,
+                <span class="question-mark">?</span>keep_alive,
+                <span class="string">&quot;Detected an attempt to update status of unknown peer.&quot;
+            </span>);
+        }
     }
 
     <span class="doccomment">/// Calculates the current number of permanently connected peers.
     </span><span class="kw">fn </span>permanently_connected_peers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
         <span class="self">self</span>.known_peers
             .iter()
-            .filter(|(<span class="kw">_</span>, state)| state.connection_state == ConnectionState::Permanent)
+            .filter(|(<span class="kw">_</span>, connection_state)| {
+                <span class="macro">matches!</span>(connection_state, ConnectionState::Permanent { .. })
+            })
             .count() <span class="kw">as </span>u32
     }
 
@@ -765,7 +812,9 @@
     </span><span class="kw">fn </span>active_peers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
         <span class="self">self</span>.known_peers
             .iter()
-            .filter(|(<span class="kw">_</span>, state)| state.connection_state != ConnectionState::NotInterested)
+            .filter(|(<span class="kw">_</span>, connection_state)| {
+                !<span class="macro">matches!</span>(connection_state, ConnectionState::NotInterested)
+            })
             .count() <span class="kw">as </span>u32
     }
 
@@ -786,9 +835,9 @@
         <span class="kw">let </span>status_count =
             <span class="self">self</span>.known_peers
                 .iter()
-                .fold(HashMap::new(), |<span class="kw-2">mut </span>result, (<span class="kw">_</span>, state)| {
+                .fold(HashMap::new(), |<span class="kw-2">mut </span>result, (<span class="kw">_</span>, connection_state)| {
                     result
-                        .entry(state.connection_state.stringify())
+                        .entry(connection_state.stringify())
                         .and_modify(|count| <span class="kw-2">*</span>count += <span class="number">1</span>)
                         .or_insert(<span class="number">1</span>);
                     result
@@ -796,9 +845,9 @@
 
         <span class="kw">let </span>peer_status = <span class="self">self</span>.known_peers.iter().fold(
             HashMap::&lt;String, Vec&lt;PeerId&gt;&gt;::new(),
-            |<span class="kw-2">mut </span>result, (peer_id, state)| {
+            |<span class="kw-2">mut </span>result, (peer_id, connection_state)| {
                 result
-                    .entry(state.connection_state.stringify())
+                    .entry(connection_state.stringify())
                     .and_modify(|peers| peers.push(<span class="kw-2">*</span>peer_id))
                     .or_insert(<span class="macro">vec!</span>[<span class="kw-2">*</span>peer_id]);
                 result
@@ -818,62 +867,72 @@
 
     <span class="kw">fn </span>handle_established_inbound_connection(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        <span class="kw">_</span>: ConnectionId,
+        connection_id: ConnectionId,
         peer_id: PeerId,
         <span class="kw">_</span>: <span class="kw-2">&amp;</span>Multiaddr,
         <span class="kw">_</span>: <span class="kw-2">&amp;</span>Multiaddr,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;THandler&lt;<span class="self">Self</span>&gt;, ConnectionDenied&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.new_connection_handler(<span class="kw-2">&amp;</span>peer_id))
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.new_connection_handler(<span class="kw-2">&amp;</span>peer_id, connection_id))
     }
 
     <span class="kw">fn </span>handle_established_outbound_connection(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        <span class="kw">_</span>: ConnectionId,
+        connection_id: ConnectionId,
         peer_id: PeerId,
         <span class="kw">_</span>: <span class="kw-2">&amp;</span>Multiaddr,
         <span class="kw">_</span>: Endpoint,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;THandler&lt;<span class="self">Self</span>&gt;, ConnectionDenied&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.new_connection_handler(<span class="kw-2">&amp;</span>peer_id))
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.new_connection_handler(<span class="kw-2">&amp;</span>peer_id, connection_id))
     }
 
     <span class="kw">fn </span>on_swarm_event(<span class="kw-2">&amp;mut </span><span class="self">self</span>, event: FromSwarm&lt;<span class="self">Self</span>::ConnectionHandler&gt;) {
         <span class="kw">match </span>event {
-            FromSwarm::ConnectionEstablished(ConnectionEstablished { peer_id, .. }) =&gt; {
+            FromSwarm::ConnectionEstablished(ConnectionEstablished {
+                peer_id,
+                connection_id,
+                ..
+            }) =&gt; {
                 <span class="kw">match </span><span class="self">self</span>.known_peers.entry(peer_id) {
                     <span class="comment">// Connection was established without dialing from this protocol
                     </span>Entry::Vacant(entry) =&gt; {
-                        entry.insert(PeerState {
-                            connection_state: ConnectionState::Deciding,
-                            connection_counter: <span class="number">1</span>,
-                        });
+                        entry.insert(ConnectionState::Deciding { connection_id });
 
                         <span class="macro">trace!</span>(%peer_id, <span class="string">&quot;Pending peer decision...&quot;</span>);
                         <span class="self">self</span>.wake();
                     }
-                    Entry::Occupied(<span class="kw-2">mut </span>entry) =&gt; {
-                        entry.get_mut().connection_counter += <span class="number">1</span>;
-                    }
+                    Entry::Occupied(<span class="kw">_</span>) =&gt; {
+                        <span class="comment">// We&#39;re already have either a connection or a decision
+                    </span>}
                 }
             }
             FromSwarm::ConnectionClosed(ConnectionClosed {
                 peer_id,
                 remaining_established,
+                connection_id,
                 ..
             }) =&gt; {
-                <span class="comment">// No established connections left, one of the reasons - the other side chose to not
-                // keep the connection alive. We remove information from the local state and
-                // possibly will try to reconnect later.
+                <span class="comment">// Handle connection with known ConnectionId.
+                </span><span class="kw">let </span>known_connection_closed = <span class="self">self
+                    </span>.known_peers
+                    .get(<span class="kw-2">&amp;</span>peer_id)
+                    .and_then(|connection_state| connection_state.connection_id())
+                    .map(|exiting_connection_id| exiting_connection_id == connection_id)
+                    .unwrap_or(<span class="bool-val">false</span>);
+
+                <span class="kw">if </span>known_connection_closed {
+                    <span class="macro">trace!</span>(%peer_id, <span class="question-mark">?</span>connection_id, <span class="string">&quot;Known connection closed.&quot;</span>);
+                    <span class="self">self</span>.known_peers.remove(<span class="kw-2">&amp;</span>peer_id);
+                    <span class="self">self</span>.wake();
+                }
+
+                <span class="comment">// Handle connection with `NotInterested` status.
                 </span><span class="kw">if </span>remaining_established == <span class="number">0 </span>{
                     <span class="kw">let </span>old_peer_decision = <span class="self">self</span>.known_peers.remove(<span class="kw-2">&amp;</span>peer_id);
 
                     <span class="kw">if </span>old_peer_decision.is_some() {
-                        <span class="macro">trace!</span>(%peer_id, <span class="question-mark">?</span>old_peer_decision, <span class="string">&quot;Known peer disconnected.&quot;</span>);
+                        <span class="macro">trace!</span>(%peer_id, <span class="question-mark">?</span>old_peer_decision, <span class="question-mark">?</span>connection_id, <span class="string">&quot;Known peer disconnected.&quot;</span>);
                         <span class="self">self</span>.wake();
                     }
-                } <span class="kw">else </span>{
-                    <span class="self">self</span>.known_peers
-                        .entry(peer_id)
-                        .and_modify(|state| state.connection_counter -= <span class="number">1</span>);
                 };
             }
             FromSwarm::DialFailure(DialFailure { peer_id, .. }) =&gt; {
@@ -881,7 +940,7 @@
                     <span class="kw">let </span>other_connections = <span class="self">self
                         </span>.known_peers
                         .get(<span class="kw-2">&amp;</span>peer_id)
-                        .map(|state| state.connection_counter &gt; <span class="number">0</span>)
+                        .map(|connection_state| connection_state.connected())
                         .unwrap_or(<span class="bool-val">false</span>);
                     <span class="kw">if </span>!other_connections {
                         <span class="kw">let </span>old_peer_decision = <span class="self">self</span>.known_peers.remove(<span class="kw-2">&amp;</span>peer_id);
@@ -924,32 +983,29 @@
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(change) = <span class="self">self</span>.peer_decision_changes.pop() {
             <span class="kw">return </span>Poll::Ready(ToSwarm::NotifyHandler {
                 peer_id: change.peer_id,
-                handler: NotifyHandler::Any,
+                handler: NotifyHandler::One(change.connection_id),
                 event: change.keep_alive,
             });
         }
 
         <span class="comment">// Check decision statuses.
-        </span><span class="kw">for </span>(peer_id, state) <span class="kw">in </span><span class="self">self</span>.known_peers.iter_mut() {
-            <span class="kw">match </span>state.connection_state.clone() {
+        </span><span class="kw">for </span>(peer_id, connection_state) <span class="kw">in </span><span class="self">self</span>.known_peers.iter_mut() {
+            <span class="kw">match </span>connection_state {
                 ConnectionState::Connecting {
                     peer_address: address,
-                    ..
                 } =&gt; {
-                    state.connection_state = ConnectionState::Deciding;
-
                     <span class="macro">debug!</span>(%peer_id, <span class="string">&quot;Dialing a new peer.&quot;</span>);
 
-                    <span class="kw">let </span>dial_opts = DialOpts::peer_id(<span class="kw-2">*</span>peer_id).addresses(<span class="macro">vec!</span>[address]);
+                    <span class="kw">let </span>dial_opts = DialOpts::peer_id(<span class="kw-2">*</span>peer_id).addresses(<span class="macro">vec!</span>[address.clone()]);
 
                     <span class="kw">return </span>Poll::Ready(ToSwarm::Dial {
                         opts: dial_opts.build(),
                     });
                 }
-                ConnectionState::Deciding =&gt; {
+                ConnectionState::Deciding { .. } =&gt; {
                     <span class="comment">// The decision time is limited by the connection timeout.
                 </span>}
-                ConnectionState::Permanent | ConnectionState::NotInterested =&gt; {
+                ConnectionState::Permanent { .. } | ConnectionState::NotInterested { .. } =&gt; {
                     <span class="comment">// Decision is made - no action necessary.
                 </span>}
             }
@@ -979,9 +1035,9 @@
 
                     <span class="kw">for </span>(peer_id, address) <span class="kw">in </span>peer_addresses {
                         <span class="self">self</span>.known_peers.entry(peer_id).or_insert_with(|| {
-                            PeerState::new(ConnectionState::Connecting {
+                            ConnectionState::Connecting {
                                 peer_address: address,
-                            })
+                            }
                         });
                     }
                 }

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["BackgroundTaskError","FarmingError","PlottingError","SingleDiskPlotError","SingleDiskPlotId","SingleDiskPlotInfo","SingleDiskPlotSummary"],"mod":["piece_cache","piece_reader"],"struct":["SingleDiskPlot","SingleDiskPlotOptions","SingleDiskSemaphore"]};
