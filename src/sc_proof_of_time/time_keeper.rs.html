@@ -233,6 +233,14 @@
 <a href="#233" id="233">233</a>
 <a href="#234" id="234">234</a>
 <a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Time keeper implementation.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::gossip::PotGossip;
@@ -253,7 +261,7 @@
 <span class="kw">use </span>subspace_core_primitives::{NonEmptyVec, PotProof, PotSeed};
 <span class="kw">use </span>subspace_proof_of_time::ProofOfTime;
 <span class="kw">use </span>tokio::sync::mpsc::{channel, Receiver, Sender};
-<span class="kw">use </span>tracing::{error, info, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, trace, warn};
 
 <span class="doccomment">/// Channel size to send the produced proofs.
 /// The proof producer thread will block if the receiver is behind and
@@ -317,14 +325,14 @@
             <span class="macro">futures::select! </span>{
                 local_proof = local_proof_receiver.recv().fuse() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = local_proof {
-                        <span class="macro">trace!</span>(<span class="string">&quot;time_keeper: got local proof: {proof}&quot;</span>);
+                        <span class="macro">trace!</span>(%proof, <span class="string">&quot;Got local proof&quot;</span>);
                         <span class="self">self</span>.handle_local_proof(proof);
                     }
                 },
                 <span class="kw">_ </span>= <span class="self">self</span>.gossip.process_incoming_messages(
                     handle_gossip_message.clone()
                 ).fuse() =&gt; {
-                    <span class="macro">error!</span>(<span class="string">&quot;time_keeper: gossip engine has terminated.&quot;</span>);
+                    <span class="macro">error!</span>(<span class="string">&quot;Gossip engine has terminated&quot;</span>);
                     <span class="kw">return</span>;
                 }
             }
@@ -333,17 +341,19 @@
 
     <span class="doccomment">/// Initializes the chain state from the consensus tip info.
     </span><span class="kw">async fn </span>initialize(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">info!</span>(<span class="string">&quot;time_keeper::initialize: waiting for initialization ...&quot;</span>);
+        <span class="macro">debug!</span>(<span class="string">&quot;Waiting for initialization&quot;</span>);
 
         <span class="comment">// Wait for the first block import.
         </span><span class="kw">let </span><span class="kw-2">mut </span>block_import = <span class="self">self</span>.client.import_notification_stream();
         <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming_block) = block_import.next().<span class="kw">await </span>{
             <span class="kw">let </span>pre_digest = <span class="kw">match </span>extract_pre_digest(<span class="kw-2">&amp;</span>incoming_block.header) {
                 <span class="prelude-val">Ok</span>(pre_digest) =&gt; pre_digest,
-                <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="prelude-val">Err</span>(error) =&gt; {
                     <span class="macro">warn!</span>(
-                        <span class="string">&quot;time_keeper::initialize: failed to get pre_digest: {}/{:?}/{err:?}&quot;</span>,
-                        incoming_block.hash, incoming_block.origin
+                        %error,
+                        block_hash = %incoming_block.hash,
+                        origin = <span class="question-mark">?</span>incoming_block.origin,
+                        <span class="string">&quot;Failed to get pre_digest&quot;</span>,
                     );
                     <span class="kw">continue</span>;
                 }
@@ -353,16 +363,19 @@
                 <span class="prelude-val">Some</span>(pot_pre_digest) =&gt; pot_pre_digest,
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="macro">warn!</span>(
-                        <span class="string">&quot;time_keeper::initialize: failed to get pot_pre_digest: {}/{:?}&quot;</span>,
-                        incoming_block.hash, incoming_block.origin
+                        block_hash = %incoming_block.hash,
+                        origin = <span class="question-mark">?</span>incoming_block.origin,
+                        <span class="string">&quot;Failed to get pot_pre_digest&quot;</span>,
                     );
                     <span class="kw">continue</span>;
                 }
             };
 
-            <span class="macro">info!</span>(
-                <span class="string">&quot;time_keeper::initialize: initialization complete: {}/{:?}, pot_pre_digest = {:?}&quot;</span>,
-                incoming_block.hash, incoming_block.origin, pot_pre_digest
+            <span class="macro">debug!</span>(
+                block_hash = %incoming_block.hash,
+                origin = <span class="question-mark">?</span>incoming_block.origin,
+                <span class="question-mark">?</span>pot_pre_digest,
+                <span class="string">&quot;Initialization complete&quot;</span>,
             );
             <span class="kw">let </span>proofs = pot_pre_digest.proofs().cloned().unwrap_or_else(|| {
                 <span class="comment">// Producing proofs starting from (genesis_slot + 1).
@@ -376,7 +389,7 @@
                         .expect(<span class="string">&quot;Initial slot number should be available for block_number &gt;= 1&quot;</span>),
                     block_hash,
                 );
-                <span class="macro">info!</span>(<span class="string">&quot;time_keeper::initialize: creating first proof: {proof}&quot;</span>);
+                <span class="macro">debug!</span>(%proof, <span class="string">&quot;Creating first proof&quot;</span>);
                 NonEmptyVec::new_with_entry(proof)
             });
 
@@ -426,14 +439,18 @@
                 last_proof.injected_block_hash,
             );
             <span class="kw">let </span>elapsed = start_ts.elapsed();
-            <span class="macro">trace!</span>(<span class="string">&quot;time_keeper::produce proofs: {next_proof}, time=[{elapsed:?}]&quot;</span>);
+            <span class="macro">trace!</span>(
+                %next_proof,
+                <span class="question-mark">?</span>elapsed,
+                <span class="string">&quot;Produce proofs&quot;</span>,
+            );
 
             <span class="comment">// Store the new proof back into the chain and gossip to other time keepers.
-            </span><span class="kw">if let </span><span class="prelude-val">Err</span>(e) = state.on_proof(<span class="kw-2">&amp;</span>next_proof) {
-                <span class="macro">info!</span>(<span class="string">&quot;time_keeper::produce proofs: failed to extend chain: {e:?}&quot;</span>);
+            </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = state.on_proof(<span class="kw-2">&amp;</span>next_proof) {
+                <span class="macro">error!</span>(%error, <span class="string">&quot;Produce proofs: failed to extend chain&quot;</span>);
                 <span class="kw">continue</span>;
-            } <span class="kw">else if let </span><span class="prelude-val">Err</span>(e) = proof_sender.blocking_send(next_proof.clone()) {
-                <span class="macro">warn!</span>(<span class="string">&quot;time_keeper::produce proofs: send failed: {e:?}&quot;</span>);
+            } <span class="kw">else if let </span><span class="prelude-val">Err</span>(error) = proof_sender.blocking_send(next_proof.clone()) {
+                <span class="macro">warn!</span>(%error, <span class="string">&quot;Produce proofs: send failed&quot;</span>);
                 <span class="kw">return</span>;
             }
 
@@ -460,11 +477,10 @@
         <span class="kw">let </span>ret = <span class="self">self</span>.pot_state.on_proof_from_peer(sender, <span class="kw-2">&amp;</span>proof);
         <span class="kw">let </span>elapsed = start_ts.elapsed();
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = ret {
-            <span class="macro">trace!</span>(<span class="string">&quot;time_keeper::on gossip: {err:?}, {sender}&quot;</span>);
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = ret {
+            <span class="macro">trace!</span>(%error, %sender, <span class="string">&quot;On gossip&quot;</span>);
         } <span class="kw">else </span>{
-            <span class="macro">trace!</span>(<span class="string">&quot;time_keeper::on gossip: {proof}, time=[{elapsed:?}], {sender}&quot;</span>);
-            <span class="self">self</span>.gossip.gossip_message(proof.encode());
+            <span class="macro">trace!</span>(%proof, <span class="question-mark">?</span>elapsed, %sender, <span class="string">&quot;On gossip&quot;</span>);
         }
     }
 }

@@ -173,16 +173,6 @@
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
-<a href="#176" id="176">176</a>
-<a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! PoT gossip functionality.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
@@ -199,13 +189,11 @@
 <span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::crypto::blake2b_256_hash;
-<span class="kw">use </span>subspace_core_primitives::PotProof;
+<span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, PotProof};
 <span class="kw">use </span>subspace_proof_of_time::ProofOfTime;
 <span class="kw">use </span>tracing::{error, trace};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>GOSSIP_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/subspace-proof-of-time&quot;</span>;
-
-<span class="kw">type </span>MessageHash = [u8; <span class="number">32</span>];
 
 <span class="doccomment">/// PoT gossip components.
 </span><span class="attr">#[derive(Clone)]
@@ -276,7 +264,7 @@
                     }
                 },
                  <span class="kw">_ </span>= gossip_engine_poll.fuse() =&gt; {
-                    <span class="macro">error!</span>(<span class="string">&quot;Gossip engine has terminated.&quot;</span>);
+                    <span class="macro">error!</span>(<span class="string">&quot;Gossip engine has terminated&quot;</span>);
                     <span class="kw">return</span>;
                 }
             }
@@ -288,7 +276,7 @@
 </span><span class="kw">struct </span>PotGossipValidator {
     pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
     proof_of_time: ProofOfTime,
-    pending: RwLock&lt;HashSet&lt;MessageHash&gt;&gt;,
+    pending: RwLock&lt;HashSet&lt;Blake2b256Hash&gt;&gt;,
 }
 
 <span class="kw">impl </span>PotGossipValidator {
@@ -304,8 +292,7 @@
     <span class="doccomment">/// Called when the message is broadcast.
     </span><span class="kw">fn </span>on_broadcast(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: <span class="kw-2">&amp;</span>[u8]) {
         <span class="kw">let </span>hash = blake2b_256_hash(msg);
-        <span class="kw">let </span><span class="kw-2">mut </span>pending = <span class="self">self</span>.pending.write();
-        pending.insert(hash);
+        <span class="self">self</span>.pending.write().insert(hash);
     }
 }
 
@@ -319,11 +306,11 @@
         <span class="kw">match </span>PotProof::decode(<span class="kw-2">&amp;mut </span>data) {
             <span class="prelude-val">Ok</span>(proof) =&gt; {
                 <span class="comment">// Perform AES verification only if the proof is a candidate.
-                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.pot_state.is_candidate(<span class="kw-2">*</span>sender, <span class="kw-2">&amp;</span>proof) {
-                    <span class="macro">trace!</span>(<span class="string">&quot;gossip::validate: not a candidate: {err:?}&quot;</span>);
+                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self</span>.pot_state.is_candidate(<span class="kw-2">*</span>sender, <span class="kw-2">&amp;</span>proof) {
+                    <span class="macro">trace!</span>(%error, <span class="string">&quot;Not a candidate&quot;</span>);
                     ValidationResult::Discard
-                } <span class="kw">else if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.proof_of_time.verify(<span class="kw-2">&amp;</span>proof) {
-                    <span class="macro">trace!</span>(<span class="string">&quot;gossip::validate: verification failed: {err:?}&quot;</span>);
+                } <span class="kw">else if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self</span>.proof_of_time.verify(<span class="kw-2">&amp;</span>proof) {
+                    <span class="macro">trace!</span>(%error, <span class="string">&quot;Verification failed&quot;</span>);
                     ValidationResult::Discard
                 } <span class="kw">else </span>{
                     ValidationResult::ProcessAndKeep(topic::&lt;Block&gt;())
@@ -336,8 +323,7 @@
     <span class="kw">fn </span>message_expired&lt;<span class="lifetime">&#39;a</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; Box&lt;<span class="kw">dyn </span>FnMut(Block::Hash, <span class="kw-2">&amp;</span>[u8]) -&gt; bool + <span class="lifetime">&#39;a</span>&gt; {
         Box::new(<span class="kw">move </span>|_topic, data| {
             <span class="kw">let </span>hash = blake2b_256_hash(data);
-            <span class="kw">let </span>pending = <span class="self">self</span>.pending.read();
-            !pending.contains(<span class="kw-2">&amp;</span>hash)
+            !<span class="self">self</span>.pending.read().contains(<span class="kw-2">&amp;</span>hash)
         })
     }
 
@@ -346,13 +332,7 @@
     ) -&gt; Box&lt;<span class="kw">dyn </span>FnMut(<span class="kw-2">&amp;</span>PeerId, MessageIntent, <span class="kw-2">&amp;</span>Block::Hash, <span class="kw-2">&amp;</span>[u8]) -&gt; bool + <span class="lifetime">&#39;a</span>&gt; {
         Box::new(<span class="kw">move </span>|_who, _intent, _topic, data| {
             <span class="kw">let </span>hash = blake2b_256_hash(data);
-            <span class="kw">let </span><span class="kw-2">mut </span>pending = <span class="self">self</span>.pending.write();
-            <span class="kw">if </span>pending.contains(<span class="kw-2">&amp;</span>hash) {
-                pending.remove(<span class="kw-2">&amp;</span>hash);
-                <span class="bool-val">true
-            </span>} <span class="kw">else </span>{
-                <span class="bool-val">false
-            </span>}
+            <span class="self">self</span>.pending.write().remove(<span class="kw-2">&amp;</span>hash)
         })
     }
 }
