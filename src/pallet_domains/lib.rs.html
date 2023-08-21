@@ -1580,6 +1580,16 @@
 <a href="#1580" id="1580">1580</a>
 <a href="#1581" id="1581">1581</a>
 <a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a>
+<a href="#1591" id="1591">1591</a>
+<a href="#1592" id="1592">1592</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1795,14 +1805,7 @@
         <span class="doccomment">/// A variation of the Identifier used for holding the funds used for staking and domains.
         </span><span class="kw">type </span>HoldIdentifier: HoldIdentifier&lt;<span class="self">Self</span>&gt;;
 
-        <span class="doccomment">/// The block tree pruning depth, its value should &lt;= `BlockHashCount` because we
-        /// need the consensus block hash to verify execution receipt, which is used to
-        /// construct the node of the block tree.
-        ///
-        /// TODO: `BlockTreePruningDepth` &lt;= `BlockHashCount` is not enough to guarantee the consensus block
-        /// hash must exists while verifying receipt because the domain block is not mapping to the consensus
-        /// block one by one, we need to either store the consensus block hash in runtime manually or store
-        /// the consensus block hash in the client side and use host function to get them in runtime.
+        <span class="doccomment">/// The block tree pruning depth.
         </span><span class="attr">#[pallet::constant]
         </span><span class="kw">type </span>BlockTreePruningDepth: Get&lt;<span class="self">Self</span>::DomainNumber&gt;;
 
@@ -2049,6 +2052,17 @@
         T::DomainHash,
         OptionQuery,
     &gt;;
+
+    <span class="doccomment">/// The consensus block hash used to verify ER, only store the consensus block hash for a domain
+    /// if that consensus block contains bundle of the domain, the hash will be pruned when the ER
+    /// that point to the consensus block is pruned.
+    ///
+    /// TODO: this storage is unbounded in some cases, see https://github.com/subspace/subspace/issues/1673
+    /// for more details, this will be fixed once https://github.com/subspace/subspace/issues/1731 is implemented.
+    </span><span class="attr">#[pallet::storage]
+    #[pallet::getter(<span class="kw">fn </span>consensus_hash)]
+    </span><span class="kw">pub type </span>ConsensusBlockHash&lt;T: Config&gt; =
+        StorageDoubleMap&lt;<span class="kw">_</span>, Identity, DomainId, Identity, T::BlockNumber, T::Hash, OptionQuery&gt;;
 
     <span class="doccomment">/// A set of `BundleDigest` from all bundles that successfully submitted to the consensus block,
     /// these bundles will be used to construct the domain block and `ExecutionInbox` is used to:
@@ -2649,7 +2663,13 @@
 
             do_upgrade_runtimes::&lt;T&gt;(block_number);
 
-            <span class="kw">let _ </span>= SuccessfulBundles::&lt;T&gt;::clear(u32::MAX, <span class="prelude-val">None</span>);
+            <span class="comment">// Store the hash of the parent consensus block for domain that have bundles submitted
+            // in that consensus block
+            </span><span class="kw">let </span>parent_number = block_number - One::one();
+            <span class="kw">let </span>parent_hash = frame_system::Pallet::&lt;T&gt;::block_hash(parent_number);
+            <span class="kw">for </span>(domain_id, <span class="kw">_</span>) <span class="kw">in </span>SuccessfulBundles::&lt;T&gt;::drain() {
+                ConsensusBlockHash::&lt;T&gt;::insert(domain_id, parent_number, parent_hash);
+            }
 
             Weight::zero()
         }

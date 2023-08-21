@@ -873,12 +873,61 @@
 <a href="#873" id="873">873</a>
 <a href="#874" id="874">874</a>
 <a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::StateRoots;
 <span class="kw">use crate</span>::{
-    BalanceOf, BlockTree, Config, DomainBlocks, ExecutionInbox, ExecutionReceiptOf,
-    HeadReceiptNumber, InboxedBundle,
+    BalanceOf, BlockTree, Config, ConsensusBlockHash, DomainBlocks, ExecutionInbox,
+    ExecutionReceiptOf, HeadReceiptNumber, InboxedBundle,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
@@ -886,7 +935,7 @@
 <span class="kw">use </span>sp_core::Get;
 <span class="kw">use </span>sp_domains::merkle_tree::MerkleTree;
 <span class="kw">use </span>sp_domains::{DomainId, ExecutionReceipt, OperatorId};
-<span class="kw">use </span>sp_runtime::traits::{CheckedSub, One, Saturating, Zero};
+<span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Saturating, Zero};
 <span class="kw">use </span>sp_std::cmp::Ordering;
 <span class="kw">use </span>sp_std::vec::Vec;
 
@@ -904,6 +953,7 @@
     MultipleERsAfterChallengePeriod,
     MissingDomainBlock,
     InvalidTraceRoot,
+    UnavailableConsensusBlockHash,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -1041,14 +1091,28 @@
             expected_execution_trace_root == <span class="kw-2">*</span>execution_trace_root,
             Error::InvalidTraceRoot
         );
-    }
 
-    <span class="kw">let </span>excepted_consensus_block_hash =
-        frame_system::Pallet::&lt;T&gt;::block_hash(consensus_block_number);
-    <span class="macro">ensure!</span>(
-        <span class="kw-2">*</span>consensus_block_hash == excepted_consensus_block_hash,
-        Error::BuiltOnUnknownConsensusBlock
-    );
+        <span class="kw">let </span>excepted_consensus_block_hash =
+            <span class="kw">match </span>ConsensusBlockHash::&lt;T&gt;::get(domain_id, consensus_block_number) {
+                <span class="prelude-val">Some</span>(hash) =&gt; hash,
+                <span class="comment">// The `initialize_block` of non-system pallets is skipped in the `validate_transaction`,
+                // thus the hash of best block, which is recorded in the this pallet&#39;s `on_initialize` hook,
+                // is unavailable at this point.
+                </span><span class="prelude-val">None </span>=&gt; {
+                    <span class="kw">let </span>parent_block_number =
+                        frame_system::Pallet::&lt;T&gt;::current_block_number() - One::one();
+                    <span class="kw">if </span><span class="kw-2">*</span>consensus_block_number == parent_block_number {
+                        frame_system::Pallet::&lt;T&gt;::parent_hash()
+                    } <span class="kw">else </span>{
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::UnavailableConsensusBlockHash);
+                    }
+                }
+            };
+        <span class="macro">ensure!</span>(
+            <span class="kw-2">*</span>consensus_block_hash == excepted_consensus_block_hash,
+            Error::BuiltOnUnknownConsensusBlock
+        );
+    }
 
     <span class="kw">if let </span><span class="prelude-val">Some</span>(parent_block_number) = domain_block_number.checked_sub(<span class="kw-2">&amp;</span>One::one()) {
         <span class="kw">let </span>parent_block_exist = BlockTree::&lt;T&gt;::get(domain_id, parent_block_number)
@@ -1142,6 +1206,11 @@
                 }
                 <span class="kw">let _ </span>= ExecutionInbox::&lt;T&gt;::clear_prefix((domain_id, to_prune), u32::MAX, <span class="prelude-val">None</span>);
 
+                ConsensusBlockHash::&lt;T&gt;::remove(
+                    domain_id,
+                    domain_block.execution_receipt.consensus_block_number,
+                );
+
                 pruned_domain_block_info = <span class="prelude-val">Some</span>(PrunedDomainBlockInfo {
                     domain_block_number: to_prune,
                     operator_ids: domain_block.operator_ids,
@@ -1233,6 +1302,7 @@
     <span class="kw">use </span>frame_system::Pallet <span class="kw">as </span>System;
     <span class="kw">use </span>sp_core::{Pair, H256, U256};
     <span class="kw">use </span>sp_domains::{BundleDigest, OperatorPair, RuntimeType};
+    <span class="kw">use </span>sp_runtime::traits::BlockNumberProvider;
     <span class="kw">use </span>subspace_runtime_primitives::SSC;
 
     <span class="kw">fn </span>run_to_block&lt;T: Config&gt;(block_number: T::BlockNumber, parent_hash: T::Hash) {
@@ -1297,12 +1367,13 @@
 
         <span class="kw">let </span>head_node = get_block_tree_node_at::&lt;Test&gt;(domain_id, head_receipt_number).unwrap();
         <span class="kw">let </span><span class="kw-2">mut </span>receipt = head_node.execution_receipt;
+        <span class="macro">assert_eq!</span>(
+            receipt.consensus_block_number,
+            frame_system::Pallet::&lt;Test&gt;::current_block_number()
+        );
         <span class="kw">for </span>block_number <span class="kw">in </span>(head_receipt_number + <span class="number">1</span>)..=to {
-            <span class="comment">// Run to `block_number`
-            </span>run_to_block::&lt;Test&gt;(
-                block_number,
-                frame_system::Pallet::&lt;Test&gt;::block_hash(block_number - <span class="number">1</span>),
-            );
+            <span class="comment">// Finilize parent block and initialize block at `block_number`
+            </span>run_to_block::&lt;Test&gt;(block_number, receipt.consensus_block_hash);
 
             <span class="comment">// Submit a bundle with the receipt of the last block
             </span><span class="kw">let </span>bundle_extrinsics_root = H256::random();
@@ -1323,7 +1394,7 @@
                 get_block_tree_node_at::&lt;Test&gt;(domain_id, head_receipt_number).unwrap();
             receipt = create_dummy_receipt(
                 block_number,
-                frame_system::Pallet::&lt;Test&gt;::block_hash(block_number),
+                H256::random(),
                 parent_block_tree_node.execution_receipt.hash(),
                 <span class="macro">vec!</span>[bundle_extrinsics_root],
             );
@@ -1387,14 +1458,29 @@
             <span class="comment">// The genesis node of the block tree
             </span><span class="kw">let </span>genesis_node = get_block_tree_node_at::&lt;Test&gt;(domain_id, <span class="number">0</span>).unwrap();
             <span class="kw">let </span><span class="kw-2">mut </span>receipt = genesis_node.execution_receipt;
+            <span class="macro">assert_eq!</span>(
+                receipt.consensus_block_number,
+                frame_system::Pallet::&lt;Test&gt;::current_block_number()
+            );
             <span class="kw">let </span><span class="kw-2">mut </span>receipt_of_block_1 = <span class="prelude-val">None</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>bundle_header_hash_of_block_1 = <span class="prelude-val">None</span>;
             <span class="kw">for </span>block_number <span class="kw">in </span><span class="number">1</span>..=(block_tree_pruning_depth + <span class="number">3</span>) {
-                <span class="comment">// Run to `block_number`
-                </span>run_to_block::&lt;Test&gt;(
-                    block_number,
-                    frame_system::Pallet::&lt;Test&gt;::block_hash(block_number - <span class="number">1</span>),
-                );
+                <span class="comment">// Finilize parent block and initialize block at `block_number`
+                </span>run_to_block::&lt;Test&gt;(block_number, receipt.consensus_block_hash);
+
+                <span class="kw">if </span>block_number != <span class="number">1 </span>{
+                    <span class="comment">// `ConsensusBlockHash` should be set to `Some` since last consensus block contains bundle
+                    </span><span class="macro">assert_eq!</span>(
+                        ConsensusBlockHash::&lt;Test&gt;::get(domain_id, block_number - <span class="number">1</span>),
+                        <span class="prelude-val">Some</span>(frame_system::Pallet::&lt;Test&gt;::block_hash(block_number - <span class="number">1</span>))
+                    );
+                    <span class="comment">// ER point to last consensus block should have `NewHead` type
+                    </span><span class="macro">assert_eq!</span>(
+                        execution_receipt_type::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>receipt),
+                        ReceiptType::Accepted(AcceptedReceiptType::NewHead)
+                    );
+                    <span class="macro">assert_ok!</span>(verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>receipt));
+                }
 
                 <span class="comment">// Submit a bundle with the receipt of the last block
                 </span><span class="kw">let </span>bundle_extrinsics_root = H256::random();
@@ -1438,15 +1524,10 @@
                 // in the next bundle
                 </span>receipt = create_dummy_receipt(
                     block_number,
-                    frame_system::Pallet::&lt;Test&gt;::block_hash(block_number),
+                    H256::random(),
                     <span class="kw-2">*</span>parent_domain_block_receipt,
                     <span class="macro">vec!</span>[bundle_extrinsics_root],
                 );
-                <span class="macro">assert_eq!</span>(
-                    execution_receipt_type::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>receipt),
-                    ReceiptType::Accepted(AcceptedReceiptType::NewHead)
-                );
-                <span class="macro">assert_ok!</span>(verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>receipt));
 
                 <span class="comment">// Record receipt of block #1 for later use
                 </span><span class="kw">if </span>block_number == <span class="number">1 </span>{
@@ -1470,6 +1551,11 @@
                 verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>pruned_receipt),
                 Error::InvalidExtrinsicsRoots
             );
+            <span class="macro">assert!</span>(ConsensusBlockHash::&lt;Test&gt;::get(
+                domain_id,
+                pruned_receipt.consensus_block_number
+            )
+            .is_none());
         });
     }
 
@@ -1640,8 +1726,7 @@
                     .unwrap()
                     .execution_receipt;
 
-            <span class="comment">// In future receipt will result in `UnknownParentBlockReceipt` error as its parent
-            // receipt is missing from the block tree
+            <span class="comment">// Construct a future receipt
             </span><span class="kw">let </span><span class="kw-2">mut </span>future_receipt = current_head_receipt.clone();
             future_receipt.domain_block_number = head_receipt_number + <span class="number">2</span>;
             future_receipt.consensus_block_number = head_receipt_number + <span class="number">2</span>;
@@ -1665,7 +1750,20 @@
                 execution_receipt_type::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>future_receipt),
                 ReceiptType::Rejected(RejectedReceiptType::InFuture)
             );
-            <span class="macro">assert_err!</span>(
+
+            <span class="comment">// Return `UnavailableConsensusBlockHash` error since ER point to a future consensus block
+            </span><span class="macro">assert_err!</span>(
+                verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>future_receipt),
+                Error::UnavailableConsensusBlockHash
+            );
+            ConsensusBlockHash::&lt;Test&gt;::insert(
+                domain_id,
+                future_receipt.consensus_block_number,
+                future_receipt.consensus_block_hash,
+            );
+
+            <span class="comment">// Return `UnknownParentBlockReceipt` error as its parent receipt is missing from the block tree
+            </span><span class="macro">assert_err!</span>(
                 verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>future_receipt),
                 Error::UnknownParentBlockReceipt
             );
