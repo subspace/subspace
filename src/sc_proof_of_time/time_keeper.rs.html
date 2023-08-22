@@ -199,62 +199,18 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a>
-<a href="#204" id="204">204</a>
-<a href="#205" id="205">205</a>
-<a href="#206" id="206">206</a>
-<a href="#207" id="207">207</a>
-<a href="#208" id="208">208</a>
-<a href="#209" id="209">209</a>
-<a href="#210" id="210">210</a>
-<a href="#211" id="211">211</a>
-<a href="#212" id="212">212</a>
-<a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
-<a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a>
-<a href="#224" id="224">224</a>
-<a href="#225" id="225">225</a>
-<a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a>
-<a href="#228" id="228">228</a>
-<a href="#229" id="229">229</a>
-<a href="#230" id="230">230</a>
-<a href="#231" id="231">231</a>
-<a href="#232" id="232">232</a>
-<a href="#233" id="233">233</a>
-<a href="#234" id="234">234</a>
-<a href="#235" id="235">235</a>
-<a href="#236" id="236">236</a>
-<a href="#237" id="237">237</a>
-<a href="#238" id="238">238</a>
-<a href="#239" id="239">239</a>
-<a href="#240" id="240">240</a>
-<a href="#241" id="241">241</a>
-<a href="#242" id="242">242</a>
-<a href="#243" id="243">243</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Time keeper implementation.
 
-</span><span class="kw">use </span><span class="kw">crate</span>::gossip::PotGossip;
-<span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
+</span><span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
 <span class="kw">use </span><span class="kw">crate</span>::PotComponents;
-<span class="kw">use </span>futures::{FutureExt, StreamExt};
-<span class="kw">use </span>parity_scale_codec::Encode;
+<span class="kw">use </span>futures::channel::mpsc;
+<span class="kw">use </span>futures::{SinkExt, StreamExt};
 <span class="kw">use </span>sc_client_api::BlockchainEvents;
-<span class="kw">use </span>sc_network::PeerId;
-<span class="kw">use </span>sc_network_gossip::{Network <span class="kw">as </span>GossipNetwork, Syncing <span class="kw">as </span>GossipSyncing};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
+<span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
 <span class="kw">use </span>std::time::{Duration, Instant};
@@ -269,15 +225,16 @@
 </span><span class="kw">const </span>PROOFS_CHANNEL_SIZE: usize = <span class="number">12</span>; <span class="comment">// 2 * reveal lag.
 
 </span><span class="doccomment">/// The time keeper manages the protocol: periodic proof generation/verification, gossip.
-</span><span class="kw">pub struct </span>TimeKeeper&lt;Block: BlockT&lt;Hash = H256&gt;, Client&gt; {
+</span><span class="kw">pub struct </span>TimeKeeper&lt;Block, Client&gt; {
     proof_of_time: ProofOfTime,
     pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
-    gossip: PotGossip&lt;Block&gt;,
     client: Arc&lt;Client&gt;,
     <span class="comment">// Expected time to produce a proof.
     // TODO: this will be removed after the pot_iterations is set
     // to produce a proof/sec.
     </span>target_proof_time: Duration,
+    gossip_sender: mpsc::Sender&lt;PotProof&gt;,
+    _block: PhantomData&lt;Block&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, Client&gt; TimeKeeper&lt;Block, Client&gt;
@@ -286,55 +243,32 @@
     Client: HeaderBackend&lt;Block&gt; + BlockchainEvents&lt;Block&gt;,
 {
     <span class="doccomment">/// Creates the time keeper instance.
-    </span><span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(
-        components: PotComponents,
+    </span><span class="kw">pub fn </span>new(
+        components: <span class="kw-2">&amp;</span>PotComponents,
         client: Arc&lt;Client&gt;,
-        network: Network,
-        sync: Arc&lt;GossipSync&gt;,
         target_proof_time: Duration,
-    ) -&gt; <span class="self">Self
-    </span><span class="kw">where
-        </span>Network: GossipNetwork&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
-        GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
-    {
-        <span class="kw">let </span>PotComponents {
-            proof_of_time,
-            protocol_state: pot_state,
-            ..
-        } = components;
-
+        gossip_sender: mpsc::Sender&lt;PotProof&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            proof_of_time: proof_of_time.clone(),
-            pot_state: pot_state.clone(),
-            gossip: PotGossip::new(network, sync, pot_state, proof_of_time),
+            proof_of_time: components.proof_of_time,
+            pot_state: Arc::clone(<span class="kw-2">&amp;</span>components.protocol_state),
             client,
             target_proof_time,
+            gossip_sender,
+            _block: PhantomData,
         }
     }
 
     <span class="doccomment">/// Runs the time keeper processing loop.
-    </span><span class="kw">pub async fn </span>run(<span class="self">self</span>) {
+    </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
         <span class="self">self</span>.initialize().<span class="kw">await</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>local_proof_receiver = <span class="self">self</span>.spawn_producer_thread();
-        <span class="kw">let </span>handle_gossip_message: Arc&lt;<span class="kw">dyn </span>Fn(PeerId, PotProof) + Send + Sync&gt; =
-            Arc::new(|sender, proof| {
-                <span class="self">self</span>.handle_gossip_message(sender, proof);
-            });
-        <span class="kw">loop </span>{
-            <span class="macro">futures::select! </span>{
-                local_proof = local_proof_receiver.recv().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = local_proof {
-                        <span class="macro">trace!</span>(%proof, <span class="string">&quot;Got local proof&quot;</span>);
-                        <span class="self">self</span>.handle_local_proof(proof);
-                    }
-                },
-                <span class="kw">_ </span>= <span class="self">self</span>.gossip.process_incoming_messages(
-                    handle_gossip_message.clone()
-                ).fuse() =&gt; {
-                    <span class="macro">error!</span>(<span class="string">&quot;Gossip engine has terminated&quot;</span>);
-                    <span class="kw">return</span>;
-                }
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(proof) = local_proof_receiver.recv().<span class="kw">await </span>{
+            <span class="macro">trace!</span>(%proof, <span class="string">&quot;Got local proof&quot;</span>);
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self</span>.gossip_sender.send(proof).<span class="kw">await </span>{
+                <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to send proof to gossip&quot;</span>);
+                <span class="kw">return</span>;
             }
         }
     }
@@ -401,7 +335,7 @@
     <span class="doccomment">/// Starts the thread to produce the proofs.
     </span><span class="kw">fn </span>spawn_producer_thread(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Receiver&lt;PotProof&gt; {
         <span class="kw">let </span>(sender, receiver) = channel(PROOFS_CHANNEL_SIZE);
-        <span class="kw">let </span>proof_of_time = <span class="self">self</span>.proof_of_time.clone();
+        <span class="kw">let </span>proof_of_time = <span class="self">self</span>.proof_of_time;
         <span class="kw">let </span>pot_state = <span class="self">self</span>.pot_state.clone();
         <span class="kw">let </span>target_proof_time = <span class="self">self</span>.target_proof_time;
         thread::Builder::new()
@@ -463,24 +397,6 @@
                     thread::sleep(Duration::from_millis(pad))
                 }
             }
-        }
-    }
-
-    <span class="doccomment">/// Gossips the locally generated proof.
-    </span><span class="kw">fn </span>handle_local_proof(<span class="kw-2">&amp;</span><span class="self">self</span>, proof: PotProof) {
-        <span class="self">self</span>.gossip.gossip_message(proof.encode());
-    }
-
-    <span class="doccomment">/// Handles the incoming gossip message.
-    </span><span class="kw">fn </span>handle_gossip_message(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: PeerId, proof: PotProof) {
-        <span class="kw">let </span>start_ts = Instant::now();
-        <span class="kw">let </span>ret = <span class="self">self</span>.pot_state.on_proof_from_peer(sender, <span class="kw-2">&amp;</span>proof);
-        <span class="kw">let </span>elapsed = start_ts.elapsed();
-
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = ret {
-            <span class="macro">trace!</span>(%error, %sender, <span class="string">&quot;On gossip&quot;</span>);
-        } <span class="kw">else </span>{
-            <span class="macro">trace!</span>(%proof, <span class="question-mark">?</span>elapsed, %sender, <span class="string">&quot;On gossip&quot;</span>);
         }
     }
 }

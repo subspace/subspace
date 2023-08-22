@@ -932,6 +932,7 @@
 <a href="#932" id="932">932</a>
 <a href="#933" id="933">933</a>
 <a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -989,7 +990,8 @@
 };
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_network::NetworkService;
-<span class="kw">use </span>sc_proof_of_time::{pot_gossip_peers_set_config, PotClient, PotComponents, TimeKeeper};
+<span class="kw">use </span>sc_proof_of_time::gossip::{pot_gossip_peers_set_config, PotGossipWorker};
+<span class="kw">use </span>sc_proof_of_time::{PotComponents, TimeKeeper};
 <span class="kw">use </span>sc_service::error::Error <span class="kw">as </span>ServiceError;
 <span class="kw">use </span>sc_service::{Configuration, NetworkStarter, PartialComponents, SpawnTasksParams, TaskManager};
 <span class="kw">use </span>sc_subspace_block_relay::{build_consensus_relay, NetworkWrapper};
@@ -1706,13 +1708,27 @@
             .as_ref()
             .map(|component| component.consensus_state());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(components) = pot_components {
+            <span class="kw">let </span>pot_gossip_worker = PotGossipWorker::new(
+                <span class="kw-2">&amp;</span>components,
+                client.clone(),
+                network_service.clone(),
+                sync_service.clone(),
+            );
+            <span class="kw">let </span>gossip_sender = pot_gossip_worker.gossip_sender();
+            task_manager.spawn_essential_handle().spawn_blocking(
+                <span class="string">&quot;pot-gossip-worker&quot;</span>,
+                <span class="prelude-val">Some</span>(<span class="string">&quot;pot&quot;</span>),
+                <span class="kw">async move </span>{
+                    pot_gossip_worker.run().<span class="kw">await</span>;
+                },
+            );
+
             <span class="kw">if </span>components.is_time_keeper() {
-                <span class="kw">let </span>time_keeper = TimeKeeper::&lt;Block, <span class="kw">_</span>&gt;::new(
-                    components,
+                <span class="kw">let </span>time_keeper = TimeKeeper::new(
+                    <span class="kw-2">&amp;</span>components,
                     client.clone(),
-                    network_service.clone(),
-                    sync_service.clone(),
                     subspace_link.slot_duration().as_duration(),
+                    gossip_sender,
                 );
 
                 task_manager.spawn_essential_handle().spawn_blocking(
@@ -1720,20 +1736,6 @@
                     <span class="prelude-val">Some</span>(<span class="string">&quot;pot&quot;</span>),
                     <span class="kw">async move </span>{
                         time_keeper.run().<span class="kw">await</span>;
-                    },
-                );
-            } <span class="kw">else </span>{
-                <span class="kw">let </span>pot_client = PotClient::&lt;Block, <span class="kw">_</span>&gt;::new(
-                    components,
-                    client.clone(),
-                    network_service.clone(),
-                    sync_service.clone(),
-                );
-                task_manager.spawn_essential_handle().spawn_blocking(
-                    <span class="string">&quot;subspace-proof-of-time-client&quot;</span>,
-                    <span class="prelude-val">Some</span>(<span class="string">&quot;pot&quot;</span>),
-                    <span class="kw">async move </span>{
-                        pot_client.run().<span class="kw">await</span>;
                     },
                 );
             }
