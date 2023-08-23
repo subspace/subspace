@@ -132,8 +132,9 @@
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
-<span class="kw">use </span><span class="kw">crate</span>::utils::archival_storage_info::ArchivalStorageInfo;
 <span class="kw">use </span><span class="kw">crate</span>::utils::readers_and_pieces::ReadersAndPieces;
 <span class="kw">use </span><span class="kw">crate</span>::NodeClient;
 <span class="kw">use </span>async_trait::async_trait;
@@ -148,14 +149,13 @@
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
 <span class="kw">use </span>subspace_networking::utils::piece_provider::{PieceProvider, PieceValidator, RetryPolicy};
 <span class="kw">use </span>subspace_networking::Node;
-<span class="kw">use </span>tracing::error;
+<span class="kw">use </span>tracing::{debug, error, trace};
 
 <span class="kw">pub struct </span>FarmerPieceGetter&lt;PV, NC&gt; {
     node: Node,
     piece_provider: PieceProvider&lt;PV&gt;,
     piece_cache: PieceCache,
     node_client: NC,
-    archival_storage_info: ArchivalStorageInfo,
     readers_and_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;ReadersAndPieces&gt;&gt;&gt;,
 }
 
@@ -165,7 +165,6 @@
         piece_provider: PieceProvider&lt;PV&gt;,
         piece_cache: PieceCache,
         node_client: NC,
-        archival_storage_info: ArchivalStorageInfo,
         readers_and_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;ReadersAndPieces&gt;&gt;&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -173,7 +172,6 @@
             piece_provider,
             piece_cache,
             node_client,
-            archival_storage_info,
             readers_and_pieces,
         }
     }
@@ -245,24 +243,30 @@
         <span class="comment">// L1 piece acquisition
         // TODO: consider using retry policy for L1 lookups as well.
         </span><span class="kw">let </span>connected_peers = HashSet::&lt;PeerId&gt;::from_iter(<span class="self">self</span>.node.connected_peers().<span class="kw">await</span><span class="question-mark">?</span>);
+        <span class="kw">if </span>connected_peers.is_empty() {
+            <span class="macro">debug!</span>(%piece_index, <span class="string">&quot;Cannot acquire piece from L1: no connected peers.&quot;</span>);
 
-        <span class="kw">for </span>peer_id <span class="kw">in </span><span class="self">self
-            </span>.archival_storage_info
-            .peers_contain_piece(<span class="kw-2">&amp;</span>piece_index)
-            .iter()
-        {
-            <span class="kw">if </span>connected_peers.contains(peer_id) {
-                <span class="kw">let </span>maybe_piece = <span class="self">self
-                    </span>.piece_provider
-                    .get_piece_from_peer(<span class="kw-2">*</span>peer_id, piece_index)
-                    .<span class="kw">await</span>;
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+        }
 
-                <span class="kw">if </span>maybe_piece.is_some() {
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(maybe_piece);
-                }
+        <span class="kw">for </span>peer_id <span class="kw">in </span>connected_peers.iter() {
+            <span class="kw">let </span>maybe_piece = <span class="self">self
+                </span>.piece_provider
+                .get_piece_from_peer(<span class="kw-2">*</span>peer_id, piece_index)
+                .<span class="kw">await</span>;
+
+            <span class="kw">if </span>maybe_piece.is_some() {
+                <span class="macro">trace!</span>(%piece_index, %peer_id, <span class="string">&quot;L1 lookup succeeded.&quot;</span>);
+
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(maybe_piece);
             }
         }
 
+        <span class="macro">debug!</span>(
+            %piece_index,
+            connected_peers=%connected_peers.len(),
+            <span class="string">&quot;Cannot acquire piece: all methods yielded empty result.&quot;
+        </span>);
         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
     }
 }
