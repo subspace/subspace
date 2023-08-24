@@ -91,97 +91,133 @@
 <a href="#91" id="91">91</a>
 <a href="#92" id="92">92</a>
 <a href="#93" id="93">93</a>
-</pre></div><pre class="rust"><code><span class="kw">use crate</span>::{BalanceOf, Config, Pallet, Relayers};
-<span class="kw">use </span>frame_support::traits::ExistenceRequirement::AllowDeath;
-<span class="kw">use </span>frame_support::traits::{Currency, ExistenceRequirement, WithdrawReasons};
-<span class="kw">use </span>frame_support::PalletId;
-<span class="kw">use </span>sp_messenger::messages::FeeModel;
-<span class="kw">use </span>sp_runtime::traits::{AccountIdConversion, CheckedDiv, CheckedSub};
-<span class="kw">use </span>sp_runtime::{ArithmeticError, DispatchResult};
-
-<span class="doccomment">/// Messenger Id used to store deposits and fees.
-</span><span class="kw">const </span>MESSENGER_PALLET_ID: PalletId = PalletId(<span class="kw-2">*</span><span class="string">b&quot;messengr&quot;</span>);
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::pallet::{InboxFee, InboxResponses, OutboxFee, RelayerRewards};
+<span class="kw">use crate</span>::{BalanceOf, Config, Error, Pallet};
+<span class="kw">use </span>frame_support::traits::fungible::Mutate;
+<span class="kw">use </span>frame_support::traits::tokens::{Fortitude, Precision};
+<span class="kw">use </span>frame_support::weights::WeightToFee;
+<span class="kw">use </span>sp_messenger::endpoint::Endpoint;
+<span class="kw">use </span>sp_messenger::messages::{ChainId, ChannelId, FeeModel, MessageId, Nonce};
+<span class="kw">use </span>sp_runtime::traits::CheckedAdd;
+<span class="kw">use </span>sp_runtime::DispatchResult;
 
 <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
-    <span class="doccomment">/// Returns the account_id to holds fees and and acts as treasury for messenger.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>messenger_account_id() -&gt; T::AccountId {
-        MESSENGER_PALLET_ID.into_account_truncating()
-    }
-
     <span class="doccomment">/// Ensures the fees from the sender per FeeModel provided for a single request for a response.
     </span><span class="attr">#[inline]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ensure_fees_for_outbox_message(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>collect_fees_for_message(
         sender: <span class="kw-2">&amp;</span>T::AccountId,
+        message_id: (ChainId, MessageId),
         fee_model: <span class="kw-2">&amp;</span>FeeModel&lt;BalanceOf&lt;T&gt;&gt;,
+        endpoint: <span class="kw-2">&amp;</span>Endpoint,
     ) -&gt; DispatchResult {
-        <span class="kw">let </span>msgr_acc_id = <span class="self">Self</span>::messenger_account_id();
-        <span class="comment">// reserve outbox fee by transferring it to the messenger account.
-        // we will use the funds to pay the relayers once the response is received.
-        </span><span class="kw">let </span>outbox_fee = fee_model.outbox_fee().ok_or(ArithmeticError::Overflow)<span class="question-mark">?</span>;
-        T::Currency::withdraw(
-            sender,
-            outbox_fee,
-            WithdrawReasons::TRANSACTION_PAYMENT,
-            AllowDeath,
-        )<span class="question-mark">?</span>;
-        T::Currency::deposit_creating(<span class="kw-2">&amp;</span>msgr_acc_id, outbox_fee);
+        <span class="kw">let </span>handler = T::get_endpoint_handler(endpoint).ok_or(Error::&lt;T&gt;::NoMessageHandler)<span class="question-mark">?</span>;
 
-        <span class="comment">// burn the fees that need to be paid on the dst_chain
-        </span><span class="kw">let </span>inbox_fee = fee_model.inbox_fee().ok_or(ArithmeticError::Overflow)<span class="question-mark">?</span>;
-        T::Currency::withdraw(
-            sender,
-            inbox_fee,
-            WithdrawReasons::TRANSACTION_PAYMENT,
-            AllowDeath,
-        )<span class="question-mark">?</span>;
+        <span class="comment">// fees need to be paid for following
+        // - Execution on dst_chain + Relay Fee. This is burned here and minted on dst_chain
+        </span><span class="kw">let </span>dst_chain_inbox_execution_fee =
+            T::WeightToFee::weight_to_fee(<span class="kw-2">&amp;</span>handler.message_weight());
+        <span class="kw">let </span>dst_chain_fee = dst_chain_inbox_execution_fee
+            .checked_add(<span class="kw-2">&amp;</span>fee_model.relay_fee)
+            .ok_or(Error::&lt;T&gt;::BalanceOverflow)<span class="question-mark">?</span>;
+
+        <span class="comment">// - Execution of response on src_chain + relay fee.
+        // - This is collected and given to operators once response is received.
+        </span><span class="kw">let </span>src_chain_outbox_response_execution_fee =
+            T::WeightToFee::weight_to_fee(<span class="kw-2">&amp;</span>handler.message_response_weight());
+        <span class="kw">let </span>src_chain_fee = src_chain_outbox_response_execution_fee
+            .checked_add(<span class="kw-2">&amp;</span>fee_model.relay_fee)
+            .ok_or(Error::&lt;T&gt;::BalanceOverflow)<span class="question-mark">?</span>;
+        OutboxFee::&lt;T&gt;::insert(message_id, src_chain_fee);
+
+        <span class="comment">// burn the total fees
+        </span><span class="kw">let </span>total_fees = dst_chain_fee
+            .checked_add(<span class="kw-2">&amp;</span>src_chain_fee)
+            .ok_or(Error::&lt;T&gt;::BalanceOverflow)<span class="question-mark">?</span>;
+        T::Currency::burn_from(sender, total_fees, Precision::Exact, Fortitude::Polite)<span class="question-mark">?</span>;
+
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Ensures the fee paid by the sender on the src_chain are minted here and paid to
-    /// relayer set when the acknowledgments are received.
+    <span class="doccomment">/// Ensures the fee paid by the sender on the src_chain for execution on this chain are stored as operator rewards
     </span><span class="attr">#[inline]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ensure_fees_for_inbox_message(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>store_fees_for_inbox_message(
+        message_id: (ChainId, MessageId),
         fee_model: <span class="kw-2">&amp;</span>FeeModel&lt;BalanceOf&lt;T&gt;&gt;,
+        endpoint: <span class="kw-2">&amp;</span>Endpoint,
     ) -&gt; DispatchResult {
-        <span class="kw">let </span>inbox_fee = fee_model.inbox_fee().ok_or(ArithmeticError::Overflow)<span class="question-mark">?</span>;
-        <span class="kw">let </span>msngr_acc_id = <span class="self">Self</span>::messenger_account_id();
-        T::Currency::deposit_creating(<span class="kw-2">&amp;</span>msngr_acc_id, inbox_fee);
+        <span class="kw">let </span>handler = T::get_endpoint_handler(endpoint).ok_or(Error::&lt;T&gt;::NoMessageHandler)<span class="question-mark">?</span>;
+        <span class="kw">let </span>inbox_execution_fee = T::WeightToFee::weight_to_fee(<span class="kw-2">&amp;</span>handler.message_weight());
+        <span class="kw">let </span>inbox_fee = inbox_execution_fee
+            .checked_add(<span class="kw-2">&amp;</span>fee_model.relay_fee)
+            .ok_or(Error::&lt;T&gt;::BalanceOverflow)<span class="question-mark">?</span>;
+
+        InboxFee::&lt;T&gt;::insert(message_id, inbox_fee);
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Distribute the rewards to the relayers.
-    /// Operation is no-op if there is not enough balance to pay.
-    /// Operation is no-op if there are no relayers.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>distribute_reward_to_relayers(reward: BalanceOf&lt;T&gt;) -&gt; DispatchResult {
-        <span class="kw">let </span>relayers = Relayers::&lt;T&gt;::get();
-        <span class="kw">let </span>relayer_count: BalanceOf&lt;T&gt; = (relayers.len() <span class="kw">as </span>u32).into();
-        <span class="kw">let </span>reward_per_relayer = <span class="kw">match </span>reward.checked_div(<span class="kw-2">&amp;</span>relayer_count) {
-            <span class="comment">// no relayers yet.
-            </span><span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
-            <span class="prelude-val">Some</span>(reward) =&gt; reward,
-        };
+    <span class="doccomment">/// Rewards operators for executing an inbox message since src_chain signalled that responses are delivered.
+    /// Removes messages responses from Inbox responses.
+    /// All the messages with nonce &lt;= latest_confirmed_nonce are deleted.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>reward_operators_for_inbox_execution(
+        dst_chain_id: ChainId,
+        channel_id: ChannelId,
+        latest_confirmed_nonce: <span class="prelude-ty">Option</span>&lt;Nonce&gt;,
+    ) -&gt; DispatchResult {
+        <span class="kw">let </span><span class="kw-2">mut </span>current_nonce = latest_confirmed_nonce;
 
-        <span class="comment">// ensure we have enough to pay but maintain minimum existential deposit
-        </span><span class="kw">let </span>msngr_acc_id = <span class="self">Self</span>::messenger_account_id();
-        <span class="kw">if </span>!T::Currency::free_balance(<span class="kw-2">&amp;</span>msngr_acc_id)
-            .checked_sub(<span class="kw-2">&amp;</span>T::Currency::minimum_balance())
-            .map(|usable| usable &gt;= reward)
-            .unwrap_or(<span class="bool-val">false</span>)
-        {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(nonce) = current_nonce {
+            <span class="comment">// for every inbox response we take, distribute the reward to the operators.
+            </span><span class="kw">if </span>InboxResponses::&lt;T&gt;::take((dst_chain_id, channel_id, nonce)).is_none() {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            }
+
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(inbox_fee) = InboxFee::&lt;T&gt;::take((dst_chain_id, (channel_id, nonce))) {
+                <span class="self">Self</span>::reward_operators(inbox_fee)<span class="question-mark">?</span>;
+            }
+
+            current_nonce = nonce.checked_sub(Nonce::one())
         }
 
-        <span class="comment">// distribute reward to relayers
-        </span><span class="kw">for </span>relayer <span class="kw">in </span>relayers.into_iter() {
-            <span class="comment">// ensure msngr account is still kept alive after transfer.
-            </span>T::Currency::transfer(
-                <span class="kw-2">&amp;</span>msngr_acc_id,
-                <span class="kw-2">&amp;</span>relayer,
-                reward_per_relayer,
-                ExistenceRequirement::KeepAlive,
-            )<span class="question-mark">?</span>;
-        }
         <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>reward_operators_for_outbox_execution(
+        dst_chain_id: ChainId,
+        message_id: MessageId,
+    ) -&gt; DispatchResult {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(fee) = OutboxFee::&lt;T&gt;::take((dst_chain_id, message_id)) {
+            <span class="self">Self</span>::reward_operators(fee)<span class="question-mark">?</span>;
+        }
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Increments the current block&#39;s relayer rewards.
+    </span><span class="kw">fn </span>reward_operators(reward: BalanceOf&lt;T&gt;) -&gt; DispatchResult {
+        RelayerRewards::&lt;T&gt;::try_mutate(|current_reward| {
+            <span class="kw-2">*</span>current_reward = current_reward
+                .checked_add(<span class="kw-2">&amp;</span>reward)
+                .ok_or(Error::&lt;T&gt;::BalanceOverflow)<span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(())
+        })
     }
 }
 </code></pre></div></section></main></body></html>

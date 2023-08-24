@@ -339,18 +339,8 @@
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
-<a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a>
-<a href="#347" id="347">347</a>
-<a href="#348" id="348">348</a>
-<a href="#349" id="349">349</a>
-<a href="#350" id="350">350</a>
-<a href="#351" id="351">351</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
-    BalanceOf, ChannelId, Channels, Config, Error, Event, FeeModel, InboxResponses, Nonce, Outbox,
+    BalanceOf, ChannelId, Channels, Config, Error, Event, InboxResponses, Nonce, Outbox,
     OutboxMessageResult, Pallet, RelayerMessages,
 };
 <span class="kw">use </span>frame_support::ensure;
@@ -431,29 +421,6 @@
         )
     }
 
-    <span class="doccomment">/// Removes messages responses from Inbox responses as the src_chain signalled that responses are delivered.
-    /// all the messages with nonce &lt;= latest_confirmed_nonce are deleted.
-    </span><span class="kw">fn </span>distribute_rewards_for_delivered_message_responses(
-        dst_chain_id: ChainId,
-        channel_id: ChannelId,
-        latest_confirmed_nonce: <span class="prelude-ty">Option</span>&lt;Nonce&gt;,
-        fee_model: <span class="kw-2">&amp;</span>FeeModel&lt;BalanceOf&lt;T&gt;&gt;,
-    ) -&gt; DispatchResult {
-        <span class="kw">let </span><span class="kw-2">mut </span>current_nonce = latest_confirmed_nonce;
-
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(nonce) = current_nonce {
-            <span class="comment">// for every inbox response we take, distribute the reward to the relayers.
-            </span><span class="kw">if </span>InboxResponses::&lt;T&gt;::take((dst_chain_id, channel_id, nonce)).is_none() {
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-            }
-
-            <span class="self">Self</span>::distribute_reward_to_relayers(fee_model.inbox_fee.relayer_pool_fee)<span class="question-mark">?</span>;
-            current_nonce = nonce.checked_sub(Nonce::one())
-        }
-
-        <span class="prelude-val">Ok</span>(())
-    }
-
     <span class="doccomment">/// Process the incoming messages from given chain_id and channel_id.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>process_inbox_messages(
         msg: Message&lt;BalanceOf&lt;T&gt;&gt;,
@@ -485,12 +452,20 @@
             <span class="comment">// process incoming endpoint message.
             </span>VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))) =&gt; {
                 <span class="kw">let </span>response = <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) =
-                    T::get_endpoint_response_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
+                    T::get_endpoint_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
                 {
                     <span class="kw">if </span>msg_weight_tag != MessageWeightTag::EndpointRequest(req.dst_endpoint.clone())
                     {
                         <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
                     }
+
+                    <span class="comment">// store fees for inbox message execution
+                    </span><span class="self">Self</span>::store_fees_for_inbox_message(
+                        (dst_chain_id, (channel_id, nonce)),
+                        <span class="kw-2">&amp;</span>channel.fee,
+                        <span class="kw-2">&amp;</span>req.src_endpoint,
+                    )<span class="question-mark">?</span>;
+
                     endpoint_handler.message(dst_chain_id, (channel_id, nonce), req)
                 } <span class="kw">else </span>{
                     <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
@@ -550,11 +525,10 @@
 
         <span class="comment">// reward relayers for relaying message responses to src_chain.
         // clean any delivered inbox responses
-        </span><span class="self">Self</span>::distribute_rewards_for_delivered_message_responses(
+        </span><span class="self">Self</span>::reward_operators_for_inbox_execution(
             dst_chain_id,
             channel_id,
             msg.last_delivered_message_response_nonce,
-            <span class="kw-2">&amp;</span>channel.fee,
         )<span class="question-mark">?</span>;
 
         <span class="self">Self</span>::deposit_event(Event::InboxMessageResponse {
@@ -652,14 +626,23 @@
                 VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))),
                 VersionedPayload::V0(Payload::Endpoint(RequestResponse::Response(resp))),
             ) =&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) = T::get_endpoint_response_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
-                {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) = T::get_endpoint_handler(<span class="kw-2">&amp;</span>req.dst_endpoint) {
                     <span class="kw">if </span>resp_msg_weight_tag
                         != MessageWeightTag::EndpointResponse(req.dst_endpoint.clone())
                     {
                         <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
                     }
-                    endpoint_handler.message_response(dst_chain_id, (channel_id, nonce), req, resp)
+
+                    <span class="kw">let </span>resp = endpoint_handler.message_response(
+                        dst_chain_id,
+                        (channel_id, nonce),
+                        req,
+                        resp,
+                    );
+
+                    <span class="self">Self</span>::reward_operators_for_outbox_execution(dst_chain_id, (channel_id, nonce))<span class="question-mark">?</span>;
+
+                    resp
                 } <span class="kw">else </span>{
                     <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
                 }
@@ -667,9 +650,6 @@
 
             (<span class="kw">_</span>, <span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(Error::&lt;T&gt;::InvalidMessagePayload.into()),
         };
-
-        <span class="comment">// distribute rewards to relayers for relaying the outbox messages.
-        </span><span class="self">Self</span>::distribute_reward_to_relayers(channel.fee.outbox_fee.relayer_pool_fee)<span class="question-mark">?</span>;
 
         Channels::&lt;T&gt;::mutate(
             dst_chain_id,

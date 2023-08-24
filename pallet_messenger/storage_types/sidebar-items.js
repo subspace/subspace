@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Channels","Inbox","InboxResponses","NextChannelId","NextRelayerIdx","Outbox","OutboxResponses","RelayerMessages","Relayers","RelayersInfo"]};
+window.SIDEBAR_ITEMS = {"struct":["Channels","Inbox","InboxFee","InboxResponses","NextChannelId","NextRelayerIdx","Outbox","OutboxFee","OutboxResponses","RelayerMessages","RelayerRewards","Relayers","RelayersInfo"]};
