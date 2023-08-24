@@ -22,6 +22,7 @@ var srcIndex = JSON.parse('{\
 "pallet_messenger":["",[],["fees.rs","lib.rs","messages.rs","relayer.rs","weights.rs"]],\
 "pallet_object_store":["",[],["lib.rs"]],\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
+"pallet_operator_rewards":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_runtime_configs":["",[],["lib.rs"]],\
 "pallet_subspace":["",[],["equivocation.rs","lib.rs","weights.rs"]],\
