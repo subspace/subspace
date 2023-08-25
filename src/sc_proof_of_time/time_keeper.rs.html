@@ -199,23 +199,54 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Time keeper implementation.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::state_manager::PotProtocolState;
 <span class="kw">use </span><span class="kw">crate</span>::PotComponents;
 <span class="kw">use </span>futures::channel::mpsc;
-<span class="kw">use </span>futures::{SinkExt, StreamExt};
-<span class="kw">use </span>sc_client_api::BlockchainEvents;
+<span class="kw">use </span>futures::SinkExt;
+<span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::marker::PhantomData;
+<span class="kw">use </span>std::num::NonZeroU32;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
 <span class="kw">use </span>std::time::{Duration, Instant};
-<span class="kw">use </span>subspace_core_primitives::{NonEmptyVec, PotProof, PotSeed};
-<span class="kw">use </span>subspace_proof_of_time::ProofOfTime;
+<span class="kw">use </span>subspace_core_primitives::{NonEmptyVec, PotKey, PotProof, PotSeed};
 <span class="kw">use </span>tokio::sync::mpsc::{channel, Receiver, Sender};
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
 
@@ -226,12 +257,17 @@
 
 </span><span class="doccomment">/// The time keeper manages the protocol: periodic proof generation/verification, gossip.
 </span><span class="kw">pub struct </span>TimeKeeper&lt;Block, Client&gt; {
-    proof_of_time: ProofOfTime,
-    pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
-    client: Arc&lt;Client&gt;,
+    <span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
+    </span>initial_seed: PotSeed,
+    <span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
+    </span>initial_key: PotKey,
+    iterations: NonZeroU32,
+    <span class="comment">// TODO: Make stateless and remove this
+    </span>pot_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
+    <span class="comment">// TODO: Make stateless and remove this
+    </span>client: Arc&lt;Client&gt;,
     <span class="comment">// Expected time to produce a proof.
-    // TODO: this will be removed after the pot_iterations is set
-    // to produce a proof/sec.
+    // TODO: this will be removed after the pot_iterations is set to produce a proof/sec.
     </span>target_proof_time: Duration,
     gossip_sender: mpsc::Sender&lt;PotProof&gt;,
     _block: PhantomData&lt;Block&gt;,
@@ -240,7 +276,7 @@
 <span class="kw">impl</span>&lt;Block, Client&gt; TimeKeeper&lt;Block, Client&gt;
 <span class="kw">where
     </span>Block: BlockT&lt;Hash = H256&gt;,
-    Client: HeaderBackend&lt;Block&gt; + BlockchainEvents&lt;Block&gt;,
+    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt;,
 {
     <span class="doccomment">/// Creates the time keeper instance.
     </span><span class="kw">pub fn </span>new(
@@ -250,7 +286,9 @@
         gossip_sender: mpsc::Sender&lt;PotProof&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            proof_of_time: components.proof_of_time,
+            initial_seed: components.initial_seed,
+            initial_key: components.initial_key,
+            iterations: components.iterations,
             pot_state: Arc::clone(<span class="kw-2">&amp;</span>components.protocol_state),
             client,
             target_proof_time,
@@ -275,73 +313,87 @@
 
     <span class="doccomment">/// Initializes the chain state from the consensus tip info.
     </span><span class="kw">async fn </span>initialize(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">debug!</span>(<span class="string">&quot;Waiting for initialization&quot;</span>);
+        <span class="macro">debug!</span>(<span class="string">&quot;Initializing timekeeper&quot;</span>);
 
-        <span class="comment">// Wait for the first block import.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>block_import = <span class="self">self</span>.client.import_notification_stream();
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming_block) = block_import.next().<span class="kw">await </span>{
-            <span class="kw">let </span>pre_digest = <span class="kw">match </span>extract_pre_digest(<span class="kw-2">&amp;</span>incoming_block.header) {
-                <span class="prelude-val">Ok</span>(pre_digest) =&gt; pre_digest,
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="macro">warn!</span>(
-                        %error,
-                        block_hash = %incoming_block.hash,
-                        origin = <span class="question-mark">?</span>incoming_block.origin,
-                        <span class="string">&quot;Failed to get pre_digest&quot;</span>,
-                    );
-                    <span class="kw">continue</span>;
-                }
-            };
-
-            <span class="kw">let </span>pot_pre_digest = <span class="kw">match </span>pre_digest.pot_pre_digest() {
-                <span class="prelude-val">Some</span>(pot_pre_digest) =&gt; pot_pre_digest,
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="macro">warn!</span>(
-                        block_hash = %incoming_block.hash,
-                        origin = <span class="question-mark">?</span>incoming_block.origin,
-                        <span class="string">&quot;Failed to get pot_pre_digest&quot;</span>,
-                    );
-                    <span class="kw">continue</span>;
-                }
-            };
-
-            <span class="macro">debug!</span>(
-                block_hash = %incoming_block.hash,
-                origin = <span class="question-mark">?</span>incoming_block.origin,
-                <span class="question-mark">?</span>pot_pre_digest,
-                <span class="string">&quot;Initialization complete&quot;</span>,
-            );
-            <span class="kw">let </span>proofs = pot_pre_digest.proofs().cloned().unwrap_or_else(|| {
-                <span class="comment">// Producing proofs starting from (genesis_slot + 1).
-                // TODO: Proper error handling or proof
-                </span><span class="kw">let </span>block_hash = incoming_block.hash.into();
-                <span class="kw">let </span>proof = <span class="self">self</span>.proof_of_time.create(
-                    PotSeed::from_block_hash(block_hash),
-                    Default::default(), <span class="comment">// TODO: key from cmd line or BTC
-                    </span>pot_pre_digest
-                        .next_block_initial_slot()
-                        .expect(<span class="string">&quot;Initial slot number should be available for block_number &gt;= 1&quot;</span>),
-                    block_hash,
+        <span class="kw">let </span>best_hash = <span class="self">self</span>.client.info().best_hash;
+        <span class="kw">let </span>best_block = <span class="kw">match </span><span class="self">self</span>.client.block(best_hash) {
+            <span class="prelude-val">Ok</span>(maybe_best_header) =&gt; maybe_best_header.expect(<span class="string">&quot;Best block must exist; qed&quot;</span>).block,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="comment">// TODO: This is very bad, initialization must become fallible
+                </span><span class="macro">error!</span>(
+                    %error,
+                    %best_hash,
+                    <span class="string">&quot;Failed to get best block&quot;</span>,
                 );
-                <span class="macro">debug!</span>(%proof, <span class="string">&quot;Creating first proof&quot;</span>);
-                NonEmptyVec::new_with_entry(proof)
-            });
+                <span class="kw">return</span>;
+            }
+        };
 
-            <span class="self">self</span>.pot_state.reset(proofs);
-            <span class="kw">return</span>;
-        }
+        <span class="kw">let </span>pre_digest = <span class="kw">match </span>extract_pre_digest(best_block.header()) {
+            <span class="prelude-val">Ok</span>(pre_digest) =&gt; pre_digest,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="comment">// TODO: This is very bad, initialization must become fallible
+                </span><span class="macro">error!</span>(
+                    %error,
+                    %best_hash,
+                    <span class="string">&quot;Failed to get pre_digest&quot;</span>,
+                );
+                <span class="kw">return</span>;
+            }
+        };
+
+        <span class="kw">let </span>maybe_pot_pre_digest = pre_digest.pot_pre_digest();
+
+        <span class="kw">let </span>proofs = <span class="kw">match </span>maybe_pot_pre_digest {
+            <span class="prelude-val">Some</span>(pot_pre_digest) =&gt; pot_pre_digest.proofs().clone(),
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="comment">// TODO: We shouldn&#39;t need to generate proofs here, but current state expects parent
+                //  proofs to exist
+                // No proof of time means genesis block, produce the very first proof
+                </span><span class="kw">let </span>checkpoints = <span class="kw">match </span>subspace_proof_of_time::prove(
+                    <span class="self">self</span>.initial_seed,
+                    <span class="self">self</span>.initial_key,
+                    <span class="self">self</span>.iterations,
+                ) {
+                    <span class="prelude-val">Ok</span>(next_checkpoints) =&gt; next_checkpoints,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="comment">// TODO: This is very bad, initialization must become fallible
+                        </span><span class="macro">error!</span>(%error, <span class="string">&quot;Failed to produce proof, exiting timekeeper&quot;</span>);
+                        <span class="kw">return</span>;
+                    }
+                };
+                <span class="kw">let </span>proof = PotProof::new(
+                    <span class="number">0</span>,
+                    <span class="self">self</span>.initial_seed,
+                    <span class="self">self</span>.initial_key,
+                    checkpoints,
+                    best_hash.into(),
+                );
+                <span class="macro">debug!</span>(%proof, <span class="string">&quot;Created the first proof&quot;</span>);
+                NonEmptyVec::new_with_entry(proof)
+            }
+        };
+
+        <span class="self">self</span>.pot_state.reset(proofs);
+
+        <span class="macro">debug!</span>(
+            %best_hash,
+            <span class="question-mark">?</span>maybe_pot_pre_digest,
+            <span class="string">&quot;Initialization complete&quot;</span>,
+        );
     }
 
     <span class="doccomment">/// Starts the thread to produce the proofs.
     </span><span class="kw">fn </span>spawn_producer_thread(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Receiver&lt;PotProof&gt; {
         <span class="kw">let </span>(sender, receiver) = channel(PROOFS_CHANNEL_SIZE);
-        <span class="kw">let </span>proof_of_time = <span class="self">self</span>.proof_of_time;
         <span class="kw">let </span>pot_state = <span class="self">self</span>.pot_state.clone();
+        <span class="kw">let </span>iterations = <span class="self">self</span>.iterations;
         <span class="kw">let </span>target_proof_time = <span class="self">self</span>.target_proof_time;
+
         thread::Builder::new()
             .name(<span class="string">&quot;pot-proof-producer&quot;</span>.to_string())
             .spawn(<span class="kw">move </span>|| {
-                <span class="self">Self</span>::produce_proofs(proof_of_time, pot_state, sender, target_proof_time);
+                <span class="self">Self</span>::produce_proofs(iterations, pot_state, sender, target_proof_time);
             })
             <span class="comment">// TODO: Proper error handling or proof
             </span>.expect(<span class="string">&quot;Failed to spawn PoT proof producer thread&quot;</span>);
@@ -350,7 +402,7 @@
 
     <span class="doccomment">/// Long running loop to produce the proofs.
     </span><span class="kw">fn </span>produce_proofs(
-        proof_of_time: ProofOfTime,
+        iterations: NonZeroU32,
         state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
         proof_sender: Sender&lt;PotProof&gt;,
         target_proof_time: Duration,
@@ -366,12 +418,22 @@
             <span class="kw">let </span>next_slot_number = last_proof.slot_number + <span class="number">1</span>;
             <span class="kw">let </span>next_seed = last_proof.next_seed(<span class="prelude-val">None</span>);
             <span class="kw">let </span>next_key = last_proof.next_key();
-            <span class="kw">let </span>next_proof = proof_of_time.create(
+            <span class="kw">let </span>next_checkpoints =
+                <span class="kw">match </span>subspace_proof_of_time::prove(next_seed, next_key, iterations) {
+                    <span class="prelude-val">Ok</span>(next_checkpoints) =&gt; next_checkpoints,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to produce proof, exiting timekeeper&quot;</span>);
+                        <span class="kw">return</span>;
+                    }
+                };
+            <span class="kw">let </span>next_proof = PotProof::new(
+                next_slot_number,
                 next_seed,
                 next_key,
-                next_slot_number,
+                next_checkpoints,
                 last_proof.injected_block_hash,
             );
+
             <span class="kw">let </span>elapsed = start_ts.elapsed();
             <span class="macro">trace!</span>(
                 %next_proof,

@@ -1494,11 +1494,6 @@
 <a href="#1494" id="1494">1494</a>
 <a href="#1495" id="1495">1495</a>
 <a href="#1496" id="1496">1496</a>
-<a href="#1497" id="1497">1497</a>
-<a href="#1498" id="1498">1498</a>
-<a href="#1499" id="1499">1499</a>
-<a href="#1500" id="1500">1500</a>
-<a href="#1501" id="1501">1501</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1600,16 +1595,6 @@
     </span>MissingPotDigest {
         block_number: BlockNumber,
         parent_slot_number: <span class="prelude-ty">Option</span>&lt;SlotNumber&gt;,
-        slot_number: SlotNumber,
-    },
-
-    <span class="doccomment">/// Parent block has no proof of time digest.
-    </span><span class="attr">#[error(
-        <span class="string">&quot;Parent block missing proof of time : {block_number}/{parent_slot_number}/{slot_number}&quot;
-    </span>)]
-    </span>ParentMissingPotDigest {
-        block_number: BlockNumber,
-        parent_slot_number: SlotNumber,
         slot_number: SlotNumber,
     },
 
@@ -2512,7 +2497,10 @@
         };
 
         <span class="kw">if </span>subspace_digest_items.global_randomness != correct_global_randomness {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidGlobalRandomness(block_hash));
+            <span class="comment">// TODO: There is some kind of mess with PoT randomness right now that doesn&#39;t make a
+            //  lot of sense, restore this check once that is resolved
+            </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+            </span><span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidGlobalRandomness(block_hash));
         }
 
         <span class="kw">if </span>subspace_digest_items.solution_range != correct_solution_range {
@@ -2659,21 +2647,23 @@
             <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(randomness),
         };
 
-        <span class="kw">let </span>parent_pot_digest = parent_pre_digest.proof_of_time.as_ref().ok_or_else(|| {
-            PotVerifyError::ParentMissingPotDigest {
-                block_number: block_number.into(),
-                parent_slot_number: parent_pre_digest.slot.into(),
-                slot_number: pre_digest.slot.into(),
-            }
-        })<span class="question-mark">?</span>;
+        <span class="kw">let </span>maybe_parent_pot_digest = <span class="kw-2">&amp;</span>parent_pre_digest.proof_of_time;
 
         proof_of_time
             .verify_block_proofs(
                 block_number.into(),
-                pre_digest.slot.into(),
+                <span class="comment">// TODO: Hack while we don&#39;t have PoT-based slot worker, remove once we do
+                </span>parent_pre_digest
+                    .proof_of_time
+                    .as_ref()
+                    .map(|p| p.proofs().last().slot_number)
+                    .unwrap_or_default()
+                    + SlotNumber::from(parent_pre_digest.slot)
+                        .checked_sub(SlotNumber::from(pre_digest.slot))
+                        .unwrap_or_default(),
                 pot_digest,
                 parent_pre_digest.slot.into(),
-                parent_pot_digest,
+                maybe_parent_pot_digest,
             )
             .map_err(PotVerifyError::PotVerifyBlockProofsError)<span class="question-mark">?</span>;
 

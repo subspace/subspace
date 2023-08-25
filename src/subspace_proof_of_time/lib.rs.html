@@ -74,142 +74,80 @@
 <a href="#74" id="74">74</a>
 <a href="#75" id="75">75</a>
 <a href="#76" id="76">76</a>
-<a href="#77" id="77">77</a>
-<a href="#78" id="78">78</a>
-<a href="#79" id="79">79</a>
-<a href="#80" id="80">80</a>
-<a href="#81" id="81">81</a>
-<a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Proof of time implementation.
 
 </span><span class="attr">#![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
-</span><span class="kw">mod </span>pot_aes;
+</span><span class="kw">mod </span>aes;
 
-<span class="kw">use </span>core::num::{NonZeroU32, NonZeroU8};
-<span class="kw">use </span>subspace_core_primitives::{BlockHash, NonEmptyVec, PotKey, PotProof, PotSeed, SlotNumber};
+<span class="kw">use </span>core::num::{NonZeroU32, NonZeroU64};
+<span class="kw">use </span>subspace_core_primitives::{PotCheckpoint, PotCheckpoints, PotKey, PotSeed};
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// Proof of time error
+</span><span class="attr">#[derive(Debug)]
 #[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, derive(thiserror::Error))]
-</span><span class="kw">pub enum </span>PotInitError {
-    <span class="attr">#[cfg_attr(
+</span><span class="kw">pub enum </span>PotError {
+    <span class="doccomment">/// Iterations is not multiple of number of checkpoints times two
+    </span><span class="attr">#[cfg_attr(
         feature = <span class="string">&quot;thiserror&quot;</span>,
         error(
-            <span class="string">&quot;pot_iterations not multiple of num_checkpoints: {pot_iterations}, {num_checkpoints}&quot;
+            <span class="string">&quot;Iterations {iterations} is not multiple of number of checkpoints {num_checkpoints} \
+            times two&quot;
         </span>)
     )]
-    </span>NotMultiple {
-        pot_iterations: u32,
-        num_checkpoints: u8,
+    </span>NotMultipleOfCheckpoints {
+        <span class="doccomment">/// Slot iterations provided
+        </span>iterations: NonZeroU64,
+        <span class="doccomment">/// Number of checkpoints
+        </span>num_checkpoints: u64,
     },
 }
 
-<span class="attr">#[derive(Debug)]
-#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, derive(thiserror::Error))]
-</span><span class="kw">pub enum </span>PotVerificationError {
-    <span class="attr">#[cfg_attr(
-        feature = <span class="string">&quot;thiserror&quot;</span>,
-        error(<span class="string">&quot;Unexpected number of checkpoints: {expected}, {actual}&quot;</span>)
-    )]
-    </span>CheckpointCountMismatch { expected: u8, actual: u64 },
+<span class="doccomment">/// Run PoT proving and produce checkpoints.
+///
+/// Returns error if `iterations` is not a multiple of checkpoints times two.
+</span><span class="attr">#[inline]
+</span><span class="kw">pub fn </span>prove(
+    seed: PotSeed,
+    key: PotKey,
+    iterations: NonZeroU32,
+) -&gt; <span class="prelude-ty">Result</span>&lt;PotCheckpoints, PotError&gt; {
+    <span class="kw">if </span>iterations.get() % u32::from(PotCheckpoints::NUM_CHECKPOINTS.get() * <span class="number">2</span>) != <span class="number">0 </span>{
+        <span class="kw">return </span><span class="prelude-val">Err</span>(PotError::NotMultipleOfCheckpoints {
+            iterations: NonZeroU64::from(iterations),
+            num_checkpoints: u64::from(PotCheckpoints::NUM_CHECKPOINTS.get()),
+        });
+    }
 
-    <span class="attr">#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, error(<span class="string">&quot;Checkpoint verification failed&quot;</span>))]
-    </span>VerificationFailed,
+    <span class="prelude-val">Ok</span>(aes::create(
+        <span class="kw-2">&amp;</span>seed,
+        <span class="kw-2">&amp;</span>key,
+        iterations.get() / u32::from(PotCheckpoints::NUM_CHECKPOINTS.get()),
+    ))
 }
 
-<span class="doccomment">/// Wrapper for the low level AES primitives
-</span><span class="attr">#[derive(Debug, Clone, Copy)]
-</span><span class="kw">pub struct </span>ProofOfTime {
-    <span class="doccomment">/// Number of checkpoints per PoT.
-    </span>num_checkpoints: u8,
-
-    <span class="doccomment">/// Number of chained AES operations per checkpoint.
-    </span>checkpoint_iterations: u32,
-}
-
-<span class="kw">impl </span>ProofOfTime {
-    <span class="doccomment">/// Creates the AES wrapper.
-    </span><span class="kw">pub fn </span>new(
-        pot_iterations: NonZeroU32,
-        num_checkpoints: NonZeroU8,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PotInitError&gt; {
-        <span class="kw">let </span>pot_iterations = pot_iterations.get();
-        <span class="kw">let </span>num_checkpoints = num_checkpoints.get();
-        <span class="kw">if </span>pot_iterations % (num_checkpoints <span class="kw">as </span>u32) != <span class="number">0 </span>{
-            <span class="kw">return </span><span class="prelude-val">Err</span>(PotInitError::NotMultiple {
-                pot_iterations,
-                num_checkpoints,
-            });
-        }
-
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<span class="doccomment">/// Verify checkpoint, number of iterations is set across uniformly distributed checkpoints.
+///
+/// Returns error if `iterations` is not a multiple of checkpoints times two.
+</span><span class="attr">#[inline]
+</span><span class="kw">pub fn </span>verify(
+    seed: PotSeed,
+    key: PotKey,
+    iterations: NonZeroU64,
+    checkpoints: <span class="kw-2">&amp;</span>[PotCheckpoint],
+) -&gt; <span class="prelude-ty">Result</span>&lt;bool, PotError&gt; {
+    <span class="kw">let </span>num_checkpoints = checkpoints.len() <span class="kw">as </span>u64;
+    <span class="kw">if </span>iterations.get() % (num_checkpoints * <span class="number">2</span>) != <span class="number">0 </span>{
+        <span class="kw">return </span><span class="prelude-val">Err</span>(PotError::NotMultipleOfCheckpoints {
+            iterations,
             num_checkpoints,
-            checkpoint_iterations: pot_iterations / (num_checkpoints <span class="kw">as </span>u32),
-        })
+        });
     }
 
-    <span class="doccomment">/// Builds the proof.
-    </span><span class="kw">pub fn </span>create(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        seed: PotSeed,
-        key: PotKey,
-        slot_number: SlotNumber,
-        injected_block_hash: BlockHash,
-    ) -&gt; PotProof {
-        <span class="kw">let </span>checkpoints = NonEmptyVec::new(pot_aes::create(
-            <span class="kw-2">&amp;</span>seed,
-            <span class="kw-2">&amp;</span>key,
-            <span class="self">self</span>.num_checkpoints,
-            <span class="self">self</span>.checkpoint_iterations,
-        ))
-        .expect(<span class="string">&quot;List of checkpoints is never empty; qed&quot;</span>);
-        PotProof::new(slot_number, seed, key, checkpoints, injected_block_hash)
-    }
-
-    <span class="doccomment">/// Verifies the proof.
-    </span><span class="kw">pub fn </span>verify(<span class="kw-2">&amp;</span><span class="self">self</span>, proof: <span class="kw-2">&amp;</span>PotProof) -&gt; <span class="prelude-ty">Result</span>&lt;(), PotVerificationError&gt; {
-        <span class="comment">// TODO: this check may break upgrades, revisit.
-        </span><span class="kw">if </span>proof.checkpoints.len() != <span class="self">self</span>.num_checkpoints <span class="kw">as </span>usize {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(PotVerificationError::CheckpointCountMismatch {
-                expected: <span class="self">self</span>.num_checkpoints,
-                actual: proof.checkpoints.len() <span class="kw">as </span>u64,
-            });
-        }
-
-        <span class="kw">if </span>pot_aes::verify_sequential(
-            <span class="kw-2">&amp;</span>proof.seed,
-            <span class="kw-2">&amp;</span>proof.key,
-            proof.checkpoints.as_slice(),
-            <span class="self">self</span>.checkpoint_iterations,
-        ) {
-            <span class="prelude-val">Ok</span>(())
-        } <span class="kw">else </span>{
-            <span class="prelude-val">Err</span>(PotVerificationError::VerificationFailed)
-        }
-    }
+    <span class="prelude-val">Ok</span>(aes::verify_sequential(
+        <span class="kw-2">&amp;</span>seed,
+        <span class="kw-2">&amp;</span>key,
+        checkpoints,
+        iterations.get() / num_checkpoints,
+    ))
 }
 </code></pre></div></section></main></body></html>

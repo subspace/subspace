@@ -873,6 +873,24 @@
 <a href="#873" id="873">873</a>
 <a href="#874" id="874">874</a>
 <a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! PoT state management.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::PotConfig;
@@ -883,10 +901,11 @@
 <span class="kw">use </span>sp_consensus_subspace::digests::PotPreDigest;
 <span class="kw">use </span>std::collections::btree_map::Entry;
 <span class="kw">use </span>std::collections::{BTreeMap, VecDeque};
+<span class="kw">use </span>std::fmt;
+<span class="kw">use </span>std::num::NonZeroU64;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>subspace_core_primitives::{BlockNumber, NonEmptyVec, PotKey, PotProof, PotSeed, SlotNumber};
-<span class="kw">use </span>subspace_proof_of_time::{PotVerificationError, ProofOfTime};
 <span class="kw">use </span>tracing::trace;
 
 <span class="doccomment">/// The maximum size of the PoT chain to keep (about 5 min worth of proofs for now).
@@ -927,14 +946,6 @@
 <span class="doccomment">/// Error codes for PotConsensusState::get_block_proofs().
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>PotGetBlockProofsError {
-    <span class="attr">#[error(<span class="string">&quot;Failed to get start slot: {summary:?}/{block_number}/{proof_slot}/{current_slot}&quot;</span>)]
-    </span>StartSlotMissing {
-        summary: PotStateSummary,
-        block_number: BlockNumber,
-        proof_slot: SlotNumber,
-        current_slot: SlotNumber,
-    },
-
     <span class="attr">#[error(
         <span class="string">&quot;Invalid slot range: {summary:?}/{block_number}/{start_slot}/{proof_slot}/{current_slot}&quot;
     </span>)]
@@ -958,22 +969,6 @@
 <span class="doccomment">/// Error codes for PotConsensusState::verify_block_proofs().
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>PotVerifyBlockProofsError {
-    <span class="attr">#[error(<span class="string">&quot;Block has no proofs: {summary:?}/{block_number}/{slot}/{parent_slot}&quot;</span>)]
-    </span>NoProofs {
-        summary: PotStateSummary,
-        block_number: BlockNumber,
-        slot: SlotNumber,
-        parent_slot: SlotNumber,
-    },
-
-    <span class="attr">#[error(<span class="string">&quot;Failed to get start slot: {summary:?}/{block_number}/{slot}/{parent_slot}&quot;</span>)]
-    </span>StartSlotMissing {
-        summary: PotStateSummary,
-        block_number: BlockNumber,
-        slot: SlotNumber,
-        parent_slot: SlotNumber,
-    },
-
     <span class="attr">#[error(<span class="string">&quot;Unexpected slot number: {summary:?}/{block_number}/{slot}/{parent_slot}/{expected_slot}/{actual_slot}&quot;</span>)]
     </span>UnexpectedSlot {
         summary: PotStateSummary,
@@ -1002,16 +997,13 @@
         error_slot: SlotNumber,
     },
 
-    <span class="attr">#[error(
-    <span class="string">&quot;Verification failed: {summary:?}/{block_number}/{slot}/{parent_slot}/{error_slot:?}/{err:?}&quot;
-    </span>)]
+    <span class="attr">#[error(<span class="string">&quot;Verification failed: {summary:?}/{block_number}/{slot}/{parent_slot}/{error_slot:?}&quot;</span>)]
     </span>VerificationFailed {
         summary: PotStateSummary,
         block_number: BlockNumber,
         slot: SlotNumber,
         parent_slot: SlotNumber,
         error_slot: SlotNumber,
-        err: PotVerificationError,
     },
 
     <span class="attr">#[error(
@@ -1085,7 +1077,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(tip) = <span class="self">self</span>.entries.back() {
             <span class="comment">// This is a debug assert for now, as this should not happen.
             // Change to return error if needed.
-            </span><span class="macro">debug_assert!</span>((tip.slot_number + <span class="number">1</span>) == proof.slot_number);
+            </span><span class="macro">debug_assert_eq!</span>((tip.slot_number + <span class="number">1</span>), proof.slot_number);
         }
         <span class="kw">if </span><span class="self">self</span>.entries.len() == <span class="self">self</span>.max_entries {
             <span class="comment">// Evict the oldest entry if full
@@ -1235,6 +1227,18 @@
         <span class="kw">let </span>tip = <span class="kw">match </span><span class="self">self</span>.chain.tip() {
             <span class="prelude-val">Some</span>(tip) =&gt; tip.clone(),
             <span class="prelude-val">None </span>=&gt; {
+                <span class="kw">if </span>proof.seed != <span class="self">self</span>.config.initial_seed {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(PotProtocolStateError::InvalidSeed {
+                        expected: <span class="self">self</span>.config.initial_seed,
+                        actual: proof.seed,
+                    });
+                }
+                <span class="kw">if </span>proof.key != <span class="self">self</span>.config.initial_key {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(PotProtocolStateError::InvalidKey {
+                        expected: <span class="self">self</span>.config.initial_key,
+                        actual: proof.key,
+                    });
+                }
                 <span class="comment">// Chain is empty, possible first proof.
                 </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
             }
@@ -1351,18 +1355,22 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_number: BlockNumber,
         current_slot: SlotNumber,
-        parent_pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
+        maybe_parent_pre_digest: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;NonEmptyVec&lt;PotProof&gt;, PotGetBlockProofsError&gt; {
         <span class="kw">let </span>summary = <span class="self">self</span>.summary();
-        <span class="kw">let </span>proof_slot = current_slot - <span class="self">self</span>.config.global_randomness_reveal_lag_slots;
-        <span class="kw">let </span>start_slot = parent_pre_digest.next_block_initial_slot().ok_or_else(|| {
-            PotGetBlockProofsError::StartSlotMissing {
-                summary: summary.clone(),
-                block_number,
-                proof_slot,
-                current_slot,
-            }
-        })<span class="question-mark">?</span>;
+        <span class="comment">// TODO: Saturating sub is a hack here to make things work for now, this will need to change
+        </span><span class="kw">let </span>proof_slot =
+            current_slot.saturating_sub(<span class="self">self</span>.config.global_randomness_reveal_lag_slots);
+        <span class="comment">// Get the expected slot of the first proof in this block.
+        </span><span class="kw">let </span>start_slot = maybe_parent_pre_digest
+            .as_ref()
+            .map(|parent_pre_digest| parent_pre_digest.next_block_initial_slot())
+            <span class="comment">// TODO: This fallback slot does not make sense and is just used to make things &quot;run&quot;
+            //  for now
+            </span>.unwrap_or(<span class="number">0</span>);
+
+        <span class="comment">// TODO: This hack does not make sense and is just used to make things &quot;run&quot; for now
+        </span><span class="kw">let </span>proof_slot = proof_slot.max(start_slot);
 
         <span class="kw">if </span>start_slot &gt; proof_slot {
             <span class="kw">return </span><span class="prelude-val">Err</span>(PotGetBlockProofsError::InvalidRange {
@@ -1379,7 +1387,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>iter = <span class="self">self</span>.chain.iter().skip_while(|p| p.slot_number &lt; start_slot);
         <span class="kw">for </span>slot <span class="kw">in </span>start_slot..=proof_slot {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = iter.next() {
-                <span class="macro">debug_assert!</span>(proof.slot_number == slot);
+                <span class="macro">debug_assert_eq!</span>(proof.slot_number, slot);
                 proofs.push(proof.clone());
             } <span class="kw">else </span>{
                 <span class="kw">return </span><span class="prelude-val">Err</span>(PotGetBlockProofsError::ProofUnavailable {
@@ -1401,27 +1409,18 @@
         slot_number: SlotNumber,
         pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
         parent_slot_number: SlotNumber,
-        parent_pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
+        maybe_parent_pre_digest: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PotVerifyBlockProofsError&gt; {
         <span class="kw">let </span>summary = <span class="self">self</span>.summary();
-        <span class="kw">let </span>block_proofs = pre_digest
-            .proofs()
-            .ok_or(PotVerifyBlockProofsError::NoProofs {
-                summary: summary.clone(),
-                block_number,
-                slot: slot_number,
-                parent_slot: parent_slot_number,
-            })<span class="question-mark">?</span>;
+        <span class="kw">let </span>block_proofs = pre_digest.proofs();
 
         <span class="comment">// Get the expected slot of the first proof in this block.
-        </span><span class="kw">let </span>start_slot = parent_pre_digest.next_block_initial_slot().ok_or_else(|| {
-            PotVerifyBlockProofsError::StartSlotMissing {
-                summary: summary.clone(),
-                block_number,
-                slot: slot_number,
-                parent_slot: parent_slot_number,
-            }
-        })<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>start_slot = maybe_parent_pre_digest
+            .as_ref()
+            .map(|parent_pre_digest| parent_pre_digest.next_block_initial_slot())
+            <span class="comment">// TODO: This fallback slot does not make sense and is just used to make things &quot;run&quot;
+            //  for now
+            </span>.unwrap_or(<span class="number">0</span>);
 
         <span class="comment">// Since we check the first proof starts with the parent.last_proof.slot + 1,
         // and we already verified the seed/key of the proofs in the chain were was
@@ -1474,16 +1473,26 @@
     <span class="doccomment">/// The PoT state
     </span>state: Mutex&lt;InternalState&gt;,
 
-    <span class="doccomment">/// For AES verification
-    </span>proof_of_time: ProofOfTime,
+    <span class="doccomment">/// For PoT verification
+    </span>iterations: NonZeroU64,
+}
+
+<span class="kw">impl </span>fmt::Debug <span class="kw">for </span>StateManager {
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; fmt::Result {
+        f.debug_struct(<span class="string">&quot;StateManager&quot;</span>)
+            .field(<span class="string">&quot;state&quot;</span>, <span class="kw-2">&amp;</span><span class="string">&quot;&lt;InternalState&gt;&quot;</span>)
+            .field(<span class="string">&quot;iterations&quot;</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.iterations)
+            .finish()
+    }
 }
 
 <span class="kw">impl </span>StateManager {
     <span class="doccomment">/// Creates the state.
-    </span><span class="kw">pub fn </span>new(config: PotConfig, proof_of_time: ProofOfTime) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(config: PotConfig) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>iterations = NonZeroU64::from(config.pot_iterations);
         <span class="self">Self </span>{
             state: Mutex::new(InternalState::new(config)),
-            proof_of_time,
+            iterations,
         }
     }
 
@@ -1534,17 +1543,45 @@
                     });
                 }
 
+                <span class="kw">let </span>is_valid = subspace_proof_of_time::verify(
+                    proof.seed,
+                    proof.key,
+                    <span class="self">self</span>.iterations,
+                    <span class="kw-2">&amp;*</span>proof.checkpoints,
+                )
+                .unwrap_or_default();
                 <span class="comment">// Perform the AES check
-                </span><span class="self">self</span>.proof_of_time.verify(proof).map_err(|err| {
-                    PotVerifyBlockProofsError::VerificationFailed {
+                </span><span class="kw">if </span>!is_valid {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(PotVerifyBlockProofsError::VerificationFailed {
                         summary: summary.clone(),
                         block_number,
                         slot: slot_number,
                         parent_slot: parent_slot_number,
                         error_slot: proof.slot_number,
-                        err,
-                    }
-                })<span class="question-mark">?</span>;
+                    });
+                }
+            } <span class="kw">else </span>{
+                <span class="comment">// TODO: This is ugly, but we need initial seed and key here right now
+                </span><span class="kw">let </span>initial_seed = <span class="self">self</span>.state.lock().config.initial_seed;
+                <span class="kw">if </span>proof.seed != initial_seed {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(PotVerifyBlockProofsError::UnexpectedSeed {
+                        summary: summary.clone(),
+                        block_number,
+                        slot: slot_number,
+                        parent_slot: parent_slot_number,
+                        error_slot: proof.slot_number,
+                    });
+                }
+                <span class="kw">let </span>initial_key = <span class="self">self</span>.state.lock().config.initial_key;
+                <span class="kw">if </span>proof.key != initial_key {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(PotVerifyBlockProofsError::UnexpectedKey {
+                        summary: summary.clone(),
+                        block_number,
+                        slot: slot_number,
+                        parent_slot: parent_slot_number,
+                        error_slot: proof.slot_number,
+                    });
+                }
             }
             to_add.push(proof.clone());
             prev_proof = <span class="prelude-val">Some</span>(proof.clone());
@@ -1572,7 +1609,7 @@
 }
 
 <span class="doccomment">/// Interface to the internal protocol components (time keeper, PoT client).
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>PotProtocolState: Send + Sync {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>PotProtocolState: fmt::Debug + Send + Sync {
     <span class="doccomment">/// Re(initializes) the chain with the given set of proofs.
     /// TODO: the proofs are assumed to have been validated, validate
     /// if needed.
@@ -1629,7 +1666,7 @@
 
 <span class="doccomment">/// Interface to consensus.
 </span><span class="attr">#[async_trait]
-</span><span class="kw">pub trait </span>PotConsensusState: Send + Sync {
+</span><span class="kw">pub trait </span>PotConsensusState: fmt::Debug + Send + Sync {
     <span class="doccomment">/// Called by consensus when trying to claim the slot.
     /// Returns the proofs in the slot range
     /// [start_slot, current_slot - global_randomness_reveal_lag_slots].
@@ -1638,7 +1675,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_number: BlockNumber,
         current_slot: SlotNumber,
-        parent_pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
+        maybe_parent_pre_digest: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;,
         wait_time: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;NonEmptyVec&lt;PotProof&gt;, PotGetBlockProofsError&gt;;
 
@@ -1650,7 +1687,7 @@
         slot_number: SlotNumber,
         pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
         parent_slot_number: SlotNumber,
-        parent_pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
+        maybe_parent_pre_digest: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PotVerifyBlockProofsError&gt;;
 }
 
@@ -1660,7 +1697,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_number: BlockNumber,
         current_slot: SlotNumber,
-        parent_pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
+        maybe_parent_pre_digest: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;,
         wait_time: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;NonEmptyVec&lt;PotProof&gt;, PotGetBlockProofsError&gt; {
         <span class="kw">let </span>start_ts = Instant::now();
@@ -1672,10 +1709,11 @@
         <span class="kw">let </span>retry_delay = Duration::from_millis(<span class="number">200</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>retries = <span class="number">0</span>;
         <span class="kw">loop </span>{
-            <span class="kw">let </span>result =
-                <span class="self">self</span>.state
-                    .lock()
-                    .get_block_proofs(block_number, current_slot, parent_pre_digest);
+            <span class="kw">let </span>result = <span class="self">self</span>.state.lock().get_block_proofs(
+                block_number,
+                current_slot,
+                maybe_parent_pre_digest,
+            );
             <span class="kw">match </span>result {
                 <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span>result,
                 <span class="prelude-val">Err</span>(PotGetBlockProofsError::ProofUnavailable { .. }) =&gt; {
@@ -1703,32 +1741,31 @@
         slot_number: SlotNumber,
         pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
         parent_slot_number: SlotNumber,
-        parent_pre_digest: <span class="kw-2">&amp;</span>PotPreDigest,
+        maybe_parent_pre_digest: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;PotPreDigest&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PotVerifyBlockProofsError&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(block_proofs) = pre_digest.proofs() {
-            <span class="comment">// Opportunistically try to extend the chain with
-            // the proofs from the block.
-            // TODO: this also is done when the chain is empty and
-            // we don&#39;t have a previous proof to verify against.
-            // This needs to be revisited as part of the node sync.
-            </span><span class="kw">let </span>(tip, summary) = {
-                <span class="kw">let </span>state = <span class="self">self</span>.state.lock();
-                (state.tip(), state.summary())
-            };
-            <span class="kw">let </span>should_append = tip
-                .as_ref()
-                .map(|tip| (tip.slot_number + <span class="number">1</span>) == block_proofs.first().slot_number)
-                .unwrap_or(<span class="bool-val">true</span>);
-            <span class="kw">if </span>should_append {
-                <span class="kw">return </span><span class="self">self</span>.verify_and_append(
-                    block_number,
-                    slot_number,
-                    block_proofs,
-                    parent_slot_number,
-                    tip,
-                    summary,
-                );
-            }
+        <span class="kw">let </span>block_proofs = pre_digest.proofs();
+        <span class="comment">// Opportunistically try to extend the chain with
+        // the proofs from the block.
+        // TODO: this also is done when the chain is empty and
+        // we don&#39;t have a previous proof to verify against.
+        // This needs to be revisited as part of the node sync.
+        </span><span class="kw">let </span>(tip, summary) = {
+            <span class="kw">let </span>state = <span class="self">self</span>.state.lock();
+            (state.tip(), state.summary())
+        };
+        <span class="kw">let </span>should_append = tip
+            .as_ref()
+            .map(|tip| (tip.slot_number + <span class="number">1</span>) == block_proofs.first().slot_number)
+            .unwrap_or(<span class="bool-val">true</span>);
+        <span class="kw">if </span>should_append {
+            <span class="kw">return </span><span class="self">self</span>.verify_and_append(
+                block_number,
+                slot_number,
+                block_proofs,
+                parent_slot_number,
+                tip,
+                summary,
+            );
         }
 
         <span class="self">self</span>.state.lock().verify_block_proofs(
@@ -1736,16 +1773,15 @@
             slot_number,
             pre_digest,
             parent_slot_number,
-            parent_pre_digest,
+            maybe_parent_pre_digest,
         )
     }
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>init_pot_state(
     config: PotConfig,
-    proof_of_time: ProofOfTime,
 ) -&gt; (Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;, Arc&lt;<span class="kw">dyn </span>PotConsensusState&gt;) {
-    <span class="kw">let </span>state = Arc::new(StateManager::new(config, proof_of_time));
+    <span class="kw">let </span>state = Arc::new(StateManager::new(config));
     (state.clone(), state)
 }
 </code></pre></div></section></main></body></html>

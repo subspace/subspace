@@ -49,7 +49,7 @@ var srcIndex = JSON.parse('{\
 "subspace_networking":["",[["behavior",[],["persistent_parameters.rs"]],["constructor",[],["temporary_bans.rs","transport.rs"]],["protocols",[["connected_peers",[],["handler.rs"]],["peer_info",[],["handler.rs","protocol.rs"]],["request_response",[["handlers",[],["generic_request_handler.rs","piece_by_index.rs","segment_header.rs"]]],["handlers.rs","request_response_factory.rs"]],["reserved_peers",[],["handler.rs"]]],["connected_peers.rs","peer_info.rs","request_response.rs","reserved_peers.rs"]],["utils",[],["multihash.rs","piece_provider.rs","prometheus.rs","unique_record_binary_heap.rs"]]],["behavior.rs","constructor.rs","lib.rs","node.rs","node_runner.rs","protocols.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["domain",[],["cli.rs","domain_instance_starter.rs","evm_chain_spec.rs"]]],["chain_spec.rs","chain_spec_utils.rs","domain.rs","lib.rs"]],\
 "subspace_proof_of_space":["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]],\
-"subspace_proof_of_time":["",[["pot_aes",[],["x86_64.rs"]]],["lib.rs","pot_aes.rs"]],\
+"subspace_proof_of_time":["",[["aes",[],["x86_64.rs"]]],["aes.rs","lib.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\

@@ -101,9 +101,6 @@
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
 <a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace proof of time implementation.
 
 </span><span class="attr">#![feature(const_option)]
@@ -113,10 +110,9 @@
 <span class="kw">mod </span>time_keeper;
 
 <span class="kw">use </span><span class="kw">crate</span>::state_manager::{init_pot_state, PotProtocolState};
-<span class="kw">use </span>core::num::{NonZeroU32, NonZeroU8};
+<span class="kw">use </span>core::num::NonZeroU32;
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>subspace_core_primitives::{BlockNumber, SlotNumber};
-<span class="kw">use </span>subspace_proof_of_time::ProofOfTime;
+<span class="kw">use </span>subspace_core_primitives::{BlockNumber, PotKey, PotSeed, SlotNumber};
 
 <span class="kw">pub use </span>state_manager::{
     PotConsensusState, PotGetBlockProofsError, PotStateSummary, PotVerifyBlockProofsError,
@@ -124,8 +120,15 @@
 <span class="kw">pub use </span>time_keeper::TimeKeeper;
 
 <span class="comment">// TODO: change the fields that can&#39;t be zero to NonZero types.
+// TODO: CLean up unused fields
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>PotConfig {
+    <span class="doccomment">/// PoT seed used initially when PoT chain starts.
+    </span><span class="kw">pub </span>initial_seed: PotSeed,
+
+    <span class="doccomment">/// PoT key used initially when PoT chain starts.
+    </span><span class="kw">pub </span>initial_key: PotKey,
+
     <span class="doccomment">/// Frequency of entropy injection from consensus.
     </span><span class="kw">pub </span>randomness_update_interval_blocks: BlockNumber,
 
@@ -146,35 +149,25 @@
 
     <span class="doccomment">/// Total iterations per proof.
     </span><span class="kw">pub </span>pot_iterations: NonZeroU32,
-
-    <span class="doccomment">/// Number of checkpoints per proof.
-    </span><span class="kw">pub </span>num_checkpoints: NonZeroU8,
-}
-
-<span class="kw">impl </span>Default <span class="kw">for </span>PotConfig {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="comment">// TODO: fill proper values. These are set to use less
-        // CPU and take less than 1 sec to produce per proof
-        // during the initial testing.
-        </span><span class="self">Self </span>{
-            randomness_update_interval_blocks: <span class="number">18</span>,
-            injection_depth_blocks: <span class="number">90</span>,
-            global_randomness_reveal_lag_slots: <span class="number">6</span>,
-            pot_injection_lag_slots: <span class="number">6</span>,
-            max_future_slots: <span class="number">10</span>,
-            pot_iterations: NonZeroU32::new(<span class="number">4 </span>* <span class="number">1_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>),
-            num_checkpoints: NonZeroU8::new(<span class="number">4</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>),
-        }
-    }
 }
 
 <span class="doccomment">/// Components initialized during the new_partial() phase of set up.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>PotComponents {
+    <span class="doccomment">/// PoT seed used initially when PoT chain starts.
+    </span><span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) initial_seed: PotSeed,
+
+    <span class="doccomment">/// PoT key used initially when PoT chain starts.
+    </span><span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) initial_key: PotKey,
+
+    <span class="doccomment">/// PoT iterations for each slot.
+    </span><span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) iterations: NonZeroU32,
+
     <span class="doccomment">/// If the role is time keeper or node client.
     </span>is_time_keeper: bool,
-
-    <span class="doccomment">/// Proof of time implementation.
-    </span>proof_of_time: ProofOfTime,
 
     <span class="doccomment">/// Protocol state.
     </span>protocol_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
@@ -185,16 +178,17 @@
 
 <span class="kw">impl </span>PotComponents {
     <span class="doccomment">/// Sets up the partial components.
-    </span><span class="kw">pub fn </span>new(is_time_keeper: bool) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>config = PotConfig::default();
-        <span class="kw">let </span>proof_of_time = ProofOfTime::new(config.pot_iterations, config.num_checkpoints)
-            <span class="comment">// TODO: Proper error handling or proof
-            </span>.expect(<span class="string">&quot;Failed to initialize proof of time&quot;</span>);
-        <span class="kw">let </span>(protocol_state, consensus_state) = init_pot_state(config, proof_of_time);
+    </span><span class="kw">pub fn </span>new(is_time_keeper: bool, config: PotConfig) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>initial_seed = config.initial_seed;
+        <span class="kw">let </span>initial_key = config.initial_key;
+        <span class="kw">let </span>iterations = config.pot_iterations;
+        <span class="kw">let </span>(protocol_state, consensus_state) = init_pot_state(config);
 
         <span class="self">Self </span>{
+            initial_seed,
+            initial_key,
+            iterations,
             is_time_keeper,
-            proof_of_time,
             protocol_state,
             consensus_state,
         }

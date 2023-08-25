@@ -696,22 +696,6 @@
 <a href="#696" id="696">696</a>
 <a href="#697" id="697">697</a>
 <a href="#698" id="698">698</a>
-<a href="#699" id="699">699</a>
-<a href="#700" id="700">700</a>
-<a href="#701" id="701">701</a>
-<a href="#702" id="702">702</a>
-<a href="#703" id="703">703</a>
-<a href="#704" id="704">704</a>
-<a href="#705" id="705">705</a>
-<a href="#706" id="706">706</a>
-<a href="#707" id="707">707</a>
-<a href="#708" id="708">708</a>
-<a href="#709" id="709">709</a>
-<a href="#710" id="710">710</a>
-<a href="#711" id="711">711</a>
-<a href="#712" id="712">712</a>
-<a href="#713" id="713">713</a>
-<a href="#714" id="714">714</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -759,8 +743,6 @@
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, FarmerSignature, SignedVote, SubspaceApi, Vote};
 <span class="kw">use </span>sp_core::crypto::ByteArray;
 <span class="kw">use </span>sp_core::H256;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_runtime::traits::NumberFor <span class="kw">as </span>BlockNumberFor;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header, One, Saturating, Zero};
 <span class="kw">use </span>sp_runtime::DigestItem;
 <span class="kw">use </span>std::future::Future;
@@ -780,15 +762,7 @@
 <span class="doccomment">/// Errors while building the block proof of time.
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 #[derive(Debug, thiserror::Error)]
-</span><span class="kw">pub enum </span>PotCreateError&lt;Block: BlockT&gt; {
-    <span class="doccomment">/// Parent block has no proof of time digest.
-    </span><span class="attr">#[error(<span class="string">&quot;Parent block missing proof of time : {parent_block_number}/{parent_slot_number}/{slot_number}&quot;</span>)]
-    </span>ParentMissingPotDigest {
-        parent_block_number: BlockNumberFor&lt;Block&gt;,
-        parent_slot_number: SlotNumber,
-        slot_number: SlotNumber,
-    },
-
+</span><span class="kw">pub enum </span>PotCreateError {
     <span class="doccomment">/// Proof creation failed.
     </span><span class="attr">#[error(<span class="string">&quot;Proof of time error: {0}&quot;</span>)]
     </span>PotGetBlockProofsError(<span class="attr">#[from] </span>PotGetBlockProofsError),
@@ -945,10 +919,6 @@
         <span class="kw">let </span>parent_hash = parent_header.hash();
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
 
-        <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span><span class="kw">let </span>global_randomness =
-            extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
-
         <span class="comment">// If proof of time is enabled, collect the proofs that go into this
         // block and derive randomness from the last proof.
         </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
@@ -959,7 +929,15 @@
                         proof_of_time.as_ref(),
                         parent_header,
                         <span class="kw-2">&amp;</span>parent_pre_digest,
-                        slot.into(),
+                        <span class="comment">// TODO: Hack while we don&#39;t have PoT-based slot worker, remove once we do
+                        </span>parent_pre_digest
+                            .proof_of_time
+                            .as_ref()
+                            .map(|p| p.proofs().last().slot_number)
+                            .unwrap_or_default()
+                            + SlotNumber::from(parent_slot)
+                                .checked_sub(SlotNumber::from(slot))
+                                .unwrap_or_default(),
                     )
                     .<span class="kw">await
                     </span>.ok()<span class="question-mark">?</span>;
@@ -971,6 +949,12 @@
                     extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>,
                 )
             };
+
+        <span class="comment">// TODO: There is some kind of mess with PoT randomness right now that doesn&#39;t make a
+        //  lot of sense, restore this check once that is resolved
+        // #[cfg(not(feature = &quot;pot&quot;))]
+        </span><span class="kw">let </span>global_randomness =
+            extract_global_randomness_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(solution_range, voting_solution_range) =
             extract_solution_ranges_for_block(<span class="self">self</span>.client.as_ref(), parent_hash).ok()<span class="question-mark">?</span>;
@@ -1338,30 +1322,14 @@
         parent_header: <span class="kw-2">&amp;</span>Block::Header,
         parent_pre_digest: <span class="kw-2">&amp;</span>PreDigest&lt;FarmerPublicKey, FarmerPublicKey&gt;,
         slot_number: SlotNumber,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;PotPreDigest, PotCreateError&lt;Block&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;PotPreDigest, PotCreateError&gt; {
         <span class="kw">let </span>block_number = <span class="kw-2">*</span>parent_header.number() + One::one();
-
-        <span class="comment">// Block 1 does not have proofs
-        </span><span class="kw">if </span>block_number.is_one() {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(PotPreDigest::FirstBlock(slot_number));
-        }
-
-        <span class="comment">// Block 2 onwards.
-        // Get the start slot number for the proofs in the new block.
-        </span><span class="kw">let </span>parent_pot_digest = parent_pre_digest.proof_of_time.as_ref().ok_or_else(|| {
-            <span class="comment">// PoT needs to be present in the block if feature is enabled.
-            </span>PotCreateError::ParentMissingPotDigest {
-                parent_block_number: <span class="kw-2">*</span>parent_header.number(),
-                parent_slot_number: parent_pre_digest.slot.into(),
-                slot_number,
-            }
-        })<span class="question-mark">?</span>;
 
         proof_of_time
             .get_block_proofs(
                 block_number.into(),
                 slot_number,
-                parent_pot_digest,
+                <span class="kw-2">&amp;</span>parent_pre_digest.proof_of_time,
                 <span class="prelude-val">Some</span>(<span class="self">self</span>.subspace_link.slot_duration().as_duration()),
             )
             .<span class="kw">await
