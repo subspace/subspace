@@ -101,107 +101,133 @@
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
 <a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace proof of time implementation.
 
 </span><span class="attr">#![feature(const_option)]
 
-</span><span class="kw">pub mod </span>gossip;
-<span class="kw">mod </span>state_manager;
-<span class="kw">mod </span>time_keeper;
+</span><span class="comment">// TODO: Adjust or remove unused modules in the future
+// pub mod gossip;
+</span><span class="kw">mod </span>slots;
+<span class="kw">pub mod </span>source;
+<span class="comment">// mod state_manager;
+// mod time_keeper;
 
-<span class="kw">use </span><span class="kw">crate</span>::state_manager::{init_pot_state, PotProtocolState};
-<span class="kw">use </span>core::num::NonZeroU32;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>subspace_core_primitives::{BlockNumber, PotKey, PotSeed, SlotNumber};
+</span><span class="kw">use </span><span class="kw">crate</span>::slots::SlotInfoProducer;
+<span class="kw">use </span><span class="kw">crate</span>::source::{PotSlotInfo, PotSlotInfoStream};
+<span class="kw">use </span>futures::StreamExt;
+<span class="kw">use </span>sc_consensus_slots::{SimpleSlotWorker, SimpleSlotWorkerToSlotWorker, SlotWorker};
+<span class="kw">use </span>sp_api::ProvideRuntimeApi;
+<span class="kw">use </span>sp_blockchain::HeaderBackend;
+<span class="kw">use </span>sp_consensus::{SelectChain, SyncOracle};
+<span class="kw">use </span>sp_consensus_slots::{Slot, SlotDuration};
+<span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi <span class="kw">as </span>SubspaceRuntimeApi};
+<span class="kw">use </span>sp_inherents::CreateInherentDataProviders;
+<span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>subspace_core_primitives::PotCheckpoints;
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>tracing::error;
+<span class="kw">use </span>tracing::{debug, trace};
 
-<span class="kw">pub use </span>state_manager::{
-    PotConsensusState, PotGetBlockProofsError, PotStateSummary, PotVerifyBlockProofsError,
-};
-<span class="kw">pub use </span>time_keeper::TimeKeeper;
-
-<span class="comment">// TODO: change the fields that can&#39;t be zero to NonZero types.
-// TODO: CLean up unused fields
-</span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>PotConfig {
-    <span class="doccomment">/// PoT seed used initially when PoT chain starts.
-    </span><span class="kw">pub </span>initial_seed: PotSeed,
-
-    <span class="doccomment">/// PoT key used initially when PoT chain starts.
-    </span><span class="kw">pub </span>initial_key: PotKey,
-
-    <span class="doccomment">/// Frequency of entropy injection from consensus.
-    </span><span class="kw">pub </span>randomness_update_interval_blocks: BlockNumber,
-
-    <span class="doccomment">/// Starting point for entropy injection from consensus.
-    </span><span class="kw">pub </span>injection_depth_blocks: BlockNumber,
-
-    <span class="doccomment">/// Number of slots it takes for updated global randomness to
-    /// take effect.
-    </span><span class="kw">pub </span>global_randomness_reveal_lag_slots: SlotNumber,
-
-    <span class="doccomment">/// Number of slots it takes for injected randomness to
-    /// take effect.
-    </span><span class="kw">pub </span>pot_injection_lag_slots: SlotNumber,
-
-    <span class="doccomment">/// If the received proof is more than max_future_slots into the
-    /// future from the current tip&#39;s slot, reject it.
-    </span><span class="kw">pub </span>max_future_slots: SlotNumber,
-
-    <span class="doccomment">/// Total iterations per proof.
-    </span><span class="kw">pub </span>pot_iterations: NonZeroU32,
+<span class="kw">pub trait </span>PotSlotWorker&lt;Block&gt;
+<span class="kw">where
+    </span>Block: BlockT,
+{
+    <span class="doccomment">/// Called when new proof of time is available for slot.
+    ///
+    /// NOTE: Can be called more than once in case of reorgs to override old slots.
+    </span><span class="kw">fn </span>on_proof(<span class="kw-2">&amp;mut </span><span class="self">self</span>, slot: Slot, checkpoints: PotCheckpoints);
 }
 
-<span class="doccomment">/// Components initialized during the new_partial() phase of set up.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>PotComponents {
-    <span class="doccomment">/// PoT seed used initially when PoT chain starts.
-    </span><span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) initial_seed: PotSeed,
-
-    <span class="doccomment">/// PoT key used initially when PoT chain starts.
-    </span><span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) initial_key: PotKey,
-
-    <span class="doccomment">/// PoT iterations for each slot.
-    </span><span class="comment">// TODO: Remove this from here, shouldn&#39;t be necessary eventually
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) iterations: NonZeroU32,
-
-    <span class="doccomment">/// If the role is time keeper or node client.
-    </span>is_time_keeper: bool,
-
-    <span class="doccomment">/// Protocol state.
-    </span>protocol_state: Arc&lt;<span class="kw">dyn </span>PotProtocolState&gt;,
-
-    <span class="doccomment">/// Consensus state.
-    </span>consensus_state: Arc&lt;<span class="kw">dyn </span>PotConsensusState&gt;,
-}
-
-<span class="kw">impl </span>PotComponents {
-    <span class="doccomment">/// Sets up the partial components.
-    </span><span class="kw">pub fn </span>new(is_time_keeper: bool, config: PotConfig) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>initial_seed = config.initial_seed;
-        <span class="kw">let </span>initial_key = config.initial_key;
-        <span class="kw">let </span>iterations = config.pot_iterations;
-        <span class="kw">let </span>(protocol_state, consensus_state) = init_pot_state(config);
-
-        <span class="self">Self </span>{
-            initial_seed,
-            initial_key,
-            iterations,
-            is_time_keeper,
-            protocol_state,
-            consensus_state,
+<span class="doccomment">/// Start a new slot worker.
+///
+/// Every time a new slot is triggered, `worker.on_slot` is called and the future it returns is
+/// polled until completion, unless we are major syncing.
+</span><span class="kw">pub async fn </span>start_slot_worker&lt;Block, Client, SC, Worker, SO, CIDP&gt;(
+    slot_duration: SlotDuration,
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>client: Arc&lt;Client&gt;,
+    select_chain: SC,
+    worker: Worker,
+    sync_oracle: SO,
+    create_inherent_data_providers: CIDP,
+    <span class="kw-2">mut </span>slot_info_stream: PotSlotInfoStream,
+) <span class="kw">where
+    </span>Block: BlockT,
+    Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
+    Client::Api: SubspaceRuntimeApi&lt;Block, FarmerPublicKey&gt;,
+    SC: SelectChain&lt;Block&gt;,
+    Worker: PotSlotWorker&lt;Block&gt; + SimpleSlotWorker&lt;Block&gt; + Send + Sync,
+    SO: SyncOracle + Send,
+    CIDP: CreateInherentDataProviders&lt;Block, ()&gt; + Send + <span class="lifetime">&#39;static</span>,
+{
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">let </span>best_hash = client.info().best_hash;
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">let </span>runtime_api = client.runtime_api();
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">let </span>block_authoring_delay = <span class="kw">match </span>runtime_api.chain_constants(best_hash) {
+        <span class="prelude-val">Ok</span>(chain_constants) =&gt; chain_constants.block_authoring_delay(),
+        <span class="prelude-val">Err</span>(error) =&gt; {
+            <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to retrieve chain constants from runtime API&quot;</span>);
+            <span class="kw">return</span>;
         }
-    }
+    };
+    <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+    </span><span class="kw">let </span>block_authoring_delay = Slot::from(<span class="number">6</span>);
 
-    <span class="doccomment">/// Checks if the role is time keeper or node client.
-    </span><span class="kw">pub fn </span>is_time_keeper(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.is_time_keeper
-    }
+    <span class="kw">let </span>slot_info_producer = SlotInfoProducer::new(
+        slot_duration.as_duration(),
+        create_inherent_data_providers,
+        select_chain,
+    );
 
-    <span class="doccomment">/// Returns the consensus interface.
-    </span><span class="kw">pub fn </span>consensus_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;<span class="kw">dyn </span>PotConsensusState&gt; {
-        <span class="self">self</span>.consensus_state.clone()
+    <span class="kw">let </span><span class="kw-2">mut </span>worker = SimpleSlotWorkerToSlotWorker(worker);
+
+    <span class="kw">let </span><span class="kw-2">mut </span>maybe_last_claimed_slot = <span class="prelude-val">None</span>;
+
+    <span class="kw">while let </span><span class="prelude-val">Some</span>(PotSlotInfo { slot, checkpoints }) = slot_info_stream.next().<span class="kw">await </span>{
+        worker.<span class="number">0</span>.on_proof(slot, checkpoints);
+
+        <span class="kw">if </span>sync_oracle.is_major_syncing() {
+            <span class="macro">debug!</span>(%slot, <span class="string">&quot;Skipping proposal slot due to sync&quot;</span>);
+            <span class="kw">continue</span>;
+        }
+
+        <span class="comment">// Slots that we claim must be `block_authoring_delay` behind the best slot we know of
+        </span><span class="kw">let </span><span class="prelude-val">Some</span>(slot_to_claim) = slot.checked_sub(<span class="kw-2">*</span>block_authoring_delay).map(Slot::from) <span class="kw">else </span>{
+            <span class="macro">trace!</span>(<span class="string">&quot;Skipping very early slot during chain start&quot;</span>);
+            <span class="kw">continue</span>;
+        };
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(last_claimed_slot) = maybe_last_claimed_slot {
+            <span class="kw">if </span>last_claimed_slot &gt;= slot_to_claim {
+                <span class="comment">// Already processed
+                </span><span class="kw">continue</span>;
+            }
+        }
+        maybe_last_claimed_slot.replace(slot_to_claim);
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(slot_info) = slot_info_producer.produce_slot_info(slot_to_claim).<span class="kw">await </span>{
+            <span class="kw">let _ </span>= worker.on_slot(slot_info).<span class="kw">await</span>;
+
+            <span class="comment">// TODO: Remove this hack, it restricts slot production with extremely low number of
+            //  iterations
+            </span>tokio::time::sleep(std::time::Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
+        }
     }
 }
 </code></pre></div></section></main></body></html>

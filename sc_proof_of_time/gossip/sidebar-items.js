@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["pot_gossip_peers_set_config"],"struct":["PotGossipWorker"]};

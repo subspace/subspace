@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PotGetBlockProofsError","PotVerifyBlockProofsError"],"mod":["gossip"],"struct":["PotComponents","PotConfig","PotStateSummary","TimeKeeper"],"trait":["PotConsensusState"]};
+window.SIDEBAR_ITEMS = {"fn":["start_slot_worker"],"mod":["source"],"trait":["PotSlotWorker"]};
