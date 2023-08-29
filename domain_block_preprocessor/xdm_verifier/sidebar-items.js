@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["verify_xdm"]};
+window.SIDEBAR_ITEMS = {"fn":["is_valid_xdm"]};

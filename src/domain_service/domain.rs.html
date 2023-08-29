@@ -514,10 +514,8 @@
 <a href="#514" id="514">514</a>
 <a href="#515" id="515">515</a>
 <a href="#516" id="516">516</a>
-<a href="#517" id="517">517</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::providers::{BlockImportProvider, RpcProvider};
-<span class="kw">use crate</span>::{DomainConfiguration, FullBackend, FullClient};
-<span class="kw">use </span>cross_domain_message_gossip::ChainTxPoolSink;
+<span class="kw">use crate</span>::{FullBackend, FullClient};
 <span class="kw">use </span>domain_client_block_preprocessor::runtime_api_full::RuntimeApiFull;
 <span class="kw">use </span>domain_client_consensus_relay_chain::DomainBlockImport;
 <span class="kw">use </span>domain_client_message_relayer::GossipMessageSink;
@@ -526,9 +524,10 @@
 <span class="kw">use </span>domain_runtime_primitives::{Balance, BlockNumber, DomainCoreApi, Hash, InherentExtrinsicApi};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::Stream;
-<span class="kw">use </span>jsonrpsee::tracing;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
-<span class="kw">use </span>sc_client_api::{BlockBackend, BlockImportNotification, BlockchainEvents, StateBackendFor};
+<span class="kw">use </span>sc_client_api::{
+    BlockBackend, BlockImportNotification, BlockchainEvents, ProofProvider, StateBackendFor,
+};
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_rpc_api::DenyUnsafe;
 <span class="kw">use </span>sc_service::{
@@ -536,7 +535,7 @@
     SpawnTasksParams, TFullBackend, TaskManager,
 };
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker, TelemetryWorkerHandle};
-<span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
+<span class="kw">use </span>sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver};
 <span class="kw">use </span>serde::de::DeserializeOwned;
 <span class="kw">use </span>sp_api::{ApiExt, BlockT, ConstructRuntimeApi, Metadata, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
@@ -546,6 +545,7 @@
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_core::{Decode, Encode};
 <span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainId, DomainsApi};
+<span class="kw">use </span>sp_messenger::messages::ChainId;
 <span class="kw">use </span>sp_messenger::{MessengerApi, RelayerApi};
 <span class="kw">use </span>sp_offchain::OffchainWorkerApi;
 <span class="kw">use </span>sp_session::SessionKeys;
@@ -585,7 +585,7 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, BlockNumber, Hash&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, BlockNumber, Hash&gt; + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;,
     RuntimeApi: ConstructRuntimeApi&lt;Block, FullClient&lt;Block, RuntimeApi, ExecutorDispatch&gt;&gt;
         + Send
         + Sync
@@ -600,7 +600,7 @@
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + DomainCoreApi&lt;Block&gt;
         + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;
-        + RelayerApi&lt;Block, AccountId, NumberFor&lt;Block&gt;&gt;,
+        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
     AccountId: Encode + Decode,
 {
@@ -622,8 +622,6 @@
     </span><span class="kw">pub </span>network_starter: NetworkStarter,
     <span class="doccomment">/// Operator.
     </span><span class="kw">pub </span>operator: DomainOperator&lt;Block, CBlock, CClient, RuntimeApi, ExecutorDispatch, BI&gt;,
-    <span class="doccomment">/// Transaction pool sink
-    </span><span class="kw">pub </span>tx_pool_sink: ChainTxPoolSink,
     _phantom_data: PhantomData&lt;AccountId&gt;,
 }
 
@@ -676,7 +674,7 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, BlockNumber, Hash&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, BlockNumber, Hash&gt; + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;,
     RuntimeApi: ConstructRuntimeApi&lt;Block, FullClient&lt;Block, RuntimeApi, ExecutorDispatch&gt;&gt;
         + Send
         + Sync
@@ -755,18 +753,19 @@
     <span class="prelude-val">Ok</span>(params)
 }
 
-<span class="kw">pub struct </span>DomainParams&lt;CBlock, CClient, SC, IBNS, CIBNS, NSNS, AccountId, Provider&gt;
+<span class="kw">pub struct </span>DomainParams&lt;CBlock, CClient, SC, IBNS, CIBNS, NSNS, Provider&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
 {
     <span class="kw">pub </span>domain_id: DomainId,
-    <span class="kw">pub </span>domain_config: DomainConfiguration&lt;AccountId&gt;,
+    <span class="kw">pub </span>domain_config: ServiceConfiguration,
     <span class="kw">pub </span>domain_created_at: NumberFor&lt;CBlock&gt;,
     <span class="kw">pub </span>consensus_client: Arc&lt;CClient&gt;,
     <span class="kw">pub </span>consensus_network_sync_oracle: Arc&lt;<span class="kw">dyn </span>SyncOracle + Send + Sync&gt;,
     <span class="kw">pub </span>select_chain: SC,
     <span class="kw">pub </span>operator_streams: OperatorStreams&lt;CBlock, IBNS, CIBNS, NSNS&gt;,
     <span class="kw">pub </span>gossip_message_sink: GossipMessageSink,
+    <span class="kw">pub </span>domain_message_receiver: TracingUnboundedReceiver&lt;Vec&lt;u8&gt;&gt;,
     <span class="kw">pub </span>provider: Provider,
 }
 
@@ -783,7 +782,7 @@
     AccountId,
     Provider,
 &gt;(
-    domain_params: DomainParams&lt;CBlock, CClient, SC, IBNS, CIBNS, NSNS, AccountId, Provider&gt;,
+    domain_params: DomainParams&lt;CBlock, CClient, SC, IBNS, CIBNS, NSNS, Provider&gt;,
 ) -&gt; sc_service::error::Result&lt;
     NewFull&lt;
         Arc&lt;FullClient&lt;Block, RuntimeApi, ExecutorDispatch&gt;&gt;,
@@ -800,16 +799,19 @@
     </span>CBlock: BlockT,
     NumberFor&lt;CBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt; + Into&lt;u32&gt;,
     &lt;Block <span class="kw">as </span>BlockT&gt;::Hash: From&lt;Hash&gt;,
-    CBlock::Hash: From&lt;Hash&gt;,
+    CBlock::Hash: From&lt;Hash&gt; + Into&lt;Hash&gt;,
     CClient: HeaderBackend&lt;CBlock&gt;
         + HeaderMetadata&lt;CBlock, Error = sp_blockchain::Error&gt;
         + BlockBackend&lt;CBlock&gt;
+        + ProofProvider&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + BlockchainEvents&lt;CBlock&gt;
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
     CClient::Api: DomainsApi&lt;CBlock, BlockNumber, Hash&gt;
+        + RelayerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
+        + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
         + BundleProducerElectionApi&lt;CBlock, subspace_runtime_primitives::Balance&gt;,
     SC: SelectChain&lt;CBlock&gt;,
     IBNS: Stream&lt;Item = (NumberFor&lt;CBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Send + <span class="lifetime">&#39;static</span>,
@@ -830,7 +832,7 @@
         + TaggedTransactionQueue&lt;Block&gt;
         + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
-        + RelayerApi&lt;Block, AccountId, NumberFor&lt;Block&gt;&gt;,
+        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
     AccountId: DeserializeOwned
         + Encode
@@ -865,6 +867,7 @@
         select_chain,
         operator_streams,
         gossip_message_sink,
+        domain_message_receiver,
         provider,
     } = domain_params;
 
@@ -872,7 +875,7 @@
     // domain_config.announce_block = false;
 
     </span><span class="kw">let </span>params = new_partial(
-        <span class="kw-2">&amp;</span>domain_config.service_config,
+        <span class="kw-2">&amp;</span>domain_config,
         domain_id,
         consensus_client.clone(),
         <span class="kw-2">&amp;</span>provider,
@@ -885,8 +888,7 @@
 
     <span class="kw">let </span>transaction_pool = params.transaction_pool.clone();
     <span class="kw">let </span><span class="kw-2">mut </span>task_manager = params.task_manager;
-    <span class="kw">let </span><span class="kw-2">mut </span>net_config =
-        sc_network::config::FullNetworkConfiguration::new(<span class="kw-2">&amp;</span>domain_config.service_config.network);
+    <span class="kw">let </span><span class="kw-2">mut </span>net_config = sc_network::config::FullNetworkConfiguration::new(<span class="kw-2">&amp;</span>domain_config.network);
 
     net_config.add_notification_protocol(
         domain_client_subnet_gossip::domain_subnet_gossip_peers_set_config(),
@@ -894,7 +896,7 @@
 
     <span class="kw">let </span>(network_service, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
         <span class="kw">crate</span>::build_network(BuildNetworkParams {
-            config: <span class="kw-2">&amp;</span>domain_config.service_config,
+            config: <span class="kw-2">&amp;</span>domain_config,
             net_config,
             client: client.clone(),
             transaction_pool: transaction_pool.clone(),
@@ -906,20 +908,20 @@
             block_relay: <span class="prelude-val">None</span>,
         })<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>is_authority = domain_config.service_config.role.is_authority();
-    domain_config.service_config.rpc_id_provider = provider.rpc_id();
+    <span class="kw">let </span>is_authority = domain_config.role.is_authority();
+    domain_config.rpc_id_provider = provider.rpc_id();
     <span class="kw">let </span>rpc_builder = {
         <span class="kw">let </span>deps = <span class="kw">crate</span>::rpc::FullDeps {
             client: client.clone(),
             pool: transaction_pool.clone(),
             graph: transaction_pool.pool().clone(),
-            chain_spec: domain_config.service_config.chain_spec.cloned_box(),
+            chain_spec: domain_config.chain_spec.cloned_box(),
             deny_unsafe: DenyUnsafe::Yes,
             network: network_service.clone(),
             sync: sync_service.clone(),
             is_authority,
-            prometheus_registry: domain_config.service_config.prometheus_registry().cloned(),
-            database_source: domain_config.service_config.database.clone(),
+            prometheus_registry: domain_config.prometheus_registry().cloned(),
+            database_source: domain_config.database.clone(),
             task_spawner: task_manager.spawn_handle(),
             backend: backend.clone(),
         };
@@ -943,7 +945,7 @@
         client: client.clone(),
         transaction_pool: transaction_pool.clone(),
         task_manager: <span class="kw-2">&amp;mut </span>task_manager,
-        config: domain_config.service_config,
+        config: domain_config,
         keystore: params.keystore_container.keystore(),
         backend: backend.clone(),
         network: network_service.clone(),
@@ -988,10 +990,9 @@
     )
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(relayer_id) = domain_config.maybe_relayer_id {
-        <span class="macro">tracing::info!</span>(<span class="question-mark">?</span>domain_id, <span class="question-mark">?</span>relayer_id, <span class="string">&quot;Starting domain relayer&quot;</span>);
+    <span class="kw">if </span>is_authority {
         <span class="kw">let </span>relayer_worker = domain_client_message_relayer::worker::relay_domain_messages(
-            relayer_id,
+            consensus_client.clone(),
             client.clone(),
             sync_service.clone(),
             gossip_message_sink,
@@ -1000,14 +1001,12 @@
         spawn_essential.spawn_essential_blocking(<span class="string">&quot;domain-relayer&quot;</span>, <span class="prelude-val">None</span>, Box::pin(relayer_worker));
     }
 
-    <span class="kw">let </span>(msg_sender, msg_receiver) = tracing_unbounded(<span class="string">&quot;domain_message_channel&quot;</span>, <span class="number">100</span>);
-
     <span class="comment">// Start cross domain message listener for domain
-    </span><span class="kw">let </span>domain_listener = cross_domain_message_gossip::start_domain_message_listener(
-        domain_id,
+    </span><span class="kw">let </span>domain_listener = cross_domain_message_gossip::start_cross_chain_message_listener(
+        ChainId::Domain(domain_id),
         client.clone(),
         params.transaction_pool.clone(),
-        msg_receiver,
+        domain_message_receiver,
     );
 
     spawn_essential.spawn_essential_blocking(
@@ -1026,7 +1025,6 @@
         rpc_handlers,
         network_starter,
         operator,
-        tx_pool_sink: msg_sender,
         _phantom_data: Default::default(),
     };
 

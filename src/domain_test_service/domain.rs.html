@@ -472,22 +472,6 @@
 <a href="#472" id="472">472</a>
 <a href="#473" id="473">473</a>
 <a href="#474" id="474">474</a>
-<a href="#475" id="475">475</a>
-<a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a>
-<a href="#478" id="478">478</a>
-<a href="#479" id="479">479</a>
-<a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used for testing with the domain.
 </span><span class="attr">#![warn(missing_docs)]
 
@@ -510,7 +494,7 @@
 <span class="kw">use </span>sc_network_sync::SyncingService;
 <span class="kw">use </span>sc_service::config::MultiaddrWithPeerId;
 <span class="kw">use </span>sc_service::{BasePath, Role, RpcHandlers, TFullBackend, TaskManager};
-<span class="kw">use </span>sc_utils::mpsc::TracingUnboundedSender;
+<span class="kw">use </span>sc_utils::mpsc::{tracing_unbounded, TracingUnboundedSender};
 <span class="kw">use </span>serde::de::DeserializeOwned;
 <span class="kw">use </span>sp_api::{ApiExt, ConstructRuntimeApi, Metadata, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
@@ -578,7 +562,7 @@
         + TaggedTransactionQueue&lt;Block&gt;
         + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
-        + RelayerApi&lt;Block, AccountId, NumberFor&lt;Block&gt;&gt;,
+        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
     ExecutorDispatch: NativeExecutionDispatch + Send + Sync + <span class="lifetime">&#39;static</span>,
     AccountId: Encode + Decode + FromKeyring,
 {
@@ -635,7 +619,7 @@
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + InherentExtrinsicApi&lt;Block&gt;
         + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;
-        + RelayerApi&lt;Block, AccountId, NumberFor&lt;Block&gt;&gt;
+        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;&gt;
         + OnchainStateApi&lt;Block, AccountId, Balance&gt;
         + EthereumRuntimeRPCApi&lt;Block&gt;,
     ExecutorDispatch: NativeExecutionDispatch + Send + Sync + <span class="lifetime">&#39;static</span>,
@@ -659,7 +643,6 @@
         base_path: BasePath,
         domain_nodes: Vec&lt;MultiaddrWithPeerId&gt;,
         domain_nodes_exclusive: bool,
-        run_relayer: bool,
         role: Role,
         mock_consensus_node: <span class="kw-2">&amp;mut </span>MockConsensusNode,
     ) -&gt; <span class="self">Self </span>{
@@ -675,7 +658,7 @@
                 </span>.expect(<span class="string">&quot;Failed to get domain instance data&quot;</span>)
         };
         <span class="kw">let </span>chain_spec = create_domain_spec(domain_id, domain_instance_data);
-        <span class="kw">let </span>service_config = node_config(
+        <span class="kw">let </span>domain_config = node_config(
             domain_id,
             tokio_handle.clone(),
             key,
@@ -689,21 +672,12 @@
 
         <span class="kw">let </span>span = <span class="macro">sc_tracing::tracing::info_span!</span>(
             sc_tracing::logging::PREFIX_LOG_SPAN,
-            name = service_config.network.node_name.as_str()
+            name = domain_config.network.node_name.as_str()
         );
         <span class="kw">let </span>_enter = span.enter();
 
-        <span class="kw">let </span>multiaddr = service_config.network.listen_addresses[<span class="number">0</span>].clone();
+        <span class="kw">let </span>multiaddr = domain_config.network.listen_addresses[<span class="number">0</span>].clone();
 
-        <span class="kw">let </span>maybe_relayer_id = <span class="kw">if </span>run_relayer {
-            <span class="prelude-val">Some</span>(&lt;AccountId <span class="kw">as </span>FromKeyring&gt;::from_keyring(key))
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>};
-        <span class="kw">let </span>domain_config = domain_service::DomainConfiguration {
-            service_config,
-            maybe_relayer_id,
-        };
         <span class="kw">let </span>operator_streams = OperatorStreams {
             <span class="comment">// Set `consensus_block_import_throttling_buffer_size` to 0 to ensure the primary chain will not be
             // ahead of the execution chain by more than one block, thus slot will not be skipped in test.
@@ -715,9 +689,12 @@
             _phantom: Default::default(),
         };
 
+        <span class="kw">let </span>(domain_message_sink, domain_message_receiver) =
+            tracing_unbounded(<span class="string">&quot;domain_message_channel&quot;</span>, <span class="number">100</span>);
         <span class="kw">let </span>gossip_msg_sink = mock_consensus_node
             .xdm_gossip_worker_builder()
             .gossip_msg_sink();
+
         <span class="kw">let </span>domain_params = domain_service::DomainParams {
             domain_id,
             domain_config,
@@ -727,6 +704,7 @@
             select_chain: mock_consensus_node.select_chain.clone(),
             operator_streams,
             gossip_message_sink: gossip_msg_sink,
+            domain_message_receiver,
             provider: DefaultProvider,
         };
 
@@ -755,14 +733,13 @@
             network_starter,
             rpc_handlers,
             operator,
-            tx_pool_sink,
             ..
         } = domain_node;
 
         <span class="kw">if </span>role.is_authority() {
             mock_consensus_node
                 .xdm_gossip_worker_builder()
-                .push_chain_tx_pool_sink(ChainId::Domain(domain_id), tx_pool_sink.clone());
+                .push_chain_tx_pool_sink(ChainId::Domain(domain_id), domain_message_sink.clone());
         }
 
         <span class="kw">let </span>addr = MultiaddrWithPeerId {
@@ -784,7 +761,7 @@
             addr,
             rpc_handlers,
             operator,
-            tx_pool_sink,
+            tx_pool_sink: domain_message_sink,
             _phantom_data: Default::default(),
         }
     }
@@ -884,7 +861,6 @@
     domain_nodes: Vec&lt;MultiaddrWithPeerId&gt;,
     domain_nodes_exclusive: bool,
     base_path: BasePath,
-    run_relayer: bool,
 }
 
 <span class="kw">impl </span>DomainNodeBuilder {
@@ -904,15 +880,8 @@
             domain_nodes: Vec::new(),
             domain_nodes_exclusive: <span class="bool-val">false</span>,
             base_path,
-            run_relayer: <span class="bool-val">false</span>,
         }
     }
-
-    <span class="doccomment">/// Run relayer with the node account id as the relayer id
-    </span><span class="kw">pub fn </span>run_relayer(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.run_relayer = <span class="bool-val">true</span>;
-        <span class="self">self
-    </span>}
 
     <span class="doccomment">/// Instruct the node to exclusively connect to registered parachain nodes.
     ///
@@ -945,7 +914,6 @@
             <span class="self">self</span>.base_path,
             <span class="self">self</span>.domain_nodes,
             <span class="self">self</span>.domain_nodes_exclusive,
-            <span class="self">self</span>.run_relayer,
             role,
             mock_consensus_node,
         )

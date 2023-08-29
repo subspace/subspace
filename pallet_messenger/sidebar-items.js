@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Call","ChannelState","Error","Event","OutboxMessageResult"],"mod":["dispatchables","storage_types","weights"],"struct":["Channel","GenesisConfig","Pallet"],"trait":["Config"],"type":["Module"]};
+window.SIDEBAR_ITEMS = {"enum":["Call","ChannelState","Error","Event","OutboxMessageResult"],"mod":["dispatchables","storage_types","weights"],"struct":["Channel","Pallet"],"trait":["Config"],"type":["Module"]};
