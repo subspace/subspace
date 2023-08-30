@@ -763,6 +763,9 @@
 <a href="#763" id="763">763</a>
 <a href="#764" id="764">764</a>
 <a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -805,6 +808,8 @@
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>ClientError, HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_consensus::{BlockOrigin, Environment, Error <span class="kw">as </span>ConsensusError, Proposer, SyncOracle};
 <span class="kw">use </span>sp_consensus_slots::Slot;
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>sp_consensus_subspace::digests::PreDigestPotInfo;
 <span class="kw">use </span>sp_consensus_subspace::digests::{extract_pre_digest, CompatibleDigestItem, PreDigest};
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>sp_consensus_subspace::SubspaceJustification;
@@ -1041,7 +1046,7 @@
                 <span class="kw">return </span><span class="prelude-val">None</span>;
             }
         };
-        <span class="kw">let </span>parent_slot = parent_pre_digest.slot;
+        <span class="kw">let </span>parent_slot = parent_pre_digest.slot();
 
         <span class="kw">if </span>slot &lt;= parent_slot {
             <span class="macro">debug!</span>(
@@ -1062,8 +1067,7 @@
 
         <span class="kw">let </span>maybe_root_plot_public_key = runtime_api.root_plot_public_key(parent_hash).ok()<span class="question-mark">?</span>;
 
-        <span class="comment">// TODO: Store `new_checkpoints`
-        </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span><span class="kw">let </span>(proof_of_time, future_proof_of_time, new_checkpoints) = {
             <span class="kw">let </span><span class="kw-2">mut </span>pot_checkpoints = <span class="self">self</span>.pot_checkpoints.lock();
 
@@ -1229,13 +1233,14 @@
                     // block reward is claimed
                     </span><span class="kw">if </span>maybe_pre_digest.is_none() &amp;&amp; solution_distance &lt;= solution_range / <span class="number">2 </span>{
                         <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;🚜 Claimed block at slot {slot}&quot;</span>);
-                        maybe_pre_digest.replace(PreDigest {
+                        maybe_pre_digest.replace(PreDigest::V0 {
                             slot,
                             solution,
                             <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-                            </span>proof_of_time,
-                            <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-                            </span>future_proof_of_time,
+                            </span>pot_info: PreDigestPotInfo::V0 {
+                                proof_of_time,
+                                future_proof_of_time,
+                            },
                         });
                     } <span class="kw">else if </span>!parent_header.number().is_zero() {
                         <span class="comment">// Not sending vote on top of genesis block since segment headers since piece
@@ -1306,7 +1311,7 @@
         <span class="kw">let </span>signature = <span class="self">self
             </span>.sign_reward(
                 H256::from_slice(header_hash.as_ref()),
-                <span class="kw-2">&amp;</span>pre_digest.solution.public_key,
+                <span class="kw-2">&amp;</span>pre_digest.solution().public_key,
             )
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -1333,7 +1338,8 @@
 
     <span class="kw">fn </span>should_backoff(<span class="kw-2">&amp;</span><span class="self">self</span>, slot: Slot, chain_head: <span class="kw-2">&amp;</span>Block::Header) -&gt; bool {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>strategy) = <span class="self">self</span>.backoff_authoring_blocks {
-            <span class="kw">if let </span><span class="prelude-val">Ok</span>(chain_head_slot) = extract_pre_digest(chain_head).map(|digest| digest.slot) {
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(chain_head_slot) = extract_pre_digest(chain_head).map(|digest| digest.slot())
+            {
                 <span class="kw">return </span>strategy.should_backoff(
                     <span class="kw-2">*</span>chain_head.number(),
                     chain_head_slot,
@@ -1369,7 +1375,7 @@
     <span class="kw">fn </span>proposing_remaining_duration(<span class="kw-2">&amp;</span><span class="self">self</span>, slot_info: <span class="kw-2">&amp;</span>SlotInfo&lt;Block&gt;) -&gt; std::time::Duration {
         <span class="kw">let </span>parent_slot = extract_pre_digest(<span class="kw-2">&amp;</span>slot_info.chain_head)
             .ok()
-            .map(|d| d.slot);
+            .map(|d| d.slot());
 
         sc_consensus_slots::proposing_remaining_duration(
             parent_slot,

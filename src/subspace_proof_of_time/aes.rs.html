@@ -172,11 +172,11 @@
 <span class="kw">use </span>aes::cipher::generic_array::GenericArray;
 <span class="kw">use </span>aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 <span class="kw">use </span>aes::Aes128;
-<span class="kw">use </span>subspace_core_primitives::{PotBytes, PotCheckpoint, PotCheckpoints, PotKey, PotSeed};
+<span class="kw">use </span>subspace_core_primitives::{PotCheckpoints, PotKey, PotProof, PotSeed};
 
 <span class="doccomment">/// Creates the AES based proof.
 </span><span class="attr">#[inline(always)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create(seed: <span class="kw-2">&amp;</span>PotSeed, key: <span class="kw-2">&amp;</span>PotKey, checkpoint_iterations: u32) -&gt; PotCheckpoints {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create(seed: PotSeed, key: PotKey, checkpoint_iterations: u32) -&gt; PotCheckpoints {
     <span class="attr">#[cfg(target_arch = <span class="string">&quot;x86_64&quot;</span>)]
     </span>{
         <span class="kw">unsafe </span>{ x86_64::create(seed.as_ref(), key.as_ref(), checkpoint_iterations) }
@@ -187,10 +187,10 @@
 
 <span class="attr">#[cfg(any(not(target_arch = <span class="string">&quot;x86_64&quot;</span>), test))]
 #[inline(always)]
-</span><span class="kw">fn </span>create_generic(seed: <span class="kw-2">&amp;</span>PotSeed, key: <span class="kw-2">&amp;</span>PotKey, checkpoint_iterations: u32) -&gt; PotCheckpoints {
-    <span class="kw">let </span>key = GenericArray::from(PotBytes::from(<span class="kw-2">*</span>key));
+</span><span class="kw">fn </span>create_generic(seed: PotSeed, key: PotKey, checkpoint_iterations: u32) -&gt; PotCheckpoints {
+    <span class="kw">let </span>key = GenericArray::from(<span class="kw-2">*</span>key);
     <span class="kw">let </span>cipher = Aes128::new(<span class="kw-2">&amp;</span>key);
-    <span class="kw">let </span><span class="kw-2">mut </span>cur_block = GenericArray::from(PotBytes::from(<span class="kw-2">*</span>seed));
+    <span class="kw">let </span><span class="kw-2">mut </span>cur_block = GenericArray::from(<span class="kw-2">*</span>seed);
 
     <span class="kw">let </span><span class="kw-2">mut </span>checkpoints = PotCheckpoints::default();
     <span class="kw">for </span>checkpoint <span class="kw">in </span>checkpoints.iter_mut() {
@@ -198,7 +198,7 @@
             <span class="comment">// Encrypt in place to produce the next block.
             </span>cipher.encrypt_block(<span class="kw-2">&amp;mut </span>cur_block);
         }
-        <span class="kw-2">*</span>checkpoint = PotCheckpoint::from(PotBytes::from(cur_block));
+        checkpoint.copy_from_slice(<span class="kw-2">&amp;</span>cur_block);
     }
 
     checkpoints
@@ -209,24 +209,24 @@
 /// Panics if `checkpoint_iterations` is not a multiple of `2`.
 </span><span class="attr">#[inline(always)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>verify_sequential(
-    seed: <span class="kw-2">&amp;</span>PotSeed,
-    key: <span class="kw-2">&amp;</span>PotKey,
-    checkpoints: <span class="kw-2">&amp;</span>[PotCheckpoint],
+    seed: PotSeed,
+    key: PotKey,
+    checkpoints: <span class="kw-2">&amp;</span>[PotProof],
     checkpoint_iterations: u64,
 ) -&gt; bool {
     <span class="macro">assert_eq!</span>(checkpoint_iterations % <span class="number">2</span>, <span class="number">0</span>);
 
-    <span class="kw">let </span>key = GenericArray::from(PotBytes::from(<span class="kw-2">*</span>key));
+    <span class="kw">let </span>key = GenericArray::from(<span class="kw-2">*</span>key);
     <span class="kw">let </span>cipher = Aes128::new(<span class="kw-2">&amp;</span>key);
 
     <span class="kw">let </span><span class="kw-2">mut </span>inputs = Vec::with_capacity(checkpoints.len());
-    inputs.push(GenericArray::from(PotBytes::from(<span class="kw-2">*</span>seed)));
-    <span class="kw">for </span>checkpoint <span class="kw">in </span>checkpoints.iter().rev().skip(<span class="number">1</span>).rev() {
-        inputs.push(GenericArray::from(PotBytes::from(<span class="kw-2">*</span>checkpoint)));
+    inputs.push(GenericArray::from(<span class="kw-2">*</span>seed));
+    <span class="kw">for </span><span class="kw-2">&amp;</span>checkpoint <span class="kw">in </span>checkpoints.iter().rev().skip(<span class="number">1</span>).rev() {
+        inputs.push(GenericArray::from(<span class="kw-2">*</span>checkpoint));
     }
     <span class="kw">let </span><span class="kw-2">mut </span>outputs = checkpoints
         .iter()
-        .map(|checkpoint| GenericArray::from(PotBytes::from(<span class="kw-2">*</span>checkpoint)))
+        .map(|<span class="kw-2">&amp;</span>checkpoint| GenericArray::from(<span class="kw-2">*</span>checkpoint))
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
     <span class="kw">for _ in </span><span class="number">0</span>..checkpoint_iterations / <span class="number">2 </span>{
@@ -240,7 +240,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span>subspace_core_primitives::{PotCheckpoint, PotKey, PotSeed};
+    <span class="kw">use </span>subspace_core_primitives::{PotKey, PotProof, PotSeed};
 
     <span class="kw">const </span>SEED: [u8; <span class="number">16</span>] = [
         <span class="number">0xd6</span>, <span class="number">0x66</span>, <span class="number">0xcc</span>, <span class="number">0xd8</span>, <span class="number">0xd5</span>, <span class="number">0x93</span>, <span class="number">0xc2</span>, <span class="number">0x3d</span>, <span class="number">0xa8</span>, <span class="number">0xdb</span>, <span class="number">0x6b</span>, <span class="number">0x5b</span>, <span class="number">0x14</span>, <span class="number">0x13</span>, <span class="number">0xb1</span>,
@@ -267,58 +267,58 @@
         <span class="kw">let </span>checkpoint_iterations = <span class="number">100</span>;
 
         <span class="comment">// Can encrypt/decrypt.
-        </span><span class="kw">let </span>checkpoints = create(<span class="kw-2">&amp;</span>seed, <span class="kw-2">&amp;</span>key, checkpoint_iterations);
+        </span><span class="kw">let </span>checkpoints = create(seed, key, checkpoint_iterations);
         <span class="attr">#[cfg(target_arch = <span class="string">&quot;x86_64&quot;</span>)]
         </span>{
-            <span class="kw">let </span>generic_checkpoints = create_generic(<span class="kw-2">&amp;</span>seed, <span class="kw-2">&amp;</span>key, checkpoint_iterations);
+            <span class="kw">let </span>generic_checkpoints = create_generic(seed, key, checkpoint_iterations);
             <span class="macro">assert_eq!</span>(checkpoints, generic_checkpoints);
         }
 
         <span class="kw">let </span>checkpoint_iterations = u64::from(checkpoint_iterations);
 
         <span class="macro">assert!</span>(verify_sequential(
-            <span class="kw-2">&amp;</span>seed,
-            <span class="kw-2">&amp;</span>key,
+            seed,
+            key,
             <span class="kw-2">&amp;*</span>checkpoints,
             checkpoint_iterations
         ));
 
         <span class="comment">// Decryption of invalid cipher text fails.
         </span><span class="kw">let </span><span class="kw-2">mut </span>checkpoints_1 = checkpoints;
-        checkpoints_1[<span class="number">0</span>] = PotCheckpoint::from(BAD_CIPHER);
+        checkpoints_1[<span class="number">0</span>] = PotProof::from(BAD_CIPHER);
         <span class="macro">assert!</span>(!verify_sequential(
-            <span class="kw-2">&amp;</span>seed,
-            <span class="kw-2">&amp;</span>key,
+            seed,
+            key,
             <span class="kw-2">&amp;*</span>checkpoints_1,
             checkpoint_iterations
         ));
 
         <span class="comment">// Decryption with wrong number of iterations fails.
         </span><span class="macro">assert!</span>(!verify_sequential(
-            <span class="kw-2">&amp;</span>seed,
-            <span class="kw-2">&amp;</span>key,
+            seed,
+            key,
             <span class="kw-2">&amp;*</span>checkpoints,
             checkpoint_iterations + <span class="number">2
         </span>));
         <span class="macro">assert!</span>(!verify_sequential(
-            <span class="kw-2">&amp;</span>seed,
-            <span class="kw-2">&amp;</span>key,
+            seed,
+            key,
             <span class="kw-2">&amp;*</span>checkpoints,
             checkpoint_iterations - <span class="number">2
         </span>));
 
         <span class="comment">// Decryption with wrong seed fails.
         </span><span class="macro">assert!</span>(!verify_sequential(
-            <span class="kw-2">&amp;</span>PotSeed::from(SEED_1),
-            <span class="kw-2">&amp;</span>key,
+            PotSeed::from(SEED_1),
+            key,
             <span class="kw-2">&amp;*</span>checkpoints,
             checkpoint_iterations
         ));
 
         <span class="comment">// Decryption with wrong key fails.
         </span><span class="macro">assert!</span>(!verify_sequential(
-            <span class="kw-2">&amp;</span>seed,
-            <span class="kw-2">&amp;</span>PotKey::from(KEY_1),
+            seed,
+            PotKey::from(KEY_1),
             <span class="kw-2">&amp;*</span>checkpoints,
             checkpoint_iterations
         ));
