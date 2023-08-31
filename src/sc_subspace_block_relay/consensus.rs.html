@@ -766,11 +766,35 @@
 <a href="#766" id="766">766</a>
 <a href="#767" id="767">767</a>
 <a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Relay implementation for consensus blocks.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::protocol::compact_block::{CompactBlockClient, CompactBlockServer};
 <span class="kw">use </span><span class="kw">crate</span>::utils::{NetworkPeerHandle, NetworkWrapper, RequestResponseErr};
-<span class="kw">use crate</span>::{ProtocolBackend, ProtocolClient, ProtocolServer, RelayError, LOG_TARGET};
+<span class="kw">use crate</span>::{
+    ProtocolBackend, ProtocolClient, ProtocolServer, ProtocolUnitInfo, RelayError, LOG_TARGET,
+};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>codec::{Compact, CompactLen, Decode, Encode};
 <span class="kw">use </span>futures::channel::oneshot;
@@ -789,6 +813,8 @@
 };
 <span class="kw">use </span>sc_service::SpawnTaskHandle;
 <span class="kw">use </span>sc_transaction_pool_api::{InPoolTransaction, TransactionPool, TxHash};
+<span class="kw">use </span>sp_api::ProvideRuntimeApi;
+<span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi};
 <span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header, NumberFor, One, Zero};
 <span class="kw">use </span>sp_runtime::Justifications;
@@ -812,6 +838,10 @@
 </span><span class="kw">const </span>MAX_RESPONSE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">8 </span>* <span class="number">1024 </span>* <span class="number">1024</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 <span class="doccomment">/// Maximum blocks in the response.
 </span><span class="kw">const </span>MAX_RESPONSE_BLOCKS: NonZeroU32 = NonZeroU32::new(<span class="number">128</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
+
+<span class="doccomment">/// If the encoded size of the extrinsic is less than the threshold,
+/// return the full extrinsic along with the tx hash.
+</span><span class="kw">const </span>TX_SIZE_THRESHOLD: NonZeroUsize = NonZeroUsize::new(<span class="number">32</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
 <span class="doccomment">/// Initial request for a single block.
 </span><span class="attr">#[derive(Encode, Decode)]
@@ -1371,7 +1401,8 @@
 <span class="kw">impl</span>&lt;Block, Client, Pool&gt; ConsensusBackend&lt;Block, Client, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt;,
+    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>new(
@@ -1413,17 +1444,29 @@
     <span class="kw">for </span>ConsensusBackend&lt;Block, Client, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt;,
+    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>download_unit_members(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_hash: <span class="kw-2">&amp;</span>BlockHash&lt;Block&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;)&gt;, RelayError&gt; {
-        <span class="kw">let </span>tx = block_transactions(block_hash, <span class="self">self</span>.client.as_ref())<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(tx
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ProtocolUnitInfo&lt;TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;&gt;, RelayError&gt; {
+        <span class="kw">let </span>txns = block_transactions(block_hash, <span class="self">self</span>.client.as_ref())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(txns
             .into_iter()
-            .map(|extrinsic| (<span class="self">self</span>.transaction_pool.hash_of(<span class="kw-2">&amp;</span>extrinsic), extrinsic))
+            .map(|extrinsic| {
+                <span class="kw">let </span>send_tx = extrinsic.encoded_size() &lt;= TX_SIZE_THRESHOLD.get()
+                    || <span class="self">self
+                        </span>.client
+                        .runtime_api()
+                        .is_inherent(<span class="kw-2">*</span>block_hash, <span class="kw-2">&amp;</span>extrinsic)
+                        .unwrap_or(<span class="bool-val">false</span>);
+                ProtocolUnitInfo {
+                    id: <span class="self">self</span>.transaction_pool.hash_of(<span class="kw-2">&amp;</span>extrinsic),
+                    unit: <span class="kw">if </span>send_tx { <span class="prelude-val">Some</span>(extrinsic) } <span class="kw">else </span>{ <span class="prelude-val">None </span>},
+                }
+            })
             .collect())
     }
 
@@ -1496,7 +1539,8 @@
 ) -&gt; BlockRelayParams&lt;Block&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
+    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>(tx, request_receiver) = async_channel::bounded(NUM_PEER_HINT.get());
