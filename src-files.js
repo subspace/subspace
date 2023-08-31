@@ -29,7 +29,7 @@ var srcIndex = JSON.parse('{\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_transporter":["",[],["lib.rs","weights.rs"]],\
 "sc_consensus_fraud_proof":["",[],["lib.rs"]],\
-"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs"]],\
+"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","import_queue.rs","lib.rs","notification.rs","slot_worker.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
 "sc_proof_of_time":["",[],["lib.rs","slots.rs","source.rs"]],\
 "sc_subspace_block_relay":["",[["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","utils.rs"]],\
