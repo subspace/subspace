@@ -918,6 +918,36 @@
 <a href="#918" id="918">918</a>
 <a href="#919" id="919">919</a>
 <a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -936,6 +966,7 @@
 
 </span><span class="doccomment">//! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 </span><span class="attr">#![feature(
+    const_option,
     impl_trait_in_assoc_type,
     int_roundings,
     type_alias_impl_trait,
@@ -976,7 +1007,9 @@
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_network::NetworkService;
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sc_proof_of_time::source::{PotSource, PotSourceConfig};
+</span><span class="kw">use </span>sc_proof_of_time::source::PotSource;
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>sc_proof_of_time::verifier::PotVerifier;
 <span class="kw">use </span>sc_service::error::Error <span class="kw">as </span>ServiceError;
 <span class="kw">use </span>sc_service::{Configuration, NetworkStarter, SpawnTasksParams, TaskManager};
 <span class="kw">use </span>sc_subspace_block_relay::{build_consensus_relay, NetworkWrapper};
@@ -999,8 +1032,12 @@
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>static_assertions::const_assert;
 <span class="kw">use </span>std::marker::PhantomData;
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{embedded_kzg_settings, Kzg};
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>subspace_core_primitives::PotSeed;
 <span class="kw">use </span>subspace_fraud_proof::verifier_api::VerifierClient;
 <span class="kw">use </span>subspace_networking::libp2p::multiaddr::Protocol;
 <span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
@@ -1014,6 +1051,11 @@
 <span class="comment">// There are multiple places where it is assumed that node is running on 64-bit system, refuse to
 // compile otherwise
 </span><span class="macro">const_assert!</span>(std::mem::size_of::&lt;usize&gt;() &gt;= std::mem::size_of::&lt;u64&gt;());
+
+<span class="doccomment">/// This is over 15 minutes of slots assuming there are no forks, should be both sufficient and not
+/// too large to handle
+</span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">const </span>POT_VERIFIER_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">10_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
 <span class="doccomment">/// Error type for Subspace service.
 </span><span class="attr">#[derive(thiserror::Error, Debug)]
@@ -1118,9 +1160,9 @@
     <span class="doccomment">/// Use the block request handler implementation from subspace
     /// instead of the default substrate handler.
     </span><span class="kw">pub </span>enable_subspace_block_relay: bool,
-    <span class="doccomment">/// Proof of time source config
+    <span class="doccomment">/// Is this node a Timekeeper
     </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-    </span><span class="kw">pub </span>pot_source_config: PotSourceConfig,
+    </span><span class="kw">pub </span>is_timekeeper: bool,
 }
 
 <span class="kw">struct </span>SubspaceExtensionsFactory&lt;PosTable&gt; {
@@ -1172,6 +1214,9 @@
     </span><span class="kw">pub </span>subspace_link: SubspaceLink&lt;Block&gt;,
     <span class="doccomment">/// Segment headers store
     </span><span class="kw">pub </span>segment_headers_store: SegmentHeadersStore&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
+    <span class="doccomment">/// Proof of time verifier
+    </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">pub </span>pot_verifier: PotVerifier,
     <span class="doccomment">/// Telemetry
     </span><span class="kw">pub </span>telemetry: <span class="prelude-ty">Option</span>&lt;Telemetry&gt;,
 }
@@ -1203,6 +1248,7 @@
             NativeElseWasmExecutor&lt;ExecutorDispatch&gt;,
         ) -&gt; Arc&lt;<span class="kw">dyn </span>GenerateGenesisStateRoot&gt;,
     &gt;,
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>pot_external_entropy: <span class="kw-2">&amp;</span>[u8],
 ) -&gt; <span class="prelude-ty">Result</span>&lt;PartialComponents&lt;RuntimeApi, ExecutorDispatch&gt;, ServiceError&gt;
 <span class="kw">where
     </span>PosTable: Table,
@@ -1300,6 +1346,11 @@
     <span class="kw">let </span>fraud_proof_block_import =
         sc_consensus_fraud_proof::block_import(client.clone(), client.clone(), proof_verifier);
 
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">let </span>pot_verifier = PotVerifier::new(
+        PotSeed::from_genesis(client.info().genesis_hash.as_ref(), pot_external_entropy),
+        POT_VERIFIER_CACHE_SIZE,
+    );
     <span class="kw">let </span>(block_import, subspace_link) = sc_consensus_subspace::block_import::&lt;
         PosTable,
         <span class="kw">_</span>,
@@ -1339,6 +1390,8 @@
             }
         },
         segment_headers_store.clone(),
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span>pot_verifier.clone(),
     )<span class="question-mark">?</span>;
 
     <span class="kw">let </span>slot_duration = subspace_link.slot_duration();
@@ -1348,7 +1401,8 @@
         client.clone(),
         kzg,
         select_chain.clone(),
-        <span class="kw">move </span>|| {
+        <span class="comment">// TODO: Remove use current best slot known from PoT verifier in PoT case
+        </span><span class="kw">move </span>|| {
             <span class="kw">let </span>timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
             Slot::from_timestamp(<span class="kw-2">*</span>timestamp, slot_duration)
@@ -1357,12 +1411,16 @@
         config.prometheus_registry(),
         telemetry.as_ref().map(|x| x.handle()),
         config.role.is_authority(),
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span>pot_verifier.clone(),
     )<span class="question-mark">?</span>;
 
     <span class="kw">let </span>other = OtherPartialComponents {
         block_import: Box::new(block_import),
         subspace_link,
         segment_headers_store,
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span>pot_verifier,
         telemetry,
     };
 
@@ -1472,6 +1530,8 @@
         block_import,
         subspace_link,
         segment_headers_store,
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span>pot_verifier,
         <span class="kw-2">mut </span>telemetry,
     } = other;
 
@@ -1685,7 +1745,7 @@
     <span class="kw">if </span>config.role.is_authority() || config.force_new_slot_notifications {
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span><span class="kw">let </span>(pot_source, pot_slot_info_stream) =
-            PotSource::new(config.pot_source_config, client.clone())
+            PotSource::new(config.is_timekeeper, client.clone(), pot_verifier)
                 .map_err(|error| Error::Other(error.into()))<span class="question-mark">?</span>;
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span>{

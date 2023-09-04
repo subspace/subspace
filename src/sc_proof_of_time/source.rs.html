@@ -139,10 +139,30 @@
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
 <a href="#141" id="141">141</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>derive_more::{Deref, DerefMut, From};
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::verifier::PotVerifier;
+<span class="kw">use </span>derive_more::{Deref, DerefMut, From};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::executor::block_on;
-<span class="kw">use </span>futures::SinkExt;
+<span class="kw">use </span>futures::{SinkExt, StreamExt};
 <span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus_slots::Slot;
@@ -152,7 +172,7 @@
 <span class="kw">use </span>std::num::NonZeroU32;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
-<span class="kw">use </span>subspace_core_primitives::{BlockHash, PotCheckpoints, PotKey, PotSeed, SlotNumber};
+<span class="kw">use </span>subspace_core_primitives::{PotCheckpoints, PotSeed, SlotNumber};
 <span class="kw">use </span>subspace_proof_of_time::PotError;
 <span class="kw">use </span>tracing::{debug, error};
 
@@ -164,18 +184,21 @@
     </span><span class="kw">pub </span>checkpoints: PotCheckpoints,
 }
 
+<span class="doccomment">/// Proof of time slot information
+</span><span class="kw">struct </span>NewCheckpoints {
+    <span class="doccomment">/// Proof of time seed
+    </span>seed: PotSeed,
+    <span class="doccomment">/// Iterations per slot
+    </span>slot_iterations: NonZeroU32,
+    <span class="doccomment">/// Slot number
+    </span>slot: Slot,
+    <span class="doccomment">/// Proof of time checkpoints
+    </span>checkpoints: PotCheckpoints,
+}
+
 <span class="doccomment">/// Stream with proof of time slots
 </span><span class="attr">#[derive(Debug, Deref, DerefMut, From)]
 </span><span class="kw">pub struct </span>PotSlotInfoStream(mpsc::Receiver&lt;PotSlotInfo&gt;);
-
-<span class="doccomment">/// Configuration for proof of time source
-</span><span class="attr">#[derive(Debug, Copy, Clone)]
-</span><span class="kw">pub struct </span>PotSourceConfig {
-    <span class="doccomment">/// Is this node a Timekeeper
-    </span><span class="kw">pub </span>is_timekeeper: bool,
-    <span class="doccomment">/// PoT key used initially when PoT chain starts
-    </span><span class="kw">pub </span>initial_key: PotKey,
-}
 
 <span class="doccomment">/// Source of proofs of time.
 ///
@@ -186,48 +209,45 @@
     <span class="comment">// TODO: Use this in `fn run`
     </span><span class="attr">#[allow(dead_code)]
     </span>client: Arc&lt;Client&gt;,
+    pot_verifier: PotVerifier,
+    local_proofs_receiver: mpsc::Receiver&lt;NewCheckpoints&gt;,
+    slot_sender: mpsc::Sender&lt;PotSlotInfo&gt;,
     _block: PhantomData&lt;Block&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, Client&gt; PotSource&lt;Block, Client&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    BlockHash: From&lt;Block::Hash&gt;,
     Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
     Client::Api: SubspaceRuntimeApi&lt;Block, FarmerPublicKey&gt;,
 {
     <span class="kw">pub fn </span>new(
-        config: PotSourceConfig,
+        <span class="comment">// TODO: Respect this boolean flag
+        </span>_is_timekeeper: bool,
         client: Arc&lt;Client&gt;,
+        pot_verifier: PotVerifier,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="self">Self</span>, PotSlotInfoStream), ApiError&gt; {
-        <span class="kw">let </span>PotSourceConfig {
-            <span class="comment">// TODO: Respect this boolean flag
-            </span>is_timekeeper: <span class="kw">_</span>,
-            initial_key,
-        } = config;
-        <span class="kw">let </span>info = client.info();
-        <span class="comment">// TODO: All 3 are incorrect and should be able to continue after node restart
-        </span><span class="kw">let </span>start_slot = SlotNumber::MIN;
-        <span class="kw">let </span>start_seed = PotSeed::from_genesis_block_hash(BlockHash::from(info.genesis_hash));
-        <span class="kw">let </span>start_key = initial_key;
+        <span class="comment">// TODO: Both of following are incorrect and should be able to continue after node restart
+        </span><span class="kw">let </span>start_slot = <span class="number">1</span>;
+        <span class="kw">let </span>start_seed = pot_verifier.genesis_seed();
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span><span class="kw">let </span>best_hash = info.best_hash;
+        </span><span class="kw">let </span>best_hash = client.info().best_hash;
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span><span class="kw">let </span>runtime_api = client.runtime_api();
-        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span><span class="kw">let </span>iterations = runtime_api
+        </span><span class="kw">let </span>slot_iterations = client
+            .runtime_api()
             .pot_parameters(best_hash)<span class="question-mark">?
-            </span>.iterations(Slot::from(start_slot));
+            </span>.slot_iterations(Slot::from(start_slot));
         <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span><span class="kw">let </span>iterations = NonZeroU32::new(<span class="number">100_000_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
+        </span><span class="kw">let </span>slot_iterations = NonZeroU32::new(<span class="number">100_000_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
         <span class="comment">// TODO: Correct capacity
-        </span><span class="kw">let </span>(slot_sender, slot_receiver) = mpsc::channel(<span class="number">10</span>);
+        </span><span class="kw">let </span>(local_proofs_sender, local_proofs_receiver) = mpsc::channel(<span class="number">10</span>);
+        <span class="kw">let </span>(slot_sender, slot_receiver) = mpsc::channel(<span class="number">10</span>);
         thread::Builder::new()
             .name(<span class="string">&quot;timekeeper&quot;</span>.to_string())
             .spawn(<span class="kw">move </span>|| {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                    run_timekeeper(start_seed, start_key, start_slot, iterations, slot_sender)
+                    run_timekeeper(start_seed, start_slot, slot_iterations, local_proofs_sender)
                 {
                     <span class="macro">error!</span>(%error, <span class="string">&quot;Timekeeper exited with an error&quot;</span>);
                 }
@@ -237,6 +257,9 @@
         <span class="prelude-val">Ok</span>((
             <span class="self">Self </span>{
                 client,
+                pot_verifier,
+                local_proofs_receiver,
+                slot_sender,
                 _block: PhantomData,
             },
             PotSlotInfoStream(slot_receiver),
@@ -244,34 +267,49 @@
     }
 
     <span class="doccomment">/// Run proof of time source
-    </span><span class="kw">pub async fn </span>run(<span class="self">self</span>) {
-        <span class="comment">// TODO: Aggregate multiple sources of proofs of time (multiple timekeepers, gossip,
-        //  blockchain itself)
-        </span>std::future::pending().<span class="kw">await
-    </span>}
+    </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
+        <span class="comment">// TODO: More sources of checkpoints (block import, gossip)
+        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(new_checkpoints) = <span class="self">self</span>.local_proofs_receiver.next().<span class="kw">await </span>{
+            <span class="kw">let </span>NewCheckpoints {
+                seed,
+                slot_iterations,
+                slot,
+                checkpoints,
+            } = new_checkpoints;
+
+            <span class="self">self</span>.pot_verifier
+                .inject_verified_checkpoints(seed, slot_iterations, checkpoints);
+
+            <span class="comment">// It doesn&#39;t matter if receiver is dropped
+            </span><span class="kw">let _ </span>= <span class="self">self
+                </span>.slot_sender
+                .send(PotSlotInfo { slot, checkpoints })
+                .<span class="kw">await</span>;
+        }
+    }
 }
 
 <span class="doccomment">/// Runs timekeeper, must be running on a fast dedicated CPU core
 </span><span class="kw">fn </span>run_timekeeper(
     <span class="kw-2">mut </span>seed: PotSeed,
-    <span class="kw-2">mut </span>key: PotKey,
     <span class="kw-2">mut </span>slot: SlotNumber,
-    iterations: NonZeroU32,
-    <span class="kw-2">mut </span>slot_sender: mpsc::Sender&lt;PotSlotInfo&gt;,
+    slot_iterations: NonZeroU32,
+    <span class="kw-2">mut </span>proofs_sender: mpsc::Sender&lt;NewCheckpoints&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PotError&gt; {
     <span class="kw">loop </span>{
-        <span class="kw">let </span>checkpoints = subspace_proof_of_time::prove(seed, key, iterations)<span class="question-mark">?</span>;
+        <span class="kw">let </span>checkpoints = subspace_proof_of_time::prove(seed, slot_iterations)<span class="question-mark">?</span>;
 
-        seed = checkpoints.output().seed();
-        key = seed.key();
-
-        <span class="kw">let </span>slot_info = PotSlotInfo {
+        <span class="kw">let </span>slot_info = NewCheckpoints {
+            seed,
+            slot_iterations,
             slot: Slot::from(slot),
             checkpoints,
         };
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = slot_sender.try_send(slot_info) {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = block_on(slot_sender.send(error.into_inner())) {
+        seed = checkpoints.output().seed();
+
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = proofs_sender.try_send(slot_info) {
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = block_on(proofs_sender.send(error.into_inner())) {
                 <span class="macro">debug!</span>(%error, <span class="string">&quot;Couldn&#39;t send checkpoints, channel is closed&quot;</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
             }

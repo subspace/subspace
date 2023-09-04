@@ -439,9 +439,57 @@
 <a href="#439" id="439">439</a>
 <a href="#440" id="440">440</a>
 <a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
-</span><span class="kw">use </span><span class="kw">crate</span>::Error;
+</span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span><span class="kw">crate</span>::get_chain_constants;
+<span class="kw">use </span><span class="kw">crate</span>::Error;
 <span class="kw">use </span>log::{debug, info, trace, warn};
 <span class="kw">use </span>prometheus_endpoint::Registry;
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
@@ -450,16 +498,22 @@
     BasicQueue, BoxJustificationImport, DefaultImportQueue, Verifier,
 };
 <span class="kw">use </span>sc_consensus_slots::check_equivocation;
-<span class="kw">use </span>sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_DEBUG, CONSENSUS_TRACE};
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>sc_proof_of_time::verifier::PotVerifier;
+<span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+</span><span class="kw">use </span>sc_telemetry::CONSENSUS_DEBUG;
+<span class="kw">use </span>sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_TRACE};
 <span class="kw">use </span>schnorrkel::context::SigningContext;
 <span class="kw">use </span>sp_api::{ApiExt, BlockT, HeaderT, ProvideRuntimeApi, TransactionFor};
 <span class="kw">use </span>sp_block_builder::BlockBuilder <span class="kw">as </span>BlockBuilderApi;
-<span class="kw">use </span>sp_blockchain::{HeaderBackend, <span class="prelude-ty">Result </span><span class="kw">as </span>ClientResult};
+<span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus::{BlockOrigin, Error <span class="kw">as </span>ConsensusError};
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_consensus_subspace::digests::{
-    extract_subspace_digest_items, CompatibleDigestItem, PreDigest,
+    extract_subspace_digest_items, CompatibleDigestItem, PreDigest, SubspaceDigestItems,
 };
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>sp_consensus_subspace::ChainConstants;
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, FarmerSignature, SubspaceApi};
 <span class="kw">use </span>sp_runtime::DigestItem;
 <span class="kw">use </span>std::marker::PhantomData;
@@ -492,7 +546,8 @@
     registry: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Registry&gt;,
     telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
     is_authoring_blocks: bool,
-) -&gt; ClientResult&lt;DefaultImportQueue&lt;Block, Client&gt;&gt;
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>pot_verifier: PotVerifier,
+) -&gt; <span class="prelude-ty">Result</span>&lt;DefaultImportQueue&lt;Block, Client&gt;, sp_blockchain::Error&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Inner: BlockImport&lt;Block, Error = ConsensusError, Transaction = TransactionFor&lt;Client, Block&gt;&gt;
@@ -504,14 +559,22 @@
     SelectChain: sp_consensus::SelectChain&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     SN: Fn() -&gt; Slot + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">let </span>chain_constants = get_chain_constants(client.as_ref())
+        .map_err(|error| sp_blockchain::Error::Application(error.into()))<span class="question-mark">?</span>;
+
     <span class="kw">let </span>verifier = SubspaceVerifier {
         client,
         kzg,
         select_chain,
         slot_now,
         telemetry,
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span>chain_constants,
         reward_signing_context: schnorrkel::context::signing_context(REWARD_SIGNING_CONTEXT),
         is_authoring_blocks,
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span>pot_verifier,
         _pos_table: PhantomData::&lt;PosTable&gt;,
         _block: PhantomData,
     };
@@ -526,23 +589,23 @@
 }
 
 <span class="doccomment">/// Errors encountered by the Subspace authorship task.
-</span><span class="attr">#[derive(Debug, Eq, PartialEq)]
-#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, derive(thiserror::Error))]
+</span><span class="attr">#[derive(Debug, Eq, PartialEq, thiserror::Error)]
 </span><span class="kw">pub enum </span>VerificationError&lt;Header: HeaderT&gt; {
     <span class="doccomment">/// Header has a bad seal
-    </span><span class="attr">#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, error(<span class="string">&quot;Header {0:?} has a bad seal&quot;</span>))]
+    </span><span class="attr">#[error(<span class="string">&quot;Header {0:?} has a bad seal&quot;</span>)]
     </span>HeaderBadSeal(Header::Hash),
     <span class="doccomment">/// Header is unsealed
-    </span><span class="attr">#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, error(<span class="string">&quot;Header {0:?} is unsealed&quot;</span>))]
+    </span><span class="attr">#[error(<span class="string">&quot;Header {0:?} is unsealed&quot;</span>)]
     </span>HeaderUnsealed(Header::Hash),
     <span class="doccomment">/// Bad reward signature
-    </span><span class="attr">#[cfg_attr(feature = <span class="string">&quot;thiserror&quot;</span>, error(<span class="string">&quot;Bad reward signature on {0:?}&quot;</span>))]
+    </span><span class="attr">#[error(<span class="string">&quot;Bad reward signature on {0:?}&quot;</span>)]
     </span>BadRewardSignature(Header::Hash),
+    <span class="doccomment">/// Invalid proof of time
+    </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    #[error(<span class="string">&quot;Invalid proof of time&quot;</span>)]
+    </span>InvalidProofOfTime,
     <span class="doccomment">/// Verification error
-    </span><span class="attr">#[cfg_attr(
-        feature = <span class="string">&quot;thiserror&quot;</span>,
-        error(<span class="string">&quot;Verification error on slot {0:?}: {1:?}&quot;</span>)
-    )]
+    </span><span class="attr">#[error(<span class="string">&quot;Verification error on slot {0:?}: {1:?}&quot;</span>)]
     </span>VerificationError(Slot, subspace_verification::Error),
 }
 
@@ -550,6 +613,7 @@
 </span><span class="kw">enum </span>CheckedHeader&lt;H, S&gt; {
     <span class="doccomment">/// A header which has slot in the future. this is the full header (not stripped)
     /// and the slot in which it should be processed.
+    </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
     </span>Deferred(H, Slot),
     <span class="doccomment">/// A header which is fully checked, including signature. This is the pre-header
     /// accompanied by the seal components.
@@ -566,11 +630,11 @@
     <span class="doccomment">/// The header being verified.
     </span>header: Header,
     <span class="doccomment">/// The slot number of the current time.
+    </span><span class="comment">// TODO: Remove field once PoT is the only option
+    </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
     </span>slot_now: Slot,
     <span class="doccomment">/// Parameters for solution verification
     </span>verify_solution_params: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>VerifySolutionParams,
-    <span class="doccomment">/// Signing context for reward signature
-    </span>reward_signing_context: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>SigningContext,
 }
 
 <span class="doccomment">/// Information from verified header
@@ -586,10 +650,15 @@
     client: Arc&lt;Client&gt;,
     kzg: Kzg,
     select_chain: SelectChain,
-    slot_now: SN,
+    <span class="comment">// TODO: Remove field once PoT is the only option
+    </span>slot_now: SN,
     telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span>chain_constants: ChainConstants,
     reward_signing_context: SigningContext,
     is_authoring_blocks: bool,
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span>pot_verifier: PotVerifier,
     _pos_table: PhantomData&lt;PosTable&gt;,
     _block: PhantomData&lt;Block&gt;,
 }
@@ -614,19 +683,24 @@
     ///
     /// `pre_digest` argument is optional in case it is available to avoid doing the work of
     /// extracting it from the header twice.
-    </span><span class="kw">fn </span>check_header(
+    </span><span class="kw">async fn </span>check_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        params: VerificationParams&lt;Block::Header&gt;,
-        pre_digest: PreDigest&lt;FarmerPublicKey, FarmerPublicKey&gt;,
+        params: VerificationParams&lt;<span class="lifetime">&#39;_</span>, Block::Header&gt;,
+        subspace_digest_items: SubspaceDigestItems&lt;
+            FarmerPublicKey,
+            FarmerPublicKey,
+            FarmerSignature,
+        &gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;CheckedHeader&lt;Block::Header, VerifiedHeaderInfo&gt;, VerificationError&lt;Block::Header&gt;&gt;
     {
         <span class="kw">let </span>VerificationParams {
             <span class="kw-2">mut </span>header,
-            slot_now,
+            <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+            </span>slot_now,
             verify_solution_params,
-            reward_signing_context,
         } = params;
 
+        <span class="kw">let </span>pre_digest = subspace_digest_items.pre_digest;
         <span class="kw">let </span>slot = pre_digest.slot();
 
         <span class="kw">let </span>seal = header
@@ -641,9 +715,26 @@
         <span class="comment">// The pre-hash of the header doesn&#39;t include the seal and that&#39;s what we sign
         </span><span class="kw">let </span>pre_hash = header.hash();
 
-        <span class="kw">if </span>slot &gt; slot_now {
+        <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+        </span><span class="kw">if </span>slot &gt; slot_now {
             header.digest_mut().push(seal);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(CheckedHeader::Deferred(header, slot));
+        }
+
+        <span class="comment">// TODO: Extend/optimize this check once we have checkpoints in justifications
+        // Check proof of time between slot of the block and future proof of time
+        </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span><span class="kw">if </span>!<span class="self">self
+            </span>.pot_verifier
+            .is_proof_valid(
+                pre_digest.pot_info().proof_of_time().seed(),
+                subspace_digest_items.pot_slot_iterations,
+                <span class="self">self</span>.chain_constants.block_authoring_delay(),
+                pre_digest.pot_info().future_proof_of_time(),
+            )
+            .<span class="kw">await
+        </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProofOfTime);
         }
 
         <span class="comment">// Verify that block is signed properly
@@ -651,7 +742,7 @@
             pre_hash.as_ref(),
             <span class="kw-2">&amp;</span>RewardSignature::from(<span class="kw-2">&amp;</span>signature),
             <span class="kw-2">&amp;</span>PublicKey::from(<span class="kw-2">&amp;</span>pre_digest.solution().public_key),
-            reward_signing_context,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.reward_signing_context,
         )
         .is_err()
         {
@@ -766,7 +857,6 @@
             FarmerSignature,
         &gt;(<span class="kw-2">&amp;</span>block.header)
         .map_err(Error::&lt;Block::Header&gt;::from)<span class="question-mark">?</span>;
-        <span class="kw">let </span>pre_digest = subspace_digest_items.pre_digest;
 
         <span class="comment">// Check if farmer&#39;s plot is burned.
         // TODO: Add to header and store in aux storage?
@@ -775,7 +865,7 @@
             .runtime_api()
             .is_in_block_list(
                 <span class="kw-2">*</span>block.header.parent_hash(),
-                <span class="kw-2">&amp;</span>pre_digest.solution().public_key,
+                <span class="kw-2">&amp;</span>subspace_digest_items.pre_digest.solution().public_key,
             )
             .or_else(|error| {
                 <span class="kw">if </span>block.state_action.skip_execution_checks() {
@@ -788,11 +878,15 @@
             <span class="macro">warn!</span>(
                 target: <span class="string">&quot;subspace&quot;</span>,
                 <span class="string">&quot;Verifying block with solution provided by farmer in block list: {}&quot;</span>,
-                pre_digest.solution().public_key
+                subspace_digest_items.pre_digest.solution().public_key
             );
 
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;Block::Header&gt;::FarmerInBlockList(
-                pre_digest.solution().public_key.clone(),
+                subspace_digest_items
+                    .pre_digest
+                    .solution()
+                    .public_key
+                    .clone(),
             )
             .into());
         }
@@ -806,28 +900,25 @@
         // from the header are checked against expected correct values during block import as well
         // as whether piece in the header corresponds to the actual archival history of the
         // blockchain.
-        </span><span class="kw">let </span>checked_header = {
-            <span class="comment">// We add one to the current slot to allow for some small drift.
-            // FIXME https://github.com/paritytech/substrate/issues/1019 in the future, alter this
-            //  queue to allow deferring of headers
-            </span><span class="self">self</span>.check_header(
+        </span><span class="kw">let </span>checked_header = <span class="self">self
+            </span>.check_header(
                 VerificationParams {
                     header: block.header.clone(),
-                    slot_now: slot_now + <span class="number">1</span>,
+                    <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+                    </span>slot_now: slot_now + <span class="number">1</span>,
                     verify_solution_params: <span class="kw-2">&amp;</span>VerifySolutionParams {
                         <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
                         </span>global_randomness: subspace_digest_items.global_randomness,
                         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-                        </span>proof_of_time: pre_digest.pot_info().proof_of_time(),
+                        </span>proof_of_time: subspace_digest_items.pre_digest.pot_info().proof_of_time(),
                         solution_range: subspace_digest_items.solution_range,
                         piece_check_params: <span class="prelude-val">None</span>,
                     },
-                    reward_signing_context: <span class="kw-2">&amp;</span><span class="self">self</span>.reward_signing_context,
                 },
-                pre_digest,
+                subspace_digest_items,
             )
-            .map_err(Error::&lt;Block::Header&gt;::from)<span class="question-mark">?
-        </span>};
+            .<span class="kw">await
+            </span>.map_err(Error::&lt;Block::Header&gt;::from)<span class="question-mark">?</span>;
 
         <span class="kw">match </span>checked_header {
             CheckedHeader::Checked(pre_header, verified_info) =&gt; {
@@ -867,7 +958,8 @@
 
                 <span class="prelude-val">Ok</span>(block)
             }
-            CheckedHeader::Deferred(a, b) =&gt; {
+            <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
+            </span>CheckedHeader::Deferred(a, b) =&gt; {
                 <span class="macro">debug!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checking {:?} failed; {:?}, {:?}.&quot;</span>, hash, a, b);
                 <span class="macro">telemetry!</span>(
                     <span class="self">self</span>.telemetry;
