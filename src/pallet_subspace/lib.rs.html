@@ -1829,7 +1829,7 @@
 </span><span class="kw">pub trait </span>GlobalRandomnessIntervalTrigger {
     <span class="doccomment">/// Trigger a global randomness update. This should be called during every block, after
     /// initialization is done.
-    </span><span class="kw">fn </span>trigger&lt;T: Config&gt;(block_number: T::BlockNumber, por_randomness: Randomness);
+    </span><span class="kw">fn </span>trigger&lt;T: Config&gt;(block_number: T::BlockNumber, block_randomness: Randomness);
 }
 
 <span class="doccomment">/// A type signifying to Subspace that it should perform a global randomness update with an internal
@@ -1839,9 +1839,9 @@
 
 <span class="comment">// TODO: Remove when switching to PoT by default
 </span><span class="kw">impl </span>GlobalRandomnessIntervalTrigger <span class="kw">for </span>NormalGlobalRandomnessInterval {
-    <span class="kw">fn </span>trigger&lt;T: Config&gt;(block_number: T::BlockNumber, por_randomness: Randomness) {
+    <span class="kw">fn </span>trigger&lt;T: Config&gt;(block_number: T::BlockNumber, block_randomness: Randomness) {
         <span class="kw">if </span>&lt;Pallet&lt;T&gt;&gt;::should_update_global_randomness(block_number) {
-            &lt;Pallet&lt;T&gt;&gt;::enact_update_global_randomness(block_number, por_randomness);
+            &lt;Pallet&lt;T&gt;&gt;::enact_update_global_randomness(block_number, block_randomness);
         }
     }
 }
@@ -2213,9 +2213,10 @@
         &gt;,
     &gt;;
 
-    <span class="doccomment">/// Temporary value (cleared at block finalization) which contains current block PoR randomness.
+    <span class="doccomment">/// The current block randomness, updated at block initialization. When the proof of time feature
+    /// is enabled it derived from PoT otherwise PoR.
     </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PorRandomness&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, Randomness&gt;;
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>BlockRandomness&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, Randomness&gt;;
 
     <span class="doccomment">/// Enable storage access for all users.
     </span><span class="attr">#[pallet::storage]
@@ -2480,10 +2481,10 @@
     /// has returned `true`, and the caller is the only caller of this function.
     </span><span class="comment">// TODO: Remove when switching to PoT by default
     </span><span class="attr">#[cfg_attr(feature = <span class="string">&quot;pot&quot;</span>, allow(unused_variables))]
-    </span><span class="kw">fn </span>enact_update_global_randomness(_block_number: T::BlockNumber, por_randomness: Randomness) {
+    </span><span class="kw">fn </span>enact_update_global_randomness(_block_number: T::BlockNumber, block_randomness: Randomness) {
         <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
         </span>GlobalRandomnesses::&lt;T&gt;::mutate(|global_randomnesses| {
-            global_randomnesses.next = <span class="prelude-val">Some</span>(por_randomness);
+            global_randomnesses.next = <span class="prelude-val">Some</span>(block_randomness);
         });
     }
 
@@ -2654,10 +2655,13 @@
 
         <span class="comment">// Extract PoR randomness from pre-digest.
         </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span><span class="kw">let </span>por_randomness = derive_randomness(pre_digest.solution(), pre_digest.slot().into());
-        <span class="comment">// Store PoR randomness for block duration as it might be useful.
-        </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span>PorRandomness::&lt;T&gt;::put(por_randomness);
+        </span><span class="kw">let </span>block_randomness = derive_randomness(pre_digest.solution(), pre_digest.slot().into());
+
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span><span class="kw">let </span>block_randomness = pre_digest.proof_of_time.derive_global_randomness();
+
+        <span class="comment">// Update the block randomness.
+        </span>BlockRandomness::&lt;T&gt;::put(block_randomness);
 
         <span class="comment">// Deposit global randomness data such that light client can validate blocks later.
         </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
@@ -2671,7 +2675,7 @@
 
         <span class="comment">// Enact global randomness update, if necessary.
         </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span>T::GlobalRandomnessIntervalTrigger::trigger::&lt;T&gt;(block_number, por_randomness);
+        </span>T::GlobalRandomnessIntervalTrigger::trigger::&lt;T&gt;(block_number, block_randomness);
         <span class="comment">// Enact era change, if necessary.
         </span>T::EraChangeTrigger::trigger::&lt;T&gt;(block_number);
 
@@ -2702,9 +2706,6 @@
                 next_solution_range,
             ));
         }
-
-        <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span>PorRandomness::&lt;T&gt;::take();
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>((public_key, sector_index, scalar, audit_chunk_offset, slot, _reward_address)) =
             CurrentBlockAuthorInfo::&lt;T&gt;::take()
@@ -3449,13 +3450,12 @@
     }
 }
 
-<span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-</span><span class="kw">impl</span>&lt;T: Config&gt; frame_support::traits::Randomness&lt;T::Hash, T::BlockNumber&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
+<span class="kw">impl</span>&lt;T: Config&gt; frame_support::traits::Randomness&lt;T::Hash, T::BlockNumber&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
     <span class="kw">fn </span>random(subject: <span class="kw-2">&amp;</span>[u8]) -&gt; (T::Hash, T::BlockNumber) {
         <span class="kw">let </span><span class="kw-2">mut </span>subject = subject.to_vec();
         subject.extend_from_slice(
-            PorRandomness::&lt;T&gt;::get()
-                .expect(<span class="string">&quot;PoR randomness is always set in block initialization; qed&quot;</span>)
+            BlockRandomness::&lt;T&gt;::get()
+                .expect(<span class="string">&quot;Block randomness is always set in block initialization; qed&quot;</span>)
                 .as_ref(),
         );
 
@@ -3468,8 +3468,8 @@
     <span class="kw">fn </span>random_seed() -&gt; (T::Hash, T::BlockNumber) {
         (
             T::Hashing::hash(
-                PorRandomness::&lt;T&gt;::get()
-                    .expect(<span class="string">&quot;PoR randomness is always set in block initialization; qed&quot;</span>)
+                BlockRandomness::&lt;T&gt;::get()
+                    .expect(<span class="string">&quot;Block randomness is always set in block initialization; qed&quot;</span>)
                     .as_ref(),
             ),
             frame_system::Pallet::&lt;T&gt;::current_block_number(),
