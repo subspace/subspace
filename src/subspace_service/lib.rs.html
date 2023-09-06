@@ -939,14 +939,6 @@
 <a href="#939" id="939">939</a>
 <a href="#940" id="940">940</a>
 <a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1005,6 +997,8 @@
 };
 <span class="kw">use </span>sc_executor::{NativeElseWasmExecutor, NativeExecutionDispatch};
 <span class="kw">use </span>sc_network::NetworkService;
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">use </span>sc_proof_of_time::gossip::pot_gossip_peers_set_config;
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>sc_proof_of_time::source::PotSource;
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
@@ -1641,10 +1635,9 @@
     </span>};
     <span class="kw">let </span><span class="kw-2">mut </span>net_config = sc_network::config::FullNetworkConfiguration::new(<span class="kw-2">&amp;</span>config.network);
     net_config.add_notification_protocol(cdm_gossip_peers_set_config());
-    <span class="comment">// TODO: Restore PoT gossip
-    // #[cfg(feature = &quot;pot&quot;)]
-    // net_config.add_notification_protocol(pot_gossip_peers_set_config());
-    </span><span class="kw">let </span>sync_mode = Arc::clone(<span class="kw-2">&amp;</span>net_config.network_config.sync_mode);
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span>net_config.add_notification_protocol(pot_gossip_peers_set_config());
+    <span class="kw">let </span>sync_mode = Arc::clone(<span class="kw-2">&amp;</span>net_config.network_config.sync_mode);
     <span class="kw">let </span>(network_service, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
         sc_service::build_network(sc_service::BuildNetworkParams {
             config: <span class="kw-2">&amp;</span>config,
@@ -1740,34 +1733,25 @@
     <span class="kw">let </span>block_importing_notification_stream = subspace_link.block_importing_notification_stream();
     <span class="kw">let </span>archived_segment_notification_stream = subspace_link.archived_segment_notification_stream();
 
-    <span class="kw">if </span>config.role.is_authority() || config.force_new_slot_notifications {
-        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span><span class="kw">let </span>(pot_source, pot_slot_info_stream) =
-            PotSource::new(config.is_timekeeper, client.clone(), pot_verifier)
-                .map_err(|error| Error::Other(error.into()))<span class="question-mark">?</span>;
-        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span>{
-            task_manager.spawn_essential_handle().spawn_blocking(
-                <span class="string">&quot;pot-source&quot;</span>,
-                <span class="prelude-val">Some</span>(<span class="string">&quot;pot&quot;</span>),
-                pot_source.run(),
-            );
-            <span class="comment">// TODO: Restore PoT gossip
-            // let pot_gossip_worker = PotGossipWorker::&lt;Block&gt;::new(
-            //     &amp;pot_components,
-            //     network_service.clone(),
-            //     sync_service.clone(),
-            // );
-            // let gossip_sender = pot_gossip_worker.gossip_sender();
-            // task_manager.spawn_essential_handle().spawn_blocking(
-            //     &quot;pot-gossip-worker&quot;,
-            //     Some(&quot;pot&quot;),
-            //     async move {
-            //         pot_gossip_worker.run().await;
-            //     },
-            // );
-        </span>}
+    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+    </span><span class="kw">let </span>pot_slot_info_stream = {
+        <span class="kw">let </span>(pot_source, pot_gossip_worker, pot_slot_info_stream) = PotSource::new(
+            config.is_timekeeper,
+            client.clone(),
+            pot_verifier,
+            network_service.clone(),
+            sync_service.clone(),
+        )
+        .map_err(|error| Error::Other(error.into()))<span class="question-mark">?</span>;
+        <span class="kw">let </span>spawn_essential_handle = task_manager.spawn_essential_handle();
 
+        spawn_essential_handle.spawn(<span class="string">&quot;pot-source&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;pot&quot;</span>), pot_source.run());
+        spawn_essential_handle.spawn_blocking(<span class="string">&quot;pot-gossip&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;pot&quot;</span>), pot_gossip_worker.run());
+
+        pot_slot_info_stream
+    };
+
+    <span class="kw">if </span>config.role.is_authority() || config.force_new_slot_notifications {
         <span class="kw">let </span>proposer_factory = ProposerFactory::new(
             task_manager.spawn_handle(),
             client.clone(),

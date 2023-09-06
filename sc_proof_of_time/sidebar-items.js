@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["start_slot_worker"],"mod":["source","verifier"],"trait":["PotSlotWorker"]};
+window.SIDEBAR_ITEMS = {"fn":["start_slot_worker"],"mod":["gossip","source","verifier"],"trait":["PotSlotWorker"]};
