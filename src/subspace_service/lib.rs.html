@@ -933,12 +933,6 @@
 <a href="#933" id="933">933</a>
 <a href="#934" id="934">934</a>
 <a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a>
-<a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
-<a href="#940" id="940">940</a>
-<a href="#941" id="941">941</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -974,7 +968,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::metrics::NodeMetrics;
 <span class="kw">use </span><span class="kw">crate</span>::tx_pre_validator::ConsensusChainTxPreValidator;
 <span class="kw">use </span>cross_domain_message_gossip::cdm_gossip_peers_set_config;
-<span class="kw">use </span>derive_more::{Deref, DerefMut, Into};
 <span class="kw">use </span>domain_runtime_primitives::{BlockNumber <span class="kw">as </span>DomainNumber, Hash <span class="kw">as </span>DomainHash};
 <span class="kw">pub use </span>dsn::DsnConfig;
 <span class="kw">use </span>frame_system_rpc_runtime_api::AccountNonceApi;
@@ -1118,7 +1111,7 @@
 &gt;;
 
 <span class="doccomment">/// Subspace networking instantiation variant
-</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="attr">#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 </span><span class="kw">pub enum </span>SubspaceNetworking {
     <span class="doccomment">/// Use existing networking instance
@@ -1136,12 +1129,9 @@
 }
 
 <span class="doccomment">/// Subspace-specific service configuration.
-</span><span class="attr">#[derive(Debug, Deref, DerefMut, Into)]
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SubspaceConfiguration {
     <span class="doccomment">/// Base configuration.
-    </span><span class="attr">#[deref]
-    #[deref_mut]
-    #[into]
     </span><span class="kw">pub </span>base: Configuration,
     <span class="doccomment">/// Whether slot notifications need to be present even if node is not responsible for block
     /// authoring.
@@ -1528,7 +1518,7 @@
         <span class="kw-2">mut </span>telemetry,
     } = other;
 
-    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking.clone() {
+    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking {
         SubspaceNetworking::Reuse {
             node,
             bootstrap_nodes,
@@ -1537,7 +1527,7 @@
             <span class="kw">let </span>dsn_protocol_version = hex::encode(client.chain_info().genesis_hash);
 
             <span class="macro">debug!</span>(
-                chain_type=<span class="question-mark">?</span>config.chain_spec.chain_type(),
+                chain_type=<span class="question-mark">?</span>config.base.chain_spec.chain_type(),
                 genesis_hash=%hex::encode(client.chain_info().genesis_hash),
                 <span class="string">&quot;Setting DSN protocol version...&quot;
             </span>);
@@ -1618,7 +1608,7 @@
 
             node_listeners
         } <span class="kw">else </span>{
-            bootstrap_nodes.clone()
+            bootstrap_nodes
         }
     };
 
@@ -1633,14 +1623,14 @@
     } <span class="kw">else </span>{
         <span class="prelude-val">None
     </span>};
-    <span class="kw">let </span><span class="kw-2">mut </span>net_config = sc_network::config::FullNetworkConfiguration::new(<span class="kw-2">&amp;</span>config.network);
+    <span class="kw">let </span><span class="kw-2">mut </span>net_config = sc_network::config::FullNetworkConfiguration::new(<span class="kw-2">&amp;</span>config.base.network);
     net_config.add_notification_protocol(cdm_gossip_peers_set_config());
     <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
     </span>net_config.add_notification_protocol(pot_gossip_peers_set_config());
     <span class="kw">let </span>sync_mode = Arc::clone(<span class="kw-2">&amp;</span>net_config.network_config.sync_mode);
     <span class="kw">let </span>(network_service, system_rpc_tx, tx_handler_controller, network_starter, sync_service) =
         sc_service::build_network(sc_service::BuildNetworkParams {
-            config: <span class="kw-2">&amp;</span>config,
+            config: <span class="kw-2">&amp;</span>config.base,
             net_config,
             client: client.clone(),
             transaction_pool: transaction_pool.clone(),
@@ -1651,14 +1641,13 @@
             block_relay,
         })<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>subspace_sync_oracle =
-        SubspaceSyncOracle::new(config.force_authoring, sync_service.clone());
+    <span class="kw">let </span>sync_oracle = SubspaceSyncOracle::new(config.base.force_authoring, sync_service.clone());
 
     <span class="kw">let </span>subspace_archiver = create_subspace_archiver(
         segment_headers_store.clone(),
         <span class="kw-2">&amp;</span>subspace_link,
         client.clone(),
-        subspace_sync_oracle.clone(),
+        sync_oracle.clone(),
         telemetry.as_ref().map(|telemetry| telemetry.handle()),
     );
 
@@ -1695,7 +1684,7 @@
             );
     }
 
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(registry) = config.prometheus_registry().as_ref() {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(registry) = config.base.prometheus_registry() {
         <span class="kw">match </span>NodeMetrics::new(
             client.clone(),
             client.import_notification_stream(),
@@ -1716,9 +1705,9 @@
         }
     }
 
-    <span class="kw">if </span>config.offchain_worker.enabled {
+    <span class="kw">if </span>config.base.offchain_worker.enabled {
         sc_service::build_offchain_workers(
-            <span class="kw-2">&amp;</span>config,
+            <span class="kw-2">&amp;</span>config.base,
             task_manager.spawn_handle(),
             client.clone(),
             network_service.clone(),
@@ -1726,7 +1715,6 @@
     }
 
     <span class="kw">let </span>backoff_authoring_blocks: <span class="prelude-ty">Option</span>&lt;()&gt; = <span class="prelude-val">None</span>;
-    <span class="kw">let </span>prometheus_registry = config.prometheus_registry().cloned();
 
     <span class="kw">let </span>new_slot_notification_stream = subspace_link.new_slot_notification_stream();
     <span class="kw">let </span>reward_signing_notification_stream = subspace_link.reward_signing_notification_stream();
@@ -1751,12 +1739,12 @@
         pot_slot_info_stream
     };
 
-    <span class="kw">if </span>config.role.is_authority() || config.force_new_slot_notifications {
+    <span class="kw">if </span>config.base.role.is_authority() || config.force_new_slot_notifications {
         <span class="kw">let </span>proposer_factory = ProposerFactory::new(
             task_manager.spawn_handle(),
             client.clone(),
             transaction_pool.clone(),
-            prometheus_registry.as_ref(),
+            config.base.prometheus_registry(),
             telemetry.as_ref().map(|x| x.handle()),
         );
 
@@ -1765,7 +1753,7 @@
             select_chain: select_chain.clone(),
             env: proposer_factory,
             block_import,
-            sync_oracle: subspace_sync_oracle.clone(),
+            sync_oracle: sync_oracle.clone(),
             justification_sync_link: sync_service.clone(),
             create_inherent_data_providers: {
                 <span class="kw">let </span>client = client.clone();
@@ -1795,7 +1783,7 @@
                     }
                 }
             },
-            force_authoring: config.force_authoring,
+            force_authoring: config.base.force_authoring,
             backoff_authoring_blocks,
             subspace_link: subspace_link.clone(),
             segment_headers_store: segment_headers_store.clone(),
@@ -1832,7 +1820,7 @@
             <span class="kw">let </span>reward_signing_notification_stream = reward_signing_notification_stream.clone();
             <span class="kw">let </span>archived_segment_notification_stream = archived_segment_notification_stream.clone();
             <span class="kw">let </span>transaction_pool = transaction_pool.clone();
-            <span class="kw">let </span>chain_spec = config.chain_spec.cloned_box();
+            <span class="kw">let </span>chain_spec = config.base.chain_spec.cloned_box();
 
             Box::new(<span class="kw">move </span>|deny_unsafe, subscription_executor| {
                 <span class="kw">let </span>deps = rpc::FullDeps {
@@ -1847,7 +1835,7 @@
                         .clone(),
                     dsn_bootstrap_nodes: dsn_bootstrap_nodes.clone(),
                     segment_headers_store: segment_headers_store.clone(),
-                    sync_oracle: subspace_sync_oracle.clone(),
+                    sync_oracle: sync_oracle.clone(),
                     kzg: subspace_link.kzg().clone(),
                 };
 
@@ -1858,7 +1846,7 @@
         },
         backend: backend.clone(),
         system_rpc_tx,
-        config: config.into(),
+        config: config.base,
         telemetry: telemetry.as_mut(),
         tx_handler_controller,
         sync_service: sync_service.clone(),
