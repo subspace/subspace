@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["PotSlotInfo","PotSlotInfoStream","PotSource"]};
+window.SIDEBAR_ITEMS = {"mod":["gossip"],"struct":["PotSlotInfo","PotSlotInfoStream","PotSourceWorker"]};

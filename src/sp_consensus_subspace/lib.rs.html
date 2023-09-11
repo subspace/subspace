@@ -734,6 +734,11 @@
 <a href="#734" id="734">734</a>
 <a href="#735" id="735">735</a>
 <a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -779,9 +784,10 @@
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>sp_std::num::NonZeroU32;
 <span class="kw">use </span>sp_std::vec::Vec;
-<span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
+<span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
+</span><span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>subspace_core_primitives::Blake2b256Hash;
+</span><span class="kw">use </span>subspace_core_primitives::Blake3Hash;
 <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
 </span><span class="kw">use </span>subspace_core_primitives::Randomness;
 <span class="kw">use </span>subspace_core_primitives::{
@@ -795,7 +801,8 @@
 </span><span class="kw">use </span>subspace_proof_of_space::shim::ShimTable;
 <span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
 </span><span class="kw">use </span>subspace_proof_of_space::PosTableType;
-<span class="kw">use </span>subspace_proof_of_space::Table;
+<span class="attr">#[cfg(feature = <span class="string">&quot;std&quot;</span>)]
+</span><span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
 <span class="kw">use </span>subspace_verification::{check_reward_signature, VerifySolutionParams};
 
@@ -872,21 +879,22 @@
 
 <span class="doccomment">/// Change of parameters to apply to PoT chain
 </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode, TypeInfo, MaxEncodedLen)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Decode, Encode, TypeInfo, MaxEncodedLen)]
 </span><span class="kw">pub struct </span>PotParametersChange {
     <span class="doccomment">/// At which slot change of parameters takes effect
     </span><span class="kw">pub </span>slot: Slot,
-    <span class="doccomment">/// New number of iterations
-    </span><span class="kw">pub </span>iterations: NonZeroU32,
+    <span class="doccomment">/// New number of slot iterations
+    </span><span class="kw">pub </span>slot_iterations: NonZeroU32,
     <span class="doccomment">/// Entropy that should be injected at this time
     </span><span class="comment">// TODO: Reconsider if the type is correct here
-    </span><span class="kw">pub </span>entropy: Blake2b256Hash,
+    </span><span class="kw">pub </span>entropy: Blake3Hash,
 }
 
 <span class="doccomment">/// An consensus log item for Subspace.
 </span><span class="attr">#[derive(Debug, Decode, Encode, Clone, PartialEq, Eq)]
 </span><span class="kw">enum </span>ConsensusLog {
-    <span class="doccomment">/// Number of iterations for proof of time per slot.
+    <span class="doccomment">/// Number of iterations for proof of time per slot, corresponds to slot that directly follows
+    /// parent block&#39;s slot and can change before slot for which block is produced.
     </span><span class="attr">#[codec(index = <span class="number">0</span>)]
     #[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
     </span>PotSlotIterations(NonZeroU32),
@@ -1383,7 +1391,8 @@
 </span><span class="kw">pub enum </span>PotParameters {
     <span class="doccomment">/// Initial version of the parameters
     </span>V0 {
-        <span class="doccomment">/// Base number of iterations per slot
+        <span class="doccomment">/// Number of iterations for proof of time per slot, corresponds to slot that directly
+        /// follows parent block&#39;s slot and can change before slot for which block is produced
         </span>slot_iterations: NonZeroU32,
         <span class="doccomment">/// Optional next scheduled change of parameters
         </span>next_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
@@ -1392,20 +1401,21 @@
 
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">impl </span>PotParameters {
-    <span class="doccomment">/// Number of iterations for proof of time per slot, taking into account potential future change
-    </span><span class="kw">pub fn </span>slot_iterations(<span class="kw-2">&amp;</span><span class="self">self</span>, slot: Slot) -&gt; NonZeroU32 {
+    <span class="doccomment">/// Number of iterations for proof of time per slot, corresponds to slot that directly follows
+    /// parent block&#39;s slot and can change before slot for which block is produced
+    </span><span class="kw">pub fn </span>slot_iterations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NonZeroU32 {
         <span class="kw">let </span><span class="self">Self</span>::V0 {
-            slot_iterations,
-            next_change,
+            slot_iterations, ..
         } = <span class="self">self</span>;
 
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(next_change) = next_change {
-            <span class="kw">if </span>next_change.slot &gt;= slot {
-                <span class="kw">return </span>next_change.iterations;
-            }
-        }
-
         <span class="kw-2">*</span>slot_iterations
+    }
+
+    <span class="doccomment">/// Get next proof of time parameters change if any
+    </span><span class="kw">pub fn </span>next_parameters_change(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt; {
+        <span class="kw">let </span><span class="self">Self</span>::V0 { next_change, .. } = <span class="self">self</span>;
+
+        <span class="kw-2">*</span>next_change
     }
 }
 
