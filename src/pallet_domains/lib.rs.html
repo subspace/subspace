@@ -1594,6 +1594,12 @@
 <a href="#1594" id="1594">1594</a>
 <a href="#1595" id="1595">1595</a>
 <a href="#1596" id="1596">1596</a>
+<a href="#1597" id="1597">1597</a>
+<a href="#1598" id="1598">1598</a>
+<a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1706,8 +1712,9 @@
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
         do_auto_stake_block_rewards, do_deregister_operator, do_nominate_operator,
-        do_register_operator, do_reward_operators, do_switch_operator_domain, do_withdraw_stake,
-        Error <span class="kw">as </span>StakingError, Nominator, Operator, OperatorConfig, StakingSummary, Withdraw,
+        do_register_operator, do_reward_operators, do_slash_operators, do_switch_operator_domain,
+        do_withdraw_stake, Error <span class="kw">as </span>StakingError, Nominator, Operator, OperatorConfig,
+        StakingSummary, Withdraw,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::{
         do_finalize_domain_current_epoch, do_unlock_pending_withdrawals,
@@ -2304,7 +2311,7 @@
                 }
                 <span class="comment">// Add the exeuctione receipt to the block tree
                 </span>ReceiptType::Accepted(accepted_receipt_type) =&gt; {
-                    <span class="kw">let </span>maybe_pruned_domain_block_info = process_execution_receipt::&lt;T&gt;(
+                    <span class="kw">let </span>maybe_confirmed_domain_block_info = process_execution_receipt::&lt;T&gt;(
                         domain_id,
                         operator_id,
                         receipt,
@@ -2312,26 +2319,31 @@
                     )
                     .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
-                    <span class="comment">// If any domain block is pruned, then we have a new head added
+                    <span class="comment">// If any domain block is confirmed, then we have a new head added
                     // so distribute the operator rewards and, if required, do epoch transition as well.
                     //
                     // NOTE: Skip the following staking related operations when benchmarking the
                     // `submit_bundle` call, these operations will be benchmarked separately.
                     </span><span class="attr">#[cfg(not(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(pruned_block_info) = maybe_pruned_domain_block_info {
+                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(confirmed_block_info) = maybe_confirmed_domain_block_info {
                         do_reward_operators::&lt;T&gt;(
                             domain_id,
-                            pruned_block_info.operator_ids.into_iter(),
-                            pruned_block_info.rewards,
+                            confirmed_block_info.operator_ids.into_iter(),
+                            confirmed_block_info.rewards,
                         )
                         .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
-                        <span class="kw">if </span>pruned_block_info.domain_block_number % T::StakeEpochDuration::get()
+                        do_slash_operators::&lt;T&gt;(
+                            confirmed_block_info.invalid_bundle_authors.into_iter(),
+                        )
+                        .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+
+                        <span class="kw">if </span>confirmed_block_info.domain_block_number % T::StakeEpochDuration::get()
                             == Zero::zero()
                         {
                             <span class="kw">let </span>completed_epoch_index = do_finalize_domain_current_epoch::&lt;T&gt;(
                                 domain_id,
-                                pruned_block_info.domain_block_number,
+                                confirmed_block_info.domain_block_number,
                             )
                             .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
@@ -2343,7 +2355,7 @@
 
                         do_unlock_pending_withdrawals::&lt;T&gt;(
                             domain_id,
-                            pruned_block_info.domain_block_number,
+                            confirmed_block_info.domain_block_number,
                         )
                         .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
                     }
