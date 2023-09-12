@@ -1066,6 +1066,33 @@
 <a href="#1066" id="1066">1066</a>
 <a href="#1067" id="1067">1067</a>
 <a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1108,9 +1135,11 @@
 <span class="kw">use </span>futures::channel::oneshot;
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>futures::executor::block_on;
+<span class="kw">use </span>futures::FutureExt;
 <span class="kw">use </span>jsonrpsee::RpcModule;
 <span class="kw">use </span>pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi;
 <span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="kw">use </span>sc_basic_authorship::ProposerFactory;
 <span class="kw">use </span>sc_client_api::execution_extensions::ExtensionsFactory;
 <span class="kw">use </span>sc_client_api::{
@@ -1167,6 +1196,7 @@
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>subspace_core_primitives::PotSeed;
 <span class="kw">use </span>subspace_fraud_proof::verifier_api::VerifierClient;
+<span class="kw">use </span>subspace_metrics::{start_prometheus_metrics_server, RegistryAdapter};
 <span class="kw">use </span>subspace_networking::libp2p::multiaddr::Protocol;
 <span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
 <span class="kw">use </span>subspace_networking::Node;
@@ -1262,6 +1292,8 @@
         </span>node: Node,
         <span class="doccomment">/// Bootstrap nodes used (that can be also sent to the farmer over RPC)
         </span>bootstrap_nodes: Vec&lt;Multiaddr&gt;,
+        <span class="doccomment">/// DSN metrics registry (libp2p type).
+        </span>metrics_registry: <span class="prelude-ty">Option</span>&lt;Registry&gt;,
     },
     <span class="doccomment">/// Networking must be instantiated internally
     </span>Create {
@@ -1738,7 +1770,7 @@
 
 <span class="doccomment">/// Builds a new service for a full client.
 </span><span class="kw">pub async fn </span>new_full&lt;PosTable, RuntimeApi, ExecutorDispatch&gt;(
-    config: SubspaceConfiguration,
+    <span class="kw-2">mut </span>config: SubspaceConfiguration,
     partial_components: PartialComponents&lt;RuntimeApi, ExecutorDispatch&gt;,
     enable_rpc_extensions: bool,
     block_proposal_slot_portion: SlotProportion,
@@ -1782,11 +1814,12 @@
         <span class="kw-2">mut </span>telemetry,
     } = other;
 
-    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking {
+    <span class="kw">let </span>(node, bootstrap_nodes, dsn_metrics_registry) = <span class="kw">match </span>config.subspace_networking {
         SubspaceNetworking::Reuse {
             node,
             bootstrap_nodes,
-        } =&gt; (node, bootstrap_nodes),
+            metrics_registry,
+        } =&gt; (node, bootstrap_nodes, metrics_registry),
         SubspaceNetworking::Create { config: dsn_config } =&gt; {
             <span class="kw">let </span>dsn_protocol_version = hex::encode(client.chain_info().genesis_hash);
 
@@ -1796,10 +1829,11 @@
                 <span class="string">&quot;Setting DSN protocol version...&quot;
             </span>);
 
-            <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) = create_dsn_instance(
+            <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner, dsn_metrics_registry) = create_dsn_instance(
                 dsn_protocol_version,
                 dsn_config.clone(),
                 segment_headers_store.clone(),
+                config.base.prometheus_config.is_some(),
             )<span class="question-mark">?</span>;
 
             <span class="macro">info!</span>(<span class="string">&quot;Subspace networking initialized: Node ID is {}&quot;</span>, node.id());
@@ -1829,7 +1863,7 @@
                     ),
                 );
 
-            (node, dsn_config.bootstrap_nodes)
+            (node, dsn_config.bootstrap_nodes, dsn_metrics_registry)
         }
     };
 
@@ -2073,6 +2107,26 @@
             subspace,
         );
     }
+
+    <span class="comment">// We replace the Substrate implementation of metrics server with our own.
+    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(prometheus_config) = config.base.prometheus_config.take() {
+        <span class="kw">let </span>registry = <span class="kw">if let </span><span class="prelude-val">Some</span>(dsn_metrics_registry) = dsn_metrics_registry {
+            RegistryAdapter::Both(dsn_metrics_registry, prometheus_config.registry)
+        } <span class="kw">else </span>{
+            RegistryAdapter::Substrate(prometheus_config.registry)
+        };
+
+        <span class="kw">let </span>metrics_server =
+            start_prometheus_metrics_server(<span class="macro">vec!</span>[prometheus_config.port], registry)<span class="question-mark">?</span>.map(|error| {
+                <span class="macro">debug!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Metrics server error.&quot;</span>);
+            });
+
+        task_manager.spawn_handle().spawn(
+            <span class="string">&quot;node-metrics-server&quot;</span>,
+            <span class="prelude-val">Some</span>(<span class="string">&quot;node-metrics-server&quot;</span>),
+            metrics_server,
+        );
+    };
 
     <span class="kw">let </span>rpc_handlers = sc_service::spawn_tasks(SpawnTasksParams {
         network: network_service.clone(),
