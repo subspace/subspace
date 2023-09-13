@@ -856,6 +856,13 @@
 <a href="#856" id="856">856</a>
 <a href="#857" id="857">857</a>
 <a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -894,9 +901,10 @@
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>sc_proof_of_time::PotSlotWorker;
 <span class="kw">use </span>sc_telemetry::TelemetryHandle;
+<span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
 <span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
 <span class="kw">use </span>schnorrkel::context::SigningContext;
-<span class="kw">use </span>sp_api::{ApiError, NumberFor, ProvideRuntimeApi, TransactionFor};
+<span class="kw">use </span>sp_api::{ApiError, ApiExt, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>ClientError, HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_consensus::{BlockOrigin, Environment, Error <span class="kw">as </span>ConsensusError, Proposer, SyncOracle};
 <span class="kw">use </span>sp_consensus_slots::Slot;
@@ -988,6 +996,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) block_proposal_slot_portion: SlotProportion,
     <span class="kw">pub</span>(<span class="kw">super</span>) max_block_proposal_slot_portion: <span class="prelude-ty">Option</span>&lt;SlotProportion&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) offchain_tx_pool_factory: OffchainTransactionPoolFactory&lt;Block&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) chain_constants: ChainConstants,
     <span class="kw">pub</span>(<span class="kw">super</span>) segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     <span class="doccomment">/// Solution receivers for challenges that were sent to farmers and expected to be received
@@ -1085,8 +1094,8 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     E: Environment&lt;Block, Error = Error&gt; + Send + Sync,
-    E::Proposer: Proposer&lt;Block, Error = Error, Transaction = TransactionFor&lt;Client, Block&gt;&gt;,
-    I: BlockImport&lt;Block, Transaction = TransactionFor&lt;Client, Block&gt;&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    E::Proposer: Proposer&lt;Block, Error = Error&gt;,
+    I: BlockImport&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     SO: SyncOracle + Send + Sync,
     L: JustificationSyncLink&lt;Block&gt;,
     BS: BackoffAuthoringBlocksStrategy&lt;NumberFor&lt;Block&gt;&gt; + Send + Sync,
@@ -1477,11 +1486,11 @@
         header: Block::Header,
         header_hash: <span class="kw-2">&amp;</span>Block::Hash,
         body: Vec&lt;Block::Extrinsic&gt;,
-        storage_changes: sc_consensus_slots::StorageChanges&lt;I::Transaction, Block&gt;,
+        storage_changes: sc_consensus_slots::StorageChanges&lt;Block&gt;,
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>(pre_digest, _justification): <span class="self">Self</span>::Claim,
         <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))] </span>pre_digest: <span class="self">Self</span>::Claim,
         _aux_data: <span class="self">Self</span>::AuxData,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;BlockImportParams&lt;Block, I::Transaction&gt;, ConsensusError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;BlockImportParams&lt;Block&gt;, ConsensusError&gt; {
         <span class="kw">let </span>signature = <span class="self">self
             </span>.sign_reward(
                 H256::from_slice(header_hash.as_ref()),
@@ -1574,8 +1583,8 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     E: Environment&lt;Block, Error = Error&gt; + Send + Sync,
-    E::Proposer: Proposer&lt;Block, Error = Error, Transaction = TransactionFor&lt;Client, Block&gt;&gt;,
-    I: BlockImport&lt;Block, Transaction = TransactionFor&lt;Client, Block&gt;&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    E::Proposer: Proposer&lt;Block, Error = Error&gt;,
+    I: BlockImport&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     SO: SyncOracle + Send + Sync,
     L: JustificationSyncLink&lt;Block&gt;,
     BS: BackoffAuthoringBlocksStrategy&lt;NumberFor&lt;Block&gt;&gt; + Send + Sync,
@@ -1592,7 +1601,12 @@
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>future_proof_of_time: PotOutput,
     ) {
         <span class="kw">let </span>parent_hash = parent_header.hash();
-        <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
+        <span class="kw">let </span><span class="kw-2">mut </span>runtime_api = <span class="self">self</span>.client.runtime_api();
+        <span class="comment">// Register the offchain tx pool to be able to use it from the runtime.
+        </span>runtime_api.register_extension(
+            <span class="self">self</span>.offchain_tx_pool_factory
+                .offchain_transaction_pool(parent_hash),
+        );
 
         <span class="kw">if </span><span class="self">self</span>.should_backoff(slot, parent_header) {
             <span class="kw">return</span>;

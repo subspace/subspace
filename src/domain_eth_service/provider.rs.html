@@ -213,13 +213,12 @@
 <a href="#213" id="213">213</a>
 <a href="#214" id="214">214</a>
 <a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::rpc::{create_eth_rpc, EthDeps};
 <span class="kw">use </span><span class="kw">crate</span>::service::{
     new_frontier_partial, spawn_frontier_tasks, EthConfiguration, FrontierPartialComponents,
 };
 <span class="kw">use </span>clap::Parser;
-<span class="kw">use </span>domain_runtime_primitives::{Balance, Index};
+<span class="kw">use </span>domain_runtime_primitives::{Balance, Nonce};
 <span class="kw">use </span>domain_service::providers::{BlockImportProvider, DefaultProvider, RpcProvider};
 <span class="kw">use </span>domain_service::rpc::FullDeps;
 <span class="kw">use </span>domain_service::FullClient;
@@ -228,12 +227,10 @@
 <span class="kw">use </span>fc_storage::overrides_handle;
 <span class="kw">use </span>fp_rpc::{ConvertTransaction, ConvertTransactionRuntimeApi, EthereumRuntimeRPCApi};
 <span class="kw">use </span>jsonrpsee::RpcModule;
-<span class="kw">use </span>sc_client_api::{
-    AuxStore, Backend, BlockBackend, BlockchainEvents, StateBackendFor, StorageProvider,
-};
+<span class="kw">use </span>sc_client_api::{AuxStore, Backend, BlockBackend, BlockchainEvents, StorageProvider};
 <span class="kw">use </span>sc_executor::NativeExecutionDispatch;
 <span class="kw">use </span>sc_rpc::{RpcSubscriptionIdProvider, SubscriptionTaskExecutor};
-<span class="kw">use </span>sc_service::{BasePath, TFullBackend};
+<span class="kw">use </span>sc_service::BasePath;
 <span class="kw">use </span>sc_transaction_pool::ChainApi;
 <span class="kw">use </span>sc_transaction_pool_api::TransactionPool;
 <span class="kw">use </span>serde::de::DeserializeOwned;
@@ -242,6 +239,7 @@
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>BlockChainError, HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_core::H256;
+<span class="kw">use </span>sp_inherents::CreateInherentDataProviders;
 <span class="kw">use </span>sp_runtime::codec::{Decode, Encode};
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::fmt::{Debug, Display};
@@ -280,10 +278,8 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    RuntimeApi::RuntimeApi: ApiExt&lt;Block, StateBackend = StateBackendFor&lt;TFullBackend&lt;Block&gt;, Block&gt;&gt;
-        + Core&lt;Block&gt;
-        + BlockBuilder&lt;Block&gt;
-        + EthereumRuntimeRPCApi&lt;Block&gt;,
+    RuntimeApi::RuntimeApi:
+        ApiExt&lt;Block&gt; + Core&lt;Block&gt; + BlockBuilder&lt;Block&gt; + EthereumRuntimeRPCApi&lt;Block&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">type </span>BI = FrontierBlockImport&lt;
@@ -300,8 +296,8 @@
     }
 }
 
-<span class="kw">impl</span>&lt;Block, Client, BE, TxPool, CA, AccountId, CT, EC&gt;
-    RpcProvider&lt;Block, Client, TxPool, CA, BE, AccountId&gt; <span class="kw">for </span>EthProvider&lt;CT, EC&gt;
+<span class="kw">impl</span>&lt;Block, Client, BE, TxPool, CA, AccountId, CT, EC, CIDP&gt;
+    RpcProvider&lt;Block, Client, TxPool, CA, BE, AccountId, CIDP&gt; <span class="kw">for </span>EthProvider&lt;CT, EC&gt;
 <span class="kw">where
     </span>Block: BlockT&lt;Hash = H256&gt;,
     BE: Backend&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
@@ -318,7 +314,7 @@
         + <span class="lifetime">&#39;static</span>,
     Client::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + EthereumRuntimeRPCApi&lt;Block&gt;
-        + AccountNonceApi&lt;Block, AccountId, Index&gt;
+        + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
         + ConvertTransactionRuntimeApi&lt;Block&gt;,
     Client::Api: BlockBuilder&lt;Block&gt;,
     Client::Api: EthereumRuntimeRPCApi&lt;Block&gt;,
@@ -327,12 +323,13 @@
     TxPool: TransactionPool&lt;Block = Block&gt; + Sync + Send + <span class="lifetime">&#39;static</span>,
     CA: ChainApi&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
     AccountId: DeserializeOwned + Encode + Debug + Decode + Display + Clone + Sync + Send + <span class="lifetime">&#39;static</span>,
+    CIDP: CreateInherentDataProviders&lt;Block, ()&gt; + Send + Clone + <span class="lifetime">&#39;static</span>,
 {
-    <span class="kw">type </span>Deps = EthDeps&lt;Client, TxPool, CA, CT, Block, BE&gt;;
+    <span class="kw">type </span>Deps = EthDeps&lt;Client, TxPool, CA, CT, Block, BE, CIDP&gt;;
 
     <span class="kw">fn </span>deps(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        full_deps: FullDeps&lt;Block, Client, TxPool, CA, BE&gt;,
+        full_deps: FullDeps&lt;Block, Client, TxPool, CA, BE, CIDP&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Deps, sc_service::Error&gt; {
         <span class="kw">let </span>client = full_deps.client.clone();
         <span class="kw">let </span>overrides = overrides_handle(client.clone());
@@ -373,6 +370,7 @@
             fee_history_cache_limit,
             execute_gas_limit_multiplier: <span class="self">self</span>.eth_config.execute_gas_limit_multiplier,
             forced_parent_hashes: <span class="prelude-val">None</span>,
+            pending_inherent_data_provider: full_deps.create_inherent_data_provider,
         })
     }
 
@@ -405,7 +403,7 @@
         &gt; = Default::default();
         <span class="kw">let </span>pubsub_notification_sinks = Arc::new(pubsub_notification_sinks);
 
-        <span class="kw">let </span>io = create_eth_rpc::&lt;Client, BE, TxPool, CA, CT, Block, EC&gt;(
+        <span class="kw">let </span>io = create_eth_rpc::&lt;Client, BE, TxPool, CA, CT, Block, EC, CIDP&gt;(
             io,
             deps.clone(),
             subscription_task_executor,

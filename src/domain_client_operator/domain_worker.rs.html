@@ -261,13 +261,25 @@
 <a href="#261" id="261">261</a>
 <a href="#262" id="262">262</a>
 <a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Shared domain worker functions.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::utils::{to_number_primitive, BlockInfo, OperatorSlotInfo};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{SinkExt, Stream, StreamExt};
 <span class="kw">use </span>sc_client_api::{BlockBackend, BlockImportNotification, BlockchainEvents};
-<span class="kw">use </span>sp_api::{ApiError, BlockT, ProvideRuntimeApi};
+<span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
+<span class="kw">use </span>sp_api::{ApiError, ApiExt, BlockT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::{HashAndNumber, HeaderBackend};
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_domains::{DomainsApi, OpaqueBundle};
@@ -288,6 +300,7 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>handle_slot_notifications&lt;Block, CBlock, CClient, BundlerFn&gt;(
     consensus_client: <span class="kw-2">&amp;</span>CClient,
+    consensus_offchain_tx_pool_factory: <span class="kw-2">&amp;</span>OffchainTransactionPoolFactory&lt;CBlock&gt;,
     bundler: BundlerFn,
     <span class="kw-2">mut </span>slots: <span class="kw">impl </span>Stream&lt;Item = (OperatorSlotInfo, <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;()&gt;&gt;)&gt; + Unpin,
 ) <span class="kw">where
@@ -304,8 +317,13 @@
 {
     <span class="kw">while let </span><span class="prelude-val">Some</span>((operator_slot_info, slot_acknowledgement_sender)) = slots.next().<span class="kw">await </span>{
         <span class="kw">let </span>slot = operator_slot_info.slot;
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-            on_new_slot::&lt;Block, CBlock, <span class="kw">_</span>, <span class="kw">_</span>&gt;(consensus_client, <span class="kw-2">&amp;</span>bundler, operator_slot_info).<span class="kw">await
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = on_new_slot::&lt;Block, CBlock, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+            consensus_client,
+            consensus_offchain_tx_pool_factory.clone(),
+            <span class="kw-2">&amp;</span>bundler,
+            operator_slot_info,
+        )
+        .<span class="kw">await
         </span>{
             <span class="macro">tracing::error!</span>(
                 <span class="question-mark">?</span>error,
@@ -456,6 +474,7 @@
 
 <span class="kw">async fn </span>on_new_slot&lt;Block, CBlock, CClient, BundlerFn&gt;(
     consensus_client: <span class="kw-2">&amp;</span>CClient,
+    consensus_offchain_tx_pool_factory: OffchainTransactionPoolFactory&lt;CBlock&gt;,
     bundler: <span class="kw-2">&amp;</span>BundlerFn,
     operator_slot_info: OperatorSlotInfo,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ApiError&gt;
@@ -488,9 +507,12 @@
         }
     };
 
-    consensus_client
-        .runtime_api()
-        .submit_bundle_unsigned(best_hash, opaque_bundle)<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>runtime_api = consensus_client.runtime_api();
+    <span class="comment">// Register the offchain tx pool to be able to use it from the runtime.
+    </span>runtime_api.register_extension(
+        consensus_offchain_tx_pool_factory.offchain_transaction_pool(best_hash),
+    );
+    runtime_api.submit_bundle_unsigned(best_hash, opaque_bundle)<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(())
 }

@@ -205,6 +205,16 @@
 <a href="#205" id="205">205</a>
 <a href="#206" id="206">206</a>
 <a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>domain_service::rpc::FullDeps;
 <span class="kw">use </span>fc_mapping_sync::{EthereumBlockNotification, EthereumBlockNotificationSinks};
 <span class="kw">use </span>fc_rpc::{
@@ -227,6 +237,7 @@
 <span class="kw">use </span>sp_block_builder::BlockBuilder <span class="kw">as </span>BlockBuilderApi;
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>BlockChainError, HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_core::H256;
+<span class="kw">use </span>sp_inherents::CreateInherentDataProviders;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>std::collections::BTreeMap;
 <span class="kw">use </span>std::sync::Arc;
@@ -245,9 +256,9 @@
 }
 
 <span class="doccomment">/// Extra dependencies for Ethereum compatibility.
-</span><span class="kw">pub struct </span>EthDeps&lt;Client, TxPool, CA: ChainApi, CT, Block: BlockT, BE&gt; {
+</span><span class="kw">pub struct </span>EthDeps&lt;Client, TxPool, CA: ChainApi, CT, Block: BlockT, BE, CIDP&gt; {
     <span class="doccomment">/// Full Rpc deps
-    </span><span class="kw">pub </span>full_deps: FullDeps&lt;Block, Client, TxPool, CA, BE&gt;,
+    </span><span class="kw">pub </span>full_deps: FullDeps&lt;Block, Client, TxPool, CA, BE, CIDP&gt;,
     <span class="doccomment">/// Ethereum transaction converter.
     </span><span class="kw">pub </span>converter: <span class="prelude-ty">Option</span>&lt;CT&gt;,
     <span class="doccomment">/// Whether to enable dev signer
@@ -273,10 +284,12 @@
     </span><span class="kw">pub </span>execute_gas_limit_multiplier: u64,
     <span class="doccomment">/// Mandated parent hashes for a given block hash.
     </span><span class="kw">pub </span>forced_parent_hashes: <span class="prelude-ty">Option</span>&lt;BTreeMap&lt;H256, H256&gt;&gt;,
+    <span class="doccomment">/// Pending inherent data provider
+    </span><span class="kw">pub </span>pending_inherent_data_provider: CIDP,
 }
 
-<span class="kw">impl</span>&lt;Client, TxPool, CA: ChainApi, CT: Clone, Block: BlockT, BE&gt; Clone
-    <span class="kw">for </span>EthDeps&lt;Client, TxPool, CA, CT, Block, BE&gt;
+<span class="kw">impl</span>&lt;Client, TxPool, CA: ChainApi, CT: Clone, Block: BlockT, BE, CIDP: Clone&gt; Clone
+    <span class="kw">for </span>EthDeps&lt;Client, TxPool, CA, CT, Block, BE, CIDP&gt;
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -293,14 +306,15 @@
             fee_history_cache_limit: <span class="self">self</span>.fee_history_cache_limit,
             execute_gas_limit_multiplier: <span class="self">self</span>.execute_gas_limit_multiplier,
             forced_parent_hashes: <span class="self">self</span>.forced_parent_hashes.clone(),
+            pending_inherent_data_provider: <span class="self">self</span>.pending_inherent_data_provider.clone(),
         }
     }
 }
 
 <span class="doccomment">/// Instantiate Ethereum-compatible RPC extensions.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_eth_rpc&lt;Client, BE, TxPool, CA, CT, Block, EC: EthConfig&lt;Block, Client&gt;&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_eth_rpc&lt;Client, BE, TxPool, CA, CT, Block, EC, CIDP&gt;(
     <span class="kw-2">mut </span>io: RpcModule&lt;()&gt;,
-    deps: EthDeps&lt;Client, TxPool, CA, CT, Block, BE&gt;,
+    deps: EthDeps&lt;Client, TxPool, CA, CT, Block, BE, CIDP&gt;,
     subscription_task_executor: SubscriptionTaskExecutor,
     pubsub_notification_sinks: Arc&lt;
         EthereumBlockNotificationSinks&lt;EthereumBlockNotification&lt;Block&gt;&gt;,
@@ -319,11 +333,14 @@
     TxPool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
     CA: ChainApi&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
     CT: ConvertTransaction&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    EC: EthConfig&lt;Block, Client&gt;,
+    CIDP: CreateInherentDataProviders&lt;Block, ()&gt; + Send + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>EthDeps {
         full_deps,
         converter,
         enable_dev_signer,
+        sync: <span class="kw">_</span>,
         frontier_backend,
         overrides,
         block_data_cache,
@@ -333,7 +350,7 @@
         fee_history_cache_limit,
         execute_gas_limit_multiplier,
         forced_parent_hashes,
-        ..
+        pending_inherent_data_provider,
     } = deps;
 
     <span class="kw">let </span>FullDeps {
@@ -352,10 +369,10 @@
     }
 
     io.merge(
-        Eth::new(
+        Eth::&lt;Block, Client, TxPool, CT, BE, CA, CIDP, EC&gt;::new(
             client.clone(),
             pool.clone(),
-            graph,
+            graph.clone(),
             converter,
             sync.clone(),
             <span class="macro">vec!</span>[],
@@ -367,6 +384,8 @@
             fee_history_cache_limit,
             execute_gas_limit_multiplier,
             forced_parent_hashes,
+            pending_inherent_data_provider,
+            <span class="prelude-val">None</span>,
         )
         .replace_config::&lt;EC&gt;()
         .into_rpc(),
@@ -377,6 +396,7 @@
             EthFilter::new(
                 client.clone(),
                 frontier_backend,
+                graph.clone(),
                 filter_pool,
                 <span class="number">500_usize</span>, <span class="comment">// max stored filters
                 </span>max_past_logs,

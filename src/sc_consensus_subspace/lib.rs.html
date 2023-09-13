@@ -1230,9 +1230,6 @@
 <a href="#1230" id="1230">1230</a>
 <a href="#1231" id="1231">1231</a>
 <a href="#1232" id="1232">1232</a>
-<a href="#1233" id="1233">1233</a>
-<a href="#1234" id="1234">1234</a>
-<a href="#1235" id="1235">1235</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1285,13 +1282,12 @@
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>sc_proof_of_time::verifier::PotVerifier;
 <span class="kw">use </span>sc_telemetry::TelemetryHandle;
+<span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
 <span class="kw">use </span>sc_utils::mpsc::TracingUnboundedSender;
-<span class="kw">use </span>sp_api::{ApiError, ApiExt, BlockT, HeaderT, NumberFor, ProvideRuntimeApi, TransactionFor};
+<span class="kw">use </span>sp_api::{ApiError, ApiExt, BlockT, HeaderT, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder <span class="kw">as </span>BlockBuilderApi;
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>ClientError, HeaderBackend, HeaderMetadata, <span class="prelude-ty">Result </span><span class="kw">as </span>ClientResult};
-<span class="kw">use </span>sp_consensus::{
-    BlockOrigin, Environment, Error <span class="kw">as </span>ConsensusError, Proposer, SelectChain, SyncOracle,
-};
+<span class="kw">use </span>sp_consensus::{Environment, Error <span class="kw">as </span>ConsensusError, Proposer, SelectChain, SyncOracle};
 <span class="kw">use </span>sp_consensus_slots::{Slot, SlotDuration};
 <span class="kw">use </span>sp_consensus_subspace::digests::{
     extract_pre_digest, extract_subspace_digest_items, Error <span class="kw">as </span>DigestError, SubspaceDigestItems,
@@ -1636,6 +1632,11 @@
     <span class="doccomment">/// Handle use to report telemetries.
     </span><span class="kw">pub </span>telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
 
+    <span class="doccomment">/// The offchain transaction pool factory.
+    ///
+    /// Will be used when sending equivocation reports and votes.
+    </span><span class="kw">pub </span>offchain_tx_pool_factory: OffchainTransactionPoolFactory&lt;Block&gt;,
+
     <span class="doccomment">/// Proof of time verifier
     </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
     </span><span class="kw">pub </span>pot_verifier: PotVerifier,
@@ -1662,6 +1663,7 @@
         block_proposal_slot_portion,
         max_block_proposal_slot_portion,
         telemetry,
+        offchain_tx_pool_factory,
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span>pot_verifier,
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
@@ -1683,11 +1685,8 @@
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     SC: SelectChain&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     E: Environment&lt;Block, Error = Error&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
-    E::Proposer: Proposer&lt;Block, Error = Error, Transaction = TransactionFor&lt;Client, Block&gt;&gt;,
-    I: BlockImport&lt;Block, Error = ConsensusError, Transaction = TransactionFor&lt;Client, Block&gt;&gt;
-        + Send
-        + Sync
-        + <span class="lifetime">&#39;static</span>,
+    E::Proposer: Proposer&lt;Block, Error = Error&gt;,
+    I: BlockImport&lt;Block, Error = ConsensusError&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
     L: JustificationSyncLink&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     CIDP: CreateInherentDataProviders&lt;Block, ()&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
@@ -1710,6 +1709,7 @@
         block_proposal_slot_portion,
         max_block_proposal_slot_portion,
         telemetry,
+        offchain_tx_pool_factory,
         chain_constants: get_chain_constants(client.as_ref())
             .map_err(|error| sp_consensus::Error::Other(error.into()))<span class="question-mark">?</span>,
         segment_headers_store,
@@ -1915,7 +1915,6 @@
     </span><span class="kw">async fn </span>block_import_verification(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_hash: Block::Hash,
-        origin: BlockOrigin,
         header: Block::Header,
         extrinsics: <span class="prelude-ty">Option</span>&lt;Vec&lt;Block::Extrinsic&gt;&gt;,
         root_plot_public_key: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;FarmerPublicKey&gt;,
@@ -2174,9 +2173,8 @@
                     .<span class="kw">await
                     </span>.map_err(Error::CreateInherents)<span class="question-mark">?</span>;
 
-                <span class="kw">let </span>inherent_res = <span class="self">self</span>.client.runtime_api().check_inherents_with_context(
+                <span class="kw">let </span>inherent_res = <span class="self">self</span>.client.runtime_api().check_inherents(
                     parent_hash,
-                    origin.into(),
                     Block::new(header, extrinsics),
                     inherent_data,
                 )<span class="question-mark">?</span>;
@@ -2205,9 +2203,7 @@
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
-    Inner: BlockImport&lt;Block, Transaction = TransactionFor&lt;Client, Block&gt;, Error = ConsensusError&gt;
-        + Send
-        + Sync,
+    Inner: BlockImport&lt;Block, Error = ConsensusError&gt; + Send + Sync,
     Inner::Error: Into&lt;ConsensusError&gt;,
     Client: ProvideRuntimeApi&lt;Block&gt;
         + BlockBackend&lt;Block&gt;
@@ -2221,11 +2217,10 @@
     BlockNumber: From&lt;&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Header <span class="kw">as </span>HeaderT&gt;::Number&gt;,
 {
     <span class="kw">type </span>Error = ConsensusError;
-    <span class="kw">type </span>Transaction = TransactionFor&lt;Client, Block&gt;;
 
     <span class="kw">async fn </span>import_block(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        <span class="kw-2">mut </span>block: BlockImportParams&lt;Block, <span class="self">Self</span>::Transaction&gt;,
+        <span class="kw-2">mut </span>block: BlockImportParams&lt;Block&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ImportResult, <span class="self">Self</span>::Error&gt; {
         <span class="kw">let </span>block_hash = block.post_hash();
         <span class="kw">let </span>block_number = <span class="kw-2">*</span>block.header.number();
@@ -2253,7 +2248,6 @@
 
         <span class="self">self</span>.block_import_verification(
             block_hash,
-            block.origin,
             block.header.clone(),
             block.body.clone(),
             <span class="kw-2">&amp;</span>root_plot_public_key,

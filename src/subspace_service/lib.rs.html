@@ -1093,6 +1093,10 @@
 <a href="#1093" id="1093">1093</a>
 <a href="#1094" id="1094">1094</a>
 <a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1142,9 +1146,7 @@
 <span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="kw">use </span>sc_basic_authorship::ProposerFactory;
 <span class="kw">use </span>sc_client_api::execution_extensions::ExtensionsFactory;
-<span class="kw">use </span>sc_client_api::{
-    BlockBackend, BlockchainEvents, ExecutorProvider, HeaderBackend, StateBackendFor,
-};
+<span class="kw">use </span>sc_client_api::{Backend, BlockBackend, BlockchainEvents, ExecutorProvider, HeaderBackend};
 <span class="kw">use </span>sc_consensus::{BlockImport, DefaultImportQueue, ImportQueue};
 <span class="kw">use </span>sc_consensus_slots::SlotProportion;
 <span class="kw">use </span>sc_consensus_subspace::archiver::{create_subspace_archiver, SegmentHeadersStore};
@@ -1165,7 +1167,8 @@
 <span class="kw">use </span>sc_service::{Configuration, NetworkStarter, SpawnTasksParams, TaskManager};
 <span class="kw">use </span>sc_subspace_block_relay::{build_consensus_relay, NetworkWrapper};
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker};
-<span class="kw">use </span>sp_api::{ApiExt, ConstructRuntimeApi, Metadata, ProvideRuntimeApi, TransactionFor};
+<span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
+<span class="kw">use </span>sp_api::{ApiExt, ConstructRuntimeApi, Metadata, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::HeaderMetadata;
 <span class="kw">use </span>sp_consensus::Error <span class="kw">as </span>ConsensusError;
@@ -1175,7 +1178,6 @@
 <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
 </span><span class="kw">use </span>sp_consensus_subspace::PotExtension;
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, KzgExtension, PosExtension, SubspaceApi};
-<span class="kw">use </span>sp_core::offchain;
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_domains::transaction::PreValidationObjectApi;
 <span class="kw">use </span>sp_domains::{DomainsApi, GenerateGenesisStateRoot, GenesisReceiptExtension};
@@ -1202,7 +1204,7 @@
 <span class="kw">use </span>subspace_networking::Node;
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
-<span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Hash, Index <span class="kw">as </span>Nonce};
+<span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Hash, Nonce};
 <span class="kw">use </span>subspace_transaction_pool::{FullPool, PreValidateTransaction};
 <span class="kw">use </span>tracing::{debug, error, info, Instrument};
 
@@ -1344,7 +1346,6 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _block_hash: Block::Hash,
         _block_number: NumberFor&lt;Block&gt;,
-        _capabilities: offchain::Capabilities,
     ) -&gt; Extensions {
         <span class="kw">let </span><span class="kw-2">mut </span>exts = Extensions::new();
         exts.register(KzgExtension::new(<span class="self">self</span>.kzg.clone()));
@@ -1478,14 +1479,7 @@
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
 {
     <span class="doccomment">/// Subspace block import
-    </span><span class="kw">pub </span>block_import: Box&lt;
-        <span class="kw">dyn </span>BlockImport&lt;
-                Block,
-                Error = ConsensusError,
-                Transaction = TransactionFor&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;, Block&gt;,
-            &gt; + Send
-            + Sync,
-    &gt;,
+    </span><span class="kw">pub </span>block_import: Box&lt;<span class="kw">dyn </span>BlockImport&lt;Block, Error = ConsensusError&gt; + Send + Sync&gt;,
     <span class="doccomment">/// Subspace link
     </span><span class="kw">pub </span>subspace_link: SubspaceLink&lt;Block&gt;,
     <span class="doccomment">/// Segment headers store
@@ -1501,7 +1495,7 @@
     FullClient&lt;RuntimeApi, ExecutorDispatch&gt;,
     FullBackend,
     FullSelectChain,
-    DefaultImportQueue&lt;Block, FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
+    DefaultImportQueue&lt;Block&gt;,
     FullPool&lt;
         Block,
         FullClient&lt;RuntimeApi, ExecutorDispatch&gt;,
@@ -1532,7 +1526,7 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    RuntimeApi::RuntimeApi: ApiExt&lt;Block, StateBackend = StateBackendFor&lt;FullBackend, Block&gt;&gt;
+    RuntimeApi::RuntimeApi: ApiExt&lt;Block&gt;
         + Metadata&lt;Block&gt;
         + BlockBuilder&lt;Block&gt;
         + OffchainWorkerApi&lt;Block&gt;
@@ -1689,6 +1683,7 @@
         <span class="kw-2">&amp;</span>task_manager.spawn_essential_handle(),
         config.prometheus_registry(),
         telemetry.as_ref().map(|x| x.handle()),
+        OffchainTransactionPoolFactory::new(transaction_pool.clone()),
         config.role.is_authority(),
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span>pot_verifier.clone(),
@@ -1781,7 +1776,7 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    RuntimeApi::RuntimeApi: ApiExt&lt;Block, StateBackend = StateBackendFor&lt;FullBackend, Block&gt;&gt;
+    RuntimeApi::RuntimeApi: ApiExt&lt;Block&gt;
         + Metadata&lt;Block&gt;
         + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
         + BlockBuilder&lt;Block&gt;
@@ -2003,12 +1998,24 @@
         }
     }
 
+    <span class="kw">let </span>offchain_tx_pool_factory = OffchainTransactionPoolFactory::new(transaction_pool.clone());
+
     <span class="kw">if </span>config.base.offchain_worker.enabled {
-        sc_service::build_offchain_workers(
-            <span class="kw-2">&amp;</span>config.base,
-            task_manager.spawn_handle(),
-            client.clone(),
-            network_service.clone(),
+        task_manager.spawn_handle().spawn(
+            <span class="string">&quot;offchain-workers-runner&quot;</span>,
+            <span class="string">&quot;offchain-worker&quot;</span>,
+            sc_offchain::OffchainWorkers::new(sc_offchain::OffchainWorkerOptions {
+                runtime_api_provider: client.clone(),
+                is_validator: config.base.role.is_authority(),
+                keystore: <span class="prelude-val">Some</span>(keystore_container.keystore()),
+                offchain_db: backend.offchain_storage(),
+                transaction_pool: <span class="prelude-val">Some</span>(offchain_tx_pool_factory.clone()),
+                network_provider: network_service.clone(),
+                enable_http_requests: <span class="bool-val">true</span>,
+                custom_extensions: |<span class="kw">_</span>| <span class="macro">vec!</span>[],
+            })
+            .run(client.clone(), task_manager.spawn_handle())
+            .boxed(),
         );
     }
 
@@ -2087,7 +2094,8 @@
             segment_headers_store: segment_headers_store.clone(),
             block_proposal_slot_portion,
             max_block_proposal_slot_portion: <span class="prelude-val">None</span>,
-            telemetry: <span class="prelude-val">None</span>,
+            telemetry: telemetry.as_ref().map(|x| x.handle()),
+            offchain_tx_pool_factory,
             <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
             </span>pot_verifier,
             <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
