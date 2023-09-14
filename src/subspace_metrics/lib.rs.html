@@ -90,6 +90,38 @@
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
 <a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
 </pre></div><pre class="rust"><code><span class="attr">#![warn(missing_docs)]
 </span><span class="doccomment">//! This Rust module serves as a bridge between two different Prometheus metrics libraries
 //! used within our frameworks — Substrate and Libp2p.
@@ -107,10 +139,11 @@
 <span class="kw">use </span>prometheus_client::registry::Registry <span class="kw">as </span>Libp2pMetricsRegistry;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::Future;
+<span class="kw">use </span>std::io::ErrorKind;
 <span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::ops::DerefMut;
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>tracing::info;
+<span class="kw">use </span>tracing::{error, info, warn};
 
 <span class="kw">type </span>SharedRegistry = Arc&lt;Mutex&lt;RegistryAdapter&gt;&gt;;
 
@@ -168,18 +201,49 @@
 
 <span class="doccomment">/// Start prometheus metrics server on the provided address.
 </span><span class="kw">pub fn </span>start_prometheus_metrics_server(
-    endpoints: Vec&lt;SocketAddr&gt;,
+    <span class="kw-2">mut </span>endpoints: Vec&lt;SocketAddr&gt;,
     registry: RegistryAdapter,
 ) -&gt; std::io::Result&lt;<span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt;&gt; {
     <span class="kw">let </span>shared_registry = Arc::new(Mutex::new(registry));
     <span class="kw">let </span>data = Data::new(shared_registry);
 
-    <span class="macro">info!</span>(<span class="question-mark">?</span>endpoints, <span class="string">&quot;Starting metrics server...&quot;</span>,);
+    <span class="kw">let </span>app_factory = <span class="kw">move </span>|| App::new().app_data(data.clone()).service(metrics);
+    <span class="kw">let </span>result = HttpServer::new(app_factory.clone()).bind(endpoints.as_slice());
 
-    <span class="prelude-val">Ok</span>(
-        HttpServer::new(<span class="kw">move </span>|| App::new().app_data(data.clone()).service(metrics))
-            .bind(endpoints.as_slice())<span class="question-mark">?
-            </span>.run(),
-    )
+    <span class="kw">let </span>server = <span class="kw">match </span>result {
+        <span class="prelude-val">Ok</span>(server) =&gt; server,
+        <span class="prelude-val">Err</span>(error) =&gt; {
+            <span class="kw">if </span>error.kind() != ErrorKind::AddrInUse {
+                <span class="macro">error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to start metrics server.&quot;</span>);
+
+                <span class="kw">return </span><span class="prelude-val">Err</span>(error);
+            }
+
+            <span class="comment">// Trying to recover from &quot;address in use&quot; error.
+            </span><span class="macro">warn!</span>(
+                <span class="question-mark">?</span>error,
+                <span class="string">&quot;Failed to start metrics server. Falling back to the random port...&quot;</span>,
+            );
+
+            endpoints.iter_mut().for_each(|endpoint| {
+                endpoint.set_port(<span class="number">0</span>);
+            });
+
+            <span class="kw">let </span>result = HttpServer::new(app_factory).bind(endpoints.as_slice());
+
+            <span class="kw">match </span>result {
+                <span class="prelude-val">Ok</span>(server) =&gt; server,
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to start metrics server on the random port.&quot;</span>);
+
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(error);
+                }
+            }
+        }
+    };
+
+    <span class="macro">info!</span>(endpoints = <span class="question-mark">?</span>server.addrs(), <span class="string">&quot;Metrics server started.&quot;</span>,);
+
+    <span class="prelude-val">Ok</span>(server.run())
 }
 </code></pre></div></section></main></body></html>
