@@ -846,23 +846,6 @@
 <a href="#846" id="846">846</a>
 <a href="#847" id="847">847</a>
 <a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -888,8 +871,6 @@
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{StreamExt, TryFutureExt};
 <span class="kw">use </span>log::{debug, error, info, warn};
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>sc_client_api::AuxStore;
 <span class="kw">use </span>sc_consensus::block_import::{BlockImport, BlockImportParams, StateAction};
 <span class="kw">use </span>sc_consensus::{JustificationSyncLink, StorageChanges};
@@ -1002,13 +983,11 @@
     <span class="doccomment">/// Solution receivers for challenges that were sent to farmers and expected to be received
     /// eventually
     </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-    </span><span class="comment">// TODO: Substrate should make `fn claim_slot` take `&amp;mut self`, the  we&#39;ll not need `Mutex`
     </span><span class="kw">pub</span>(<span class="kw">super</span>) pending_solutions:
-        Mutex&lt;BTreeMap&lt;Slot, mpsc::Receiver&lt;Solution&lt;FarmerPublicKey, FarmerPublicKey&gt;&gt;&gt;&gt;,
+        BTreeMap&lt;Slot, mpsc::Receiver&lt;Solution&lt;FarmerPublicKey, FarmerPublicKey&gt;&gt;&gt;,
     <span class="doccomment">/// Collection of PoT slots that can be retrieved later if needed by block production
     </span><span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-    </span><span class="comment">// TODO: Substrate should make `fn claim_slot` take `&amp;mut self`, the  we&#39;ll not need `Mutex`
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) pot_checkpoints: Mutex&lt;BTreeMap&lt;Slot, PotCheckpoints&gt;&gt;,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) pot_checkpoints: BTreeMap&lt;Slot, PotCheckpoints&gt;,
     <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) pot_verifier: PotVerifier,
     <span class="kw">pub</span>(<span class="kw">super</span>) _pos_table: PhantomData&lt;PosTable&gt;,
@@ -1024,14 +1003,11 @@
     SO: SyncOracle + Send + Sync,
 {
     <span class="kw">fn </span>on_proof(<span class="kw-2">&amp;mut </span><span class="self">self</span>, slot: Slot, checkpoints: PotCheckpoints) {
-        {
-            <span class="kw">let </span><span class="kw-2">mut </span>pot_checkpoints = <span class="self">self</span>.pot_checkpoints.lock();
+        <span class="comment">// Remove checkpoints from future slots, if present they are out of date anyway
+        </span><span class="self">self</span>.pot_checkpoints
+            .retain(|<span class="kw-2">&amp;</span>stored_slot, _checkpoints| stored_slot &lt; slot);
 
-            <span class="comment">// Remove checkpoints from future slots, if present they are out of date anyway
-            </span>pot_checkpoints.retain(|<span class="kw-2">&amp;</span>stored_slot, _checkpoints| stored_slot &lt; slot);
-
-            pot_checkpoints.insert(slot, checkpoints);
-        }
+        <span class="self">self</span>.pot_checkpoints.insert(slot, checkpoints);
 
         <span class="kw">if </span><span class="self">self</span>.sync_oracle.is_major_syncing() {
             <span class="macro">debug!</span>(
@@ -1075,9 +1051,7 @@
                 solution_sender,
             });
 
-        <span class="self">self</span>.pending_solutions
-            .lock()
-            .insert(slot, solution_receiver);
+        <span class="self">self</span>.pending_solutions.insert(slot, solution_receiver);
     }
 }
 
@@ -1142,7 +1116,7 @@
     }
 
     <span class="kw">async fn </span>claim_slot(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         parent_header: <span class="kw-2">&amp;</span>Block::Header,
         slot: Slot,
         _aux_data: <span class="kw-2">&amp;</span><span class="self">Self</span>::AuxData,
@@ -1181,35 +1155,27 @@
 
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span><span class="kw">let </span>(proof_of_time, future_proof_of_time, new_checkpoints) = {
-            <span class="comment">// TODO: These variables and code block below are only necessary to work around
-            //  https://github.com/rust-lang/rust/issues/57478
-            </span><span class="kw">let </span>proof_of_time;
-            <span class="kw">let </span>future_slot;
-            <span class="kw">let </span>future_proof_of_time;
-            <span class="kw">let </span>new_checkpoints;
-            {
-                <span class="kw">let </span><span class="kw-2">mut </span>pot_checkpoints = <span class="self">self</span>.pot_checkpoints.lock();
+            <span class="comment">// Remove checkpoints from old slots we will not need anymore
+            </span><span class="self">self</span>.pot_checkpoints
+                .retain(|<span class="kw-2">&amp;</span>stored_slot, _checkpoints| stored_slot &gt; parent_slot);
 
-                <span class="comment">// Remove checkpoints from old slots we will not need anymore
-                </span>pot_checkpoints.retain(|<span class="kw-2">&amp;</span>stored_slot, _checkpoints| stored_slot &gt; parent_slot);
+            <span class="kw">let </span>proof_of_time = <span class="self">self</span>.pot_checkpoints.get(<span class="kw-2">&amp;</span>slot)<span class="question-mark">?</span>.output();
 
-                proof_of_time = pot_checkpoints.get(<span class="kw-2">&amp;</span>slot)<span class="question-mark">?</span>.output();
+            <span class="comment">// Future slot for which proof must be available before authoring block at this slot
+            </span><span class="kw">let </span>future_slot = slot + <span class="self">self</span>.chain_constants.block_authoring_delay();
+            <span class="kw">let </span>parent_future_slot = parent_slot + <span class="self">self</span>.chain_constants.block_authoring_delay();
+            <span class="kw">let </span>future_proof_of_time = <span class="self">self</span>.pot_checkpoints.get(<span class="kw-2">&amp;</span>future_slot)<span class="question-mark">?</span>.output();
 
-                <span class="comment">// Future slot for which proof must be available before authoring block at this slot
-                </span>future_slot = slot + <span class="self">self</span>.chain_constants.block_authoring_delay();
-                <span class="kw">let </span>parent_future_slot = parent_slot + <span class="self">self</span>.chain_constants.block_authoring_delay();
-                future_proof_of_time = pot_checkpoints.get(<span class="kw-2">&amp;</span>future_slot)<span class="question-mark">?</span>.output();
-
-                <span class="comment">// New checkpoints that were produced since parent block&#39;s future slot up to current
-                // future slot (inclusive)
-                </span>new_checkpoints = pot_checkpoints
-                    .iter()
-                    .filter_map(|(<span class="kw-2">&amp;</span>stored_slot, <span class="kw-2">&amp;</span>checkpoints)| {
-                        (stored_slot &gt; parent_future_slot &amp;&amp; stored_slot &lt;= future_slot)
-                            .then_some(checkpoints)
-                    })
-                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-            }
+            <span class="comment">// New checkpoints that were produced since parent block&#39;s future slot up to current
+            // future slot (inclusive)
+            </span><span class="kw">let </span>new_checkpoints = <span class="self">self
+                </span>.pot_checkpoints
+                .iter()
+                .filter_map(|(<span class="kw-2">&amp;</span>stored_slot, <span class="kw-2">&amp;</span>checkpoints)| {
+                    (stored_slot &gt; parent_future_slot &amp;&amp; stored_slot &lt;= future_slot)
+                        .then_some(checkpoints)
+                })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
             <span class="kw">let </span>pot_parameters = runtime_api.pot_parameters(parent_hash).ok()<span class="question-mark">?</span>;
             <span class="kw">let </span>slot_iterations;
@@ -1271,11 +1237,11 @@
 
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span><span class="kw">let </span><span class="kw-2">mut </span>solution_receiver = {
-            <span class="kw">let </span><span class="kw-2">mut </span>pending_solutions = <span class="self">self</span>.pending_solutions.lock();
             <span class="comment">// Remove receivers for old slots we will not need anymore
-            </span>pending_solutions.retain(|<span class="kw-2">&amp;</span>stored_slot, _solution_receiver| stored_slot &gt;= slot);
+            </span><span class="self">self</span>.pending_solutions
+                .retain(|<span class="kw-2">&amp;</span>stored_slot, _solution_receiver| stored_slot &gt;= slot);
 
-            <span class="kw">let </span><span class="kw-2">mut </span>solution_receiver = pending_solutions.remove(<span class="kw-2">&amp;</span>slot)<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>solution_receiver = <span class="self">self</span>.pending_solutions.remove(<span class="kw-2">&amp;</span>slot)<span class="question-mark">?</span>;
             <span class="comment">// Time is out, we will not accept any more solutions
             </span>solution_receiver.close();
             solution_receiver
