@@ -504,8 +504,6 @@
 <a href="#504" id="504">504</a>
 <a href="#505" id="505">505</a>
 <a href="#506" id="506">506</a>
-<a href="#507" id="507">507</a>
-<a href="#508" id="508">508</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the consensus block.
 //!
@@ -535,14 +533,14 @@
 <span class="kw">use </span>rand_chacha::ChaCha8Rng;
 <span class="kw">use </span>runtime_api::InherentExtrinsicConstructor;
 <span class="kw">use </span>sc_client_api::BlockBackend;
-<span class="kw">use </span>sp_api::ProvideRuntimeApi;
+<span class="kw">use </span>sp_api::{HashT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_domains::{
     BundleValidity, DomainId, DomainsApi, DomainsDigestItem, ExecutionReceipt, ExtrinsicsRoot,
-    InvalidBundle, InvalidBundleType, OpaqueBundle, OpaqueBundles, ReceiptValidity,
+    InvalidBundle, InvalidBundleType, OpaqueBundle, OpaqueBundles, ReceiptValidity, ValidBundle,
 };
 <span class="kw">use </span>sp_messenger::MessengerApi;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, NumberFor};
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::collections::{BTreeMap, VecDeque};
 <span class="kw">use </span>std::fmt::Debug;
@@ -616,18 +614,15 @@
     <span class="prelude-val">Ok</span>((extrinsics, shuffling_seed, maybe_new_runtime))
 }
 
-<span class="kw">fn </span>deduplicate_and_shuffle_extrinsics&lt;Block, SE&gt;(
-    parent_hash: Block::Hash,
-    signer_extractor: <span class="kw-2">&amp;</span>SE,
-    <span class="kw-2">mut </span>extrinsics: Vec&lt;Block::Extrinsic&gt;,
+<span class="kw">fn </span>deduplicate_and_shuffle_extrinsics&lt;Block&gt;(
+    <span class="kw-2">mut </span>extrinsics: Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Block::Extrinsic)&gt;,
     shuffling_seed: Randomness,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;Block::Extrinsic&gt;, sp_blockchain::Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    SE: SignerExtractor&lt;Block&gt;,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>seen = Vec::new();
-    extrinsics.retain(|uxt| <span class="kw">match </span>seen.contains(uxt) {
+    extrinsics.retain(|(<span class="kw">_</span>, uxt)| <span class="kw">match </span>seen.contains(uxt) {
         <span class="bool-val">true </span>=&gt; {
             <span class="macro">tracing::trace!</span>(extrinsic = <span class="question-mark">?</span>uxt, <span class="string">&quot;Duplicated extrinsic&quot;</span>);
             <span class="bool-val">false
@@ -640,14 +635,6 @@
     drop(seen);
 
     <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>extrinsics, <span class="string">&quot;Origin deduplicated extrinsics&quot;</span>);
-
-    <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>signer_extractor.extract_signer(parent_hash, extrinsics) {
-        <span class="prelude-val">Ok</span>(res) =&gt; res,
-        <span class="prelude-val">Err</span>(e) =&gt; {
-            <span class="macro">tracing::error!</span>(error = <span class="question-mark">?</span>e, <span class="string">&quot;Error at calling runtime api: extract_signer&quot;</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(e.into());
-        }
-    };
 
     <span class="kw">let </span>extrinsics =
         shuffle_extrinsics::&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic, AccountId&gt;(extrinsics, shuffling_seed);
@@ -705,6 +692,7 @@
 <span class="kw">pub struct </span>PreprocessResult&lt;Block: BlockT&gt; {
     <span class="kw">pub </span>extrinsics: Vec&lt;Block::Extrinsic&gt;,
     <span class="kw">pub </span>extrinsics_roots: Vec&lt;ExtrinsicsRoot&gt;,
+    <span class="kw">pub </span>valid_bundles: Vec&lt;ValidBundle&gt;,
     <span class="kw">pub </span>invalid_bundles: Vec&lt;InvalidBundle&gt;,
 }
 
@@ -820,16 +808,11 @@
             .runtime_api()
             .domain_tx_range(consensus_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(invalid_bundles, extrinsics) =
+        <span class="kw">let </span>(valid_bundles, invalid_bundles, extrinsics) =
             <span class="self">self</span>.compile_bundles_to_extrinsics(bundles, tx_range, domain_hash)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>extrinsics_in_bundle = deduplicate_and_shuffle_extrinsics(
-            domain_hash,
-            <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
-            extrinsics,
-            shuffling_seed,
-        )
-        .map(|exts| <span class="self">self</span>.filter_invalid_xdm_extrinsics(domain_hash, exts))<span class="question-mark">?</span>;
+        <span class="kw">let </span>extrinsics_in_bundle =
+            deduplicate_and_shuffle_extrinsics::&lt;Block&gt;(extrinsics, shuffling_seed)<span class="question-mark">?</span>;
 
         <span class="comment">// Fetch inherent extrinsics
         </span><span class="kw">let </span><span class="kw-2">mut </span>extrinsics = construct_inherent_extrinsics(
@@ -856,6 +839,7 @@
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(PreprocessResult {
             extrinsics,
             extrinsics_roots,
+            valid_bundles,
             invalid_bundles,
         }))
     }
@@ -868,13 +852,35 @@
         bundles: OpaqueBundles&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash, Balance&gt;,
         tx_range: U256,
         at: Block::Hash,
-    ) -&gt; sp_blockchain::Result&lt;(Vec&lt;InvalidBundle&gt;, Vec&lt;Block::Extrinsic&gt;)&gt; {
+    ) -&gt; sp_blockchain::Result&lt;(
+        Vec&lt;ValidBundle&gt;,
+        Vec&lt;InvalidBundle&gt;,
+        Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Block::Extrinsic)&gt;,
+    )&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>invalid_bundles = Vec::with_capacity(bundles.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>valid_bundles = Vec::with_capacity(bundles.len());
         <span class="kw">let </span><span class="kw-2">mut </span>valid_extrinsics = Vec::new();
 
         <span class="kw">for </span>(index, bundle) <span class="kw">in </span>bundles.into_iter().enumerate() {
             <span class="kw">match </span><span class="self">self</span>.check_bundle_validity(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>tx_range, at)<span class="question-mark">? </span>{
-                BundleValidity::Valid(extrinsics) =&gt; valid_extrinsics.extend(extrinsics),
+                BundleValidity::Valid(extrinsics) =&gt; {
+                    <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span><span class="self">self</span>.runtime_api.extract_signer(at, extrinsics) {
+                        <span class="prelude-val">Ok</span>(res) =&gt; res,
+                        <span class="prelude-val">Err</span>(e) =&gt; {
+                            <span class="macro">tracing::error!</span>(error = <span class="question-mark">?</span>e, <span class="string">&quot;Error at calling runtime api: extract_signer&quot;</span>);
+                            <span class="kw">return </span><span class="prelude-val">Err</span>(e.into());
+                        }
+                    };
+                    <span class="kw">let </span>bundle_digest: Vec&lt;<span class="kw">_</span>&gt; = extrinsics
+                        .iter()
+                        .map(|(signer, tx)| (signer.clone(), BlakeTwo256::hash_of(tx)))
+                        .collect();
+                    valid_bundles.push(ValidBundle {
+                        bundle_index: index <span class="kw">as </span>u32,
+                        bundle_digest: BlakeTwo256::hash_of(<span class="kw-2">&amp;</span>bundle_digest),
+                    });
+                    valid_extrinsics.extend(extrinsics);
+                }
                 BundleValidity::Invalid(invalid_bundle_type) =&gt; {
                     invalid_bundles.push(InvalidBundle {
                         bundle_index: index <span class="kw">as </span>u32,
@@ -884,7 +890,7 @@
             }
         }
 
-        <span class="prelude-val">Ok</span>((invalid_bundles, valid_extrinsics))
+        <span class="prelude-val">Ok</span>((valid_bundles, invalid_bundles, valid_extrinsics))
     }
 
     <span class="kw">fn </span>check_bundle_validity(
@@ -949,33 +955,23 @@
                 </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::IllegalTx));
             }
 
+            <span class="comment">// TODO: the behavior is changed, as before invalid XDM will be dropped silently,
+            // and the other extrinsic of the bundle will be continue processed, now the whole
+            // bundle is considered as invalid and excluded from further processing.
+            </span><span class="kw">if </span>!is_valid_xdm::&lt;CClient, CBlock, Block, <span class="kw">_</span>&gt;(
+                <span class="kw-2">&amp;</span><span class="self">self</span>.consensus_client,
+                at,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
+                <span class="kw-2">&amp;</span>extrinsic,
+            )<span class="question-mark">? </span>{
+                <span class="comment">// TODO: Generate a fraud proof for this invalid bundle
+                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::InvalidXDM));
+            }
+
             extrinsics.push(extrinsic);
         }
 
         <span class="prelude-val">Ok</span>(BundleValidity::Valid(extrinsics))
-    }
-
-    <span class="kw">fn </span>filter_invalid_xdm_extrinsics(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        at: Block::Hash,
-        exts: Vec&lt;Block::Extrinsic&gt;,
-    ) -&gt; Vec&lt;Block::Extrinsic&gt; {
-        exts.into_iter()
-            .filter(|ext| {
-                <span class="kw">match </span>is_valid_xdm::&lt;CClient, CBlock, Block, <span class="kw">_</span>&gt;(
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.consensus_client,
-                    at,
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
-                    ext,
-                ) {
-                    <span class="prelude-val">Ok</span>(valid) =&gt; valid,
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">tracing::error!</span>(<span class="string">&quot;failed to verify extrinsic: {err}&quot;</span>,);
-                        <span class="bool-val">false
-                    </span>}
-                }
-            })
-            .collect()
     }
 }
 
