@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["build_consensus_relay"],"struct":["NetworkWrapper"]};
+window.SIDEBAR_ITEMS = {"enum":["BlockRelayConfigurationError"],"fn":["build_consensus_relay"],"struct":["NetworkWrapper"]};
