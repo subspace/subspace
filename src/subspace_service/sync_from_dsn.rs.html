@@ -262,6 +262,28 @@
 <a href="#262" id="262">262</a>
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>import_blocks;
 <span class="kw">mod </span>piece_validator;
 <span class="kw">mod </span>segment_header_downloader;
@@ -277,8 +299,10 @@
 <span class="kw">use </span>sc_consensus_subspace::archiver::SegmentHeadersStore;
 <span class="kw">use </span>sc_network::config::SyncMode;
 <span class="kw">use </span>sc_network::{NetworkPeers, NetworkService};
-<span class="kw">use </span>sp_api::BlockT;
+<span class="kw">use </span>sp_api::{BlockT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
+<span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi};
+<span class="kw">use </span>sp_runtime::Saturating;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::sync::atomic::Ordering;
 <span class="kw">use </span>std::sync::Arc;
@@ -323,9 +347,11 @@
     Client: HeaderBackend&lt;Block&gt;
         + BlockBackend&lt;Block&gt;
         + BlockchainEvents&lt;Block&gt;
+        + ProvideRuntimeApi&lt;Block&gt;
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
 {
     <span class="kw">let </span>(tx, rx) = mpsc::channel(<span class="number">0</span>);
     <span class="kw">let </span>observer_fut = {
@@ -476,13 +502,31 @@
 <span class="kw">where
     </span>Block: BlockT,
     AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
-    Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
+    Client: HeaderBackend&lt;Block&gt;
+        + BlockBackend&lt;Block&gt;
+        + ProvideRuntimeApi&lt;Block&gt;
+        + Send
+        + Sync
+        + <span class="lifetime">&#39;static</span>,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     IQS: ImportQueueService&lt;Block&gt; + <span class="question-mark">?</span>Sized,
 {
     <span class="comment">// Corresponds to contents of block one, everyone has it, so we consider it being processed
     // right away
     </span><span class="kw">let </span><span class="kw-2">mut </span>last_processed_segment_index = SegmentIndex::ZERO;
-    <span class="kw">let </span><span class="kw-2">mut </span>last_processed_block_number = client.info().finalized_number;
+    <span class="comment">// TODO: We&#39;ll be able to just take finalized block once we are able to decouple pruning from
+    //  finality: https://github.com/paritytech/polkadot-sdk/issues/1570
+    </span><span class="kw">let </span><span class="kw-2">mut </span>last_processed_block_number = {
+        <span class="kw">let </span>info = client.info();
+        info.best_number.saturating_sub(
+            client
+                .runtime_api()
+                .chain_constants(info.best_hash)
+                .map_err(|error| error.to_string())<span class="question-mark">?
+                </span>.confirmation_depth_k()
+                .into(),
+        )
+    };
     <span class="kw">let </span>segment_header_downloader = SegmentHeaderDownloader::new(node);
     <span class="kw">let </span>piece_provider = PieceProvider::new(
         node.clone(),

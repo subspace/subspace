@@ -783,77 +783,6 @@
 <a href="#783" id="783">783</a>
 <a href="#784" id="784">784</a>
 <a href="#785" id="785">785</a>
-<a href="#786" id="786">786</a>
-<a href="#787" id="787">787</a>
-<a href="#788" id="788">788</a>
-<a href="#789" id="789">789</a>
-<a href="#790" id="790">790</a>
-<a href="#791" id="791">791</a>
-<a href="#792" id="792">792</a>
-<a href="#793" id="793">793</a>
-<a href="#794" id="794">794</a>
-<a href="#795" id="795">795</a>
-<a href="#796" id="796">796</a>
-<a href="#797" id="797">797</a>
-<a href="#798" id="798">798</a>
-<a href="#799" id="799">799</a>
-<a href="#800" id="800">800</a>
-<a href="#801" id="801">801</a>
-<a href="#802" id="802">802</a>
-<a href="#803" id="803">803</a>
-<a href="#804" id="804">804</a>
-<a href="#805" id="805">805</a>
-<a href="#806" id="806">806</a>
-<a href="#807" id="807">807</a>
-<a href="#808" id="808">808</a>
-<a href="#809" id="809">809</a>
-<a href="#810" id="810">810</a>
-<a href="#811" id="811">811</a>
-<a href="#812" id="812">812</a>
-<a href="#813" id="813">813</a>
-<a href="#814" id="814">814</a>
-<a href="#815" id="815">815</a>
-<a href="#816" id="816">816</a>
-<a href="#817" id="817">817</a>
-<a href="#818" id="818">818</a>
-<a href="#819" id="819">819</a>
-<a href="#820" id="820">820</a>
-<a href="#821" id="821">821</a>
-<a href="#822" id="822">822</a>
-<a href="#823" id="823">823</a>
-<a href="#824" id="824">824</a>
-<a href="#825" id="825">825</a>
-<a href="#826" id="826">826</a>
-<a href="#827" id="827">827</a>
-<a href="#828" id="828">828</a>
-<a href="#829" id="829">829</a>
-<a href="#830" id="830">830</a>
-<a href="#831" id="831">831</a>
-<a href="#832" id="832">832</a>
-<a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a>
-<a href="#835" id="835">835</a>
-<a href="#836" id="836">836</a>
-<a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -881,10 +810,12 @@
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>futures::StreamExt;
-<span class="kw">use </span>log::{debug, error, info, warn};
+<span class="kw">use </span>log::{debug, info, warn};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rand_chacha::ChaCha8Rng;
+<span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
+<span class="kw">use </span>rayon::ThreadPoolBuilder;
 <span class="kw">use </span>sc_client_api::{AuxStore, Backend <span class="kw">as </span>BackendT, BlockBackend, Finalizer, LockImportRun};
 <span class="kw">use </span>sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_INFO};
 <span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
@@ -903,6 +834,9 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
 <span class="kw">use </span>subspace_core_primitives::{BlockNumber, RecordedHistorySegment, SegmentHeader, SegmentIndex};
+
+<span class="doccomment">/// This corresponds to default value of `--max-runtime-instances` in Substrate
+</span><span class="kw">const </span>BLOCKS_TO_ARCHIVE_CONCURRENCY: usize = <span class="number">8</span>;
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>SegmentHeadersStoreInner&lt;AS&gt; {
@@ -934,7 +868,7 @@
     <span class="kw">const </span>INITIAL_CACHE_CAPACITY: usize = <span class="number">1_000</span>;
 
     <span class="doccomment">/// Create new instance
-    </span><span class="kw">pub fn </span>new(aux_store: Arc&lt;AS&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, sp_blockchain::Error&gt; {
+    </span><span class="kw">pub fn </span>new(aux_store: Arc&lt;AS&gt;) -&gt; sp_blockchain::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>cache = Vec::with_capacity(<span class="self">Self</span>::INITIAL_CACHE_CAPACITY);
         <span class="kw">let </span><span class="kw-2">mut </span>next_key_index = <span class="number">0</span>;
 
@@ -977,7 +911,7 @@
     </span><span class="kw">pub fn </span>add_segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_headers: <span class="kw-2">&amp;</span>[SegmentHeader],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt; {
+    ) -&gt; sp_blockchain::Result&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>maybe_last_segment_index = <span class="self">self</span>.max_segment_index();
         <span class="kw">let </span><span class="kw-2">mut </span>segment_headers_to_store = Vec::with_capacity(segment_headers.len());
         <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
@@ -1057,139 +991,63 @@
 /// https://github.com/paritytech/substrate/discussions/14359
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>FINALIZATION_DEPTH_IN_SEGMENTS: usize = <span class="number">5</span>;
 
-<span class="kw">fn </span>find_last_archived_block&lt;Block, Client&gt;(
+<span class="kw">fn </span>find_last_archived_block&lt;Block, Client, AS&gt;(
     client: <span class="kw-2">&amp;</span>Client,
-    best_block_hash: Block::Hash,
-) -&gt; <span class="prelude-ty">Option</span>&lt;(SegmentHeader, Block, BlockObjectMapping)&gt;
+    segment_headers_store: <span class="kw-2">&amp;</span>SegmentHeadersStore&lt;AS&gt;,
+) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;(SegmentHeader, Block, BlockObjectMapping)&gt;&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt; + ObjectsApi&lt;Block&gt;,
+    AS: AuxStore,
 {
-    <span class="kw">let </span><span class="kw-2">mut </span>block_to_check = best_block_hash;
-    <span class="kw">let </span>last_segment_header = <span class="lifetime">&#39;outer</span>: <span class="kw">loop </span>{
-        <span class="kw">let </span>block = client
-            .block(block_to_check)
-            .expect(<span class="string">&quot;Older blocks should always exist&quot;</span>)
-            .expect(<span class="string">&quot;Older blocks should always exist&quot;</span>);
-
-        <span class="kw">for </span>extrinsic <span class="kw">in </span>block.block.extrinsics() {
-            <span class="kw">match </span>client
-                .runtime_api()
-                .extract_segment_headers(block_to_check, extrinsic)
-            {
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(segment_headers)) =&gt; {
-                    <span class="kw">break </span><span class="lifetime">&#39;outer </span>segment_headers.into_iter().last()<span class="question-mark">?</span>;
-                }
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                    <span class="comment">// Some other extrinsic, ignore
-                </span>}
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="comment">// TODO: Probably light client, can this even happen?
-                    </span><span class="macro">panic!</span>(
-                        <span class="string">&quot;Failed to make runtime API call during last archived block search: \
-                        {error:?}&quot;
-                    </span>);
-                }
-            }
-        }
-
-        <span class="kw">let </span>parent_block_hash = <span class="kw-2">*</span>block.block.header().parent_hash();
-
-        <span class="kw">if </span>parent_block_hash == Block::Hash::default() {
-            <span class="comment">// Genesis block, nothing else to check
-            </span><span class="kw">return </span><span class="prelude-val">None</span>;
-        }
-
-        block_to_check = parent_block_hash;
+    <span class="kw">let </span><span class="prelude-val">Some</span>(max_segment_index) = segment_headers_store.max_segment_index() <span class="kw">else </span>{
+        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
     };
 
-    <span class="kw">let </span>last_archived_block_number = last_segment_header.last_archived_block().number;
+    <span class="kw">if </span>max_segment_index == SegmentIndex::ZERO {
+        <span class="comment">// Just genesis, nothing else to check
+        </span><span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+    }
 
-    <span class="kw">let </span>last_archived_block = <span class="kw">loop </span>{
-        <span class="kw">let </span>block = client
-            .block(block_to_check)
-            .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>)
-            .expect(<span class="string">&quot;Older blocks must always exist&quot;</span>)
+    <span class="kw">for </span>segment_header <span class="kw">in </span>(SegmentIndex::ZERO..=max_segment_index)
+        .rev()
+        .filter_map(|segment_index| segment_headers_store.get_segment_header(segment_index))
+    {
+        <span class="kw">let </span>last_archived_block_number = segment_header.last_archived_block().number;
+        <span class="kw">let </span><span class="prelude-val">Some</span>(last_archived_block_hash) = client.hash(last_archived_block_number.into())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="comment">// This block number is not in our chain yet (segment headers store may know about more
+            // blocks in existence than is currently imported)
+            </span><span class="kw">continue</span>;
+        };
+
+        <span class="kw">let </span>last_segment_header = segment_header;
+
+        <span class="kw">let </span>last_archived_block = client
+            .block(last_archived_block_hash)<span class="question-mark">?
+            </span>.expect(<span class="string">&quot;Last archived block must always be retrievable; qed&quot;</span>)
             .block;
 
-        <span class="kw">if </span><span class="kw-2">*</span>block.header().number() == last_archived_block_number.into() {
-            <span class="kw">break </span>block;
-        }
+        <span class="kw">let </span>block_object_mappings = client
+            .runtime_api()
+            .validated_object_call_hashes(last_archived_block_hash)
+            .and_then(|calls| {
+                client.runtime_api().extract_block_object_mapping(
+                    <span class="kw-2">*</span>last_archived_block.header().parent_hash(),
+                    last_archived_block.clone(),
+                    calls,
+                )
+            })
+            .unwrap_or_default();
 
-        block_to_check = <span class="kw-2">*</span>block.header().parent_hash();
-    };
-
-    <span class="kw">let </span>last_archived_block_hash = block_to_check;
-
-    <span class="kw">let </span>block_object_mappings = client
-        .runtime_api()
-        .validated_object_call_hashes(last_archived_block_hash)
-        .and_then(|calls| {
-            client.runtime_api().extract_block_object_mapping(
-                <span class="kw-2">*</span>last_archived_block.header().parent_hash(),
-                last_archived_block.clone(),
-                calls,
-            )
-        })
-        .unwrap_or_default();
-
-    <span class="prelude-val">Some</span>((
-        last_segment_header,
-        last_archived_block,
-        block_object_mappings,
-    ))
-}
-
-<span class="kw">struct </span>BlockHashesToArchive&lt;Block&gt;
-<span class="kw">where
-    </span>Block: BlockT,
-{
-    block_hashes: Vec&lt;Block::Hash&gt;,
-    best_archived: <span class="prelude-ty">Option</span>&lt;(Block::Hash, NumberFor&lt;Block&gt;)&gt;,
-}
-
-<span class="kw">fn </span>block_hashes_to_archive&lt;Block, Client&gt;(
-    client: <span class="kw-2">&amp;</span>Client,
-    best_block_hash: Block::Hash,
-    blocks_to_archive_from: NumberFor&lt;Block&gt;,
-    blocks_to_archive_to: NumberFor&lt;Block&gt;,
-) -&gt; BlockHashesToArchive&lt;Block&gt;
-<span class="kw">where
-    </span>Block: BlockT,
-    Client: HeaderBackend&lt;Block&gt;,
-{
-    <span class="kw">let </span>block_range = blocks_to_archive_from..=blocks_to_archive_to;
-    <span class="kw">let </span><span class="kw-2">mut </span>block_hashes = Vec::new();
-    <span class="kw">let </span><span class="kw-2">mut </span>block_hash_to_check = best_block_hash;
-    <span class="kw">let </span><span class="kw-2">mut </span>best_archived = <span class="prelude-val">None</span>;
-
-    <span class="kw">loop </span>{
-        <span class="comment">// TODO: `Error` here must be handled instead
-        </span><span class="kw">let </span>header = client
-            .header(block_hash_to_check)
-            .expect(<span class="string">&quot;Parent block must exist; qed&quot;</span>)
-            .expect(<span class="string">&quot;Parent block must exist; qed&quot;</span>);
-
-        <span class="kw">if </span>block_range.contains(header.number()) {
-            block_hashes.push(block_hash_to_check);
-
-            <span class="kw">if </span>best_archived.is_none() {
-                best_archived.replace((block_hash_to_check, <span class="kw-2">*</span>header.number()));
-            }
-        }
-
-        <span class="kw">if </span><span class="kw-2">*</span>header.number() == blocks_to_archive_from {
-            <span class="kw">break</span>;
-        }
-
-        block_hash_to_check = <span class="kw-2">*</span>header.parent_hash();
+        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((
+            last_segment_header,
+            last_archived_block,
+            block_object_mappings,
+        )));
     }
 
-    BlockHashesToArchive {
-        block_hashes,
-        best_archived,
-    }
+    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
 }
 
 <span class="doccomment">/// Derive genesis segment on demand, returns `Ok(None)` in case genesis block was already pruned
@@ -1270,12 +1128,11 @@
 }
 
 <span class="kw">fn </span>initialize_archiver&lt;Block, Client, AS&gt;(
-    best_block_hash: Block::Hash,
     best_block_number: NumberFor&lt;Block&gt;,
     segment_headers_store: <span class="kw-2">&amp;</span>SegmentHeadersStore&lt;AS&gt;,
     subspace_link: <span class="kw-2">&amp;</span>SubspaceLink&lt;Block&gt;,
     client: <span class="kw-2">&amp;</span>Client,
-) -&gt; InitializedArchiver&lt;Block&gt;
+) -&gt; sp_blockchain::Result&lt;InitializedArchiver&lt;Block&gt;&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt; + AuxStore,
@@ -1286,7 +1143,7 @@
         .expect(<span class="string">&quot;Must always be able to get chain constants&quot;</span>)
         .confirmation_depth_k();
 
-    <span class="kw">let </span>maybe_last_archived_block = find_last_archived_block(client, best_block_hash);
+    <span class="kw">let </span>maybe_last_archived_block = find_last_archived_block(client, segment_headers_store)<span class="question-mark">?</span>;
     <span class="kw">let </span>have_last_segment_header = maybe_last_archived_block.is_some();
     <span class="kw">let </span><span class="kw-2">mut </span>best_archived_block = <span class="prelude-val">None</span>;
 
@@ -1361,40 +1218,60 @@
                 blocks_to_archive_to,
             );
 
-            <span class="kw">let </span>block_hashes_to_archive = block_hashes_to_archive(
-                client,
-                best_block_hash,
-                blocks_to_archive_from.into(),
-                blocks_to_archive_to.into(),
-            );
-            best_archived_block = block_hashes_to_archive.best_archived;
-            <span class="kw">let </span>block_hashes_to_archive = block_hashes_to_archive.block_hashes;
+            <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
+                .num_threads(BLOCKS_TO_ARCHIVE_CONCURRENCY)
+                .build()
+                .map_err(|error| {
+                    sp_blockchain::Error::Backend(<span class="macro">format!</span>(
+                        <span class="string">&quot;Failed to create thread pool for archiver initialization: {error}&quot;
+                    </span>))
+                })<span class="question-mark">?</span>;
+            <span class="comment">// We need to limit number of threads to avoid running out of WASM instances
+            </span><span class="kw">let </span>blocks_to_archive = thread_pool.install(|| {
+                (blocks_to_archive_from..=blocks_to_archive_to)
+                    .into_par_iter()
+                    .map_init(
+                        || client.runtime_api(),
+                        |runtime_api, block_number| {
+                            <span class="kw">let </span>block_hash = client
+                                .hash(block_number.into())<span class="question-mark">?
+                                </span>.expect(<span class="string">&quot;All blocks since last archived must be present; qed&quot;</span>);
 
-            <span class="kw">for </span>block_hash_to_archive <span class="kw">in </span>block_hashes_to_archive.into_iter().rev() {
-                <span class="kw">let </span>block = client
-                    .block(block_hash_to_archive)
-                    .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
-                    .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
-                    .block;
+                            <span class="kw">let </span>block = client
+                                .block(block_hash)<span class="question-mark">?
+                                </span>.expect(<span class="string">&quot;All blocks since last archived must be present; qed&quot;</span>)
+                                .block;
+
+                            <span class="kw">let </span>block_object_mappings = runtime_api
+                                .validated_object_call_hashes(block_hash)
+                                .and_then(|calls| {
+                                    client.runtime_api().extract_block_object_mapping(
+                                        <span class="kw-2">*</span>block.header().parent_hash(),
+                                        block.clone(),
+                                        calls,
+                                    )
+                                })
+                                .unwrap_or_default();
+
+                            <span class="prelude-val">Ok</span>((block, block_object_mappings))
+                        },
+                    )
+                    .collect::&lt;sp_blockchain::Result&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()
+            })<span class="question-mark">?</span>;
+
+            best_archived_block = blocks_to_archive
+                .last()
+                .map(|(block, _block_object_mappings)| (block.hash(), <span class="kw-2">*</span>block.header().number()));
+
+            <span class="kw">for </span>(block, block_object_mappings) <span class="kw">in </span>blocks_to_archive {
                 <span class="kw">let </span>block_number_to_archive = <span class="kw-2">*</span>block.header().number();
-
-                <span class="kw">let </span>block_object_mappings = client
-                    .runtime_api()
-                    .validated_object_call_hashes(block_hash_to_archive)
-                    .and_then(|calls| {
-                        client.runtime_api().extract_block_object_mapping(
-                            <span class="kw-2">*</span>block.header().parent_hash(),
-                            block.clone(),
-                            calls,
-                        )
-                    })
-                    .unwrap_or_default();
 
                 <span class="kw">let </span>encoded_block = <span class="kw">if </span>block_number_to_archive.is_zero() {
                     encode_genesis_block(<span class="kw-2">&amp;</span>block)
                 } <span class="kw">else </span>{
                     block.encode()
                 };
+
                 <span class="macro">debug!</span>(
                     target: <span class="string">&quot;subspace&quot;</span>,
                     <span class="string">&quot;Encoded block {} has size of {:.2} kiB&quot;</span>,
@@ -1412,11 +1289,7 @@
                 older_archived_segments.extend(archived_segments);
 
                 <span class="kw">if </span>!new_segment_headers.is_empty() {
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                        segment_headers_store.add_segment_headers(<span class="kw-2">&amp;</span>new_segment_headers)
-                    {
-                        <span class="macro">panic!</span>(<span class="string">&quot;Failed to store segment headers: {error}&quot;</span>);
-                    }
+                    segment_headers_store.add_segment_headers(<span class="kw-2">&amp;</span>new_segment_headers)<span class="question-mark">?</span>;
                     <span class="comment">// Set list of expected segment headers for the block where we expect segment
                     // header extrinsic to be included
                     </span>subspace_link.segment_headers.lock().put(
@@ -1434,13 +1307,13 @@
         }
     }
 
-    InitializedArchiver {
+    <span class="prelude-val">Ok</span>(InitializedArchiver {
         confirmation_depth_k,
         archiver,
         older_archived_segments,
         best_archived_block: best_archived_block
             .expect(<span class="string">&quot;Must always set if there is no logical error; qed&quot;</span>),
-    }
+    })
 }
 
 <span class="kw">fn </span>finalize_block&lt;Block, Backend, Client&gt;(
@@ -1459,7 +1332,7 @@
     }
     <span class="comment">// We don&#39;t have anything useful to do with this result yet, the only source of errors was
     // logged already inside
-    </span><span class="kw">let </span>_result: <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, sp_blockchain::Error&gt; = client.lock_import_and_run(|import_op| {
+    </span><span class="kw">let </span>_result: sp_blockchain::Result&lt;<span class="kw">_</span>&gt; = client.lock_import_and_run(|import_op| {
         <span class="comment">// Ideally some handle to a synchronization oracle would be used to avoid unconditionally
         // notifying.
         </span>client
@@ -1493,8 +1366,8 @@
     client: Arc&lt;Client&gt;,
     sync_oracle: SubspaceSyncOracle&lt;SO&gt;,
     telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
-) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">&#39;static
-</span><span class="kw">where
+) -&gt; sp_blockchain::Result&lt;<span class="kw">impl </span>Future&lt;Output = sp_blockchain::Result&lt;()&gt;&gt; + Send + <span class="lifetime">&#39;static</span>&gt;
+<span class="kw">where
     </span>Block: BlockT,
     Backend: BackendT&lt;Block&gt;,
     Client: ProvideRuntimeApi&lt;Block&gt;
@@ -1511,7 +1384,6 @@
     SO: SyncOracle + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>client_info = client.info();
-    <span class="kw">let </span>best_block_hash = client_info.best_hash;
     <span class="kw">let </span>best_block_number = client_info.best_number;
 
     <span class="kw">let </span>InitializedArchiver {
@@ -1520,12 +1392,11 @@
         older_archived_segments,
         best_archived_block: (<span class="kw-2">mut </span>best_archived_block_hash, <span class="kw-2">mut </span>best_archived_block_number),
     } = initialize_archiver(
-        best_block_hash,
         best_block_number,
         <span class="kw-2">&amp;</span>segment_headers_store,
         subspace_link,
         client.as_ref(),
-    );
+    )<span class="question-mark">?</span>;
 
     <span class="kw">let </span><span class="kw-2">mut </span>block_importing_notification_stream = subspace_link
         .block_importing_notification_stream
@@ -1534,7 +1405,7 @@
         subspace_link.archived_segment_notification_sender.clone();
     <span class="kw">let </span>segment_headers = Arc::clone(<span class="kw-2">&amp;</span>subspace_link.segment_headers);
 
-    <span class="kw">async move </span>{
+    <span class="prelude-val">Ok</span>(<span class="kw">async move </span>{
         <span class="comment">// Farmers may have not received all previous segments, send them now.
         </span><span class="kw">for </span>archived_segment <span class="kw">in </span>older_archived_segments {
             send_archived_segment_notification(
@@ -1570,12 +1441,10 @@
             <span class="kw">let </span>block = client
                 .block(
                     client
-                        .hash(block_number_to_archive)
-                        .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
-                        .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>),
-                )
-                .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
-                .expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
+                        .hash(block_number_to_archive)<span class="question-mark">?
+                        </span>.expect(<span class="string">&quot;Older block by number must always exist&quot;</span>),
+                )<span class="question-mark">?
+                </span>.expect(<span class="string">&quot;Older block by number must always exist&quot;</span>)
                 .block;
 
             <span class="kw">let </span>parent_block_hash = <span class="kw-2">*</span>block.header().parent_hash();
@@ -1589,19 +1458,19 @@
             );
 
             <span class="kw">if </span>parent_block_hash != best_archived_block_hash {
-                <span class="macro">error!</span>(
-                    target: <span class="string">&quot;subspace&quot;</span>,
+                <span class="kw">let </span>error = <span class="macro">format!</span>(
                     <span class="string">&quot;Attempt to switch to a different fork beyond archiving depth, \
                     can&#39;t do it: parent block hash {}, best archived block hash {}&quot;</span>,
-                    parent_block_hash,
-                    best_archived_block_hash
+                    parent_block_hash, best_archived_block_hash
                 );
-                <span class="kw">return</span>;
+                <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Consensus(sp_consensus::Error::Other(
+                    error.into(),
+                )));
             }
 
             best_archived_block_hash = block_hash_to_archive;
 
-            <span class="kw">let </span>block_object_mappings = <span class="kw">match </span>client
+            <span class="kw">let </span>block_object_mappings = client
                 .runtime_api()
                 .validated_object_call_hashes(block_hash_to_archive)
                 .and_then(|calls| {
@@ -1610,16 +1479,12 @@
                         block.clone(),
                         calls,
                     )
-                }) {
-                <span class="prelude-val">Ok</span>(block_object_mappings) =&gt; block_object_mappings,
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="macro">error!</span>(
-                        target: <span class="string">&quot;subspace&quot;</span>,
-                        <span class="string">&quot;Failed to retrieve block object mappings: {error}&quot;
-                    </span>);
-                    <span class="kw">return</span>;
-                }
-            };
+                })
+                .map_err(|error| {
+                    sp_blockchain::Error::Application(
+                        <span class="macro">format!</span>(<span class="string">&quot;Failed to retrieve block object mappings: {error}&quot;</span>).into(),
+                    )
+                })<span class="question-mark">?</span>;
 
             <span class="kw">let </span>encoded_block = block.encode();
             <span class="macro">debug!</span>(
@@ -1637,15 +1502,7 @@
             ) {
                 <span class="kw">let </span>segment_header = archived_segment.segment_header;
 
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                    segment_headers_store.add_segment_headers(slice::from_ref(<span class="kw-2">&amp;</span>segment_header))
-                {
-                    <span class="macro">error!</span>(
-                        target: <span class="string">&quot;subspace&quot;</span>,
-                        <span class="string">&quot;Failed to store segment headers: {error}&quot;
-                    </span>);
-                    <span class="kw">return</span>;
-                }
+                segment_headers_store.add_segment_headers(slice::from_ref(<span class="kw-2">&amp;</span>segment_header))<span class="question-mark">?</span>;
 
                 send_archived_segment_notification(
                     <span class="kw-2">&amp;</span>archived_segment_notification_sender,
@@ -1671,9 +1528,8 @@
 
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(block_number_to_finalize) = maybe_block_number_to_finalize {
                     <span class="kw">let </span>block_hash_to_finalize = client
-                        .hash(block_number_to_finalize.into())
-                        .expect(<span class="string">&quot;Block about to be finalized must always exist&quot;</span>)
-                        .expect(<span class="string">&quot;Block about to be finalized must always exist&quot;</span>);
+                        .hash(block_number_to_finalize.into())<span class="question-mark">?
+                        </span>.expect(<span class="string">&quot;Block about to be finalized must always exist&quot;</span>);
                     finalize_block(
                         client.as_ref(),
                         telemetry.clone(),
@@ -1683,7 +1539,9 @@
                 }
             }
         }
-    }
+
+        <span class="prelude-val">Ok</span>(())
+    })
 }
 
 <span class="kw">async fn </span>send_archived_segment_notification(
