@@ -1313,24 +1313,6 @@
 <a href="#1313" id="1313">1313</a>
 <a href="#1314" id="1314">1314</a>
 <a href="#1315" id="1315">1315</a>
-<a href="#1316" id="1316">1316</a>
-<a href="#1317" id="1317">1317</a>
-<a href="#1318" id="1318">1318</a>
-<a href="#1319" id="1319">1319</a>
-<a href="#1320" id="1320">1320</a>
-<a href="#1321" id="1321">1321</a>
-<a href="#1322" id="1322">1322</a>
-<a href="#1323" id="1323">1323</a>
-<a href="#1324" id="1324">1324</a>
-<a href="#1325" id="1325">1325</a>
-<a href="#1326" id="1326">1326</a>
-<a href="#1327" id="1327">1327</a>
-<a href="#1328" id="1328">1328</a>
-<a href="#1329" id="1329">1329</a>
-<a href="#1330" id="1330">1330</a>
-<a href="#1331" id="1331">1331</a>
-<a href="#1332" id="1332">1332</a>
-<a href="#1333" id="1333">1333</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1355,17 +1337,17 @@
 
 </span><span class="kw">pub mod </span>archiver;
 <span class="kw">pub mod </span>aux_schema;
-<span class="kw">pub mod </span>import_queue;
 <span class="kw">pub mod </span>notification;
 <span class="kw">mod </span>slot_worker;
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
+<span class="kw">pub mod </span>verifier;
 
 <span class="kw">use </span><span class="kw">crate</span>::archiver::{SegmentHeadersStore, FINALIZATION_DEPTH_IN_SEGMENTS};
-<span class="kw">use </span><span class="kw">crate</span>::import_queue::VerificationError;
 <span class="kw">use </span><span class="kw">crate</span>::notification::{SubspaceNotificationSender, SubspaceNotificationStream};
 <span class="kw">use </span><span class="kw">crate</span>::slot_worker::SubspaceSlotWorker;
 <span class="kw">pub use </span><span class="kw">crate</span>::slot_worker::SubspaceSyncOracle;
+<span class="kw">use </span><span class="kw">crate</span>::verifier::VerificationError;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>log::{debug, info, warn};
@@ -1410,14 +1392,17 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
     BlockNumber, HistorySize, PublicKey, Randomness, SectorId, SegmentHeader, SegmentIndex,
-    Solution, SolutionRange,
+    Solution, SolutionRange, REWARD_SIGNING_CONTEXT,
 };
 <span class="kw">use </span>subspace_proof_of_space::Table;
-<span class="kw">use </span>subspace_solving::REWARD_SIGNING_CONTEXT;
 <span class="kw">use </span>subspace_verification::{
     calculate_block_weight, Error <span class="kw">as </span>VerificationPrimitiveError, PieceCheckParams,
     VerifySolutionParams,
 };
+
+<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+</span><span class="kw">const </span>SUBSPACE_FULL_POT_VERIFICATION_INTERMEDIATE: <span class="kw-2">&amp;</span>[u8] =
+    <span class="string">b&quot;subspace_full_pot_verification_intermediate&quot;</span>;
 
 <span class="doccomment">/// Information about new slot that just arrived
 </span><span class="attr">#[derive(Debug, Copy, Clone)]
@@ -1831,8 +1816,10 @@
         max_block_proposal_slot_portion,
         telemetry,
         offchain_tx_pool_factory,
-        chain_constants: get_chain_constants(client.as_ref())
-            .map_err(|error| sp_consensus::Error::Other(error.into()))<span class="question-mark">?</span>,
+        chain_constants: client
+            .runtime_api()
+            .chain_constants(client.info().best_hash)
+            .map_err(|error| sp_consensus::Error::ChainLookup(error.to_string()))<span class="question-mark">?</span>,
         segment_headers_store,
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
         </span>pending_solutions: Default::default(),
@@ -2044,6 +2031,7 @@
             FarmerPublicKey,
             FarmerSignature,
         &gt;,
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>full_pot_verification: bool,
         <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)] </span>justifications: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;Justifications&gt;,
         skip_runtime_access: bool,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;Block::Header&gt;&gt; {
@@ -2272,17 +2260,18 @@
             // do not have access to parent block, thus only verify proofs after proof of time of at
             // current slot up until future proof of time (inclusive), here during block import we
             // verify the rest.
-            </span><span class="kw">if </span>!<span class="self">self
-                </span>.pot_verifier
-                .is_output_valid(
-                    parent_slot + Slot::from(<span class="number">1</span>),
-                    pot_seed,
-                    slot_iterations,
-                    slots_since_parent,
-                    subspace_digest_items.pre_digest.pot_info().proof_of_time(),
-                    subspace_digest_items.pot_parameters_change,
-                )
-                .<span class="kw">await
+            </span><span class="kw">if </span>full_pot_verification
+                &amp;&amp; !<span class="self">self
+                    </span>.pot_verifier
+                    .is_output_valid(
+                        parent_slot + Slot::from(<span class="number">1</span>),
+                        pot_seed,
+                        slot_iterations,
+                        slots_since_parent,
+                        subspace_digest_items.pre_digest.pot_info().proof_of_time(),
+                        subspace_digest_items.pot_parameters_change,
+                    )
+                    .<span class="kw">await
             </span>{
                 <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidProofOfTime);
             }
@@ -2422,6 +2411,12 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         <span class="kw-2">mut </span>block: BlockImportParams&lt;Block&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ImportResult, <span class="self">Self</span>::Error&gt; {
+        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+        </span><span class="kw">let </span>full_pot_verification = block
+            .intermediates
+            .remove(SUBSPACE_FULL_POT_VERIFICATION_INTERMEDIATE)
+            .and_then(|full_pot_verification| full_pot_verification.downcast_ref().copied())
+            .unwrap_or(<span class="bool-val">true</span>);
         <span class="kw">let </span>block_hash = block.post_hash();
         <span class="kw">let </span>block_number = <span class="kw-2">*</span>block.header.number();
 
@@ -2452,6 +2447,8 @@
             block.body.clone(),
             <span class="kw-2">&amp;</span>root_plot_public_key,
             <span class="kw-2">&amp;</span>subspace_digest_items,
+            <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
+            </span>full_pot_verification,
             <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
             </span><span class="kw-2">&amp;</span>block.justifications,
             skip_execution_checks,
@@ -2554,40 +2551,6 @@
     }
 }
 
-<span class="doccomment">/// Get chain constant configurations
-</span><span class="kw">pub fn </span>get_chain_constants&lt;Block, Client&gt;(
-    client: <span class="kw-2">&amp;</span>Client,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ChainConstants, Error&lt;Block::Header&gt;&gt;
-<span class="kw">where
-    </span>Block: BlockT,
-    Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt; + AuxStore,
-    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
-{
-    <span class="kw">match </span>aux_schema::load_chain_constants(client)<span class="question-mark">? </span>{
-        <span class="prelude-val">Some</span>(chain_constants) =&gt; <span class="prelude-val">Ok</span>(chain_constants),
-        <span class="prelude-val">None </span>=&gt; {
-            <span class="comment">// This is only called on the very first block for which we always have runtime
-            // storage access
-            </span><span class="kw">let </span>chain_constants = client
-                .runtime_api()
-                .chain_constants(client.info().best_hash)
-                .map_err(Error::&lt;Block::Header&gt;::RuntimeApi)<span class="question-mark">?</span>;
-
-            aux_schema::write_chain_constants(<span class="kw-2">&amp;</span>chain_constants, |values| {
-                client.insert_aux(
-                    <span class="kw-2">&amp;</span>values
-                        .iter()
-                        .map(|(key, value)| (key.as_slice(), <span class="kw-2">*</span>value))
-                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-                    <span class="kw-2">&amp;</span>[],
-                )
-            })<span class="question-mark">?</span>;
-
-            <span class="prelude-val">Ok</span>(chain_constants)
-        }
-    }
-}
-
 <span class="doccomment">/// Produce a Subspace block-import object to be used later on in the construction of an
 /// import-queue.
 ///
@@ -2626,8 +2589,9 @@
     <span class="kw">let </span>(block_importing_notification_sender, block_importing_notification_stream) =
         notification::channel(<span class="string">&quot;subspace_block_importing_notification_stream&quot;</span>);
 
-    <span class="kw">let </span>chain_constants = get_chain_constants(client.as_ref())
-        .map_err(|error| sp_blockchain::Error::Application(error.into()))<span class="question-mark">?</span>;
+    <span class="kw">let </span>chain_constants = client
+        .runtime_api()
+        .chain_constants(client.info().best_hash)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>link = SubspaceLink {
         slot_duration,

@@ -29,7 +29,7 @@ var srcIndex = JSON.parse('{\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_transporter":["",[],["lib.rs","weights.rs"]],\
 "sc_consensus_fraud_proof":["",[],["lib.rs"]],\
-"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","import_queue.rs","lib.rs","notification.rs","slot_worker.rs"]],\
+"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs","verifier.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
 "sc_proof_of_time":["",[["source",[],["gossip.rs","state.rs","timekeeper.rs"]]],["lib.rs","slots.rs","source.rs","verifier.rs"]],\
 "sc_subspace_block_relay":["",[["consensus",[],["relay.rs","types.rs"]],["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","types.rs","utils.rs"]],\
@@ -55,7 +55,6 @@ var srcIndex = JSON.parse('{\
 "subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
 "subspace_service":["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs","tx_pre_validator.rs"]],\
-"subspace_solving":["",[],["lib.rs"]],\
 "subspace_test_client":["",[],["chain_spec.rs","domain_chain_spec.rs","lib.rs"]],\
 "subspace_test_runtime":["",[],["lib.rs"]],\
 "subspace_test_service":["",[],["lib.rs"]],\

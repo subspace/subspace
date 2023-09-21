@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["REWARD_SIGNING_CONTEXT"]};
