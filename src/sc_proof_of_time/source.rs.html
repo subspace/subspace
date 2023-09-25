@@ -353,10 +353,6 @@
 <a href="#353" id="353">353</a>
 <a href="#354" id="354">354</a>
 <a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>gossip;
 <span class="kw">mod </span>state;
 <span class="kw">mod </span>timekeeper;
@@ -442,33 +438,30 @@
         GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
         SO: SyncOracle + Send + Sync + <span class="lifetime">&#39;static</span>,
     {
-        <span class="kw">let </span>chain_constants;
-        <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_parameters_change;
-        <span class="kw">let </span>start_slot;
+        <span class="kw">let </span>best_hash = client.info().best_hash;
+        <span class="kw">let </span>runtime_api = client.runtime_api();
+        <span class="kw">let </span>chain_constants = runtime_api.chain_constants(best_hash)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>best_header = client
+            .header(best_hash)<span class="question-mark">?
+            </span>.ok_or_else(|| ApiError::UnknownBlock(<span class="macro">format!</span>(<span class="string">&quot;Parent block {best_hash} not found&quot;</span>)))<span class="question-mark">?</span>;
+        <span class="kw">let </span>best_pre_digest = extract_pre_digest(<span class="kw-2">&amp;</span>best_header)
+            .map_err(|error| ApiError::Application(error.into()))<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>start_slot = <span class="kw">if </span>best_header.number().is_zero() {
+            Slot::from(<span class="number">1</span>)
+        } <span class="kw">else </span>{
+            <span class="comment">// Next slot after the best one seen
+            </span>best_pre_digest.slot() + chain_constants.block_authoring_delay() + Slot::from(<span class="number">1</span>)
+        };
+
+        <span class="kw">let </span>pot_parameters = runtime_api.pot_parameters(best_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_parameters_change = pot_parameters.next_parameters_change();
+
         <span class="kw">let </span>start_seed;
         <span class="kw">let </span>slot_iterations;
-        {
-            <span class="kw">let </span>best_hash = client.info().best_hash;
-            <span class="kw">let </span>runtime_api = client.runtime_api();
-            chain_constants = runtime_api.chain_constants(best_hash)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>best_header = client.header(best_hash)<span class="question-mark">?</span>.ok_or_else(|| {
-                ApiError::UnknownBlock(<span class="macro">format!</span>(<span class="string">&quot;Parent block {best_hash} not found&quot;</span>))
-            })<span class="question-mark">?</span>;
-            <span class="kw">let </span>best_pre_digest = extract_pre_digest(<span class="kw-2">&amp;</span>best_header)
-                .map_err(|error| ApiError::Application(error.into()))<span class="question-mark">?</span>;
-
-            start_slot = <span class="kw">if </span>best_header.number().is_zero() {
-                Slot::from(<span class="number">1</span>)
-            } <span class="kw">else </span>{
-                <span class="comment">// Next slot after the best one seen
-                </span>best_pre_digest.slot() + chain_constants.block_authoring_delay() + Slot::from(<span class="number">1</span>)
-            };
-
-            <span class="kw">let </span>pot_parameters = runtime_api.pot_parameters(best_hash)<span class="question-mark">?</span>;
-            maybe_next_parameters_change = pot_parameters.next_parameters_change();
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = maybe_next_parameters_change
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = maybe_next_parameters_change
                 &amp;&amp; parameters_change.slot == start_slot
             {
                 start_seed = best_pre_digest.pot_info().future_proof_of_time().seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
@@ -482,7 +475,6 @@
                 };
                 slot_iterations = pot_parameters.slot_iterations();
             }
-        }
 
         <span class="kw">let </span>state = Arc::new(PotState::new(
             NextSlotInput {

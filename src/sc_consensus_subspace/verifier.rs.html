@@ -609,9 +609,6 @@
 <a href="#609" id="609">609</a>
 <a href="#610" id="610">610</a>
 <a href="#611" id="611">611</a>
-<a href="#612" id="612">612</a>
-<a href="#613" id="613">613</a>
-<a href="#614" id="614">614</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
 </span><span class="kw">use crate</span>::{Error, SUBSPACE_FULL_POT_VERIFICATION_INTERMEDIATE};
@@ -674,14 +671,17 @@
     </span>VerificationError(Slot, subspace_verification::Error),
 }
 
-<span class="comment">// TODO: Make this non-enum
-</span><span class="doccomment">/// A header which has been checked
-</span><span class="kw">enum </span>CheckedHeader&lt;H, S&gt; {
-    <span class="doccomment">/// A header which is fully checked, including signature. This is the pre-header
-    /// accompanied by the seal components.
+<span class="doccomment">/// A header which has been checked
+</span><span class="kw">struct </span>CheckedHeader&lt;H&gt; {
+    <span class="doccomment">/// A header which is fully checked, including signature. This is the pre-header accompanied by
+    /// the seal components.
     ///
     /// Includes the digest item that encoded the seal.
-    </span>Checked(H, S),
+    </span>pre_header: H,
+    <span class="doccomment">/// Pre-digest
+    </span>pre_digest: PreDigest&lt;FarmerPublicKey, FarmerPublicKey&gt;,
+    <span class="doccomment">/// Seal (signature)
+    </span>seal: DigestItem,
 }
 
 <span class="doccomment">/// Subspace verification parameters
@@ -693,14 +693,6 @@
     </span>header: Header,
     <span class="doccomment">/// Parameters for solution verification
     </span>verify_solution_params: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>VerifySolutionParams,
-}
-
-<span class="doccomment">/// Information from verified header
-</span><span class="kw">struct </span>VerifiedHeaderInfo {
-    <span class="doccomment">/// Pre-digest
-    </span>pre_digest: PreDigest&lt;FarmerPublicKey, FarmerPublicKey&gt;,
-    <span class="doccomment">/// Seal (signature)
-    </span>seal: DigestItem,
 }
 
 <span class="doccomment">/// Options for Subspace block verifier
@@ -847,8 +839,7 @@
         &gt;,
         full_pot_verification: bool,
         justifications: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;Justifications&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;CheckedHeader&lt;Block::Header, VerifiedHeaderInfo&gt;, VerificationError&lt;Block::Header&gt;&gt;
-    {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;CheckedHeader&lt;Block::Header&gt;, VerificationError&lt;Block::Header&gt;&gt; {
         <span class="kw">let </span>VerificationParams {
             <span class="kw-2">mut </span>header,
             verify_solution_params,
@@ -1013,10 +1004,11 @@
         )
         .map_err(|error| VerificationError::VerificationError(slot, error))<span class="question-mark">?</span>;
 
-        <span class="prelude-val">Ok</span>(CheckedHeader::Checked(
-            header,
-            VerifiedHeaderInfo { pre_digest, seal },
-        ))
+        <span class="prelude-val">Ok</span>(CheckedHeader {
+            pre_header: header,
+            pre_digest,
+            seal,
+        })
     }
 
     <span class="kw">async fn </span>check_and_report_equivocation(
@@ -1185,45 +1177,47 @@
             Box::new(full_pot_verification),
         );
 
-        <span class="kw">match </span>checked_header {
-            CheckedHeader::Checked(pre_header, verified_info) =&gt; {
-                <span class="kw">let </span>slot = verified_info.pre_digest.slot();
+        <span class="kw">let </span>CheckedHeader {
+            pre_header,
+            pre_digest,
+            seal,
+        } = checked_header;
 
-                <span class="comment">// the header is valid but let&#39;s check if there was something else already
-                // proposed at the same slot by the given author. if there was, we will
-                // report the equivocation to the runtime.
-                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
-                    </span>.check_and_report_equivocation(
-                        slot_now,
-                        slot,
-                        <span class="kw-2">&amp;</span>block.header,
-                        <span class="kw-2">&amp;</span>verified_info.pre_digest.solution().public_key,
-                        <span class="kw-2">&amp;</span>block.origin,
-                    )
-                    .<span class="kw">await
-                </span>{
-                    <span class="macro">warn!</span>(
-                        target: <span class="string">&quot;subspace&quot;</span>,
-                        <span class="string">&quot;Error checking/reporting Subspace equivocation: {}&quot;</span>,
-                        err
-                    );
-                }
+        <span class="kw">let </span>slot = pre_digest.slot();
 
-                <span class="macro">trace!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checked {:?}; importing.&quot;</span>, pre_header);
-                <span class="macro">telemetry!</span>(
-                    <span class="self">self</span>.telemetry;
-                    CONSENSUS_TRACE;
-                    <span class="string">&quot;subspace.checked_and_importing&quot;</span>;
-                    <span class="string">&quot;pre_header&quot; </span>=&gt; <span class="question-mark">?</span>pre_header,
-                );
-
-                block.header = pre_header;
-                block.post_digests.push(verified_info.seal);
-                block.post_hash = <span class="prelude-val">Some</span>(hash);
-
-                <span class="prelude-val">Ok</span>(block)
-            }
+        <span class="comment">// the header is valid but let&#39;s check if there was something else already proposed at the
+        // same slot by the given author. if there was, we will report the equivocation to the
+        // runtime.
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
+            </span>.check_and_report_equivocation(
+                slot_now,
+                slot,
+                <span class="kw-2">&amp;</span>block.header,
+                <span class="kw-2">&amp;</span>pre_digest.solution().public_key,
+                <span class="kw-2">&amp;</span>block.origin,
+            )
+            .<span class="kw">await
+        </span>{
+            <span class="macro">warn!</span>(
+                target: <span class="string">&quot;subspace&quot;</span>,
+                <span class="string">&quot;Error checking/reporting Subspace equivocation: {}&quot;</span>,
+                err
+            );
         }
+
+        <span class="macro">trace!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checked {:?}; importing.&quot;</span>, pre_header);
+        <span class="macro">telemetry!</span>(
+            <span class="self">self</span>.telemetry;
+            CONSENSUS_TRACE;
+            <span class="string">&quot;subspace.checked_and_importing&quot;</span>;
+            <span class="string">&quot;pre_header&quot; </span>=&gt; <span class="question-mark">?</span>pre_header,
+        );
+
+        block.header = pre_header;
+        block.post_digests.push(seal);
+        block.post_hash = <span class="prelude-val">Some</span>(hash);
+
+        <span class="prelude-val">Ok</span>(block)
     }
 }
 </code></pre></div></section></main></body></html>
