@@ -357,29 +357,6 @@
 <a href="#357" id="357">357</a>
 <a href="#358" id="358">358</a>
 <a href="#359" id="359">359</a>
-<a href="#360" id="360">360</a>
-<a href="#361" id="361">361</a>
-<a href="#362" id="362">362</a>
-<a href="#363" id="363">363</a>
-<a href="#364" id="364">364</a>
-<a href="#365" id="365">365</a>
-<a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a>
-<a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>gossip;
 <span class="kw">mod </span>state;
 <span class="kw">mod </span>timekeeper;
@@ -388,6 +365,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::source::state::{NextSlotInput, PotState};
 <span class="kw">use </span><span class="kw">crate</span>::source::timekeeper::{run_timekeeper, TimekeeperProof};
 <span class="kw">use </span><span class="kw">crate</span>::verifier::PotVerifier;
+<span class="kw">use </span>core_affinity::CoreId;
 <span class="kw">use </span>derive_more::{Deref, DerefMut};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{select, StreamExt};
@@ -398,29 +376,17 @@
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_consensus_slots::Slot;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_consensus_subspace::digests::extract_subspace_digest_items;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_consensus_subspace::ChainConstants;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_consensus_subspace::FarmerSignature;
-<span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi <span class="kw">as </span>SubspaceRuntimeApi};
-<span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_runtime::traits::Header <span class="kw">as </span>HeaderT;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>sp_runtime::traits::Zero;
+<span class="kw">use </span>sp_consensus_subspace::digests::{extract_pre_digest, extract_subspace_digest_items};
+<span class="kw">use </span>sp_consensus_subspace::{
+    ChainConstants, FarmerPublicKey, FarmerSignature, SubspaceApi <span class="kw">as </span>SubspaceRuntimeApi,
+};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, Zero};
+<span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::marker::PhantomData;
-<span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-</span><span class="kw">use </span>std::num::NonZeroU32;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
 <span class="kw">use </span>subspace_core_primitives::PotCheckpoints;
-<span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-</span><span class="kw">use </span>tracing::warn;
-<span class="kw">use </span>tracing::{debug, error};
+<span class="kw">use </span>tracing::{debug, error, warn};
 
 <span class="kw">const </span>LOCAL_PROOFS_CHANNEL_CAPACITY: usize = <span class="number">10</span>;
 <span class="kw">const </span>SLOTS_CHANNEL_CAPACITY: usize = <span class="number">10</span>;
@@ -447,8 +413,7 @@
 #[must_use = <span class="string">&quot;Proof of time source doesn&#39;t do anything unless run() method is called&quot;</span>]
 </span><span class="kw">pub struct </span>PotSourceWorker&lt;Block, Client&gt; {
     client: Arc&lt;Client&gt;,
-    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-    </span>chain_constants: ChainConstants,
+    chain_constants: ChainConstants,
     timekeeper_proofs_receiver: mpsc::Receiver&lt;TimekeeperProof&gt;,
     to_gossip_sender: mpsc::Sender&lt;ToGossipMessage&gt;,
     from_gossip_receiver: mpsc::Receiver&lt;(PeerId, GossipProof)&gt;,
@@ -465,6 +430,7 @@
 {
     <span class="kw">pub fn </span>new&lt;Network, GossipSync, SO&gt;(
         is_timekeeper: bool,
+        timekeeper_cpu_cores: HashSet&lt;usize&gt;,
         client: Arc&lt;Client&gt;,
         pot_verifier: PotVerifier,
         network: Network,
@@ -476,15 +442,12 @@
         GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
         SO: SyncOracle + Send + Sync + <span class="lifetime">&#39;static</span>,
     {
-        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span><span class="kw">let </span>chain_constants;
-        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>maybe_next_parameters_change;
+        <span class="kw">let </span>chain_constants;
+        <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_parameters_change;
         <span class="kw">let </span>start_slot;
         <span class="kw">let </span>start_seed;
         <span class="kw">let </span>slot_iterations;
-        <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-        </span>{
+        {
             <span class="kw">let </span>best_hash = client.info().best_hash;
             <span class="kw">let </span>runtime_api = client.runtime_api();
             chain_constants = runtime_api.chain_constants(best_hash)<span class="question-mark">?</span>;
@@ -520,12 +483,6 @@
                 slot_iterations = pot_parameters.slot_iterations();
             }
         }
-        <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-        </span>{
-            start_slot = Slot::from(<span class="number">1</span>);
-            start_seed = pot_verifier.genesis_seed();
-            slot_iterations = NonZeroU32::new(<span class="number">100_000_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
-        }
 
         <span class="kw">let </span>state = Arc::new(PotState::new(
             NextSlotInput {
@@ -533,8 +490,7 @@
                 slot_iterations,
                 seed: start_seed,
             },
-            <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-            </span>maybe_next_parameters_change,
+            maybe_next_parameters_change,
             pot_verifier.clone(),
         ));
 
@@ -548,6 +504,16 @@
             thread::Builder::new()
                 .name(<span class="string">&quot;timekeeper&quot;</span>.to_string())
                 .spawn(<span class="kw">move </span>|| {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(core) = timekeeper_cpu_cores.into_iter().next() {
+                        <span class="kw">if </span>!core_affinity::set_for_current(CoreId { id: core }) {
+                            <span class="macro">warn!</span>(
+                                %core,
+                                <span class="string">&quot;Failed to set core affinity, timekeeper will run on random CPU \
+                                core&quot;</span>,
+                            );
+                        }
+                    }
+
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
                         run_timekeeper(state, pot_verifier, timekeeper_proofs_sender)
                     {
@@ -573,8 +539,7 @@
 
         <span class="kw">let </span>source_worker = <span class="self">Self </span>{
             client,
-            <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-            </span>chain_constants,
+            chain_constants,
             timekeeper_proofs_receiver,
             to_gossip_sender,
             from_gossip_receiver,
@@ -672,8 +637,7 @@
             expected_next_slot_input,
             proof.slot,
             proof.checkpoints.output(),
-            <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-            </span><span class="prelude-val">None</span>,
+            <span class="prelude-val">None</span>,
         ) {
             <span class="comment">// We don&#39;t care if block production is too slow or block production is not enabled on
             // this node at all
@@ -696,16 +660,7 @@
         }
     }
 
-    <span class="attr">#[cfg(not(feature = <span class="string">&quot;pot&quot;</span>))]
-    </span><span class="kw">fn </span>handle_block_import_notification(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        _block_hash: Block::Hash,
-        _header: <span class="kw-2">&amp;</span>Block::Header,
-    ) {
-    }
-
-    <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-    </span><span class="kw">fn </span>handle_block_import_notification(
+    <span class="kw">fn </span>handle_block_import_notification(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         block_hash: Block::Hash,
         header: <span class="kw-2">&amp;</span>Block::Header,
@@ -744,8 +699,7 @@
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(next_slot_input) = <span class="self">self</span>.state.update(
             best_slot,
             best_proof,
-            <span class="attr">#[cfg(feature = <span class="string">&quot;pot&quot;</span>)]
-            </span><span class="prelude-val">Some</span>(subspace_digest_items.pot_parameters_change),
+            <span class="prelude-val">Some</span>(subspace_digest_items.pot_parameters_change),
         ) {
             <span class="macro">warn!</span>(<span class="string">&quot;Proof of time chain reorg happened&quot;</span>);
 

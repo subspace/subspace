@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["verify_solution"],"struct":["HostFunctions"]};
+window.SIDEBAR_ITEMS = {"fn":["is_proof_of_time_valid","verify_solution"],"struct":["HostFunctions"]};
