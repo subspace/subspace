@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AllowAuthoringBy","Call","Error","Event"],"mod":["dispatchables","equivocation","storage_types","weights"],"struct":["GenesisConfig","NormalEraChange","Pallet","SolutionRangeOverride"],"trait":["Config","EraChangeTrigger"],"type":["CurrentSlot","EraStartSlot","GenesisSlot","Module","NextSolutionRangeOverride","ShouldAdjustSolutionRange"]};
+window.SIDEBAR_ITEMS = {"mod":["equivocation","pallet","weights"],"struct":["NormalEraChange"],"trait":["EraChangeTrigger"]};
