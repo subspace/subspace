@@ -533,31 +533,6 @@
 <a href="#533" id="533">533</a>
 <a href="#534" id="534">534</a>
 <a href="#535" id="535">535</a>
-<a href="#536" id="536">536</a>
-<a href="#537" id="537">537</a>
-<a href="#538" id="538">538</a>
-<a href="#539" id="539">539</a>
-<a href="#540" id="540">540</a>
-<a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a>
-<a href="#546" id="546">546</a>
-<a href="#547" id="547">547</a>
-<a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a>
-<a href="#552" id="552">552</a>
-<a href="#553" id="553">553</a>
-<a href="#554" id="554">554</a>
-<a href="#555" id="555">555</a>
-<a href="#556" id="556">556</a>
-<a href="#557" id="557">557</a>
-<a href="#558" id="558">558</a>
-<a href="#559" id="559">559</a>
-<a href="#560" id="560">560</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
 <span class="kw">mod </span>transport;
 
@@ -574,7 +549,8 @@
 <span class="kw">use </span><span class="kw">crate</span>::protocols::request_response::request_response_factory::RequestHandler;
 <span class="kw">use </span><span class="kw">crate</span>::protocols::reserved_peers::Config <span class="kw">as </span>ReservedPeersConfig;
 <span class="kw">use </span><span class="kw">crate</span>::shared::Shared;
-<span class="kw">use </span><span class="kw">crate</span>::utils::{strip_peer_id, ResizableSemaphore};
+<span class="kw">use </span><span class="kw">crate</span>::utils::rate_limiter::RateLimiter;
+<span class="kw">use </span><span class="kw">crate</span>::utils::strip_peer_id;
 <span class="kw">use crate</span>::{PeerInfo, PeerInfoConfig};
 <span class="kw">use </span>backoff::{ExponentialBackoff, SystemClock};
 <span class="kw">use </span>futures::channel::mpsc;
@@ -639,29 +615,6 @@
 <span class="comment">// TODO: Consider moving this constant to configuration or removing `Toggle` wrapper when we find a
 // use-case for gossipsub protocol.
 </span><span class="kw">const </span>ENABLE_GOSSIP_PROTOCOL: bool = <span class="bool-val">false</span>;
-
-<span class="doccomment">/// Base limit for number of concurrent tasks initiated towards Kademlia.
-///
-/// We restrict this so we can manage outgoing requests a bit better by cancelling low-priority
-/// requests, but this value will be boosted depending on number of connected peers.
-</span><span class="kw">const </span>KADEMLIA_BASE_CONCURRENT_TASKS: NonZeroUsize = NonZeroUsize::new(<span class="number">15</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
-<span class="doccomment">/// Above base limit will be boosted by specified number for every peer connected starting with
-/// second peer, such that it scaled with network connectivity, but the exact coefficient might need
-/// to be tweaked in the future.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KADEMLIA_CONCURRENT_TASKS_BOOST_PER_PEER: usize = <span class="number">15</span>;
-<span class="doccomment">/// Base limit for number of any concurrent tasks except Kademlia.
-///
-/// We configure total number of streams per connection to 256. Here we assume half of them might be
-/// incoming and half outgoing, we also leave a small buffer of streams just in case.
-///
-/// We restrict this so we don&#39;t exceed number of streams for single peer, but this value will be
-/// boosted depending on number of connected peers.
-</span><span class="kw">const </span>REGULAR_BASE_CONCURRENT_TASKS: NonZeroUsize =
-    NonZeroUsize::new(<span class="number">50 </span>- KADEMLIA_BASE_CONCURRENT_TASKS.get()).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
-<span class="doccomment">/// Above base limit will be boosted by specified number for every peer connected starting with
-/// second peer, such that it scaled with network connectivity, but the exact coefficient might need
-/// to be tweaked in the future.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>REGULAR_CONCURRENT_TASKS_BOOST_PER_PEER: usize = <span class="number">25</span>;
 
 <span class="kw">const </span>TEMPORARY_BANS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">10_000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 <span class="kw">const </span>TEMPORARY_BANS_DEFAULT_BACKOFF_INITIAL_INTERVAL: Duration = Duration::from_secs(<span class="number">5</span>);
@@ -1084,15 +1037,12 @@
     <span class="comment">// Create final structs
     </span><span class="kw">let </span>(command_sender, command_receiver) = mpsc::channel(<span class="number">1</span>);
 
-    <span class="kw">let </span>kademlia_tasks_semaphore = ResizableSemaphore::new(KADEMLIA_BASE_CONCURRENT_TASKS);
-    <span class="kw">let </span>regular_tasks_semaphore = ResizableSemaphore::new(REGULAR_BASE_CONCURRENT_TASKS);
+    <span class="kw">let </span>rate_limiter = RateLimiter::new(
+        max_established_outgoing_connections,
+        max_pending_outgoing_connections,
+    );
 
-    <span class="kw">let </span>shared = Arc::new(Shared::new(
-        local_peer_id,
-        command_sender,
-        kademlia_tasks_semaphore,
-        regular_tasks_semaphore,
-    ));
+    <span class="kw">let </span>shared = Arc::new(Shared::new(local_peer_id, command_sender, rate_limiter));
     <span class="kw">let </span>shared_weak = Arc::downgrade(<span class="kw-2">&amp;</span>shared);
 
     <span class="kw">let </span>node = Node::new(shared);

@@ -529,12 +529,14 @@
 <a href="#529" id="529">529</a>
 <a href="#530" id="530">530</a>
 <a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::protocols::request_response::handlers::generic_request_handler::GenericRequest;
 <span class="kw">use </span><span class="kw">crate</span>::protocols::request_response::request_response_factory;
 <span class="kw">pub use </span><span class="kw">crate</span>::shared::NewPeerInfo;
 <span class="kw">use </span><span class="kw">crate</span>::shared::{Command, CreatedSubscription, Shared};
 <span class="kw">use </span><span class="kw">crate</span>::utils::multihash::Multihash;
-<span class="kw">use </span><span class="kw">crate</span>::utils::{HandlerFn, ResizableSemaphorePermit};
+<span class="kw">use </span><span class="kw">crate</span>::utils::rate_limiter::RateLimiterPermit;
+<span class="kw">use </span><span class="kw">crate</span>::utils::HandlerFn;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>event_listener_primitives::HandlerId;
 <span class="kw">use </span>futures::channel::mpsc::SendError;
@@ -559,7 +561,7 @@
     command_sender: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Command&gt;&gt;,
     <span class="attr">#[pin]
     </span>receiver: mpsc::UnboundedReceiver&lt;Bytes&gt;,
-    _permit: ResizableSemaphorePermit,
+    _permit: RateLimiterPermit,
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>TopicSubscription {
@@ -796,7 +798,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         key: Multihash,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = PeerRecord&gt;, GetValueError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.kademlia_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = mpsc::unbounded();
 
         <span class="self">self</span>.shared
@@ -819,7 +821,7 @@
         key: Multihash,
         value: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = ()&gt;, PutValueError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.kademlia_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = mpsc::unbounded();
 
         <span class="self">self</span>.shared
@@ -839,7 +841,7 @@
 
     <span class="doccomment">/// Subcribe to some topic on the DSN.
     </span><span class="kw">pub async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>, topic: Sha256Topic) -&gt; <span class="prelude-ty">Result</span>&lt;TopicSubscription, SubscribeError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.regular_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_regular_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = oneshot::channel();
 
         <span class="self">self</span>.shared
@@ -867,7 +869,7 @@
 
     <span class="doccomment">/// Subcribe a messgo to some topic on the DSN.
     </span><span class="kw">pub async fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, topic: Sha256Topic, message: Vec&lt;u8&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), PublishError&gt; {
-        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.regular_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.rate_limiter.acquire_regular_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = oneshot::channel();
 
         <span class="self">self</span>.shared
@@ -892,7 +894,7 @@
     <span class="kw">where
         </span>Request: GenericRequest,
     {
-        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.regular_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.rate_limiter.acquire_regular_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = oneshot::channel();
         <span class="kw">let </span>command = Command::GenericRequest {
             peer_id,
@@ -913,7 +915,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         key: Multihash,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = PeerId&gt;, GetClosestPeersError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.kademlia_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
         <span class="macro">trace!</span>(<span class="question-mark">?</span>key, <span class="string">&quot;Starting &#39;GetClosestPeers&#39; request.&quot;</span>);
 
         <span class="kw">let </span>(result_sender, result_receiver) = mpsc::unbounded();
@@ -937,7 +939,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         key: Multihash,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = PeerId&gt;, GetProvidersError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.kademlia_tasks_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = mpsc::unbounded();
 
         <span class="macro">trace!</span>(<span class="question-mark">?</span>key, <span class="string">&quot;Starting &#39;get_providers&#39; request.&quot;</span>);

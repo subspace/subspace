@@ -24,7 +24,7 @@ var srcIndex = JSON.parse('{\
 "pallet_offences_subspace":["",[],["lib.rs"]],\
 "pallet_operator_rewards":["",[],["lib.rs"]],\
 "pallet_rewards":["",[],["default_weights.rs","lib.rs"]],\
-"pallet_runtime_configs":["",[],["lib.rs"]],\
+"pallet_runtime_configs":["",[],["lib.rs","weights.rs"]],\
 "pallet_subspace":["",[],["equivocation.rs","lib.rs","weights.rs"]],\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_transporter":["",[],["lib.rs","weights.rs"]],\
@@ -46,7 +46,7 @@ var srcIndex = JSON.parse('{\
 "subspace_farmer_components":["",[],["auditing.rs","file_ext.rs","lib.rs","plotting.rs","proving.rs","reading.rs","sector.rs","segment_reconstruction.rs"]],\
 "subspace_fraud_proof":["",[],["domain_runtime_code.rs","invalid_state_transition_proof.rs","invalid_transaction_proof.rs","lib.rs","verifier_api.rs"]],\
 "subspace_metrics":["",[],["lib.rs"]],\
-"subspace_networking":["",[["behavior",[],["persistent_parameters.rs"]],["constructor",[],["temporary_bans.rs","transport.rs"]],["protocols",[["connected_peers",[],["handler.rs"]],["peer_info",[],["handler.rs","protocol.rs"]],["request_response",[["handlers",[],["generic_request_handler.rs","piece_by_index.rs","segment_header.rs"]]],["handlers.rs","request_response_factory.rs"]],["reserved_peers",[],["handler.rs"]]],["connected_peers.rs","peer_info.rs","request_response.rs","reserved_peers.rs"]],["utils",[],["multihash.rs","piece_provider.rs","unique_record_binary_heap.rs"]]],["behavior.rs","constructor.rs","lib.rs","node.rs","node_runner.rs","protocols.rs","shared.rs","utils.rs"]],\
+"subspace_networking":["",[["behavior",[],["persistent_parameters.rs"]],["constructor",[],["temporary_bans.rs","transport.rs"]],["protocols",[["connected_peers",[],["handler.rs"]],["peer_info",[],["handler.rs","protocol.rs"]],["request_response",[["handlers",[],["generic_request_handler.rs","piece_by_index.rs","segment_header.rs"]]],["handlers.rs","request_response_factory.rs"]],["reserved_peers",[],["handler.rs"]]],["connected_peers.rs","peer_info.rs","request_response.rs","reserved_peers.rs"]],["utils",[["rate_limiter",[],["resizable_semaphore.rs"]]],["multihash.rs","piece_provider.rs","rate_limiter.rs","unique_record_binary_heap.rs"]]],["behavior.rs","constructor.rs","lib.rs","node.rs","node_runner.rs","protocols.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["domain",[],["cli.rs","domain_instance_starter.rs","evm_chain_spec.rs"]]],["chain_spec.rs","chain_spec_utils.rs","domain.rs","lib.rs"]],\
 "subspace_proof_of_space":["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]],\
 "subspace_proof_of_time":["",[["aes",[],["x86_64.rs"]]],["aes.rs","lib.rs"]],\
