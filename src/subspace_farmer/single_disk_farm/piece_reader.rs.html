@@ -211,24 +211,16 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
-<a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{SinkExt, StreamExt};
-<span class="kw">use </span>memmap2::Mmap;
 <span class="kw">use </span>parking_lot::RwLock;
+<span class="kw">use </span>std::fs::File;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceOffset, PublicKey, SectorId, SectorIndex};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
-<span class="kw">use </span>subspace_farmer_components::reading;
 <span class="kw">use </span>subspace_farmer_components::sector::{sector_size, SectorMetadataChecksummed};
+<span class="kw">use </span>subspace_farmer_components::{reading, ReadAt};
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>tracing::{error, warn};
 
@@ -253,7 +245,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new&lt;PosTable&gt;(
         public_key: PublicKey,
         pieces_in_sector: u16,
-        global_plot_mmap: Mmap,
+        plot_file: Arc&lt;File&gt;,
         sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
         erasure_coding: ErasureCoding,
         modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
@@ -266,7 +258,7 @@
         <span class="kw">let </span>reading_fut = read_pieces::&lt;PosTable&gt;(
             public_key,
             pieces_in_sector,
-            global_plot_mmap,
+            plot_file,
             sectors_metadata,
             erasure_coding,
             modifying_sector_index,
@@ -304,7 +296,7 @@
 </span><span class="kw">async fn </span>read_pieces&lt;PosTable&gt;(
     public_key: PublicKey,
     pieces_in_sector: u16,
-    global_plot_mmap: Mmap,
+    plot_file: Arc&lt;File&gt;,
     sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     erasure_coding: ErasureCoding,
     modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
@@ -312,13 +304,6 @@
 ) <span class="kw">where
     </span>PosTable: Table,
 {
-    <span class="attr">#[cfg(unix)]
-    </span>{
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = global_plot_mmap.advise(memmap2::Advice::Random) {
-            <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to set random access on global plot mmap&quot;</span>);
-        }
-    }
-
     <span class="kw">let </span><span class="kw-2">mut </span>table_generator = PosTable::generator();
 
     <span class="kw">while let </span><span class="prelude-val">Some</span>(read_piece_request) = read_piece_receiver.next().<span class="kw">await </span>{
@@ -350,8 +335,7 @@
                     <span class="macro">error!</span>(
                         %sector_index,
                         %sector_count,
-                        <span class="string">&quot;Tried to read piece from sector that is not yet \
-                        plotted&quot;
+                        <span class="string">&quot;Tried to read piece from sector that is not yet plotted&quot;
                     </span>);
                     <span class="kw">continue</span>;
                 }
@@ -360,13 +344,39 @@
             (sector_metadata, sector_count)
         };
 
-        <span class="kw">let </span>maybe_piece = read_piece::&lt;PosTable&gt;(
+        <span class="comment">// Sector must be plotted
+        </span><span class="kw">if </span>sector_index &gt;= sector_count {
+            <span class="macro">warn!</span>(
+                %sector_index,
+                %piece_offset,
+                %sector_count,
+                <span class="string">&quot;Incorrect sector offset&quot;
+            </span>);
+            <span class="comment">// Doesn&#39;t matter if receiver still cares about it
+            </span><span class="kw">let _ </span>= response_sender.send(<span class="prelude-val">None</span>);
+            <span class="kw">continue</span>;
+        }
+        <span class="comment">// Piece must be within sector
+        </span><span class="kw">if </span>u16::from(piece_offset) &gt;= pieces_in_sector {
+            <span class="macro">warn!</span>(
+                %sector_index,
+                %piece_offset,
+                %sector_count,
+                <span class="string">&quot;Incorrect piece offset&quot;
+            </span>);
+            <span class="comment">// Doesn&#39;t matter if receiver still cares about it
+            </span><span class="kw">let _ </span>= response_sender.send(<span class="prelude-val">None</span>);
+            <span class="kw">continue</span>;
+        }
+
+        <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
+        <span class="kw">let </span>sector = plot_file.offset(sector_index <span class="kw">as </span>usize * sector_size);
+
+        <span class="kw">let </span>maybe_piece = read_piece::&lt;PosTable, <span class="kw">_</span>&gt;(
             <span class="kw-2">&amp;</span>public_key,
             piece_offset,
-            pieces_in_sector,
-            sector_count,
             <span class="kw-2">&amp;</span>sector_metadata,
-            <span class="kw-2">&amp;</span>global_plot_mmap,
+            <span class="kw-2">&amp;</span>sector,
             <span class="kw-2">&amp;</span>erasure_coding,
             <span class="kw-2">&amp;mut </span>table_generator,
         );
@@ -376,48 +386,23 @@
     }
 }
 
-<span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">fn </span>read_piece&lt;PosTable&gt;(
+<span class="kw">fn </span>read_piece&lt;PosTable, Sector&gt;(
     public_key: <span class="kw-2">&amp;</span>PublicKey,
     piece_offset: PieceOffset,
-    pieces_in_sector: u16,
-    sector_count: SectorIndex,
     sector_metadata: <span class="kw-2">&amp;</span>SectorMetadataChecksummed,
-    global_plot: <span class="kw-2">&amp;</span>[u8],
+    sector: <span class="kw-2">&amp;</span>Sector,
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
     table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
 ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt;
 <span class="kw">where
     </span>PosTable: Table,
+    Sector: ReadAt + <span class="question-mark">?</span>Sized,
 {
     <span class="kw">let </span>sector_index = sector_metadata.sector_index;
-    <span class="comment">// Sector must be plotted
-    </span><span class="kw">if </span>sector_index &gt;= sector_count {
-        <span class="macro">warn!</span>(
-            %sector_index,
-            %piece_offset,
-            %sector_count,
-            <span class="string">&quot;Incorrect sector offset&quot;
-        </span>);
-        <span class="kw">return </span><span class="prelude-val">None</span>;
-    }
-    <span class="comment">// Piece must be within sector
-    </span><span class="kw">if </span>u16::from(piece_offset) &gt;= pieces_in_sector {
-        <span class="macro">warn!</span>(
-            %sector_index,
-            %piece_offset,
-            %sector_count,
-            <span class="string">&quot;Incorrect piece offset&quot;
-        </span>);
-        <span class="kw">return </span><span class="prelude-val">None</span>;
-    }
 
     <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
-    <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
-    <span class="comment">// TODO: Would be nicer to have list of plots here and just index it
-    </span><span class="kw">let </span>sector = <span class="kw-2">&amp;</span>global_plot[sector_index <span class="kw">as </span>usize * sector_size..][..sector_size];
 
-    <span class="kw">let </span>piece = <span class="kw">match </span>reading::read_piece::&lt;PosTable&gt;(
+    <span class="kw">let </span>piece = <span class="kw">match </span>reading::read_piece::&lt;PosTable, <span class="kw">_</span>&gt;(
         piece_offset,
         <span class="kw-2">&amp;</span>sector_id,
         sector_metadata,
@@ -430,7 +415,6 @@
             <span class="macro">error!</span>(
                 %sector_index,
                 %piece_offset,
-                %sector_count,
                 %error,
                 <span class="string">&quot;Failed to read piece from sector&quot;
             </span>);

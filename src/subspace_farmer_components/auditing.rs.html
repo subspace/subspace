@@ -94,13 +94,24 @@
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
 <a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::proving::SolutionCandidates;
 <span class="kw">use </span><span class="kw">crate</span>::sector::{SectorContentsMap, SectorMetadataChecksummed};
+<span class="kw">use </span><span class="kw">crate</span>::ReadAt;
 <span class="kw">use </span>std::collections::VecDeque;
 <span class="kw">use </span>std::mem;
 <span class="kw">use </span>subspace_core_primitives::crypto::Scalar;
 <span class="kw">use </span>subspace_core_primitives::{Blake2b256Hash, PublicKey, SectorId, SectorIndex, SolutionRange};
 <span class="kw">use </span>subspace_verification::is_within_solution_range;
+<span class="kw">use </span>tracing::warn;
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ChunkCandidate {
@@ -113,20 +124,23 @@
 <span class="doccomment">/// Audit a single sector and generate a stream of solutions, where `sector` must be positioned
 /// correctly at the beginning of the sector (seek to desired offset before calling this function
 /// and seek back afterwards if necessary).
-</span><span class="kw">pub fn </span>audit_sector&lt;<span class="lifetime">&#39;a</span>&gt;(
+</span><span class="kw">pub fn </span>audit_sector&lt;<span class="lifetime">&#39;a</span>, Sector&gt;(
     public_key: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>PublicKey,
     sector_index: SectorIndex,
     global_challenge: <span class="kw-2">&amp;</span>Blake2b256Hash,
     solution_range: SolutionRange,
-    sector: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>[u8],
+    sector: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Sector,
     sector_metadata: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>SectorMetadataChecksummed,
-) -&gt; <span class="prelude-ty">Option</span>&lt;SolutionCandidates&lt;<span class="lifetime">&#39;a</span>&gt;&gt; {
+) -&gt; <span class="prelude-ty">Option</span>&lt;SolutionCandidates&lt;<span class="lifetime">&#39;a</span>, Sector&gt;&gt;
+<span class="kw">where
+    </span>Sector: ReadAt + <span class="question-mark">?</span>Sized,
+{
     <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
 
     <span class="kw">let </span>sector_slot_challenge = sector_id.derive_sector_slot_challenge(global_challenge);
     <span class="kw">let </span>s_bucket_audit_index = sector_slot_challenge.s_bucket_audit_index();
-    <span class="kw">let </span>s_bucket_audit_size = Scalar::FULL_BYTES
-        * usize::from(sector_metadata.s_bucket_sizes[usize::from(s_bucket_audit_index)]);
+    <span class="kw">let </span>s_bucket_audit_size =
+        usize::from(sector_metadata.s_bucket_sizes[usize::from(s_bucket_audit_index)]);
     <span class="kw">let </span>s_bucket_audit_offset = Scalar::FULL_BYTES
         * sector_metadata
             .s_bucket_sizes
@@ -139,15 +153,19 @@
     <span class="kw">let </span>sector_contents_map_size =
         SectorContentsMap::encoded_size(sector_metadata.pieces_in_sector);
 
-    <span class="comment">// Read s-bucket
-    </span><span class="kw">let </span>s_bucket =
-        <span class="kw-2">&amp;</span>sector[sector_contents_map_size + s_bucket_audit_offset..][..s_bucket_audit_size];
+    <span class="kw">let </span>s_bucket_audit_offset_in_sector = sector_contents_map_size + s_bucket_audit_offset;
 
     <span class="comment">// Map all winning chunks
-    </span><span class="kw">let </span>winning_chunks = s_bucket
-        .array_chunks::&lt;{ Scalar::FULL_BYTES }&gt;()
-        .enumerate()
-        .filter_map(|(chunk_offset, chunk)| {
+    </span><span class="kw">let </span>winning_chunks = (<span class="number">0</span>..s_bucket_audit_size)
+        .filter_map(|chunk_offset| {
+            <span class="kw">let </span><span class="kw-2">mut </span>chunk = [<span class="number">0</span>; Scalar::FULL_BYTES];
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = sector.read_at(
+                <span class="kw-2">&amp;mut </span>chunk,
+                s_bucket_audit_offset_in_sector + chunk_offset * Scalar::FULL_BYTES,
+            ) {
+                <span class="macro">warn!</span>(%error, %sector_index, %chunk_offset, <span class="string">&quot;Failed read chunk sector&quot;</span>);
+                <span class="kw">return </span><span class="prelude-val">None</span>;
+            }
             <span class="comment">// Check all audit chunks within chunk, there might be more than one winning
             </span><span class="kw">let </span>winning_audit_chunk_offsets = chunk
                 .array_chunks::&lt;{ mem::size_of::&lt;SolutionRange&gt;() }&gt;()

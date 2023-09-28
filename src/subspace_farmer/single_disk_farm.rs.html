@@ -1776,22 +1776,6 @@
 <a href="#1776" id="1776">1776</a>
 <a href="#1777" id="1777">1777</a>
 <a href="#1778" id="1778">1778</a>
-<a href="#1779" id="1779">1779</a>
-<a href="#1780" id="1780">1780</a>
-<a href="#1781" id="1781">1781</a>
-<a href="#1782" id="1782">1782</a>
-<a href="#1783" id="1783">1783</a>
-<a href="#1784" id="1784">1784</a>
-<a href="#1785" id="1785">1785</a>
-<a href="#1786" id="1786">1786</a>
-<a href="#1787" id="1787">1787</a>
-<a href="#1788" id="1788">1788</a>
-<a href="#1789" id="1789">1789</a>
-<a href="#1790" id="1790">1790</a>
-<a href="#1791" id="1791">1791</a>
-<a href="#1792" id="1792">1792</a>
-<a href="#1793" id="1793">1793</a>
-<a href="#1794" id="1794">1794</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1813,7 +1797,6 @@
 <span class="kw">use </span>futures::future::{select, Either};
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
-<span class="kw">use </span>memmap2::{Mmap, MmapOptions};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
@@ -2531,10 +2514,12 @@
             .create(<span class="bool-val">true</span>)
             .open(directory.join(<span class="self">Self</span>::METADATA_FILE))<span class="question-mark">?</span>;
 
+        metadata_file.advise_random_access()<span class="question-mark">?</span>;
+
         <span class="kw">let </span>metadata_size = metadata_file.seek(SeekFrom::End(<span class="number">0</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span>expected_metadata_size =
             RESERVED_PLOT_METADATA + sector_metadata_size <span class="kw">as </span>u64 * u64::from(target_sector_count);
-        <span class="kw">let </span>(metadata_header, metadata_header_mmap) = <span class="kw">if </span>metadata_size == <span class="number">0 </span>{
+        <span class="kw">let </span>metadata_header = <span class="kw">if </span>metadata_size == <span class="number">0 </span>{
             <span class="kw">let </span>metadata_header = PlotMetadataHeader {
                 version: <span class="number">0</span>,
                 plotted_sector_count: <span class="number">0</span>,
@@ -2545,13 +2530,7 @@
                 .map_err(SingleDiskFarmError::CantPreallocateMetadataFile)<span class="question-mark">?</span>;
             metadata_file.write_all_at(metadata_header.encode().as_slice(), <span class="number">0</span>)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>metadata_header_mmap = <span class="kw">unsafe </span>{
-                MmapOptions::new()
-                    .len(PlotMetadataHeader::encoded_size())
-                    .map_mut(<span class="kw-2">&amp;</span>metadata_file)<span class="question-mark">?
-            </span>};
-
-            (metadata_header, metadata_header_mmap)
+            metadata_header
         } <span class="kw">else </span>{
             <span class="kw">if </span>metadata_size != expected_metadata_size {
                 <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will
@@ -2562,14 +2541,12 @@
                 <span class="comment">// Truncating file (if necessary)
                 </span>metadata_file.set_len(expected_metadata_size)<span class="question-mark">?</span>;
             }
-            <span class="kw">let </span><span class="kw-2">mut </span>metadata_header_mmap = <span class="kw">unsafe </span>{
-                MmapOptions::new()
-                    .len(PlotMetadataHeader::encoded_size())
-                    .map_mut(<span class="kw-2">&amp;</span>metadata_file)<span class="question-mark">?
-            </span>};
+
+            <span class="kw">let </span><span class="kw-2">mut </span>metadata_header_bytes = <span class="macro">vec!</span>[<span class="number">0</span>; PlotMetadataHeader::encoded_size()];
+            metadata_file.read_exact_at(<span class="kw-2">&amp;mut </span>metadata_header_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
 
             <span class="kw">let </span><span class="kw-2">mut </span>metadata_header =
-                PlotMetadataHeader::decode(<span class="kw-2">&amp;mut </span>metadata_header_mmap.as_ref())
+                PlotMetadataHeader::decode(<span class="kw-2">&amp;mut </span>metadata_header_bytes.as_ref())
                     .map_err(SingleDiskFarmError::FailedToDecodeMetadataHeader)<span class="question-mark">?</span>;
 
             <span class="kw">if </span>metadata_header.version != <span class="self">Self</span>::SUPPORTED_PLOT_VERSION {
@@ -2580,29 +2557,24 @@
 
             <span class="kw">if </span>metadata_header.plotted_sector_count &gt; target_sector_count {
                 metadata_header.plotted_sector_count = target_sector_count;
-                metadata_header.encode_to(<span class="kw-2">&amp;mut </span>metadata_header_mmap.as_mut());
+                metadata_file.write_all_at(<span class="kw-2">&amp;</span>metadata_header.encode(), <span class="number">0</span>)<span class="question-mark">?</span>;
             }
 
-            (metadata_header, metadata_header_mmap)
+            metadata_header
         };
 
         <span class="kw">let </span>sectors_metadata = {
-            <span class="kw">let </span>metadata_mmap = <span class="kw">unsafe </span>{
-                MmapOptions::new()
-                    .offset(RESERVED_PLOT_METADATA)
-                    .len(sector_metadata_size * usize::from(target_sector_count))
-                    .map(<span class="kw-2">&amp;</span>metadata_file)<span class="question-mark">?
-            </span>};
-
             <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata =
                 Vec::&lt;SectorMetadataChecksummed&gt;::with_capacity(usize::from(target_sector_count));
 
-            <span class="kw">for </span><span class="kw-2">mut </span>sector_metadata_bytes <span class="kw">in </span>metadata_mmap
-                .chunks_exact(sector_metadata_size)
-                .take(metadata_header.plotted_sector_count <span class="kw">as </span>usize)
-            {
+            <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata_bytes = <span class="macro">vec!</span>[<span class="number">0</span>; sector_metadata_size];
+            <span class="kw">for </span>sector_index <span class="kw">in </span><span class="number">0</span>..metadata_header.plotted_sector_count {
+                metadata_file.read_exact_at(
+                    <span class="kw-2">&amp;mut </span>sector_metadata_bytes,
+                    RESERVED_PLOT_METADATA + sector_metadata_size <span class="kw">as </span>u64 * u64::from(sector_index),
+                )<span class="question-mark">?</span>;
                 sectors_metadata.push(
-                    SectorMetadataChecksummed::decode(<span class="kw-2">&amp;mut </span>sector_metadata_bytes)
+                    SectorMetadataChecksummed::decode(<span class="kw-2">&amp;mut </span>sector_metadata_bytes.as_ref())
                         .map_err(SingleDiskFarmError::FailedToDecodeSectorMetadata)<span class="question-mark">?</span>,
                 );
             }
@@ -2617,6 +2589,8 @@
                 .create(<span class="bool-val">true</span>)
                 .open(directory.join(<span class="self">Self</span>::PLOT_FILE))<span class="question-mark">?</span>,
         );
+
+        plot_file.advise_random_access()<span class="question-mark">?</span>;
 
         <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
         // writes to fail later)
@@ -2684,7 +2658,6 @@
                             sector_size,
                             sector_metadata_size,
                             metadata_header,
-                            metadata_header_mmap,
                             plot_file,
                             metadata_file,
                             sectors_metadata,
@@ -2757,12 +2730,7 @@
         <span class="kw">let </span>farming_join_handle = thread::Builder::new()
             .name(<span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}&quot;</span>))
             .spawn({
-                <span class="kw">let </span>plot_mmap = <span class="kw">unsafe </span>{ Mmap::map(<span class="kw-2">&amp;*</span>plot_file)<span class="question-mark">? </span>};
-                <span class="attr">#[cfg(unix)]
-                </span>{
-                    plot_mmap.advise(memmap2::Advice::Random)<span class="question-mark">?</span>;
-                }
-
+                <span class="kw">let </span>plot_file = Arc::clone(<span class="kw-2">&amp;</span>plot_file);
                 <span class="kw">let </span>handle = handle.clone();
                 <span class="kw">let </span>erasure_coding = erasure_coding.clone();
                 <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
@@ -2789,7 +2757,7 @@
                             reward_address,
                             node_client,
                             sector_size,
-                            plot_mmap,
+                            <span class="kw-2">&amp;</span>plot_file,
                             sectors_metadata,
                             kzg,
                             erasure_coding,
@@ -2818,7 +2786,7 @@
         <span class="kw">let </span>(piece_reader, reading_fut) = PieceReader::new::&lt;PosTable&gt;(
             public_key,
             pieces_in_sector,
-            <span class="kw">unsafe </span>{ Mmap::map(<span class="kw-2">&amp;*</span>plot_file)<span class="question-mark">? </span>},
+            plot_file,
             Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata),
             erasure_coding,
             modifying_sector_index,

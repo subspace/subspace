@@ -225,8 +225,13 @@
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
 <a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>derive_more::Display;
-<span class="kw">use </span>memmap2::{Mmap, MmapOptions};
 <span class="kw">use </span>std::fs::{File, OpenOptions};
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::sync::Arc;
@@ -270,8 +275,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Inner {
     file: File,
-    read_mmap: Mmap,
-    file_size: usize,
+    num_elements: usize,
 }
 
 <span class="doccomment">/// Piece cache stored on one disk
@@ -294,6 +298,8 @@
             .create(<span class="bool-val">true</span>)
             .open(directory.join(<span class="self">Self</span>::FILE_NAME))<span class="question-mark">?</span>;
 
+        file.advise_random_access()<span class="question-mark">?</span>;
+
         <span class="kw">let </span>expected_size = <span class="self">Self</span>::element_size() * capacity;
         <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
         // writes to fail later)
@@ -302,17 +308,10 @@
         <span class="comment">// Truncating file (if necessary)
         </span>file.set_len(expected_size <span class="kw">as </span>u64)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>read_mmap = <span class="kw">unsafe </span>{ MmapOptions::new().len(expected_size).map(<span class="kw-2">&amp;</span>file)<span class="question-mark">? </span>};
-        <span class="attr">#[cfg(unix)]
-        </span>{
-            read_mmap.advise(memmap2::Advice::Random)<span class="question-mark">?</span>;
-        }
-
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             inner: Arc::new(Inner {
                 file,
-                read_mmap,
-                file_size: expected_size,
+                num_elements: expected_size / <span class="self">Self</span>::element_size(),
             }),
         })
     }
@@ -328,28 +327,33 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>contents(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (Offset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">&#39;_ </span>{
-        <span class="self">self</span>.inner
-            .read_mmap
-            .array_chunks::&lt;{ <span class="self">Self</span>::element_size() }&gt;()
-            .enumerate()
-            .map(|(offset, chunk)| {
-                <span class="kw">let </span>(piece_index_bytes, piece_bytes) = chunk.split_at(PieceIndex::SIZE);
-                <span class="kw">let </span>piece_index = PieceIndex::from_bytes(
-                    piece_index_bytes
-                        .try_into()
-                        .expect(<span class="string">&quot;Statically known to have correct size; qed&quot;</span>),
-                );
-                <span class="comment">// Piece index zero might mean we have piece index zero or just an empty space
-                </span><span class="kw">let </span>piece_index = <span class="kw">if </span>piece_index != PieceIndex::ZERO
-                    || piece_bytes.iter().any(|<span class="kw-2">&amp;</span>byte| byte != <span class="number">0</span>)
-                {
+        <span class="kw">let </span>file = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.file;
+        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size()];
+
+        (<span class="number">0</span>..<span class="self">self</span>.inner.num_elements).map(<span class="kw">move </span>|offset| {
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                file.read_exact_at(<span class="kw-2">&amp;mut </span>element, (offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64)
+            {
+                <span class="macro">warn!</span>(%error, %offset, <span class="string">&quot;Failed to read cache element #1&quot;</span>);
+                <span class="kw">return </span>(Offset(offset), <span class="prelude-val">None</span>);
+            }
+
+            <span class="kw">let </span>(piece_index_bytes, piece_bytes) = element.split_at(PieceIndex::SIZE);
+            <span class="kw">let </span>piece_index = PieceIndex::from_bytes(
+                piece_index_bytes
+                    .try_into()
+                    .expect(<span class="string">&quot;Statically known to have correct size; qed&quot;</span>),
+            );
+            <span class="comment">// Piece index zero might mean we have piece index zero or just an empty space
+            </span><span class="kw">let </span>piece_index =
+                <span class="kw">if </span>piece_index != PieceIndex::ZERO || piece_bytes.iter().any(|<span class="kw-2">&amp;</span>byte| byte != <span class="number">0</span>) {
                     <span class="prelude-val">Some</span>(piece_index)
                 } <span class="kw">else </span>{
                     <span class="prelude-val">None
                 </span>};
 
-                (Offset(offset), piece_index)
-            })
+            (Offset(offset), piece_index)
+        })
     }
 
     <span class="doccomment">/// Store piece in cache at specified offset, replacing existing piece if there is any
@@ -363,27 +367,26 @@
         piece: <span class="kw-2">&amp;</span>Piece,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), DiskPieceCacheError&gt; {
         <span class="kw">let </span>Offset(offset) = offset;
-        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.file_size / <span class="self">Self</span>::element_size() {
+        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::OffsetOutsideOfRange {
                 provided: offset,
-                max: <span class="self">self</span>.inner.file_size / <span class="self">Self</span>::element_size() - <span class="number">1</span>,
+                max: <span class="self">self</span>.inner.num_elements - <span class="number">1</span>,
             });
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>write_mmap = <span class="kw">unsafe </span>{
-            MmapOptions::new()
-                .offset((offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64)
-                .len(<span class="self">Self</span>::element_size())
-                .map_mut(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.file)<span class="question-mark">?
-        </span>};
+        <span class="kw">let </span>element_offset = (offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64;
 
-        <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = write_mmap.split_at_mut(PieceIndex::SIZE);
-        piece_index_bytes.copy_from_slice(<span class="kw-2">&amp;</span>piece_index.to_bytes());
-        <span class="kw">let </span>(piece_bytes, checksum) = remaining_bytes.split_at_mut(Piece::SIZE);
-        piece_bytes.copy_from_slice(piece.as_ref());
-        checksum.copy_from_slice(<span class="kw-2">&amp;</span>blake3_hash_list(<span class="kw-2">&amp;</span>[piece_index_bytes, piece.as_ref()]));
-
-        write_mmap.flush()<span class="question-mark">?</span>;
+        <span class="kw">let </span>piece_index_bytes = piece_index.to_bytes();
+        <span class="self">self</span>.inner
+            .file
+            .write_all_at(<span class="kw-2">&amp;</span>piece_index_bytes, element_offset)<span class="question-mark">?</span>;
+        <span class="self">self</span>.inner
+            .file
+            .write_all_at(piece.as_ref(), element_offset + PieceIndex::SIZE <span class="kw">as </span>u64)<span class="question-mark">?</span>;
+        <span class="self">self</span>.inner.file.write_all_at(
+            <span class="kw-2">&amp;</span>blake3_hash_list(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>piece_index_bytes, piece.as_ref()]),
+            element_offset + PieceIndex::SIZE <span class="kw">as </span>u64 + Piece::SIZE <span class="kw">as </span>u64,
+        )<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -396,16 +399,22 @@
     /// doesn&#39;t happen for the same piece being accessed!
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_piece_index(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: Offset) -&gt; <span class="prelude-ty">Option</span>&lt;PieceIndex&gt; {
         <span class="kw">let </span>Offset(offset) = offset;
-        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.file_size / <span class="self">Self</span>::element_size() {
+        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
             <span class="macro">warn!</span>(%offset, <span class="string">&quot;Trying to read piece out of range, this must be an implementation bug&quot;</span>);
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
 
-        <span class="prelude-val">Some</span>(PieceIndex::from_bytes(
-            <span class="self">self</span>.inner.read_mmap[<span class="self">Self</span>::element_size() * offset..][..PieceIndex::SIZE]
-                .try_into()
-                .expect(<span class="string">&quot;Statically guaranteed to be correct size; qed&quot;</span>),
-        ))
+        <span class="kw">let </span><span class="kw-2">mut </span>piece_index_bytes = [<span class="number">0</span>; PieceIndex::SIZE];
+
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self</span>.inner.file.read_exact_at(
+            <span class="kw-2">&amp;mut </span>piece_index_bytes,
+            (offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64,
+        ) {
+            <span class="macro">warn!</span>(%error, %offset, <span class="string">&quot;Failed to read cache piece index&quot;</span>);
+            <span class="kw">return </span><span class="prelude-val">None</span>;
+        }
+
+        <span class="prelude-val">Some</span>(PieceIndex::from_bytes(piece_index_bytes))
     }
 
     <span class="doccomment">/// Read piece from cache at specified offset.
@@ -416,14 +425,17 @@
     /// doesn&#39;t happen for the same piece being accessed!
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: Offset) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, DiskPieceCacheError&gt; {
         <span class="kw">let </span>Offset(offset) = offset;
-        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.file_size / <span class="self">Self</span>::element_size() {
+        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
             <span class="macro">warn!</span>(%offset, <span class="string">&quot;Trying to read piece out of range, this must be an implementation bug&quot;</span>);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         }
 
-        <span class="kw">let </span>piece_element_memory =
-            <span class="kw-2">&amp;</span><span class="self">self</span>.inner.read_mmap[offset * <span class="self">Self</span>::element_size()..][..<span class="self">Self</span>::element_size()];
-        <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = piece_element_memory.split_at(PieceIndex::SIZE);
+        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size()];
+        <span class="self">self</span>.inner
+            .file
+            .read_exact_at(<span class="kw-2">&amp;mut </span>element, (offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = element.split_at(PieceIndex::SIZE);
         <span class="kw">let </span>(piece_bytes, expected_checksum) = remaining_bytes.split_at(Piece::SIZE);
         <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
         piece.copy_from_slice(piece_bytes);

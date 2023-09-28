@@ -315,21 +315,14 @@
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
 <a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
-    sector_record_chunks_size, sector_size, RecordMetadata, SectorContentsMap,
-    SectorContentsMapFromBytesError, SectorMetadataChecksummed,
+    sector_record_chunks_size, RecordMetadata, SectorContentsMap, SectorContentsMapFromBytesError,
+    SectorMetadataChecksummed,
 };
+<span class="kw">use </span><span class="kw">crate</span>::ReadAt;
 <span class="kw">use </span>parity_scale_codec::Decode;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
+<span class="kw">use </span>std::io;
 <span class="kw">use </span>std::mem::ManuallyDrop;
 <span class="kw">use </span>std::simd::Simd;
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, Scalar};
@@ -344,14 +337,6 @@
 <span class="doccomment">/// Errors that happen during reading
 </span><span class="attr">#[derive(Debug, Error)]
 </span><span class="kw">pub enum </span>ReadingError {
-    <span class="doccomment">/// Wrong sector size
-    </span><span class="attr">#[error(<span class="string">&quot;Wrong sector size: expected {expected}, actual {actual}&quot;</span>)]
-    </span>WrongSectorSize {
-        <span class="doccomment">/// Expected size in bytes
-        </span>expected: usize,
-        <span class="doccomment">/// Actual size in bytes
-        </span>actual: usize,
-    },
     <span class="doccomment">/// Failed to read chunk.
     ///
     /// This is an implementation bug, most likely due to mismatch between sector contents map and
@@ -360,6 +345,8 @@
     </span>FailedToReadChunk {
         <span class="doccomment">/// Chunk location
         </span>chunk_location: usize,
+        <span class="doccomment">/// Low-level error
+        </span>error: io::Error,
     },
     <span class="doccomment">/// Invalid chunk, possible disk corruption
     </span><span class="attr">#[error(
@@ -395,6 +382,9 @@
     <span class="doccomment">/// Failed to decode sector contents map
     </span><span class="attr">#[error(<span class="string">&quot;Failed to decode sector contents map: {0}&quot;</span>)]
     </span>FailedToDecodeSectorContentsMap(<span class="attr">#[from] </span>SectorContentsMapFromBytesError),
+    <span class="doccomment">/// I/O error occurred
+    </span><span class="attr">#[error(<span class="string">&quot;I/O error: {0}&quot;</span>)]
+    </span>Io(<span class="attr">#[from] </span>io::Error),
     <span class="doccomment">/// Checksum mismatch
     </span><span class="attr">#[error(<span class="string">&quot;Checksum mismatch&quot;</span>)]
     </span>ChecksumMismatch,
@@ -412,24 +402,18 @@
 }
 
 <span class="doccomment">/// Read sector record chunks, only plotted s-buckets are returned (in decoded form)
-</span><span class="kw">pub fn </span>read_sector_record_chunks&lt;PosTable&gt;(
+</span><span class="kw">pub fn </span>read_sector_record_chunks&lt;PosTable, Sector&gt;(
     piece_offset: PieceOffset,
     pieces_in_sector: u16,
     s_bucket_offsets: <span class="kw-2">&amp;</span>[u32; Record::NUM_S_BUCKETS],
     sector_contents_map: <span class="kw-2">&amp;</span>SectorContentsMap,
     pos_table: <span class="kw-2">&amp;</span>PosTable,
-    sector: <span class="kw-2">&amp;</span>[u8],
+    sector: <span class="kw-2">&amp;</span>Sector,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;[<span class="prelude-ty">Option</span>&lt;Scalar&gt;; Record::NUM_S_BUCKETS]&gt;, ReadingError&gt;
 <span class="kw">where
     </span>PosTable: Table,
+    Sector: ReadAt + <span class="question-mark">?</span>Sized,
 {
-    <span class="kw">if </span>sector.len() != sector_size(pieces_in_sector) {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(ReadingError::WrongSectorSize {
-            expected: sector_size(pieces_in_sector),
-            actual: sector.len(),
-        });
-    }
-
     <span class="kw">let </span><span class="kw-2">mut </span>record_chunks = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; Record::NUM_S_BUCKETS];
 
     record_chunks
@@ -452,11 +436,17 @@
 
                 <span class="kw">let </span>chunk_location = chunk_offset + s_bucket_offset <span class="kw">as </span>usize;
 
-                <span class="kw">let </span><span class="kw-2">mut </span>record_chunk = sector[SectorContentsMap::encoded_size(pieces_in_sector)..]
-                    .array_chunks::&lt;{ Scalar::FULL_BYTES }&gt;()
-                    .nth(chunk_location)
-                    .copied()
-                    .ok_or(ReadingError::FailedToReadChunk { chunk_location })<span class="question-mark">?</span>;
+                <span class="kw">let </span><span class="kw-2">mut </span>record_chunk = [<span class="number">0</span>; Scalar::FULL_BYTES];
+                sector
+                    .read_at(
+                        <span class="kw-2">&amp;mut </span>record_chunk,
+                        SectorContentsMap::encoded_size(pieces_in_sector)
+                            + chunk_location * Scalar::FULL_BYTES,
+                    )
+                    .map_err(|error| ReadingError::FailedToReadChunk {
+                        chunk_location,
+                        error,
+                    })<span class="question-mark">?</span>;
 
                 <span class="comment">// Decode chunk if necessary
                 </span><span class="kw">if </span>encoded_chunk_used {
@@ -550,57 +540,49 @@
 }
 
 <span class="doccomment">/// Read metadata (commitment and witness) for record
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_record_metadata(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_record_metadata&lt;Sector&gt;(
     piece_offset: PieceOffset,
     pieces_in_sector: u16,
-    sector: <span class="kw-2">&amp;</span>[u8],
-) -&gt; <span class="prelude-ty">Result</span>&lt;RecordMetadata, ReadingError&gt; {
-    <span class="kw">if </span>sector.len() != sector_size(pieces_in_sector) {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(ReadingError::WrongSectorSize {
-            expected: sector_size(pieces_in_sector),
-            actual: sector.len(),
-        });
-    }
-
+    sector: <span class="kw-2">&amp;</span>Sector,
+) -&gt; <span class="prelude-ty">Result</span>&lt;RecordMetadata, ReadingError&gt;
+<span class="kw">where
+    </span>Sector: ReadAt + <span class="question-mark">?</span>Sized,
+{
     <span class="kw">let </span>sector_metadata_start = SectorContentsMap::encoded_size(pieces_in_sector)
         + sector_record_chunks_size(pieces_in_sector);
     <span class="comment">// Move to the beginning of the commitment and witness we care about
-    </span><span class="kw">let </span>record_metadata_bytes = <span class="kw-2">&amp;</span>sector[sector_metadata_start..]
-        [RecordMetadata::encoded_size() * usize::from(piece_offset)..];
-    <span class="kw">let </span>record_metadata = RecordMetadata::decode(<span class="kw-2">&amp;mut &amp;*</span>record_metadata_bytes).expect(
-        <span class="string">&quot;Length is correct and checked above, contents doesn&#39;t have specific structure to \
-        it; qed&quot;</span>,
-    );
+    </span><span class="kw">let </span>record_metadata_offset =
+        sector_metadata_start + RecordMetadata::encoded_size() * usize::from(piece_offset);
+
+    <span class="kw">let </span><span class="kw-2">mut </span>record_metadata_bytes = [<span class="number">0</span>; RecordMetadata::encoded_size()];
+    sector.read_at(<span class="kw-2">&amp;mut </span>record_metadata_bytes, record_metadata_offset)<span class="question-mark">?</span>;
+    <span class="kw">let </span>record_metadata = RecordMetadata::decode(<span class="kw-2">&amp;mut </span>record_metadata_bytes.as_ref())
+        .expect(<span class="string">&quot;Length is correct, contents doesn&#39;t have specific structure to it; qed&quot;</span>);
 
     <span class="prelude-val">Ok</span>(record_metadata)
 }
 
 <span class="doccomment">/// Read piece from sector
-</span><span class="kw">pub fn </span>read_piece&lt;PosTable&gt;(
+</span><span class="kw">pub fn </span>read_piece&lt;PosTable, Sector&gt;(
     piece_offset: PieceOffset,
     sector_id: <span class="kw-2">&amp;</span>SectorId,
     sector_metadata: <span class="kw-2">&amp;</span>SectorMetadataChecksummed,
-    sector: <span class="kw-2">&amp;</span>[u8],
+    sector: <span class="kw-2">&amp;</span>Sector,
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
     table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Piece, ReadingError&gt;
 <span class="kw">where
     </span>PosTable: Table,
+    Sector: ReadAt + <span class="question-mark">?</span>Sized,
 {
     <span class="kw">let </span>pieces_in_sector = sector_metadata.pieces_in_sector;
 
-    <span class="kw">if </span>sector.len() != sector_size(pieces_in_sector) {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(ReadingError::WrongSectorSize {
-            expected: sector_size(pieces_in_sector),
-            actual: sector.len(),
-        });
-    }
-
     <span class="kw">let </span>sector_contents_map = {
-        SectorContentsMap::from_bytes(
-            <span class="kw-2">&amp;</span>sector[..SectorContentsMap::encoded_size(pieces_in_sector)],
-            pieces_in_sector,
-        )<span class="question-mark">?
+        <span class="kw">let </span><span class="kw-2">mut </span>sector_contents_map_bytes =
+            <span class="macro">vec!</span>[<span class="number">0</span>; SectorContentsMap::encoded_size(pieces_in_sector)];
+        sector.read_at(<span class="kw-2">&amp;mut </span>sector_contents_map_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
+
+        SectorContentsMap::from_bytes(<span class="kw-2">&amp;</span>sector_contents_map_bytes, pieces_in_sector)<span class="question-mark">?
     </span>};
 
     <span class="comment">// Restore source record scalars
