@@ -191,6 +191,21 @@
 <a href="#191" id="191">191</a>
 <a href="#192" id="192">192</a>
 <a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::Handlers;
@@ -198,7 +213,7 @@
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parking_lot::RwLock;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
+<span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuildError};
 <span class="kw">use </span>std::fs::File;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::Arc;
@@ -257,35 +272,50 @@
     </span>FailedToCreateThreadPool(<span class="attr">#[from] </span>ThreadPoolBuildError),
 }
 
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>FarmingOptions&lt;<span class="lifetime">&#39;a</span>, NC&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) public_key: PublicKey,
+    <span class="kw">pub</span>(<span class="kw">super</span>) reward_address: PublicKey,
+    <span class="kw">pub</span>(<span class="kw">super</span>) node_client: NC,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sector_size: usize,
+    <span class="kw">pub</span>(<span class="kw">super</span>) plot_file: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>File,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) kzg: Kzg,
+    <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: ErasureCoding,
+    <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) thread_pool: Arc&lt;ThreadPool&gt;,
+}
+
 <span class="doccomment">/// Starts farming process.
 ///
 /// NOTE: Returned future is async, but does blocking operations and should be running in dedicated
 /// thread.
 </span><span class="comment">// False-positive, we do drop lock before .await
 </span><span class="attr">#[allow(clippy::await_holding_lock)]
-#[allow(clippy::too_many_arguments)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>farming&lt;NC, PosTable&gt;(
-    disk_farm_index: usize,
-    public_key: PublicKey,
-    reward_address: PublicKey,
-    node_client: NC,
-    sector_size: usize,
-    plot_file: <span class="kw-2">&amp;</span>File,
-    sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
-    kzg: Kzg,
-    erasure_coding: ErasureCoding,
-    handlers: Arc&lt;Handlers&gt;,
-    modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
-    <span class="kw-2">mut </span>slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>farming&lt;PosTable, NC&gt;(
+    farming_options: FarmingOptions&lt;<span class="lifetime">&#39;_</span>, NC&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), FarmingError&gt;
 <span class="kw">where
-    </span>NC: NodeClient,
-    PosTable: Table,
+    </span>PosTable: Table,
+    NC: NodeClient,
 {
+    <span class="kw">let </span>FarmingOptions {
+        public_key,
+        reward_address,
+        node_client,
+        sector_size,
+        plot_file,
+        sectors_metadata,
+        kzg,
+        erasure_coding,
+        handlers,
+        modifying_sector_index,
+        <span class="kw-2">mut </span>slot_info_notifications,
+        thread_pool,
+    } = farming_options;
+
     <span class="kw">let </span><span class="kw-2">mut </span>table_generator = PosTable::generator();
-    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
-        .thread_name(<span class="kw">move </span>|thread_index| <span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}.{thread_index}&quot;</span>))
-        .build()<span class="question-mark">?</span>;
 
     <span class="kw">while let </span><span class="prelude-val">Some</span>(slot_info) = slot_info_notifications.next().<span class="kw">await </span>{
         <span class="kw">let </span>slot = slot_info.slot_number;
