@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["audit_sector"]};
+window.SIDEBAR_ITEMS = {"fn":["audit_sector"],"struct":["AuditResult"]};
