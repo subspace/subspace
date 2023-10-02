@@ -190,6 +190,15 @@
 <a href="#190" id="190">190</a>
 <a href="#191" id="191">191</a>
 <a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>RpcError, Error, NodeClient};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures::{Stream, StreamExt};
@@ -204,15 +213,19 @@
     FarmerAppInfo, NodeSyncStatus, RewardSignatureResponse, RewardSigningInfo, SlotInfo,
     SolutionResponse,
 };
+<span class="kw">use </span>tokio::sync::Semaphore;
 
-<span class="comment">// Defines max_concurrent_requests constant in the node rpc client.
-// It must be set for large plots.
-</span><span class="kw">const </span>WS_PRC_MAX_CONCURRENT_REQUESTS: usize = <span class="number">1_000_000</span>;
+<span class="doccomment">/// Defines max_concurrent_requests constant in the node rpc client
+</span><span class="kw">const </span>RPC_MAX_CONCURRENT_REQUESTS: usize = <span class="number">1_000_000</span>;
+<span class="doccomment">/// Node is having a hard time responding for many piece requests
+</span><span class="comment">// TODO: Remove this once https://github.com/paritytech/jsonrpsee/issues/1189 is resolved
+</span><span class="kw">const </span>MAX_CONCURRENT_PIECE_REQUESTS: usize = <span class="number">10</span>;
 
 <span class="doccomment">/// `WsClient` wrapper.
-</span><span class="attr">#[derive(Clone, Debug)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>NodeRpcClient {
     client: Arc&lt;WsClient&gt;,
+    piece_request_semaphore: Arc&lt;Semaphore&gt;,
 }
 
 <span class="kw">impl </span>NodeRpcClient {
@@ -220,12 +233,16 @@
     </span><span class="kw">pub async fn </span>new(url: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, JsonError&gt; {
         <span class="kw">let </span>client = Arc::new(
             WsClientBuilder::default()
-                .max_concurrent_requests(WS_PRC_MAX_CONCURRENT_REQUESTS)
+                .max_concurrent_requests(RPC_MAX_CONCURRENT_REQUESTS)
                 .max_request_body_size(<span class="number">20 </span>* <span class="number">1024 </span>* <span class="number">1024</span>)
                 .build(url)
                 .<span class="kw">await</span><span class="question-mark">?</span>,
         );
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ client })
+        <span class="kw">let </span>piece_request_semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PIECE_REQUESTS));
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            client,
+            piece_request_semaphore,
+        })
     }
 }
 
@@ -344,6 +361,7 @@
     }
 
     <span class="kw">async fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, RpcError&gt; {
+        <span class="kw">let </span>_permit = <span class="self">self</span>.piece_request_semaphore.acquire().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>result: <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt; = <span class="self">self
             </span>.client
             .request(<span class="string">&quot;subspace_piece&quot;</span>, <span class="macro">rpc_params!</span>[<span class="kw-2">&amp;</span>piece_index])
