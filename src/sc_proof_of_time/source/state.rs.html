@@ -199,49 +199,16 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a>
-<a href="#204" id="204">204</a>
-<a href="#205" id="205">205</a>
-<a href="#206" id="206">206</a>
-<a href="#207" id="207">207</a>
-<a href="#208" id="208">208</a>
-<a href="#209" id="209">209</a>
-<a href="#210" id="210">210</a>
-<a href="#211" id="211">211</a>
-<a href="#212" id="212">212</a>
-<a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
-<a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a>
-<a href="#224" id="224">224</a>
-<a href="#225" id="225">225</a>
-<a href="#226" id="226">226</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::verifier::PotVerifier;
 <span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>sp_consensus_slots::Slot;
-<span class="kw">use </span>sp_consensus_subspace::PotParametersChange;
-<span class="kw">use </span>std::num::NonZeroU32;
+<span class="kw">use </span>sp_consensus_subspace::{PotNextSlotInput, PotParametersChange};
 <span class="kw">use </span>std::sync::atomic::Ordering;
-<span class="kw">use </span>subspace_core_primitives::{PotOutput, PotSeed};
-
-<span class="attr">#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NextSlotInput {
-    <span class="kw">pub</span>(<span class="kw">super</span>) slot: Slot,
-    <span class="kw">pub</span>(<span class="kw">super</span>) slot_iterations: NonZeroU32,
-    <span class="kw">pub</span>(<span class="kw">super</span>) seed: PotSeed,
-}
+<span class="kw">use </span>subspace_core_primitives::PotOutput;
 
 <span class="attr">#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 </span><span class="kw">struct </span>InnerState {
-    next_slot_input: NextSlotInput,
+    next_slot_input: PotNextSlotInput,
     parameters_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
 }
 
@@ -258,37 +225,19 @@
         }
 
         <span class="kw">loop </span>{
-            <span class="kw">let </span>next_slot = best_slot + Slot::from(<span class="number">1</span>);
-            <span class="kw">let </span>next_slot_iterations;
-            <span class="kw">let </span>next_seed;
-
-            <span class="comment">// The change to number of iterations might have happened before `next_slot`
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = <span class="self">self</span>.parameters_change
-                &amp;&amp; parameters_change.slot &lt;= next_slot
-            {
-                next_slot_iterations = parameters_change.slot_iterations;
-                <span class="comment">// Only if entropy injection happens on this exact slot we need to mix it in
-                </span><span class="kw">if </span>parameters_change.slot == next_slot {
-                    next_seed = best_output.seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
-                } <span class="kw">else </span>{
-                    next_seed = best_output.seed();
-                }
-            } <span class="kw">else </span>{
-                next_slot_iterations = <span class="self">self</span>.next_slot_input.slot_iterations;
-                next_seed = best_output.seed();
-            }
-
-            <span class="self">self</span>.next_slot_input = NextSlotInput {
-                slot: next_slot,
-                slot_iterations: next_slot_iterations,
-                seed: next_seed,
-            };
+            <span class="self">self</span>.next_slot_input = PotNextSlotInput::derive(
+                <span class="self">self</span>.next_slot_input.slot_iterations,
+                best_slot,
+                best_output,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.parameters_change,
+            );
 
             <span class="comment">// Advance further as far as possible using previously verified proofs/checkpoints
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(checkpoints) =
-                pot_verifier.try_get_checkpoints(next_seed, next_slot_iterations)
-            {
-                best_slot = best_slot + Slot::from(<span class="number">1</span>);
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(checkpoints) = pot_verifier.try_get_checkpoints(
+                <span class="self">self</span>.next_slot_input.slot_iterations,
+                <span class="self">self</span>.next_slot_input.seed,
+            ) {
+                best_slot = <span class="self">self</span>.next_slot_input.slot;
                 best_output = checkpoints.output();
             } <span class="kw">else </span>{
                 <span class="kw">break</span>;
@@ -303,12 +252,12 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>PotStateUpdateOutcome {
     NoChange,
     Extension {
-        from: NextSlotInput,
-        to: NextSlotInput,
+        from: PotNextSlotInput,
+        to: PotNextSlotInput,
     },
     Reorg {
-        from: NextSlotInput,
-        to: NextSlotInput,
+        from: PotNextSlotInput,
+        to: PotNextSlotInput,
     },
 }
 
@@ -320,7 +269,7 @@
 
 <span class="kw">impl </span>PotState {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
-        next_slot_input: NextSlotInput,
+        next_slot_input: PotNextSlotInput,
         parameters_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
         verifier: PotVerifier,
     ) -&gt; <span class="self">Self </span>{
@@ -335,7 +284,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>next_slot_input(<span class="kw-2">&amp;</span><span class="self">self</span>, ordering: Ordering) -&gt; NextSlotInput {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>next_slot_input(<span class="kw-2">&amp;</span><span class="self">self</span>, ordering: Ordering) -&gt; PotNextSlotInput {
         <span class="self">self</span>.inner_state.load(ordering).next_slot_input
     }
 
@@ -345,11 +294,11 @@
     /// `Err(existing_next_slot_input)` in case state was changed in the meantime.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_extend(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        expected_previous_next_slot_input: NextSlotInput,
+        expected_previous_next_slot_input: PotNextSlotInput,
         best_slot: Slot,
         best_output: PotOutput,
         maybe_updated_parameters_change: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NextSlotInput, NextSlotInput&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;PotNextSlotInput, PotNextSlotInput&gt; {
         <span class="kw">let </span>old_inner_state = <span class="self">self</span>.inner_state.load(Ordering::Acquire);
         <span class="kw">if </span>expected_previous_next_slot_input != old_inner_state.next_slot_input {
             <span class="kw">return </span><span class="prelude-val">Err</span>(old_inner_state.next_slot_input);
@@ -415,22 +364,23 @@
             {
                 <span class="kw">let </span>slot = Slot::from(slot);
 
-                <span class="kw">let </span><span class="prelude-val">Some</span>(checkpoints) = <span class="self">self</span>.verifier.try_get_checkpoints(seed, slot_iterations)
+                <span class="kw">let </span><span class="prelude-val">Some</span>(checkpoints) = <span class="self">self</span>.verifier.try_get_checkpoints(slot_iterations, seed)
                 <span class="kw">else </span>{
                     <span class="kw">break</span>;
                 };
 
-                <span class="kw">let </span>next_slot = slot + Slot::from(<span class="number">1</span>);
+                <span class="kw">let </span>pot_input = PotNextSlotInput::derive(
+                    slot_iterations,
+                    slot,
+                    checkpoints.output(),
+                    <span class="kw-2">&amp;</span>maybe_updated_parameters_change.flatten(),
+                );
 
-                <span class="comment">// In case parameters change in the next slot, account for them
-                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(parameters_change)) = maybe_updated_parameters_change
-                    &amp;&amp; parameters_change.slot == next_slot
-                {
-                    slot_iterations = parameters_change.slot_iterations;
-                    seed = checkpoints.output().seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
-                } <span class="kw">else </span>{
-                    seed = checkpoints.output().seed();
-                }
+                <span class="comment">// TODO: Consider carrying of the whole `PotNextSlotInput` rather than individual
+                //  variables
+                </span><span class="kw">let </span>next_slot = slot + Slot::from(<span class="number">1</span>);
+                slot_iterations = pot_input.slot_iterations;
+                seed = pot_input.seed;
 
                 <span class="kw">if </span>next_slot == best_state.next_slot_input.slot
                     &amp;&amp; slot_iterations == best_state.next_slot_input.slot_iterations

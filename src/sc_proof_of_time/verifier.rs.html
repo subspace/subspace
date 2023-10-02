@@ -384,6 +384,7 @@
 <a href="#384" id="384">384</a>
 <a href="#385" id="385">385</a>
 <a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Proof of time verifier
 
 </span><span class="attr">#[cfg(test)]
@@ -394,7 +395,7 @@
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>sp_consensus_slots::Slot;
-<span class="kw">use </span>sp_consensus_subspace::PotParametersChange;
+<span class="kw">use </span>sp_consensus_subspace::{PotNextSlotInput, PotParametersChange};
 <span class="kw">use </span>std::num::{NonZeroU32, NonZeroUsize};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{PotCheckpoints, PotOutput, PotSeed};
@@ -449,11 +450,40 @@
         <span class="self">self</span>.genesis_seed
     }
 
+    <span class="doccomment">/// Try to get checkpoints for provided seed and slot iterations, returns `None` if proving
+    /// fails internally.
+    </span><span class="kw">pub async fn </span>get_checkpoints(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        slot_iterations: NonZeroU32,
+        seed: PotSeed,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;PotCheckpoints&gt; {
+        <span class="comment">// TODO: This &quot;proxy&quot; is a workaround for https://github.com/rust-lang/rust/issues/57478
+        </span><span class="kw">let </span>(result_sender, result_receiver) = oneshot::channel();
+        tokio::task::spawn_blocking({
+            <span class="kw">let </span>verifier = <span class="self">self</span>.clone();
+
+            <span class="kw">move </span>|| {
+                futures::executor::block_on({
+                    <span class="kw">async move </span>{
+                        <span class="comment">// Result doesn&#39;t matter here
+                        </span><span class="kw">let _ </span>= result_sender.send(
+                            verifier
+                                .calculate_checkpoints(slot_iterations, seed, <span class="bool-val">true</span>)
+                                .<span class="kw">await</span>,
+                        );
+                    }
+                });
+            }
+        });
+
+        result_receiver.<span class="kw">await</span>.unwrap_or_default()
+    }
+
     <span class="doccomment">/// Try to get checkpoints quickly without waiting for potentially locked async mutex or proving
     </span><span class="kw">pub fn </span>try_get_checkpoints(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        seed: PotSeed,
         slot_iterations: NonZeroU32,
+        seed: PotSeed,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;PotCheckpoints&gt; {
         <span class="kw">let </span>cache_key = CacheKey {
             seed,
@@ -477,23 +507,13 @@
     /// whenever possible.
     </span><span class="kw">pub async fn </span>is_output_valid(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        slot: Slot,
-        seed: PotSeed,
-        slot_iterations: NonZeroU32,
+        input: PotNextSlotInput,
         slots: Slot,
         output: PotOutput,
         maybe_parameters_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
     ) -&gt; bool {
-        <span class="self">self</span>.is_output_valid_internal(
-            slot,
-            seed,
-            slot_iterations,
-            slots,
-            output,
-            maybe_parameters_change,
-            <span class="bool-val">true</span>,
-        )
-        .<span class="kw">await
+        <span class="self">self</span>.is_output_valid_internal(input, slots, output, maybe_parameters_change, <span class="bool-val">true</span>)
+            .<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Does the same verification as [`Self::is_output_valid()`] except it relies on proofs being
@@ -501,34 +521,21 @@
     /// be a quick and cheap version of the function.
     </span><span class="kw">pub async fn </span>try_is_output_valid(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        slot: Slot,
-        seed: PotSeed,
-        slot_iterations: NonZeroU32,
+        input: PotNextSlotInput,
         slots: Slot,
         output: PotOutput,
         maybe_parameters_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
     ) -&gt; bool {
-        <span class="self">self</span>.is_output_valid_internal(
-            slot,
-            seed,
-            slot_iterations,
-            slots,
-            output,
-            maybe_parameters_change,
-            <span class="bool-val">false</span>,
-        )
-        .<span class="kw">await
+        <span class="self">self</span>.is_output_valid_internal(input, slots, output, maybe_parameters_change, <span class="bool-val">false</span>)
+            .<span class="kw">await
     </span>}
 
-    <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="kw">async fn </span>is_output_valid_internal(
+    <span class="kw">async fn </span>is_output_valid_internal(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        <span class="kw-2">mut </span>slot: Slot,
-        <span class="kw-2">mut </span>seed: PotSeed,
-        <span class="kw-2">mut </span>slot_iterations: NonZeroU32,
+        <span class="kw-2">mut </span>input: PotNextSlotInput,
         slots: Slot,
         output: PotOutput,
-        <span class="kw-2">mut </span>maybe_parameters_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
+        maybe_parameters_change: <span class="prelude-ty">Option</span>&lt;PotParametersChange&gt;,
         do_proving_if_necessary: bool,
     ) -&gt; bool {
         <span class="kw">let </span><span class="kw-2">mut </span>slots = u64::from(slots);
@@ -545,9 +552,9 @@
                             <span class="comment">// Result doesn&#39;t matter here
                             </span><span class="kw">let _ </span>= result_sender.send(
                                 verifier
-                                    .calculate_output(
-                                        seed,
-                                        slot_iterations,
+                                    .calculate_checkpoints(
+                                        input.slot_iterations,
+                                        input.seed,
                                         do_proving_if_necessary,
                                     )
                                     .<span class="kw">await</span>,
@@ -557,27 +564,23 @@
                 }
             });
 
-            <span class="kw">let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(calculated_proof)) = result_receiver.<span class="kw">await else </span>{
+            <span class="kw">let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(calculated_checkpoints)) = result_receiver.<span class="kw">await else </span>{
                 <span class="kw">return </span><span class="bool-val">false</span>;
             };
+            <span class="kw">let </span>calculated_output = calculated_checkpoints.output();
 
             slots -= <span class="number">1</span>;
 
             <span class="kw">if </span>slots == <span class="number">0 </span>{
-                <span class="kw">return </span>output == calculated_proof;
+                <span class="kw">return </span>output == calculated_output;
             }
 
-            slot = slot + Slot::from(<span class="number">1</span>);
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = maybe_parameters_change
-                &amp;&amp; parameters_change.slot == slot
-            {
-                slot_iterations = parameters_change.slot_iterations;
-                seed = calculated_proof.seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
-                maybe_parameters_change.take();
-            } <span class="kw">else </span>{
-                seed = calculated_proof.seed();
-            }
+            input = PotNextSlotInput::derive(
+                input.slot_iterations,
+                input.slot,
+                calculated_output,
+                <span class="kw-2">&amp;</span>maybe_parameters_change,
+            );
         }
     }
 
@@ -585,12 +588,12 @@
     </span><span class="comment">// TODO: False-positive, lock is not actually held over await point, remove suppression once
     //  fixed upstream
     </span><span class="attr">#[allow(clippy::await_holding_lock)]
-    </span><span class="kw">async fn </span>calculate_output(
+    </span><span class="kw">async fn </span>calculate_checkpoints(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        seed: PotSeed,
         slot_iterations: NonZeroU32,
+        seed: PotSeed,
         do_proving_if_necessary: bool,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;PotOutput&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;PotCheckpoints&gt; {
         <span class="kw">let </span>cache_key = CacheKey {
             seed,
             slot_iterations,
@@ -602,8 +605,8 @@
             <span class="kw">if let </span><span class="prelude-val">Some</span>(cache_value) = maybe_cache_value {
                 drop(cache);
                 <span class="kw">let </span>correct_checkpoints = cache_value.checkpoints.lock().<span class="kw">await</span>;
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(correct_checkpoints) = correct_checkpoints.as_ref() {
-                    <span class="kw">return </span><span class="prelude-val">Some</span>(correct_checkpoints.output());
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(correct_checkpoints) = <span class="kw-2">*</span>correct_checkpoints {
+                    <span class="kw">return </span><span class="prelude-val">Some</span>(correct_checkpoints);
                 }
 
                 <span class="comment">// There was another verification for these inputs and it wasn&#39;t successful, retry
@@ -656,9 +659,8 @@
                 <span class="kw">return </span><span class="prelude-val">None</span>;
             };
 
-            <span class="kw">let </span>proof = generated_checkpoints.output();
             checkpoints.replace(generated_checkpoints);
-            <span class="kw">return </span><span class="prelude-val">Some</span>(proof);
+            <span class="kw">return </span><span class="prelude-val">Some</span>(generated_checkpoints);
         }
     }
 

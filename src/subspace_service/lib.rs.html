@@ -1133,26 +1133,6 @@
 <a href="#1133" id="1133">1133</a>
 <a href="#1134" id="1134">1134</a>
 <a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a>
-<a href="#1137" id="1137">1137</a>
-<a href="#1138" id="1138">1138</a>
-<a href="#1139" id="1139">1139</a>
-<a href="#1140" id="1140">1140</a>
-<a href="#1141" id="1141">1141</a>
-<a href="#1142" id="1142">1142</a>
-<a href="#1143" id="1143">1143</a>
-<a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a>
-<a href="#1146" id="1146">1146</a>
-<a href="#1147" id="1147">1147</a>
-<a href="#1148" id="1148">1148</a>
-<a href="#1149" id="1149">1149</a>
-<a href="#1150" id="1150">1150</a>
-<a href="#1151" id="1151">1151</a>
-<a href="#1152" id="1152">1152</a>
-<a href="#1153" id="1153">1153</a>
-<a href="#1154" id="1154">1154</a>
-<a href="#1155" id="1155">1155</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1230,7 +1210,7 @@
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_consensus_subspace::digests::extract_pre_digest;
 <span class="kw">use </span>sp_consensus_subspace::{
-    FarmerPublicKey, KzgExtension, PosExtension, PotExtension, SubspaceApi,
+    FarmerPublicKey, KzgExtension, PosExtension, PotExtension, PotNextSlotInput, SubspaceApi,
 };
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_domains::transaction::PreValidationObjectApi;
@@ -1471,37 +1451,21 @@
                     }
                 };
 
-                <span class="kw">let </span>slot_iterations;
-                <span class="kw">let </span>pot_seed;
-                <span class="kw">let </span>after_parent_slot = parent_slot + Slot::from(<span class="number">1</span>);
-
-                <span class="kw">if </span>parent_header.number().is_zero() {
-                    slot_iterations = pot_parameters.slot_iterations();
-                    pot_seed = pot_verifier.genesis_seed();
+                <span class="kw">let </span>pot_input = <span class="kw">if </span>parent_header.number().is_zero() {
+                    PotNextSlotInput {
+                        slot: parent_slot + Slot::from(<span class="number">1</span>),
+                        slot_iterations: pot_parameters.slot_iterations(),
+                        seed: pot_verifier.genesis_seed(),
+                    }
                 } <span class="kw">else </span>{
                     <span class="kw">let </span>pot_info = parent_pre_digest.pot_info();
-                    <span class="comment">// The change to number of iterations might have happened before
-                    // `after_parent_slot`
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = pot_parameters.next_parameters_change()
-                        &amp;&amp; parameters_change.slot &lt;= after_parent_slot
-                    {
-                        slot_iterations = parameters_change.slot_iterations;
-                        <span class="comment">// Only if entropy injection happens exactly after parent slot we need to \
-                        // mix it in
-                        </span><span class="kw">if </span>parameters_change.slot == after_parent_slot {
-                            pot_seed = pot_info
-                                .proof_of_time()
-                                .seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
-                        } <span class="kw">else </span>{
-                            pot_seed = pot_info
-                                .proof_of_time().seed();
-                        }
-                    } <span class="kw">else </span>{
-                        slot_iterations = pot_parameters.slot_iterations();
-                        pot_seed = pot_info
-                            .proof_of_time()
-                            .seed();
-                    }
+
+                    PotNextSlotInput::derive(
+                        pot_parameters.slot_iterations(),
+                        parent_slot,
+                        pot_info.proof_of_time(),
+                        <span class="kw-2">&amp;</span>pot_parameters.next_parameters_change(),
+                    )
                 };
 
                 <span class="comment">// Ensure proof of time and future proof of time included in upcoming block are
@@ -1509,18 +1473,14 @@
 
                 </span><span class="kw">if </span>quick_verification {
                     block_on(pot_verifier.try_is_output_valid(
-                        after_parent_slot,
-                        pot_seed,
-                        slot_iterations,
+                        pot_input,
                         Slot::from(slot - u64::from(parent_slot)),
                         proof_of_time,
                         pot_parameters.next_parameters_change(),
                     ))
                 } <span class="kw">else </span>{
                     block_on(pot_verifier.is_output_valid(
-                        after_parent_slot,
-                        pot_seed,
-                        slot_iterations,
+                        pot_input,
                         Slot::from(slot - u64::from(parent_slot)),
                         proof_of_time,
                         pot_parameters.next_parameters_change(),

@@ -613,21 +613,6 @@
 <a href="#613" id="613">613</a>
 <a href="#614" id="614">614</a>
 <a href="#615" id="615">615</a>
-<a href="#616" id="616">616</a>
-<a href="#617" id="617">617</a>
-<a href="#618" id="618">618</a>
-<a href="#619" id="619">619</a>
-<a href="#620" id="620">620</a>
-<a href="#621" id="621">621</a>
-<a href="#622" id="622">622</a>
-<a href="#623" id="623">623</a>
-<a href="#624" id="624">624</a>
-<a href="#625" id="625">625</a>
-<a href="#626" id="626">626</a>
-<a href="#627" id="627">627</a>
-<a href="#628" id="628">628</a>
-<a href="#629" id="629">629</a>
-<a href="#630" id="630">630</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
 </span><span class="kw">use crate</span>::{Error, SUBSPACE_FULL_POT_VERIFICATION_INTERMEDIATE};
@@ -653,7 +638,8 @@
     extract_subspace_digest_items, CompatibleDigestItem, PreDigest, SubspaceDigestItems,
 };
 <span class="kw">use </span>sp_consensus_subspace::{
-    ChainConstants, FarmerPublicKey, FarmerSignature, SubspaceApi, SubspaceJustification,
+    ChainConstants, FarmerPublicKey, FarmerSignature, PotNextSlotInput, SubspaceApi,
+    SubspaceJustification,
 };
 <span class="kw">use </span>sp_runtime::traits::NumberFor;
 <span class="kw">use </span>sp_runtime::{DigestItem, Justifications};
@@ -937,17 +923,18 @@
                     checkpoints,
                 ));
 
-                slot_to_check = slot_to_check + Slot::from(<span class="number">1</span>);
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = subspace_digest_items.pot_parameters_change
-                    &amp;&amp; parameters_change.slot == slot_to_check
-                {
-                    slot_iterations = parameters_change.slot_iterations;
-                    seed = checkpoints
-                        .output()
-                        .seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
-                } <span class="kw">else </span>{
-                    seed = checkpoints.output().seed();
-                }
+                <span class="kw">let </span>pot_input = PotNextSlotInput::derive(
+                    slot_iterations,
+                    slot_to_check,
+                    checkpoints.output(),
+                    <span class="kw-2">&amp;</span>subspace_digest_items.pot_parameters_change,
+                );
+
+                <span class="comment">// TODO: Consider carrying of the whole `PotNextSlotInput` rather than individual
+                //  variables
+                </span>slot_to_check = pot_input.slot;
+                slot_iterations = pot_input.slot_iterations;
+                seed = pot_input.seed;
             }
             <span class="comment">// Try to find invalid checkpoints
             </span><span class="kw">if </span>full_pot_verification
@@ -968,27 +955,12 @@
             // verification
         </span>}
 
-        <span class="kw">let </span>slot_iterations;
-        <span class="kw">let </span>pot_seed;
-        <span class="kw">let </span>next_slot = slot + Slot::from(<span class="number">1</span>);
-        <span class="comment">// The change to number of iterations might have happened before `next_slot`
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(parameters_change) = subspace_digest_items.pot_parameters_change
-            &amp;&amp; parameters_change.slot &lt;= next_slot
-        {
-            slot_iterations = parameters_change.slot_iterations;
-            <span class="comment">// Only if entropy injection happens exactly on next slot we need to mix it in
-            </span><span class="kw">if </span>parameters_change.slot == next_slot {
-                pot_seed = pre_digest
-                    .pot_info()
-                    .proof_of_time()
-                    .seed_with_entropy(<span class="kw-2">&amp;</span>parameters_change.entropy);
-            } <span class="kw">else </span>{
-                pot_seed = pre_digest.pot_info().proof_of_time().seed();
-            }
-        } <span class="kw">else </span>{
-            slot_iterations = subspace_digest_items.pot_slot_iterations;
-            pot_seed = pre_digest.pot_info().proof_of_time().seed();
-        }
+        <span class="kw">let </span>pot_input = PotNextSlotInput::derive(
+            subspace_digest_items.pot_slot_iterations,
+            slot,
+            pre_digest.pot_info().proof_of_time(),
+            <span class="kw-2">&amp;</span>subspace_digest_items.pot_parameters_change,
+        );
 
         <span class="comment">// Check proof of time between slot of the block and future proof of time.
         //
@@ -999,9 +971,7 @@
             &amp;&amp; !<span class="self">self
                 </span>.pot_verifier
                 .is_output_valid(
-                    next_slot,
-                    pot_seed,
-                    slot_iterations,
+                    pot_input,
                     <span class="self">self</span>.chain_constants.block_authoring_delay(),
                     pre_digest.pot_info().future_proof_of_time(),
                     subspace_digest_items.pot_parameters_change,
