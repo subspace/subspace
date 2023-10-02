@@ -357,12 +357,42 @@
 <a href="#357" id="357">357</a>
 <a href="#358" id="358">358</a>
 <a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>gossip;
 <span class="kw">mod </span>state;
 <span class="kw">mod </span>timekeeper;
 
 <span class="kw">use </span><span class="kw">crate</span>::source::gossip::{GossipProof, PotGossipWorker, ToGossipMessage};
-<span class="kw">use </span><span class="kw">crate</span>::source::state::{NextSlotInput, PotState};
+<span class="kw">use </span><span class="kw">crate</span>::source::state::{NextSlotInput, PotState, PotStateUpdateOutcome};
 <span class="kw">use </span><span class="kw">crate</span>::source::timekeeper::{run_timekeeper, TimekeeperProof};
 <span class="kw">use </span><span class="kw">crate</span>::verifier::PotVerifier;
 <span class="kw">use </span>core_affinity::CoreId;
@@ -386,7 +416,7 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::thread;
 <span class="kw">use </span>subspace_core_primitives::PotCheckpoints;
-<span class="kw">use </span>tracing::{debug, error, warn};
+<span class="kw">use </span>tracing::{debug, error, trace, warn};
 
 <span class="kw">const </span>LOCAL_PROOFS_CHANNEL_CAPACITY: usize = <span class="number">10</span>;
 <span class="kw">const </span>SLOTS_CHANNEL_CAPACITY: usize = <span class="number">10</span>;
@@ -694,24 +724,54 @@
         <span class="comment">// This will do one of 3 things depending on circumstances:
         // * if block import is ahead of timekeeper and gossip, it will update next slot input
         // * if block import is on a different PoT chain, it will update next slot input to the
-        //   correct fork
+        //   correct fork (reorg)
         // * if block import is on the same PoT chain this will essentially do nothing
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(next_slot_input) = <span class="self">self</span>.state.update(
+        </span><span class="kw">match </span><span class="self">self</span>.state.update(
             best_slot,
             best_proof,
             <span class="prelude-val">Some</span>(subspace_digest_items.pot_parameters_change),
         ) {
-            <span class="macro">warn!</span>(<span class="string">&quot;Proof of time chain reorg happened&quot;</span>);
-
-            <span class="kw">if </span><span class="self">self
-                </span>.to_gossip_sender
-                .try_send(ToGossipMessage::NextSlotInput(next_slot_input))
-                .is_err()
-            {
-                <span class="macro">debug!</span>(
-                    next_slot = %next_slot_input.slot,
-                    <span class="string">&quot;Gossip is not able to keep-up with slot production (block import)&quot;</span>,
+            PotStateUpdateOutcome::NoChange =&gt; {
+                <span class="macro">trace!</span>(
+                    %best_slot,
+                    <span class="string">&quot;Block import didn&#39;t result in proof of time chain changes&quot;</span>,
                 );
+            }
+            PotStateUpdateOutcome::Extension { from, to } =&gt; {
+                <span class="macro">warn!</span>(
+                    from_next_slot = %from.slot,
+                    to_next_slot = %to.slot,
+                    <span class="string">&quot;Proof of time chain was extended from block import&quot;</span>,
+                );
+
+                <span class="kw">if </span><span class="self">self
+                    </span>.to_gossip_sender
+                    .try_send(ToGossipMessage::NextSlotInput(to))
+                    .is_err()
+                {
+                    <span class="macro">debug!</span>(
+                        next_slot = %to.slot,
+                        <span class="string">&quot;Gossip is not able to keep-up with slot production (block import)&quot;</span>,
+                    );
+                }
+            }
+            PotStateUpdateOutcome::Reorg { from, to } =&gt; {
+                <span class="macro">warn!</span>(
+                    from_next_slot = %from.slot,
+                    to_next_slot = %to.slot,
+                    <span class="string">&quot;Proof of time chain reorg happened&quot;</span>,
+                );
+
+                <span class="kw">if </span><span class="self">self
+                    </span>.to_gossip_sender
+                    .try_send(ToGossipMessage::NextSlotInput(to))
+                    .is_err()
+                {
+                    <span class="macro">debug!</span>(
+                        next_slot = %to.slot,
+                        <span class="string">&quot;Gossip is not able to keep-up with slot production (block import)&quot;</span>,
+                    );
+                }
             }
         }
     }
