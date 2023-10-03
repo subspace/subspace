@@ -423,16 +423,63 @@
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
 <a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Runtime registry for domains
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::{NextRuntimeId, RuntimeRegistry, ScheduledRuntimeUpgrades};
 <span class="kw">use crate</span>::{Config, Event};
+<span class="kw">use </span>alloc::string::String;
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::PalletError;
 <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::Hasher;
-<span class="kw">use </span>sp_domains::{DomainsDigestItem, RuntimeId, RuntimeType};
+<span class="kw">use </span>sp_domains::storage::RawGenesis;
+<span class="kw">use </span>sp_domains::{DomainId, DomainsDigestItem, RuntimeId, RuntimeType};
 <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, Get};
 <span class="kw">use </span>sp_runtime::DigestItem;
 <span class="kw">use </span>sp_std::vec::Vec;
@@ -448,24 +495,40 @@
     MissingRuntimeObject,
     RuntimeUpgradeAlreadyScheduled,
     MaxScheduledBlockNumber,
+    FailedToDecodeRawGenesis,
+    RuntimeCodeNotFoundInRawGenesis,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 </span><span class="kw">pub struct </span>RuntimeObject&lt;Number, Hash&gt; {
-    <span class="kw">pub </span>runtime_name: Vec&lt;u8&gt;,
+    <span class="kw">pub </span>runtime_name: String,
     <span class="kw">pub </span>runtime_type: RuntimeType,
     <span class="kw">pub </span>runtime_upgrades: u32,
     <span class="kw">pub </span>hash: Hash,
-    <span class="kw">pub </span>code: Vec&lt;u8&gt;,
+    <span class="comment">// The raw gensis storage that contains the runtime code.
+    // NOTE: don&#39;t use this field directly but `into_complete_raw_genesis` instead
+    </span><span class="kw">pub </span>raw_genesis: RawGenesis,
     <span class="kw">pub </span>version: RuntimeVersion,
     <span class="kw">pub </span>created_at: Number,
     <span class="kw">pub </span>updated_at: Number,
 }
 
+<span class="kw">impl</span>&lt;Number, Hash&gt; RuntimeObject&lt;Number, Hash&gt; {
+    <span class="comment">// Return a complete raw genesis with runtime code and domain id set properly
+    </span><span class="kw">pub fn </span>into_complete_raw_genesis(<span class="self">self</span>, domain_id: DomainId) -&gt; RawGenesis {
+        <span class="kw">let </span>RuntimeObject {
+            <span class="kw-2">mut </span>raw_genesis, ..
+        } = <span class="self">self</span>;
+        raw_genesis.set_domain_id(domain_id);
+        raw_genesis
+    }
+}
+
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
-</span><span class="kw">pub struct </span>ScheduledRuntimeUpgrade {
-    <span class="kw">pub </span>code: Vec&lt;u8&gt;,
+</span><span class="kw">pub struct </span>ScheduledRuntimeUpgrade&lt;Hash&gt; {
+    <span class="kw">pub </span>raw_genesis: RawGenesis,
     <span class="kw">pub </span>version: RuntimeVersion,
+    <span class="kw">pub </span>hash: Hash,
 }
 
 <span class="doccomment">/// Extracts the runtime version of the provided code.
@@ -496,13 +559,20 @@
 
 <span class="doccomment">/// Registers a new domain runtime..
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_register_runtime&lt;T: Config&gt;(
-    runtime_name: Vec&lt;u8&gt;,
+    runtime_name: String,
     runtime_type: RuntimeType,
-    code: Vec&lt;u8&gt;,
+    raw_genesis_storage: Vec&lt;u8&gt;,
     at: BlockNumberFor&lt;T&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RuntimeId, Error&gt; {
-    <span class="kw">let </span>runtime_version = runtime_version(<span class="kw-2">&amp;</span>code)<span class="question-mark">?</span>;
-    <span class="kw">let </span>runtime_hash = T::Hashing::hash(<span class="kw-2">&amp;</span>code);
+    <span class="kw">let </span>raw_genesis: RawGenesis = Decode::decode(<span class="kw-2">&amp;mut </span>raw_genesis_storage.as_slice())
+        .map_err(|<span class="kw">_</span>| Error::FailedToDecodeRawGenesis)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>code = raw_genesis
+        .get_runtime_code()
+        .ok_or(Error::RuntimeCodeNotFoundInRawGenesis)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>version = runtime_version(code)<span class="question-mark">?</span>;
+    <span class="kw">let </span>runtime_hash = T::Hashing::hash(code);
     <span class="kw">let </span>runtime_id = NextRuntimeId::&lt;T&gt;::get();
 
     RuntimeRegistry::&lt;T&gt;::insert(
@@ -511,8 +581,8 @@
             runtime_name,
             runtime_type,
             hash: runtime_hash,
-            code,
-            version: runtime_version,
+            raw_genesis,
+            version,
             created_at: at,
             updated_at: at,
             runtime_upgrades: <span class="number">0u32</span>,
@@ -528,13 +598,20 @@
 <span class="comment">// TODO: Remove once `do_register_runtime` works at genesis.
 </span><span class="doccomment">/// Registers a new domain runtime at genesis.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>register_runtime_at_genesis&lt;T: Config&gt;(
-    runtime_name: Vec&lt;u8&gt;,
+    runtime_name: String,
     runtime_type: RuntimeType,
     runtime_version: RuntimeVersion,
-    code: Vec&lt;u8&gt;,
+    raw_genesis_storage: Vec&lt;u8&gt;,
     at: BlockNumberFor&lt;T&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RuntimeId, Error&gt; {
-    <span class="kw">let </span>runtime_hash = T::Hashing::hash(<span class="kw-2">&amp;</span>code);
+    <span class="kw">let </span>raw_genesis: RawGenesis = Decode::decode(<span class="kw-2">&amp;mut </span>raw_genesis_storage.as_slice())
+        .map_err(|<span class="kw">_</span>| Error::FailedToDecodeRawGenesis)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>code = raw_genesis
+        .get_runtime_code()
+        .ok_or(Error::RuntimeCodeNotFoundInRawGenesis)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>runtime_hash = T::Hashing::hash(code);
     <span class="kw">let </span>runtime_id = NextRuntimeId::&lt;T&gt;::get();
 
     RuntimeRegistry::&lt;T&gt;::insert(
@@ -543,7 +620,7 @@
             runtime_name,
             runtime_type,
             hash: runtime_hash,
-            code,
+            raw_genesis,
             version: runtime_version,
             created_at: at,
             updated_at: at,
@@ -560,19 +637,31 @@
 <span class="doccomment">/// Schedules a runtime upgrade after `DomainRuntimeUpgradeDelay` from current block number.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_schedule_runtime_upgrade&lt;T: Config&gt;(
     runtime_id: RuntimeId,
-    code: Vec&lt;u8&gt;,
+    raw_genesis_storage: Vec&lt;u8&gt;,
     current_block_number: BlockNumberFor&lt;T&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;BlockNumberFor&lt;T&gt;, Error&gt; {
     <span class="kw">let </span>runtime_obj = RuntimeRegistry::&lt;T&gt;::get(runtime_id).ok_or(Error::MissingRuntimeObject)<span class="question-mark">?</span>;
-    <span class="kw">let </span>new_runtime_version = can_upgrade_code(<span class="kw-2">&amp;</span>runtime_obj.version, <span class="kw-2">&amp;</span>code)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>new_raw_genesis: RawGenesis = Decode::decode(<span class="kw-2">&amp;mut </span>raw_genesis_storage.as_slice())
+        .map_err(|<span class="kw">_</span>| Error::FailedToDecodeRawGenesis)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>new_code = new_raw_genesis
+        .get_runtime_code()
+        .ok_or(Error::RuntimeCodeNotFoundInRawGenesis)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>new_runtime_version = can_upgrade_code(<span class="kw-2">&amp;</span>runtime_obj.version, new_code)<span class="question-mark">?</span>;
+    <span class="kw">let </span>new_runtime_hash = T::Hashing::hash(new_code);
+    <span class="kw">let </span>scheduled_upgrade = ScheduledRuntimeUpgrade {
+        raw_genesis: new_raw_genesis,
+        version: new_runtime_version,
+        hash: new_runtime_hash,
+    };
     <span class="kw">let </span>scheduled_at = current_block_number
         .checked_add(<span class="kw-2">&amp;</span>T::DomainRuntimeUpgradeDelay::get())
         .ok_or(Error::MaxScheduledBlockNumber)<span class="question-mark">?</span>;
-    <span class="kw">let </span>scheduled_upgrade = ScheduledRuntimeUpgrade {
-        code,
-        version: new_runtime_version,
-    };
+
     ScheduledRuntimeUpgrades::&lt;T&gt;::insert(scheduled_at, runtime_id, scheduled_upgrade);
+
     <span class="prelude-val">Ok</span>(scheduled_at)
 }
 
@@ -583,10 +672,9 @@
                 .as_mut()
                 .expect(<span class="string">&quot;Runtime object exists since an upgrade is scheduled after verification&quot;</span>);
 
-            <span class="kw">let </span>runtime_hash = T::Hashing::hash(<span class="kw-2">&amp;</span>scheduled_update.code);
-            runtime_obj.code = scheduled_update.code;
+            runtime_obj.raw_genesis = scheduled_update.raw_genesis;
             runtime_obj.version = scheduled_update.version;
-            runtime_obj.hash = runtime_hash;
+            runtime_obj.hash = scheduled_update.hash;
             runtime_obj.runtime_upgrades = runtime_obj.runtime_upgrades.saturating_add(<span class="number">1</span>);
             runtime_obj.updated_at = at;
         });
@@ -613,6 +701,7 @@
     <span class="kw">use </span>frame_support::assert_ok;
     <span class="kw">use </span>frame_support::dispatch::RawOrigin;
     <span class="kw">use </span>frame_support::traits::OnInitialize;
+    <span class="kw">use </span>sp_domains::storage::RawGenesis;
     <span class="kw">use </span>sp_domains::{DomainsDigestItem, RuntimeId, RuntimeType};
     <span class="kw">use </span>sp_runtime::traits::BlockNumberProvider;
     <span class="kw">use </span>sp_runtime::{Digest, DispatchError};
@@ -637,11 +726,12 @@
             read_runtime_version,
         ));
         ext.execute_with(|| {
+            <span class="kw">let </span>raw_genesis_storage = RawGenesis::dummy(<span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).encode();
             <span class="kw">let </span>res = <span class="kw">crate</span>::Pallet::&lt;Test&gt;::register_domain_runtime(
                 RawOrigin::Root.into(),
-                <span class="string">b&quot;evm&quot;</span>.to_vec(),
+                <span class="string">&quot;evm&quot;</span>.to_owned(),
                 RuntimeType::Evm,
-                <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>],
+                raw_genesis_storage,
             );
 
             <span class="macro">assert_ok!</span>(res);
@@ -658,11 +748,11 @@
             RuntimeRegistry::&lt;Test&gt;::insert(
                 <span class="number">0</span>,
                 RuntimeObject {
-                    runtime_name: <span class="string">b&quot;evm&quot;</span>.to_vec(),
+                    runtime_name: <span class="string">&quot;evm&quot;</span>.to_owned(),
                     runtime_type: Default::default(),
                     runtime_upgrades: <span class="number">0</span>,
                     hash: Default::default(),
-                    code: <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>],
+                    raw_genesis: RawGenesis::dummy(<span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]),
                     version: RuntimeVersion {
                         spec_name: <span class="string">&quot;test&quot;</span>.into(),
                         spec_version: <span class="number">1</span>,
@@ -714,7 +804,7 @@
                 <span class="kw">let </span>res = <span class="kw">crate</span>::Pallet::&lt;Test&gt;::upgrade_domain_runtime(
                     RawOrigin::Root.into(),
                     <span class="number">0</span>,
-                    <span class="macro">vec!</span>[<span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>, <span class="number">9</span>],
+                    RawGenesis::dummy(<span class="macro">vec!</span>[<span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>, <span class="number">9</span>]).encode(),
                 );
 
                 <span class="macro">assert_eq!</span>(res, expected.map_err(DispatchError::from))
@@ -735,7 +825,7 @@
                 }
             );
             <span class="macro">assert_eq!</span>(runtime_obj.runtime_upgrades, <span class="number">0</span>);
-            <span class="macro">assert_eq!</span>(runtime_obj.code, <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]);
+            <span class="macro">assert_eq!</span>(runtime_obj.raw_genesis, RawGenesis::dummy(<span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]),);
 
             <span class="kw">let </span>block_number = frame_system::Pallet::&lt;Test&gt;::current_block_number();
             <span class="kw">let </span>scheduled_block_number = block_number
@@ -801,11 +891,11 @@
             RuntimeRegistry::&lt;Test&gt;::insert(
                 <span class="number">0</span>,
                 RuntimeObject {
-                    runtime_name: <span class="string">b&quot;evm&quot;</span>.to_vec(),
+                    runtime_name: <span class="string">&quot;evm&quot;</span>.to_owned(),
                     runtime_type: Default::default(),
                     runtime_upgrades: <span class="number">0</span>,
                     hash: Default::default(),
-                    code: <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>],
+                    raw_genesis: RawGenesis::dummy(<span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]),
                     version: version.clone(),
                     created_at: Default::default(),
                     updated_at: Default::default(),
@@ -825,7 +915,7 @@
             <span class="kw">let </span>res = <span class="kw">crate</span>::Pallet::&lt;Test&gt;::upgrade_domain_runtime(
                 RawOrigin::Root.into(),
                 <span class="number">0</span>,
-                <span class="macro">vec!</span>[<span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>, <span class="number">9</span>],
+                RawGenesis::dummy(<span class="macro">vec!</span>[<span class="number">6</span>, <span class="number">7</span>, <span class="number">8</span>, <span class="number">9</span>]).encode(),
             );
             <span class="macro">assert_ok!</span>(res);
 

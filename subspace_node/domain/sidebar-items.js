@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DomainSubcommand"],"struct":["DomainCli","DomainGenesisBlockBuilder","DomainInstanceStarter","EVMDomainExecutorDispatch"]};
+window.SIDEBAR_ITEMS = {"enum":["DomainSubcommand"],"struct":["DomainCli","DomainInstanceStarter","EVMDomainExecutorDispatch"]};

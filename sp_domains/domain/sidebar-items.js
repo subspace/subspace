@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["generate_genesis_state_root"],"struct":["HostFunctions"]};
