@@ -40,7 +40,7 @@ var srcIndex = JSON.parse('{\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["incremental_record_commitments.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs"]],\
-"subspace_core_primitives":["",[["crypto",[["kzg",[],["serde.rs"]]],["kzg.rs"]],["pieces",[],["serde.rs"]]],["checksum.rs","crypto.rs","lib.rs","objects.rs","pieces.rs","segments.rs","serde.rs"]],\
+"subspace_core_primitives":["",[["crypto",[],["kzg.rs"]],["pieces",[],["serde.rs"]]],["checksum.rs","crypto.rs","lib.rs","objects.rs","pieces.rs","segments.rs","serde.rs"]],\
 "subspace_erasure_coding":["",[],["lib.rs"]],\
 "subspace_farmer":["",[["node_client",[],["node_rpc_client.rs"]],["single_disk_farm",[],["farming.rs","piece_cache.rs","piece_reader.rs","plotting.rs"]],["utils",[],["farmer_piece_getter.rs","piece_validator.rs","readers_and_pieces.rs"]]],["identity.rs","lib.rs","node_client.rs","piece_cache.rs","reward_signing.rs","single_disk_farm.rs","utils.rs"]],\
 "subspace_farmer_components":["",[],["auditing.rs","file_ext.rs","lib.rs","plotting.rs","proving.rs","reading.rs","sector.rs","segment_reconstruction.rs"]],\
