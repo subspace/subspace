@@ -381,6 +381,20 @@
 <a href="#381" id="381">381</a>
 <a href="#382" id="382">382</a>
 <a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>gossip;
 <span class="kw">mod </span>state;
 <span class="kw">mod </span>timekeeper;
@@ -436,8 +450,9 @@
 /// up to day with blockchain reorgs.
 </span><span class="attr">#[derive(Debug)]
 #[must_use = <span class="string">&quot;Proof of time source doesn&#39;t do anything unless run() method is called&quot;</span>]
-</span><span class="kw">pub struct </span>PotSourceWorker&lt;Block, Client&gt; {
+</span><span class="kw">pub struct </span>PotSourceWorker&lt;Block, Client, SO&gt; {
     client: Arc&lt;Client&gt;,
+    sync_oracle: SO,
     chain_constants: ChainConstants,
     timekeeper_proofs_receiver: mpsc::Receiver&lt;TimekeeperProof&gt;,
     to_gossip_sender: mpsc::Sender&lt;ToGossipMessage&gt;,
@@ -447,13 +462,14 @@
     _block: PhantomData&lt;Block&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, Client&gt; PotSourceWorker&lt;Block, Client&gt;
+<span class="kw">impl</span>&lt;Block, Client, SO&gt; PotSourceWorker&lt;Block, Client, SO&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: BlockchainEvents&lt;Block&gt; + HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: SubspaceRuntimeApi&lt;Block, FarmerPublicKey&gt;,
+    SO: SyncOracle + Clone + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
-    <span class="kw">pub fn </span>new&lt;Network, GossipSync, SO&gt;(
+    <span class="kw">pub fn </span>new&lt;Network, GossipSync&gt;(
         is_timekeeper: bool,
         timekeeper_cpu_cores: HashSet&lt;usize&gt;,
         client: Arc&lt;Client&gt;,
@@ -465,7 +481,6 @@
     <span class="kw">where
         </span>Network: GossipNetwork&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
         GossipSync: GossipSyncing&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
-        SO: SyncOracle + Send + Sync + <span class="lifetime">&#39;static</span>,
     {
         <span class="kw">let </span>best_hash = client.info().best_hash;
         <span class="kw">let </span>runtime_api = client.runtime_api();
@@ -548,11 +563,12 @@
             Arc::clone(<span class="kw-2">&amp;</span>state),
             network,
             sync,
-            sync_oracle,
+            sync_oracle.clone(),
         );
 
         <span class="kw">let </span>source_worker = <span class="self">Self </span>{
             client,
+            sync_oracle,
             chain_constants,
             timekeeper_proofs_receiver,
             to_gossip_sender,
@@ -612,6 +628,18 @@
             slot_iterations,
             checkpoints,
         } = proof;
+
+        <span class="kw">if </span><span class="self">self</span>.sync_oracle.is_major_syncing() {
+            <span class="macro">trace!</span>(
+                <span class="question-mark">?</span>slot,
+                %seed,
+                %slot_iterations,
+                output = %checkpoints.output(),
+                <span class="string">&quot;Ignore timekeeper proof due to major syncing&quot;</span>,
+            );
+
+            <span class="kw">return</span>;
+        }
 
         <span class="macro">debug!</span>(
             <span class="question-mark">?</span>slot,
