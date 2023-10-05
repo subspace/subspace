@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":["FileExt"]};
+window.SIDEBAR_ITEMS = {"trait":["FileExt","OpenOptionsExt"]};
