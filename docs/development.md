@@ -28,6 +28,8 @@ export PATH="/opt/homebrew/opt/llvm@15/bin:$PATH"
 
 ```bash
 source ~/.zshrc
+# or
+source ~/.bashrc
 ```
 
 4. Verify that `llvm` is installed:
