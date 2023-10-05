@@ -833,13 +833,6 @@
 <a href="#833" id="833">833</a>
 <a href="#834" id="834">834</a>
 <a href="#835" id="835">835</a>
-<a href="#836" id="836">836</a>
-<a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -861,7 +854,8 @@
 
 </span><span class="attr">#![feature(try_blocks)]
 
-</span><span class="kw">use </span>futures::{future, FutureExt, StreamExt};
+</span><span class="kw">use </span>futures::channel::mpsc;
+<span class="kw">use </span>futures::{future, FutureExt, StreamExt};
 <span class="kw">use </span>jsonrpsee::core::{async_trait, Error <span class="kw">as </span>JsonRpseeError, RpcResult};
 <span class="kw">use </span>jsonrpsee::proc_macros::rpc;
 <span class="kw">use </span>jsonrpsee::types::{SubscriptionEmptyError, SubscriptionResult};
@@ -894,7 +888,9 @@
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_archiving::archiver::NewArchivedSegment;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
-<span class="kw">use </span>subspace_core_primitives::{PieceIndex, SegmentHeader, SegmentIndex, SlotNumber, Solution};
+<span class="kw">use </span>subspace_core_primitives::{
+    PieceIndex, PublicKey, SegmentHeader, SegmentIndex, SlotNumber, Solution,
+};
 <span class="kw">use </span>subspace_farmer_components::FarmerProtocolInfo;
 <span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
 <span class="kw">use </span>subspace_rpc_primitives::{
@@ -903,7 +899,9 @@
 };
 <span class="kw">use </span>tracing::{debug, error, warn};
 
-<span class="kw">const </span>SOLUTION_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
+<span class="doccomment">/// This is essentially equal to expected number of votes per block, one more is added implicitly by
+/// the fact that channel sender exists
+</span><span class="kw">const </span>SOLUTION_SENDER_CHANNEL_CAPACITY: usize = <span class="number">9</span>;
 <span class="kw">const </span>REWARD_SIGNING_TIMEOUT: Duration = Duration::from_millis(<span class="number">500</span>);
 <span class="kw">const </span>NODE_SYNC_STATUS_CHECK_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 
@@ -1043,8 +1041,9 @@
     new_slot_notification_stream: SubspaceNotificationStream&lt;NewSlotNotification&gt;,
     reward_signing_notification_stream: SubspaceNotificationStream&lt;RewardSigningNotification&gt;,
     archived_segment_notification_stream: SubspaceNotificationStream&lt;ArchivedSegmentNotification&gt;,
-    solution_response_senders:
-        Arc&lt;Mutex&lt;LruCache&lt;SlotNumber, Vec&lt;async_oneshot::Sender&lt;SolutionResponse&gt;&gt;&gt;&gt;&gt;,
+    <span class="attr">#[allow(clippy::type_complexity)]
+    </span>solution_response_senders:
+        Arc&lt;Mutex&lt;LruCache&lt;SlotNumber, mpsc::Sender&lt;Solution&lt;PublicKey, PublicKey&gt;&gt;&gt;&gt;&gt;,
     reward_signature_senders: Arc&lt;Mutex&lt;BlockSignatureSenders&gt;&gt;,
     dsn_bootstrap_nodes: Vec&lt;Multiaddr&gt;,
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
@@ -1137,6 +1136,7 @@
             })<span class="question-mark">?</span>;
 
         <span class="kw">let </span>farmer_app_info: <span class="prelude-ty">Result</span>&lt;FarmerAppInfo, ApiError&gt; = <span class="kw">try </span>{
+            <span class="kw">let </span>slot_duration = runtime_api.slot_duration(best_hash)<span class="question-mark">?</span>;
             <span class="kw">let </span>chain_constants = runtime_api.chain_constants(best_hash)<span class="question-mark">?</span>;
             <span class="kw">let </span>protocol_info = FarmerProtocolInfo {
                 history_size: runtime_api.history_size(best_hash)<span class="question-mark">?</span>,
@@ -1149,6 +1149,9 @@
             FarmerAppInfo {
                 genesis_hash,
                 dsn_bootstrap_nodes: <span class="self">self</span>.dsn_bootstrap_nodes.clone(),
+                farming_timeout: slot_duration
+                    .as_duration()
+                    .mul_f64(SlotNumber::from(chain_constants.block_authoring_delay()) <span class="kw">as </span>f64),
                 protocol_info,
             }
         };
@@ -1162,19 +1165,12 @@
     <span class="kw">fn </span>submit_solution_response(<span class="kw-2">&amp;</span><span class="self">self</span>, solution_response: SolutionResponse) -&gt; RpcResult&lt;()&gt; {
         <span class="self">self</span>.deny_unsafe.check_if_safe()<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>solution_response_senders = <span class="self">self</span>.solution_response_senders.clone();
-
-        <span class="comment">// TODO: This doesn&#39;t track what client sent a solution, allowing some clients to send
-        //  multiple (https://github.com/paritytech/jsonrpsee/issues/452)
-
-        </span><span class="kw">let </span><span class="kw-2">mut </span>solution_response_senders = solution_response_senders.lock();
-
         <span class="kw">let </span>slot = solution_response.slot_number;
+        <span class="kw">let </span><span class="kw-2">mut </span>solution_response_senders = <span class="self">self</span>.solution_response_senders.lock();
 
         <span class="kw">let </span>success = solution_response_senders
             .peek_mut(<span class="kw-2">&amp;</span>slot)
-            .and_then(|senders| senders.pop())
-            .and_then(|<span class="kw-2">mut </span>sender| sender.send(solution_response).ok())
+            .and_then(|sender| sender.try_send(solution_response.solution).ok())
             .is_some();
 
         <span class="kw">if </span>!success {
@@ -1192,98 +1188,88 @@
         <span class="kw">let </span>solution_response_senders = <span class="self">self</span>.solution_response_senders.clone();
         <span class="kw">let </span>allow_solutions = <span class="self">self</span>.deny_unsafe.check_if_safe().is_ok();
 
-        <span class="kw">let </span>stream =
-            <span class="self">self</span>.new_slot_notification_stream
-                .subscribe()
-                .map(<span class="kw">move </span>|new_slot_notification| {
-                    <span class="kw">let </span>NewSlotNotification {
-                        new_slot_info,
-                        <span class="kw-2">mut </span>solution_sender,
-                    } = new_slot_notification;
+        <span class="kw">let </span>handle_slot_notification = <span class="kw">move </span>|new_slot_notification| {
+            <span class="kw">let </span>NewSlotNotification {
+                new_slot_info,
+                <span class="kw-2">mut </span>solution_sender,
+            } = new_slot_notification;
 
-                    <span class="comment">// Only handle solution responses in case unsafe APIs are allowed
-                    </span><span class="kw">if </span>allow_solutions {
-                        <span class="kw">let </span>(response_sender, response_receiver) = async_oneshot::oneshot();
+            <span class="kw">let </span>slot_number = SlotNumber::from(new_slot_info.slot);
 
-                        <span class="comment">// Store solution sender so that we can retrieve it when solution comes from
-                        // the farmer
-                        </span>{
-                            <span class="kw">let </span><span class="kw-2">mut </span>solution_response_senders = solution_response_senders.lock();
+            <span class="comment">// Only handle solution responses in case unsafe APIs are allowed
+            </span><span class="kw">if </span>allow_solutions {
+                <span class="comment">// Store solution sender so that we can retrieve it when solution comes from
+                // the farmer
+                </span><span class="kw">let </span><span class="kw-2">mut </span>solution_response_senders = solution_response_senders.lock();
+                <span class="kw">if </span>solution_response_senders.peek(<span class="kw-2">&amp;</span>slot_number).is_none() {
+                    <span class="kw">let </span>(response_sender, <span class="kw-2">mut </span>response_receiver) =
+                        mpsc::channel(SOLUTION_SENDER_CHANNEL_CAPACITY);
 
-                            solution_response_senders
-                                .get_or_insert_mut(SlotNumber::from(new_slot_info.slot), Vec::new)
-                                .push(response_sender);
-                        }
+                    solution_response_senders.push(slot_number, response_sender);
 
-                        <span class="comment">// Wait for solutions and transform proposed proof of space solutions into
-                        // data structure `sc-consensus-subspace` expects
-                        </span><span class="kw">let </span>forward_solution_fut = <span class="kw">async move </span>{
-                            <span class="kw">if let </span><span class="prelude-val">Ok</span>(solution_response) = response_receiver.<span class="kw">await </span>{
-                                <span class="kw">for </span>solution <span class="kw">in </span>solution_response.solutions {
-                                    <span class="kw">let </span>public_key =
-                                        FarmerPublicKey::from_slice(solution.public_key.as_ref())
-                                            .expect(<span class="string">&quot;Always correct length; qed&quot;</span>);
-                                    <span class="kw">let </span>reward_address = FarmerPublicKey::from_slice(
-                                        solution.reward_address.as_ref(),
-                                    )
+                    <span class="comment">// Wait for solutions and transform proposed proof of space solutions
+                    // into data structure `sc-consensus-subspace` expects
+                    </span><span class="kw">let </span>forward_solution_fut = <span class="kw">async move </span>{
+                        <span class="kw">while let </span><span class="prelude-val">Some</span>(solution) = response_receiver.next().<span class="kw">await </span>{
+                            <span class="kw">let </span>public_key =
+                                FarmerPublicKey::from_slice(solution.public_key.as_ref())
+                                    .expect(<span class="string">&quot;Always correct length; qed&quot;</span>);
+                            <span class="kw">let </span>reward_address =
+                                FarmerPublicKey::from_slice(solution.reward_address.as_ref())
                                     .expect(<span class="string">&quot;Always correct length; qed&quot;</span>);
 
-                                    <span class="kw">let </span>sector_index = solution.sector_index;
+                            <span class="kw">let </span>sector_index = solution.sector_index;
 
-                                    <span class="kw">let </span>solution = Solution {
-                                        public_key: public_key.clone(),
-                                        reward_address,
-                                        sector_index,
-                                        history_size: solution.history_size,
-                                        piece_offset: solution.piece_offset,
-                                        record_commitment: solution.record_commitment,
-                                        record_witness: solution.record_witness,
-                                        chunk: solution.chunk,
-                                        chunk_witness: solution.chunk_witness,
-                                        audit_chunk_offset: solution.audit_chunk_offset,
-                                        proof_of_space: solution.proof_of_space,
-                                    };
+                            <span class="kw">let </span>solution = Solution {
+                                public_key: public_key.clone(),
+                                reward_address,
+                                sector_index,
+                                history_size: solution.history_size,
+                                piece_offset: solution.piece_offset,
+                                record_commitment: solution.record_commitment,
+                                record_witness: solution.record_witness,
+                                chunk: solution.chunk,
+                                chunk_witness: solution.chunk_witness,
+                                audit_chunk_offset: solution.audit_chunk_offset,
+                                proof_of_space: solution.proof_of_space,
+                            };
 
-                                    <span class="kw">if </span>solution_sender.try_send(solution).is_err() {
-                                        <span class="macro">warn!</span>(
-                                            slot = %solution_response.slot_number,
-                                            %sector_index,
-                                            %public_key,
-                                            <span class="string">&quot;Solution receiver is closed, likely because farmer \
-                                            was too slow&quot;
-                                        </span>);
-                                    }
-                                }
+                            <span class="kw">if </span>solution_sender.try_send(solution).is_err() {
+                                <span class="macro">warn!</span>(
+                                    slot = %slot_number,
+                                    %sector_index,
+                                    %public_key,
+                                    <span class="string">&quot;Solution receiver is closed, likely because farmer was too \
+                                    slow&quot;
+                                </span>);
                             }
-                        };
+                        }
+                    };
 
-                        <span class="comment">// Run above future with timeout
-                        </span>executor.spawn(
-                            <span class="string">&quot;subspace-slot-info-forward&quot;</span>,
-                            <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
-                            future::select(
-                                futures_timer::Delay::new(SOLUTION_TIMEOUT),
-                                Box::pin(forward_solution_fut),
-                            )
-                            .map(|<span class="kw">_</span>| ())
-                            .boxed(),
-                        );
-                    }
+                    executor.spawn(
+                        <span class="string">&quot;subspace-slot-info-forward&quot;</span>,
+                        <span class="prelude-val">Some</span>(<span class="string">&quot;rpc&quot;</span>),
+                        Box::pin(forward_solution_fut),
+                    );
+                }
+            }
 
-                    <span class="kw">let </span>slot_number = new_slot_info.slot.into();
+            <span class="kw">let </span>global_challenge = new_slot_info
+                .global_randomness
+                .derive_global_challenge(slot_number);
 
-                    <span class="kw">let </span>global_challenge = new_slot_info
-                        .global_randomness
-                        .derive_global_challenge(slot_number);
-
-                    <span class="comment">// This will be sent to the farmer
-                    </span>SlotInfo {
-                        slot_number,
-                        global_challenge,
-                        solution_range: new_slot_info.solution_range,
-                        voting_solution_range: new_slot_info.voting_solution_range,
-                    }
-                });
+            <span class="comment">// This will be sent to the farmer
+            </span>SlotInfo {
+                slot_number,
+                global_challenge,
+                solution_range: new_slot_info.solution_range,
+                voting_solution_range: new_slot_info.voting_solution_range,
+            }
+        };
+        <span class="kw">let </span>stream = <span class="self">self
+            </span>.new_slot_notification_stream
+            .subscribe()
+            .map(handle_slot_notification);
 
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             sink.pipe_from_stream(stream).<span class="kw">await</span>;
