@@ -253,12 +253,24 @@
 <a href="#253" id="253">253</a>
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::Handlers;
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::StreamExt;
+<span class="attr">#[cfg(windows)]
+</span><span class="kw">use </span>memmap2::Mmap;
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuildError;
@@ -270,9 +282,11 @@
 <span class="kw">use </span>subspace_core_primitives::{PosSeed, PublicKey, SectorIndex, SolutionRange};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_farmer_components::auditing::audit_sector;
+<span class="kw">use </span>subspace_farmer_components::proving;
 <span class="kw">use </span>subspace_farmer_components::proving::ProvableSolutions;
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadataChecksummed;
-<span class="kw">use </span>subspace_farmer_components::{proving, ReadAt};
+<span class="attr">#[cfg(not(windows))]
+</span><span class="kw">use </span>subspace_farmer_components::ReadAt;
 <span class="kw">use </span>subspace_proof_of_space::{Table, TableGenerator};
 <span class="kw">use </span>subspace_rpc_primitives::{SlotInfo, SolutionResponse};
 <span class="kw">use </span>thiserror::Error;
@@ -380,6 +394,8 @@
     <span class="comment">// We assume that each slot is one second
     </span><span class="kw">let </span>farming_timeout = farmer_app_info.farming_timeout;
 
+    <span class="attr">#[cfg(windows)]
+    </span><span class="kw">let </span>plot_mmap = <span class="kw">unsafe </span>{ Mmap::map(plot_file)<span class="question-mark">? </span>};
     <span class="kw">let </span>table_generator = Arc::new(Mutex::new(PosTable::generator()));
 
     <span class="kw">while let </span><span class="prelude-val">Some</span>(slot_info) = slot_info_notifications.next().<span class="kw">await </span>{
@@ -390,9 +406,15 @@
 
         <span class="macro">debug!</span>(%slot, %sector_count, <span class="string">&quot;Reading sectors&quot;</span>);
 
-        <span class="kw">let </span>sectors = (<span class="number">0</span>..sector_count)
-            .map(|sector_index| plot_file.offset(sector_index * sector_size))
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="attr">#[cfg(not(windows))]
+        </span><span class="kw">let </span>sectors = (<span class="number">0</span>..sector_count)
+            .into_par_iter()
+            .map(|sector_index| plot_file.offset(sector_index * sector_size));
+        <span class="comment">// On Windows random read is horrible in terms of performance, memory-mapped I/O helps
+        // TODO: Remove this once https://internals.rust-lang.org/t/introduce-write-all-at-read-exact-at-on-windows/19649
+        //  or similar exists in standard library
+        </span><span class="attr">#[cfg(windows)]
+        </span><span class="kw">let </span>sectors = plot_mmap.par_chunks_exact(sector_size);
 
         <span class="kw">let </span>sectors_solutions = {
             <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read();
@@ -400,7 +422,7 @@
 
             <span class="kw">let </span><span class="kw-2">mut </span>sectors_solutions = sectors_metadata
                 .par_iter()
-                .zip(<span class="kw-2">&amp;</span>sectors)
+                .zip(sectors)
                 .enumerate()
                 .filter_map(|(sector_index, (sector_metadata, sector))| {
                     <span class="kw">let </span>sector_index = sector_index <span class="kw">as </span>u16;
@@ -421,8 +443,6 @@
 
                     <span class="prelude-val">Some</span>((sector_index, audit_results.solution_candidates))
                 })
-                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-                .into_iter()
                 .filter_map(|(sector_index, solution_candidates)| {
                     <span class="kw">let </span>sector_solutions = <span class="kw">match </span>solution_candidates.into_solutions(
                         <span class="kw-2">&amp;</span>reward_address,
