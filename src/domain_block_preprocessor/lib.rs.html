@@ -422,11 +422,6 @@
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
-<a href="#427" id="427">427</a>
-<a href="#428" id="428">428</a>
-<a href="#429" id="429">429</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the consensus block.
 //!
@@ -457,8 +452,8 @@
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_domains::verification::deduplicate_and_shuffle_extrinsics;
 <span class="kw">use </span>sp_domains::{
-    BundleValidity, DomainId, DomainsApi, DomainsDigestItem, ExecutionReceipt, ExtrinsicsRoot,
-    InvalidBundle, InvalidBundleType, OpaqueBundle, OpaqueBundles, ReceiptValidity, ValidBundle,
+    DomainId, DomainsApi, DomainsDigestItem, ExecutionReceipt, InboxedBundle, InvalidBundleType,
+    OpaqueBundle, OpaqueBundles, ReceiptValidity,
 };
 <span class="kw">use </span>sp_messenger::MessengerApi;
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, NumberFor};
@@ -475,6 +470,11 @@
     Randomness,
     MaybeNewRuntime,
 );
+
+<span class="kw">enum </span>BundleValidity&lt;Extrinsic&gt; {
+    Valid(Vec&lt;Extrinsic&gt;),
+    Invalid(InvalidBundleType),
+}
 
 <span class="doccomment">/// Extracts the raw materials for building a new domain block from the primary block.
 </span><span class="kw">fn </span>prepare_domain_block_elements&lt;Block, CBlock, CClient&gt;(
@@ -535,9 +535,7 @@
 
 <span class="kw">pub struct </span>PreprocessResult&lt;Block: BlockT&gt; {
     <span class="kw">pub </span>extrinsics: Vec&lt;Block::Extrinsic&gt;,
-    <span class="kw">pub </span>extrinsics_roots: Vec&lt;ExtrinsicsRoot&gt;,
-    <span class="kw">pub </span>valid_bundles: Vec&lt;ValidBundle&gt;,
-    <span class="kw">pub </span>invalid_bundles: Vec&lt;InvalidBundle&gt;,
+    <span class="kw">pub </span>bundles: Vec&lt;InboxedBundle&gt;,
 }
 
 <span class="kw">pub struct </span>DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt; {
@@ -642,17 +640,12 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         }
 
-        <span class="kw">let </span>extrinsics_roots = bundles
-            .iter()
-            .map(|bundle| bundle.extrinsics_root())
-            .collect();
-
         <span class="kw">let </span>tx_range = <span class="self">self
             </span>.consensus_client
             .runtime_api()
             .domain_tx_range(consensus_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(valid_bundles, invalid_bundles, extrinsics) =
+        <span class="kw">let </span>(inboxed_bundles, extrinsics) =
             <span class="self">self</span>.compile_bundles_to_extrinsics(bundles, tx_range, domain_hash)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>extrinsics_in_bundle = deduplicate_and_shuffle_extrinsics::&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;(
@@ -684,9 +677,7 @@
         }
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(PreprocessResult {
             extrinsics,
-            extrinsics_roots,
-            valid_bundles,
-            invalid_bundles,
+            bundles: inboxed_bundles,
         }))
     }
 
@@ -699,15 +690,14 @@
         tx_range: U256,
         at: Block::Hash,
     ) -&gt; sp_blockchain::Result&lt;(
-        Vec&lt;ValidBundle&gt;,
-        Vec&lt;InvalidBundle&gt;,
+        Vec&lt;InboxedBundle&gt;,
         Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Block::Extrinsic)&gt;,
     )&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>invalid_bundles = Vec::with_capacity(bundles.len());
-        <span class="kw">let </span><span class="kw-2">mut </span>valid_bundles = Vec::with_capacity(bundles.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>inboxed_bundles = Vec::with_capacity(bundles.len());
         <span class="kw">let </span><span class="kw-2">mut </span>valid_extrinsics = Vec::new();
 
-        <span class="kw">for </span>(index, bundle) <span class="kw">in </span>bundles.into_iter().enumerate() {
+        <span class="kw">for </span>bundle <span class="kw">in </span>bundles {
+            <span class="kw">let </span>extrinsic_root = bundle.extrinsics_root();
             <span class="kw">match </span><span class="self">self</span>.check_bundle_validity(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>tx_range, at)<span class="question-mark">? </span>{
                 BundleValidity::Valid(extrinsics) =&gt; {
                     <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span><span class="self">self</span>.runtime_api.extract_signer(at, extrinsics) {
@@ -721,22 +711,20 @@
                         .iter()
                         .map(|(signer, tx)| (signer.clone(), BlakeTwo256::hash_of(tx)))
                         .collect();
-                    valid_bundles.push(ValidBundle {
-                        bundle_index: index <span class="kw">as </span>u32,
-                        bundle_digest_hash: BlakeTwo256::hash_of(<span class="kw-2">&amp;</span>bundle_digest),
-                    });
+                    inboxed_bundles.push(InboxedBundle::valid(
+                        BlakeTwo256::hash_of(<span class="kw-2">&amp;</span>bundle_digest),
+                        extrinsic_root,
+                    ));
                     valid_extrinsics.extend(extrinsics);
                 }
                 BundleValidity::Invalid(invalid_bundle_type) =&gt; {
-                    invalid_bundles.push(InvalidBundle {
-                        bundle_index: index <span class="kw">as </span>u32,
-                        invalid_bundle_type,
-                    });
+                    inboxed_bundles
+                        .push(InboxedBundle::invalid(invalid_bundle_type, extrinsic_root));
                 }
             }
         }
 
-        <span class="prelude-val">Ok</span>((valid_bundles, invalid_bundles, valid_extrinsics))
+        <span class="prelude-val">Ok</span>((inboxed_bundles, valid_extrinsics))
     }
 
     <span class="kw">fn </span>check_bundle_validity(
@@ -751,21 +739,15 @@
         tx_range: <span class="kw-2">&amp;</span>U256,
         at: Block::Hash,
     ) -&gt; sp_blockchain::Result&lt;BundleValidity&lt;Block::Extrinsic&gt;&gt; {
-        <span class="comment">// Bundles with incorrect ER are considered invalid.
-        </span><span class="kw">if let </span>ReceiptValidity::Invalid(invalid_receipt) =
-            <span class="self">self</span>.receipt_validator.validate_receipt(bundle.receipt())<span class="question-mark">?
-        </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::InvalidReceipt(
-                invalid_receipt,
-            )));
-        }
-
         <span class="kw">let </span>bundle_vrf_hash =
             U256::from_be_bytes(bundle.sealed_header.header.proof_of_election.vrf_hash());
 
         <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = Vec::with_capacity(bundle.extrinsics.len());
 
-        <span class="kw">for </span>opaque_extrinsic <span class="kw">in </span><span class="kw-2">&amp;</span>bundle.extrinsics {
+        <span class="comment">// Check the validity of each extrinsic
+        //
+        // NOTE: for each extrinsic the checking order must follow `InvalidBundleType::checking_order`
+        </span><span class="kw">for </span>(index, opaque_extrinsic) <span class="kw">in </span>bundle.extrinsics.iter().enumerate() {
             <span class="kw">let </span><span class="prelude-val">Ok</span>(extrinsic) =
                 &lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;::decode(<span class="kw-2">&amp;mut </span>opaque_extrinsic.encode().as_slice())
             <span class="kw">else </span>{
@@ -774,7 +756,9 @@
                     <span class="string">&quot;Undecodable extrinsic in bundle({})&quot;</span>,
                     bundle.hash()
                 );
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::UndecodableTx));
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::UndecodableTx(
+                    index <span class="kw">as </span>u32,
+                )));
             };
 
             <span class="kw">let </span>is_within_tx_range = <span class="self">self</span>.client.runtime_api().is_within_tx_range(
@@ -786,7 +770,9 @@
 
             <span class="kw">if </span>!is_within_tx_range {
                 <span class="comment">// TODO: Generate a fraud proof for this invalid bundle
-                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::OutOfRangeTx));
+                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::OutOfRangeTx(
+                    index <span class="kw">as </span>u32,
+                )));
             }
 
             <span class="comment">// TODO: the `check_transaction_validity` is unimplemented
@@ -798,7 +784,9 @@
 
             <span class="kw">if </span>!is_legal_tx {
                 <span class="comment">// TODO: Generate a fraud proof for this invalid bundle
-                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::IllegalTx));
+                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::IllegalTx(
+                    index <span class="kw">as </span>u32,
+                )));
             }
 
             <span class="comment">// TODO: the behavior is changed, as before invalid XDM will be dropped silently,
@@ -811,7 +799,9 @@
                 <span class="kw-2">&amp;</span>extrinsic,
             )<span class="question-mark">? </span>{
                 <span class="comment">// TODO: Generate a fraud proof for this invalid bundle
-                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::InvalidXDM));
+                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::InvalidXDM(
+                    index <span class="kw">as </span>u32,
+                )));
             }
 
             extrinsics.push(extrinsic);

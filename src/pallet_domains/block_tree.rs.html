@@ -954,12 +954,15 @@
 <a href="#954" id="954">954</a>
 <a href="#955" id="955">955</a>
 <a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::StateRoots;
 <span class="kw">use crate</span>::{
     BalanceOf, BlockTree, Config, ConsensusBlockInfo, DomainBlockDescendants, DomainBlocks,
-    ExecutionInbox, ExecutionReceiptOf, HeadReceiptNumber, InboxedBundle,
+    ExecutionInbox, ExecutionReceiptOf, HeadReceiptNumber, InboxedBundleAuthor,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
@@ -1079,7 +1082,7 @@
         consensus_block_number,
         consensus_block_hash,
         domain_block_number,
-        block_extrinsics_roots,
+        inboxed_bundles,
         parent_domain_block_receipt_hash,
         execution_trace,
         execution_trace_root,
@@ -1094,15 +1097,15 @@
             Error::BadGenesisReceipt
         );
     } <span class="kw">else </span>{
+        <span class="kw">let </span>bundles_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; =
+            inboxed_bundles.iter().map(|b| b.extrinsics_root).collect();
         <span class="kw">let </span>execution_inbox =
             ExecutionInbox::&lt;T&gt;::get((domain_id, domain_block_number, consensus_block_number));
-        <span class="kw">let </span>expected_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; = execution_inbox
-            .into_iter()
-            .map(|b| b.extrinsics_root)
-            .collect();
+        <span class="kw">let </span>expected_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; =
+            execution_inbox.iter().map(|b| b.extrinsics_root).collect();
         <span class="macro">ensure!</span>(
-            !block_extrinsics_roots.is_empty()
-                &amp;&amp; <span class="kw-2">*</span>block_extrinsics_roots == expected_extrinsics_roots,
+            !bundles_extrinsics_roots.is_empty()
+                &amp;&amp; bundles_extrinsics_roots == expected_extrinsics_roots,
             Error::InvalidExtrinsicsRoots
         );
 
@@ -1253,12 +1256,10 @@
                     execution_receipt.consensus_block_number,
                 ));
                 <span class="kw">for </span>(index, bd) <span class="kw">in </span>bundle_digests.into_iter().enumerate() {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(bundle_author) = InboxedBundle::&lt;T&gt;::take(bd.header_hash) {
-                        <span class="kw">if </span>execution_receipt
-                            .invalid_bundles
-                            .iter()
-                            .any(|ib| ib.bundle_index == index <span class="kw">as </span>u32)
-                        {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(bundle_author) = InboxedBundleAuthor::&lt;T&gt;::take(bd.header_hash) {
+                        <span class="comment">// It is okay to index `ER::bundles` here since `verify_execution_receipt` have checked
+                        // the `ER::bundles` have the same length of `ExecutionInbox`
+                        </span><span class="kw">if </span>execution_receipt.inboxed_bundles[index].is_invalid() {
                             invalid_bundle_authors.push(bundle_author);
                         }
                     }
@@ -1365,7 +1366,7 @@
     <span class="kw">use </span>frame_support::dispatch::RawOrigin;
     <span class="kw">use </span>frame_support::{assert_err, assert_ok};
     <span class="kw">use </span>sp_core::H256;
-    <span class="kw">use </span>sp_domains::{BundleDigest, InvalidBundle, InvalidBundleType};
+    <span class="kw">use </span>sp_domains::{BundleDigest, InboxedBundle, InvalidBundleType};
     <span class="kw">use </span>sp_runtime::traits::BlockNumberProvider;
 
     <span class="attr">#[test]
@@ -1462,7 +1463,9 @@
                         extrinsics_root: bundle_extrinsics_root,
                     }]
                 );
-                <span class="macro">assert!</span>(InboxedBundle::&lt;Test&gt;::contains_key(bundle_header_hash));
+                <span class="macro">assert!</span>(InboxedBundleAuthor::&lt;Test&gt;::contains_key(
+                    bundle_header_hash
+                ));
 
                 <span class="comment">// Head receipt number should be updated
                 </span><span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
@@ -1501,7 +1504,7 @@
             <span class="kw">let </span>pruned_bundle = bundle_header_hash_of_block_1.unwrap();
             <span class="macro">assert!</span>(BlockTree::&lt;Test&gt;::get(domain_id, <span class="number">1</span>).is_empty());
             <span class="macro">assert!</span>(ExecutionInbox::&lt;Test&gt;::get((domain_id, <span class="number">1</span>, <span class="number">1</span>)).is_empty());
-            <span class="macro">assert!</span>(!InboxedBundle::&lt;Test&gt;::contains_key(pruned_bundle));
+            <span class="macro">assert!</span>(!InboxedBundleAuthor::&lt;Test&gt;::contains_key(pruned_bundle));
             <span class="macro">assert_eq!</span>(
                 execution_receipt_type::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>pruned_receipt),
                 ReceiptType::Rejected(RejectedReceiptType::Pruned)
@@ -1697,12 +1700,12 @@
                     future_receipt.consensus_block_number,
                 ),
                 future_receipt
-                    .block_extrinsics_roots
+                    .inboxed_bundles
                     .clone()
                     .into_iter()
-                    .map(|er| BundleDigest {
+                    .map(|b| BundleDigest {
                         header_hash: H256::random(),
-                        extrinsics_root: er,
+                        extrinsics_root: b.extrinsics_root,
                     })
                     .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
             );
@@ -1730,7 +1733,8 @@
 
             <span class="comment">// Receipt with unknown extrinsics roots
             </span><span class="kw">let </span><span class="kw-2">mut </span>unknown_extrinsics_roots_receipt = current_head_receipt.clone();
-            unknown_extrinsics_roots_receipt.block_extrinsics_roots = <span class="macro">vec!</span>[H256::random()];
+            unknown_extrinsics_roots_receipt.inboxed_bundles =
+                <span class="macro">vec!</span>[InboxedBundle::valid(H256::random(), H256::random())];
             <span class="macro">assert_err!</span>(
                 verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>unknown_extrinsics_roots_receipt),
                 Error::InvalidExtrinsicsRoots
@@ -1837,36 +1841,38 @@
             <span class="kw">let </span>head_node = get_block_tree_node_at::&lt;Test&gt;(domain_id, head_receipt_number).unwrap();
             <span class="macro">assert_eq!</span>(head_node.operator_ids, operator_set);
 
-            <span class="comment">// Prepare the inbainvalid bundles and bundle authors
-            </span><span class="kw">let </span>invalid_bundle_authors: Vec&lt;<span class="kw">_</span>&gt; = operator_set
-                .clone()
-                .into_iter()
-                .filter(|i| i % <span class="number">2 </span>== <span class="number">0</span>)
-                .collect();
-            <span class="kw">let </span>invalid_bundles = invalid_bundle_authors
-                .iter()
-                .map(|i| InvalidBundle {
-                    <span class="comment">// operator id start at 1 while bundle_index start at 0, thus minus 1 here
-                    </span>bundle_index: <span class="kw-2">*</span>i <span class="kw">as </span>u32 - <span class="number">1</span>,
-                    invalid_bundle_type: InvalidBundleType::OutOfRangeTx,
-                })
-                .collect();
-
-            <span class="comment">// Get the `bunde_extrinsics_roots` that contains all the submitted bundles
+            <span class="comment">// Get the `bundles_extrinsics_roots` that contains all the submitted bundles
             </span><span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;Test&gt;::current_block_number();
             <span class="kw">let </span>execution_inbox = ExecutionInbox::&lt;Test&gt;::get((
                 domain_id,
                 current_block_number,
                 current_block_number,
             ));
-            <span class="kw">let </span>bunde_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; = execution_inbox
+            <span class="kw">let </span>bundles_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; = execution_inbox
                 .into_iter()
                 .map(|b| b.extrinsics_root)
                 .collect();
-            <span class="macro">assert_eq!</span>(bunde_extrinsics_roots.len(), operator_set.len());
+            <span class="macro">assert_eq!</span>(bundles_extrinsics_roots.len(), operator_set.len());
 
-            target_receipt.invalid_bundles = invalid_bundles;
-            target_receipt.block_extrinsics_roots = bunde_extrinsics_roots;
+            <span class="comment">// Prepare the invalid bundles and invalid bundle authors
+            </span><span class="kw">let </span><span class="kw-2">mut </span>bundles = <span class="macro">vec!</span>[];
+            <span class="kw">let </span><span class="kw-2">mut </span>invalid_bundle_authors = <span class="macro">vec!</span>[];
+            <span class="kw">for </span>(i, (operator, extrinsics_root)) <span class="kw">in </span>operator_set
+                .iter()
+                .zip(bundles_extrinsics_roots)
+                .enumerate()
+            {
+                <span class="kw">if </span>i % <span class="number">2 </span>== <span class="number">0 </span>{
+                    invalid_bundle_authors.push(<span class="kw-2">*</span>operator);
+                    bundles.push(InboxedBundle::invalid(
+                        InvalidBundleType::OutOfRangeTx(<span class="number">0</span>),
+                        extrinsics_root,
+                    ));
+                } <span class="kw">else </span>{
+                    bundles.push(InboxedBundle::valid(H256::random(), extrinsics_root));
+                }
+            }
+            target_receipt.inboxed_bundles = bundles;
 
             <span class="comment">// Run into next block
             </span>run_to_block::&lt;Test&gt;(
