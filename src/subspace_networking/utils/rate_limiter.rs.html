@@ -132,6 +132,9 @@
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>resizable_semaphore;
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
@@ -168,6 +171,9 @@
 <span class="doccomment">/// Defines the minimum size of the &quot;connection limit semaphore&quot;.
 </span><span class="kw">const </span>MINIMUM_CONNECTIONS_SEMAPHORE_SIZE: usize = <span class="number">3</span>;
 
+<span class="doccomment">/// Empiric parameter for connection timeout and retry parameters (total retries and backoff time).
+</span><span class="kw">const </span>CONNECTION_TIMEOUT_PARAMETER: usize = <span class="number">9</span>;
+
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RateLimiterPermit {
     <span class="doccomment">/// Limits Kademlia substreams.
@@ -196,9 +202,7 @@
         <span class="self">Self </span>{
             kademlia_tasks_semaphore: ResizableSemaphore::new(KADEMLIA_BASE_CONCURRENT_TASKS),
             regular_tasks_semaphore: ResizableSemaphore::new(REGULAR_BASE_CONCURRENT_TASKS),
-            connections_semaphore: ResizableSemaphore::new(
-                NonZeroUsize::new(permits).expect(<span class="string">&quot;Manual setting.&quot;</span>),
-            ),
+            connections_semaphore: ResizableSemaphore::new(permits),
         }
     }
 
@@ -207,19 +211,21 @@
     </span><span class="kw">fn </span>calculate_connection_semaphore_size(
         out_connections: usize,
         pending_out_connections: usize,
-    ) -&gt; usize {
+    ) -&gt; NonZeroUsize {
         <span class="kw">let </span>connections = out_connections.min(pending_out_connections);
-        <span class="kw">if </span>connections == <span class="number">0 </span>{
-            <span class="kw">return </span><span class="number">0</span>;
-        }
+
         <span class="comment">// Number of &quot;in-flight&quot; parallel requests for each query
         </span><span class="kw">let </span>kademlia_parallelism_level = libp2p::kad::ALPHA_VALUE.get();
-        <span class="comment">// Empiric parameter for connection timeout and retry parameters (total retries and backoff time).
-        </span><span class="kw">let </span>connection_timeout_parameter = <span class="number">10</span>;
 
-        <span class="kw">let </span>result = connections / (kademlia_parallelism_level * connection_timeout_parameter);
+        <span class="kw">let </span>permits_number =
+            (connections / (kademlia_parallelism_level * CONNECTION_TIMEOUT_PARAMETER)).max(<span class="number">1</span>);
 
-        result.max(MINIMUM_CONNECTIONS_SEMAPHORE_SIZE)
+        <span class="kw">let </span>minimum_semaphore_size =
+            NonZeroUsize::new(MINIMUM_CONNECTIONS_SEMAPHORE_SIZE).expect(<span class="string">&quot;Manual setting&quot;</span>);
+
+        NonZeroUsize::new(permits_number)
+            .expect(<span class="string">&quot;The value is at least 1&quot;</span>)
+            .max(minimum_semaphore_size)
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>acquire_regular_permit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RateLimiterPermit {
