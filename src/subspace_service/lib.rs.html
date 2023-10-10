@@ -1119,6 +1119,18 @@
 <a href="#1119" id="1119">1119</a>
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1156,6 +1168,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::tx_pre_validator::ConsensusChainTxPreValidator;
 <span class="kw">use </span>core::sync::atomic::{AtomicU32, Ordering};
 <span class="kw">use </span>cross_domain_message_gossip::cdm_gossip_peers_set_config;
+<span class="kw">use </span>domain_runtime_primitives::opaque::Block <span class="kw">as </span>DomainBlock;
 <span class="kw">use </span>domain_runtime_primitives::{BlockNumber <span class="kw">as </span>DomainNumber, Hash <span class="kw">as </span>DomainHash};
 <span class="kw">pub use </span>dsn::DsnConfig;
 <span class="kw">use </span>frame_system_rpc_runtime_api::AccountNonceApi;
@@ -1198,9 +1211,11 @@
 <span class="kw">use </span>sp_consensus_subspace::{
     FarmerPublicKey, KzgExtension, PosExtension, PotExtension, PotNextSlotInput, SubspaceApi,
 };
-<span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
+<span class="kw">use </span>sp_core::traits::{CodeExecutor, SpawnEssentialNamed};
+<span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::transaction::PreValidationObjectApi;
 <span class="kw">use </span>sp_domains::DomainsApi;
+<span class="kw">use </span>sp_domains_fraud_proof::{FraudProofExtension, FraudProofHostFunctionsImpl};
 <span class="kw">use </span>sp_externalities::Extensions;
 <span class="kw">use </span>sp_objects::ObjectsApi;
 <span class="kw">use </span>sp_offchain::OffchainWorkerApi;
@@ -1347,20 +1362,25 @@
     </span><span class="kw">pub </span>timekeeper_cpu_cores: HashSet&lt;usize&gt;,
 }
 
-<span class="kw">struct </span>SubspaceExtensionsFactory&lt;PosTable, Client&gt; {
+<span class="kw">struct </span>SubspaceExtensionsFactory&lt;PosTable, Client, DomainBlock, ExecutorDispatch&gt; {
     kzg: Kzg,
     client: Arc&lt;Client&gt;,
     pot_verifier: PotVerifier,
-    _pos_table: PhantomData&lt;PosTable&gt;,
+    executor: Arc&lt;ExecutorDispatch&gt;,
+    _pos_table: PhantomData&lt;(PosTable, DomainBlock)&gt;,
 }
 
-<span class="kw">impl</span>&lt;PosTable, Block, Client&gt; ExtensionsFactory&lt;Block&gt;
-    <span class="kw">for </span>SubspaceExtensionsFactory&lt;PosTable, Client&gt;
+<span class="kw">impl</span>&lt;PosTable, Block, Client, DomainBlock, ExecutorDispatch&gt; ExtensionsFactory&lt;Block&gt;
+    <span class="kw">for </span>SubspaceExtensionsFactory&lt;PosTable, Client, DomainBlock, ExecutorDispatch&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
+    Block::Hash: From&lt;H256&gt;,
+    DomainBlock: BlockT,
     Client: HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
-    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;
+        + DomainsApi&lt;Block, NumberFor&lt;DomainBlock&gt;, DomainBlock::Hash&gt;,
+    ExecutorDispatch: CodeExecutor,
 {
     <span class="kw">fn </span>extensions_for(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -1473,6 +1493,14 @@
                 }
             })
         }));
+
+        exts.register(FraudProofExtension::new(Arc::new(
+            FraudProofHostFunctionsImpl::&lt;<span class="kw">_</span>, <span class="kw">_</span>, DomainBlock, ExecutorDispatch&gt;::new(
+                <span class="self">self</span>.client.clone(),
+                <span class="self">self</span>.executor.clone(),
+            ),
+        )));
+
         exts
     }
 }
@@ -1569,14 +1597,24 @@
         PotSeed::from_genesis(client.info().genesis_hash.as_ref(), pot_external_entropy),
         POT_VERIFIER_CACHE_SIZE,
     );
-    client.execution_extensions().set_extensions_factory(
-        SubspaceExtensionsFactory::&lt;PosTable, <span class="kw">_</span>&gt; {
+
+    <span class="kw">let </span>invalid_state_transition_proof_verifier = InvalidStateTransitionProofVerifier::new(
+        client.clone(),
+        executor.clone(),
+        VerifierClient::new(client.clone()),
+    );
+
+    <span class="kw">let </span>executor = Arc::new(executor);
+
+    client
+        .execution_extensions()
+        .set_extensions_factory(SubspaceExtensionsFactory::&lt;PosTable, <span class="kw">_</span>, DomainBlock, <span class="kw">_</span>&gt; {
             kzg: kzg.clone(),
             client: Arc::clone(<span class="kw-2">&amp;</span>client),
             pot_verifier: pot_verifier.clone(),
+            executor: executor.clone(),
             _pos_table: PhantomData,
-        },
-    );
+        });
 
     <span class="kw">let </span>telemetry = telemetry.map(|(worker, telemetry)| {
         task_manager
@@ -1589,13 +1627,7 @@
 
     <span class="kw">let </span>invalid_transaction_proof_verifier = InvalidTransactionProofVerifier::new(
         client.clone(),
-        Arc::new(executor.clone()),
-        VerifierClient::new(client.clone()),
-    );
-
-    <span class="kw">let </span>invalid_state_transition_proof_verifier = InvalidStateTransitionProofVerifier::new(
-        client.clone(),
-        executor,
+        executor.clone(),
         VerifierClient::new(client.clone()),
     );
 
@@ -1648,7 +1680,6 @@
                         </span>.expect(<span class="string">&quot;Parent header must always exist when block is created; qed&quot;</span>);
 
                     <span class="kw">let </span>parent_block_number = parent_header.number;
-                    <span class="kw">let </span>parent_state_root = parent_header.state_root;
 
                     <span class="kw">let </span>subspace_inherents =
                         sp_consensus_subspace::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
@@ -1657,10 +1688,7 @@
                             subspace_link.segment_headers_for_block(parent_block_number + <span class="number">1</span>),
                         );
 
-                    <span class="kw">let </span>domain_inherents =
-                        sp_domains::inherents::InherentDataProvider::new(parent_state_root);
-
-                    <span class="prelude-val">Ok</span>((timestamp, subspace_inherents, domain_inherents))
+                    <span class="prelude-val">Ok</span>((timestamp, subspace_inherents))
                 }
             }
         },
@@ -2118,7 +2146,6 @@
                             </span>.expect(<span class="string">&quot;Parent header must always exist when block is created; qed&quot;</span>);
 
                         <span class="kw">let </span>parent_block_number = parent_header.number;
-                        <span class="kw">let </span>parent_state_root = parent_header.state_root;
 
                         <span class="kw">let </span>subspace_inherents =
                             sp_consensus_subspace::inherents::InherentDataProvider::from_timestamp_and_slot_duration(
@@ -2127,10 +2154,7 @@
                                 subspace_link.segment_headers_for_block(parent_block_number + <span class="number">1</span>),
                             );
 
-                        <span class="kw">let </span>domain_inherents =
-                            sp_domains::inherents::InherentDataProvider::new(parent_state_root);
-
-                        <span class="prelude-val">Ok</span>((subspace_inherents, timestamp, domain_inherents))
+                        <span class="prelude-val">Ok</span>((subspace_inherents, timestamp))
                     }
                 }
             },

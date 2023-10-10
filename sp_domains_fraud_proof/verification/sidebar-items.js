@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["verify_invalid_domain_extrinsics_root_fraud_proof"]};

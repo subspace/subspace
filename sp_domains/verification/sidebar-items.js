@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["VerificationError"],"fn":["deduplicate_and_shuffle_extrinsics","shuffle_extrinsics","verify_invalid_domain_extrinsics_root_fraud_proof","verify_invalid_total_rewards_fraud_proof"],"struct":["StorageProofVerifier"]};
+window.SIDEBAR_ITEMS = {"enum":["VerificationError"],"fn":["deduplicate_and_shuffle_extrinsics","extrinsics_shuffling_seed","shuffle_extrinsics","verify_invalid_total_rewards_fraud_proof"],"struct":["StorageProofVerifier"]};
