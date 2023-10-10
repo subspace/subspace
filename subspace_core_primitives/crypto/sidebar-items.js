@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["blake2b_256_254_hash","blake2b_256_254_hash_to_scalar","blake2b_256_hash","blake2b_256_hash_list","blake2b_256_hash_with_key","blake3_hash","blake3_hash_list","blake3_hash_parallel"],"mod":["kzg"],"struct":["Scalar"]};
+window.SIDEBAR_ITEMS = {"fn":["blake3_254_hash_to_scalar","blake3_hash","blake3_hash_list","blake3_hash_parallel","blake3_hash_with_key"],"mod":["kzg"],"struct":["Scalar"]};
