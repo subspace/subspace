@@ -1813,6 +1813,22 @@
 <a href="#1813" id="1813">1813</a>
 <a href="#1814" id="1814">1814</a>
 <a href="#1815" id="1815">1815</a>
+<a href="#1816" id="1816">1816</a>
+<a href="#1817" id="1817">1817</a>
+<a href="#1818" id="1818">1818</a>
+<a href="#1819" id="1819">1819</a>
+<a href="#1820" id="1820">1820</a>
+<a href="#1821" id="1821">1821</a>
+<a href="#1822" id="1822">1822</a>
+<a href="#1823" id="1823">1823</a>
+<a href="#1824" id="1824">1824</a>
+<a href="#1825" id="1825">1825</a>
+<a href="#1826" id="1826">1826</a>
+<a href="#1827" id="1827">1827</a>
+<a href="#1828" id="1828">1828</a>
+<a href="#1829" id="1829">1829</a>
+<a href="#1830" id="1830">1830</a>
+<a href="#1831" id="1831">1831</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -1830,7 +1846,7 @@
 // limitations under the License.
 </span><span class="attr">#![doc = <span class="macro">include_str!</span>(<span class="string">&quot;../README.md&quot;</span>)]
 #![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
-#![feature(assert_matches, const_option, let_chains)]
+#![feature(array_chunks, assert_matches, const_option, let_chains, portable_simd)]
 #![warn(unused_must_use, unsafe_code, unused_variables, unused_must_use)]
 
 </span><span class="kw">extern crate </span>alloc;
@@ -1907,7 +1923,9 @@
 
 <span class="attr">#[derive(Copy, Clone, Eq, PartialEq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 </span><span class="kw">struct </span>VoteVerificationData {
-    solution_range: SolutionRange,
+    <span class="doccomment">/// Block solution range, vote must not reach it
+    </span>solution_range: SolutionRange,
+    vote_solution_range: SolutionRange,
     current_slot: Slot,
     parent_slot: Slot,
 }
@@ -3122,6 +3140,11 @@
     <span class="kw">let </span>solution_ranges = SolutionRanges::&lt;T&gt;::get();
     VoteVerificationData {
         solution_range: <span class="kw">if </span>is_block_initialized {
+            solution_ranges.current
+        } <span class="kw">else </span>{
+            solution_ranges.next.unwrap_or(solution_ranges.current)
+        },
+        vote_solution_range: <span class="kw">if </span>is_block_initialized {
             solution_ranges.voting_current
         } <span class="kw">else </span>{
             solution_ranges
@@ -3154,6 +3177,7 @@
     UnknownSegmentCommitment,
     InvalidHistorySize,
     InvalidSolution(String),
+    QualityTooHigh,
     InvalidProofOfTime,
     InvalidFutureProofOfTime,
     DuplicateVote,
@@ -3175,6 +3199,7 @@
             CheckVoteError::UnknownSegmentCommitment =&gt; InvalidTransaction::Call,
             CheckVoteError::InvalidHistorySize =&gt; InvalidTransaction::Call,
             CheckVoteError::InvalidSolution(<span class="kw">_</span>) =&gt; InvalidTransaction::Call,
+            CheckVoteError::QualityTooHigh =&gt; InvalidTransaction::Call,
             CheckVoteError::InvalidProofOfTime =&gt; InvalidTransaction::Future,
             CheckVoteError::InvalidFutureProofOfTime =&gt; InvalidTransaction::Call,
             CheckVoteError::DuplicateVote =&gt; InvalidTransaction::Call,
@@ -3345,12 +3370,12 @@
             </span>.segment_index(),
     );
 
-    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = verify_solution(
+    <span class="kw">match </span>verify_solution(
         solution.into(),
         slot.into(),
         (<span class="kw-2">&amp;</span>VerifySolutionParams {
             proof_of_time: <span class="kw-2">*</span>proof_of_time,
-            solution_range: vote_verification_data.solution_range,
+            solution_range: vote_verification_data.vote_solution_range,
             piece_check_params: <span class="prelude-val">Some</span>(PieceCheckParams {
                 max_pieces_in_sector: T::MaxPiecesInSector::get(),
                 segment_commitment,
@@ -3363,11 +3388,18 @@
         })
             .into(),
     ) {
-        <span class="macro">debug!</span>(
-            target: <span class="string">&quot;runtime::subspace&quot;</span>,
-            <span class="string">&quot;Vote verification error: {error:?}&quot;
-        </span>);
-        <span class="kw">return </span><span class="prelude-val">Err</span>(CheckVoteError::InvalidSolution(error));
+        <span class="prelude-val">Ok</span>(solution_distance) =&gt; {
+            <span class="kw">if </span>solution_distance &lt;= vote_verification_data.solution_range {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(CheckVoteError::QualityTooHigh);
+            }
+        }
+        <span class="prelude-val">Err</span>(error) =&gt; {
+            <span class="macro">debug!</span>(
+                target: <span class="string">&quot;runtime::subspace&quot;</span>,
+                <span class="string">&quot;Vote verification error: {error:?}&quot;
+            </span>);
+            <span class="kw">return </span><span class="prelude-val">Err</span>(CheckVoteError::InvalidSolution(error));
+        }
     }
 
     <span class="comment">// Cheap proof of time verification is possible here because proof of time must have already
