@@ -166,14 +166,6 @@
 <a href="#166" id="166">166</a>
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
-<a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a>
-<a href="#172" id="172">172</a>
-<a href="#173" id="173">173</a>
-<a href="#174" id="174">174</a>
-<a href="#175" id="175">175</a>
-<a href="#176" id="176">176</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::constructor::temporary_bans::TemporaryBans;
 <span class="kw">use </span><span class="kw">crate</span>::CreationError;
 <span class="kw">use </span>futures::future::Either;
@@ -182,13 +174,12 @@
 <span class="kw">use </span>libp2p::core::transport::{Boxed, ListenerId, TransportError, TransportEvent};
 <span class="kw">use </span>libp2p::core::Transport;
 <span class="kw">use </span>libp2p::dns::TokioDnsConfig;
+<span class="kw">use </span>libp2p::quic::tokio::Transport <span class="kw">as </span>QuicTransport;
+<span class="kw">use </span>libp2p::quic::Config <span class="kw">as </span>QuicConfig;
 <span class="kw">use </span>libp2p::tcp::tokio::Transport <span class="kw">as </span>TokioTcpTransport;
 <span class="kw">use </span>libp2p::tcp::Config <span class="kw">as </span>GenTcpConfig;
-<span class="kw">use </span>libp2p::websocket::WsConfig;
 <span class="kw">use </span>libp2p::yamux::Config <span class="kw">as </span>YamuxConfig;
 <span class="kw">use </span>libp2p::{core, identity, noise, PeerId};
-<span class="kw">use </span>libp2p_quic::tokio::Transport <span class="kw">as </span>QuicTransport;
-<span class="kw">use </span>libp2p_quic::Config <span class="kw">as </span>QuicConfig;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::pin::Pin;
@@ -205,28 +196,21 @@
     timeout: Duration,
     yamux_config: YamuxConfig,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Boxed&lt;(PeerId, StreamMuxerBox)&gt;, CreationError&gt; {
-    <span class="kw">let </span>wrapped_tcp_ws = {
+    <span class="kw">let </span>wrapped_tcp = {
         <span class="kw">let </span>tcp_config = GenTcpConfig::default().nodelay(<span class="bool-val">true</span>);
-        <span class="kw">let </span>wrapped_tcp = CustomTransportWrapper::new(
+
+        CustomTransportWrapper::new(
             TokioTcpTransport::new(tcp_config.clone()),
             allow_non_global_addresses_in_dht,
             temporary_bans.clone(),
-        );
-
-        <span class="kw">let </span>wrapped_ws = WsConfig::new(CustomTransportWrapper::new(
-            TokioTcpTransport::new(tcp_config),
-            allow_non_global_addresses_in_dht,
-            temporary_bans.clone(),
-        ));
-
-        wrapped_tcp.or_transport(wrapped_ws)
+        )
     };
 
-    <span class="kw">let </span>tcp_ws_upgraded = {
+    <span class="kw">let </span>tcp_upgraded = {
         <span class="kw">let </span>noise =
             noise::Config::new(keypair).expect(<span class="string">&quot;Signing libp2p-noise static DH keypair failed.&quot;</span>);
 
-        wrapped_tcp_ws
+        wrapped_tcp
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(noise)
             .multiplex(yamux_config)
@@ -240,16 +224,16 @@
     <span class="kw">let </span>wrapped_quic =
         CustomTransportWrapper::new(quic, allow_non_global_addresses_in_dht, temporary_bans);
 
-    <span class="kw">let </span>tcp_ws_quic = tcp_ws_upgraded
-        .or_transport(wrapped_quic)
+    <span class="kw">let </span>quic_tcp = wrapped_quic
+        .or_transport(tcp_upgraded)
         .map(|either, <span class="kw">_</span>| <span class="kw">match </span>either {
             Either::Left((peer_id, muxer)) =&gt; (peer_id, muxer),
             Either::Right((peer_id, muxer)) =&gt; (peer_id, muxer),
         });
 
-    <span class="kw">let </span>dns_wrapped_upgraded_tcp_ws_quic = TokioDnsConfig::system(tcp_ws_quic)<span class="question-mark">?</span>;
+    <span class="kw">let </span>dns_wrapped_upgraded_quic_tcp = TokioDnsConfig::system(quic_tcp)<span class="question-mark">?</span>;
 
-    <span class="prelude-val">Ok</span>(dns_wrapped_upgraded_tcp_ws_quic.boxed())
+    <span class="prelude-val">Ok</span>(dns_wrapped_upgraded_quic_tcp.boxed())
 }
 
 <span class="attr">#[derive(Debug, Clone)]
