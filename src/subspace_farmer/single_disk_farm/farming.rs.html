@@ -266,12 +266,12 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::Handlers;
-<span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
+<span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::StreamExt;
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span>memmap2::Mmap;
-<span class="kw">use </span>parking_lot::{Mutex, RwLock};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuildError;
 <span class="kw">use </span>std::fs::File;
@@ -401,7 +401,7 @@
     <span class="kw">while let </span><span class="prelude-val">Some</span>(slot_info) = slot_info_notifications.next().<span class="kw">await </span>{
         <span class="kw">let </span>start = Instant::now();
         <span class="kw">let </span>slot = slot_info.slot_number;
-        <span class="kw">let </span>sectors_metadata = sectors_metadata.read();
+        <span class="kw">let </span>sectors_metadata = sectors_metadata.read().<span class="kw">await</span>;
         <span class="kw">let </span>sector_count = sectors_metadata.len();
 
         <span class="macro">debug!</span>(%slot, %sector_count, <span class="string">&quot;Reading sectors&quot;</span>);
@@ -417,7 +417,7 @@
         </span><span class="kw">let </span>sectors = plot_mmap.par_chunks_exact(sector_size);
 
         <span class="kw">let </span>sectors_solutions = {
-            <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read();
+            <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read().<span class="kw">await</span>;
             <span class="kw">let </span>maybe_sector_being_modified = modifying_sector_guard.as_ref().copied();
 
             <span class="kw">let </span><span class="kw-2">mut </span>sectors_solutions = sectors_metadata
@@ -482,9 +482,6 @@
             sectors_solutions
         };
 
-        <span class="comment">// Holds futures such that this function doesn&#39;t exit until all solutions were sent out
-        </span><span class="kw">let </span><span class="kw-2">mut </span>sending_solutions = Vec::new();
-
         <span class="lifetime">&#39;solutions_processing</span>: <span class="kw">for </span>(sector_index, sector_solutions) <span class="kw">in </span>sectors_solutions {
             <span class="kw">for </span>maybe_solution <span class="kw">in </span>sector_solutions {
                 <span class="kw">let </span>solution = <span class="kw">match </span>maybe_solution {
@@ -501,6 +498,11 @@
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>solution, <span class="string">&quot;Solution found&quot;</span>);
 
                 <span class="kw">if </span>start.elapsed() &gt;= farming_timeout {
+                    <span class="macro">warn!</span>(
+                        %slot,
+                        %sector_index,
+                        <span class="string">&quot;Proving for solution skipped due to farming time limit&quot;</span>,
+                    );
                     <span class="kw">break </span><span class="lifetime">&#39;solutions_processing</span>;
                 }
 
@@ -511,17 +513,15 @@
 
                 handlers.solution.call_simple(<span class="kw-2">&amp;</span>response);
 
-                <span class="kw">let </span>sending_solution = tokio::task::spawn({
-                    <span class="kw">let </span>node_client = node_client.clone();
-
-                    <span class="kw">async move </span>{
-                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = node_client.submit_solution_response(response).<span class="kw">await </span>{
-                            <span class="macro">warn!</span>(%error, <span class="string">&quot;Failed to submit solutions response&quot;</span>);
-                        }
-                    }
-                });
-
-                sending_solutions.push(AsyncJoinOnDrop::new(sending_solution));
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = node_client.submit_solution_response(response).<span class="kw">await </span>{
+                    <span class="macro">warn!</span>(
+                        %slot,
+                        %sector_index,
+                        %error,
+                        <span class="string">&quot;Failed to send solution to node, skipping further proving for this slot&quot;</span>,
+                    );
+                    <span class="kw">break </span><span class="lifetime">&#39;solutions_processing</span>;
+                }
             }
         }
     }

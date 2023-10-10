@@ -658,16 +658,21 @@
 <a href="#658" id="658">658</a>
 <a href="#659" id="659">659</a>
 <a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, RESERVED_PLOT_METADATA,
 };
 <span class="kw">use crate</span>::{node_client, NodeClient};
+<span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parity_scale_codec::Encode;
-<span class="kw">use </span>parking_lot::RwLock;
 <span class="kw">use </span>rayon::ThreadPool;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::fs::File;
@@ -795,7 +800,11 @@
     </span>{
         <span class="macro">trace!</span>(%sector_index, <span class="string">&quot;Preparing to plot sector&quot;</span>);
 
-        <span class="kw">let </span>maybe_old_sector_metadata = sectors_metadata.read().get(sector_index <span class="kw">as </span>usize).cloned();
+        <span class="kw">let </span>maybe_old_sector_metadata = sectors_metadata
+            .read()
+            .<span class="kw">await
+            </span>.get(sector_index <span class="kw">as </span>usize)
+            .cloned();
         <span class="kw">let </span>replotting = maybe_old_sector_metadata.is_some();
 
         <span class="kw">if </span>replotting {
@@ -832,7 +841,7 @@
         };
 
         <span class="comment">// Inform others that this sector is being modified
-        </span>modifying_sector_index.write().replace(sector_index);
+        </span>modifying_sector_index.write().<span class="kw">await</span>.replace(sector_index);
 
         <span class="kw">let </span>sector;
         <span class="kw">let </span>sector_metadata;
@@ -888,7 +897,7 @@
             metadata_file.write_all_at(<span class="kw-2">&amp;</span>metadata_header.encode(), <span class="number">0</span>)<span class="question-mark">?</span>;
         }
         {
-            <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata = sectors_metadata.write();
+            <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata = sectors_metadata.write().<span class="kw">await</span>;
             <span class="comment">// If exists then we&#39;re replotting, otherwise we create sector for the first time
             </span><span class="kw">if let </span><span class="prelude-val">Some</span>(existing_sector_metadata) = sectors_metadata.get_mut(sector_index <span class="kw">as </span>usize)
             {
@@ -925,7 +934,7 @@
         });
 
         <span class="comment">// Inform others that this sector is no longer being modified
-        </span>modifying_sector_index.write().take();
+        </span>modifying_sector_index.write().<span class="kw">await</span>.take();
 
         <span class="kw">if </span>replotting {
             <span class="macro">info!</span>(%sector_index, <span class="string">&quot;Sector replotted successfully&quot;</span>);
@@ -1188,7 +1197,8 @@
         // right now. We copy data here because `.read()`&#39;s guard is not `Send`.
         </span>sectors_metadata
             .read()
-            .iter()
+            .<span class="kw">await
+            </span>.iter()
             .map(|sector_metadata| (sector_metadata.sector_index, sector_metadata.history_size))
             .collect_into(<span class="kw-2">&amp;mut </span>sectors_to_check);
         <span class="kw">for </span>(sector_index, history_size) <span class="kw">in </span>sectors_to_check.drain(..) {

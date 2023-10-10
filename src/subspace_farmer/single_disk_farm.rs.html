@@ -1806,6 +1806,8 @@
 <a href="#1806" id="1806">1806</a>
 <a href="#1807" id="1807">1807</a>
 <a href="#1808" id="1808">1808</a>
+<a href="#1809" id="1809">1809</a>
+<a href="#1810" id="1810">1810</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1823,6 +1825,7 @@
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions,
 };
 <span class="kw">use </span><span class="kw">crate</span>::utils::{tokio_rayon_spawn_handler, JoinOnDrop};
+<span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>derive_more::{Display, From};
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
@@ -1830,7 +1833,7 @@
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
-<span class="kw">use </span>parking_lot::{Mutex, RwLock};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuilder};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -2919,18 +2922,20 @@
     }
 
     <span class="doccomment">/// Number of sectors successfully plotted so far
-    </span><span class="kw">pub fn </span>plotted_sectors_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.sectors_metadata.read().len()
+    </span><span class="kw">pub async fn </span>plotted_sectors_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.sectors_metadata.read().<span class="kw">await</span>.len()
     }
 
     <span class="doccomment">/// Read information about sectors plotted so far
-    </span><span class="kw">pub fn </span>plotted_sectors(
+    </span><span class="kw">pub async fn </span>plotted_sectors(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;PlottedSector, parity_scale_codec::Error&gt;&gt; + <span class="lifetime">&#39;_ </span>{
         <span class="kw">let </span>public_key = <span class="self">self</span>.single_disk_farm_info.public_key();
+        <span class="kw">let </span>sectors_metadata = <span class="self">self</span>.sectors_metadata.read().<span class="kw">await</span>.clone();
 
-        (<span class="number">0</span>..).zip(<span class="self">self</span>.sectors_metadata.read().clone()).map(
-            <span class="kw">move </span>|(sector_index, sector_metadata)| {
+        (<span class="number">0</span>..)
+            .zip(sectors_metadata)
+            .map(<span class="kw">move </span>|(sector_index, sector_metadata)| {
                 <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
 
                 <span class="kw">let </span><span class="kw-2">mut </span>piece_indexes = Vec::with_capacity(usize::from(<span class="self">self</span>.pieces_in_sector));
@@ -2953,8 +2958,7 @@
                     sector_metadata,
                     piece_indexes,
                 })
-            },
-        )
+            })
     }
 
     <span class="doccomment">/// Get piece cache instance
