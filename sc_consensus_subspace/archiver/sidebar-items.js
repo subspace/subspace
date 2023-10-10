@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["create_subspace_archiver","recreate_genesis_segment"],"struct":["SegmentHeadersStore"]};
+window.SIDEBAR_ITEMS = {"fn":["create_subspace_archiver","decode_block","encode_block","recreate_genesis_segment"],"struct":["SegmentHeadersStore"]};

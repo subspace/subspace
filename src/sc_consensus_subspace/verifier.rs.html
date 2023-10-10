@@ -596,36 +596,9 @@
 <a href="#596" id="596">596</a>
 <a href="#597" id="597">597</a>
 <a href="#598" id="598">598</a>
-<a href="#599" id="599">599</a>
-<a href="#600" id="600">600</a>
-<a href="#601" id="601">601</a>
-<a href="#602" id="602">602</a>
-<a href="#603" id="603">603</a>
-<a href="#604" id="604">604</a>
-<a href="#605" id="605">605</a>
-<a href="#606" id="606">606</a>
-<a href="#607" id="607">607</a>
-<a href="#608" id="608">608</a>
-<a href="#609" id="609">609</a>
-<a href="#610" id="610">610</a>
-<a href="#611" id="611">611</a>
-<a href="#612" id="612">612</a>
-<a href="#613" id="613">613</a>
-<a href="#614" id="614">614</a>
-<a href="#615" id="615">615</a>
-<a href="#616" id="616">616</a>
-<a href="#617" id="617">617</a>
-<a href="#618" id="618">618</a>
-<a href="#619" id="619">619</a>
-<a href="#620" id="620">620</a>
-<a href="#621" id="621">621</a>
-<a href="#622" id="622">622</a>
-<a href="#623" id="623">623</a>
-<a href="#624" id="624">624</a>
-<a href="#625" id="625">625</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
-</span><span class="kw">use crate</span>::{Error, SUBSPACE_FULL_POT_VERIFICATION_INTERMEDIATE};
+</span><span class="kw">use </span><span class="kw">crate</span>::Error;
 <span class="kw">use </span>futures::lock::Mutex;
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
@@ -677,6 +650,9 @@
     <span class="doccomment">/// Bad reward signature
     </span><span class="attr">#[error(<span class="string">&quot;Bad reward signature on {0:?}&quot;</span>)]
     </span>BadRewardSignature(Header::Hash),
+    <span class="doccomment">/// Missing Subspace justification
+    </span><span class="attr">#[error(<span class="string">&quot;Missing Subspace justification&quot;</span>)]
+    </span>MissingSubspaceJustification,
     <span class="doccomment">/// Invalid Subspace justification
     </span><span class="attr">#[error(<span class="string">&quot;Invalid Subspace justification: {0}&quot;</span>)]
     </span>InvalidSubspaceJustification(codec::Error),
@@ -884,16 +860,22 @@
         <span class="comment">// The pre-hash of the header doesn&#39;t include the seal and that&#39;s what we sign
         </span><span class="kw">let </span>pre_hash = header.hash();
 
-        <span class="comment">// The case where we have justifications is a happy case because we can verify most things
-        // right away and more efficiently than without justifications. But justifications are not
-        // always available, so fallback is still needed.
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(subspace_justification) = justifications.as_ref().and_then(|justifications| {
-            justifications
-                .iter()
-                .find_map(SubspaceJustification::try_from_justification)
-        }) {
-            <span class="kw">let </span>subspace_justification =
-                subspace_justification.map_err(VerificationError::InvalidSubspaceJustification)<span class="question-mark">?</span>;
+        <span class="comment">// With justifications we can verify PoT checkpoints quickly and efficiently, the only check
+        // that will remain is to ensure that seed and number of iterations (inputs) is correct
+        // during block import.
+        </span>{
+            <span class="kw">let </span><span class="prelude-val">Some</span>(subspace_justification) = justifications
+                .as_ref()
+                .and_then(|justifications| {
+                    justifications
+                        .iter()
+                        .find_map(SubspaceJustification::try_from_justification)
+                })
+                .transpose()
+                .map_err(VerificationError::InvalidSubspaceJustification)<span class="question-mark">?
+            </span><span class="kw">else </span>{
+                <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::MissingSubspaceJustification);
+            };
 
             <span class="kw">let </span>SubspaceJustification::PotCheckpoints {
                 <span class="kw-2">mut </span>seed,
@@ -966,37 +948,6 @@
                 .<span class="kw">await
                 </span>.is_some()
             {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProofOfTime);
-            }
-
-            <span class="comment">// Below verification that doesn&#39;t depend on justifications will be running more
-            // efficient due to correct checkpoints cached as the result of justification
-            // verification
-        </span>}
-
-        <span class="comment">// Check proof of time between slot of the block and future proof of time.
-        //
-        // Here during stateless verification we do not have access to parent block, thus only
-        // verify proofs after proof of time of at current slot up until future proof of time
-        // (inclusive), during block import we verify the rest.
-        </span><span class="kw">if </span>full_pot_verification {
-            <span class="kw">let </span>pot_input = PotNextSlotInput::derive(
-                subspace_digest_items.pot_slot_iterations,
-                slot,
-                pre_digest.pot_info().proof_of_time(),
-                <span class="kw-2">&amp;</span>subspace_digest_items.pot_parameters_change,
-            );
-
-            <span class="kw">if </span>!<span class="self">self
-                </span>.pot_verifier
-                .is_output_valid(
-                    pot_input,
-                    <span class="self">self</span>.chain_constants.block_authoring_delay(),
-                    pre_digest.pot_info().future_proof_of_time(),
-                    subspace_digest_items.pot_parameters_change,
-                )
-                .<span class="kw">await
-            </span>{
                 <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProofOfTime);
             }
         }
@@ -1199,11 +1150,6 @@
             )
             .<span class="kw">await
             </span>.map_err(Error::&lt;Block::Header&gt;::from)<span class="question-mark">?</span>;
-
-        block.intermediates.insert(
-            SUBSPACE_FULL_POT_VERIFICATION_INTERMEDIATE.into(),
-            Box::new(full_pot_verification),
-        );
 
         <span class="kw">let </span>CheckedHeader {
             pre_header,
