@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["auto_stake_block_rewards","deregister_operator","instantiate_domain","nominate_operator","register_domain_runtime","register_operator","submit_bundle","submit_fraud_proof","switch_domain","upgrade_domain_runtime","withdraw_stake"]};
+window.SIDEBAR_ITEMS = {"fn":["auto_stake_block_rewards","deregister_operator","instantiate_domain","nominate_operator","register_domain_runtime","register_operator","submit_bundle","submit_fraud_proof","switch_domain","update_domain_operator_allow_list","upgrade_domain_runtime","withdraw_stake"]};
