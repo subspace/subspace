@@ -663,8 +663,42 @@
 <a href="#663" id="663">663</a>
 <a href="#664" id="664">664</a>
 <a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
-    BackgroundTaskError, Handlers, PlotMetadataHeader, RESERVED_PLOT_METADATA,
+    BackgroundTaskError, Handlers, PlotMetadataHeader, SectorPlottingDetails,
+    RESERVED_PLOT_METADATA,
 };
 <span class="kw">use crate</span>::{node_client, NodeClient};
 <span class="kw">use </span>async_lock::RwLock;
@@ -704,6 +738,15 @@
 </span><span class="kw">const </span>ARCHIVED_SEGMENTS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">1000</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 <span class="doccomment">/// Get piece retry attempts number.
 </span><span class="kw">const </span>PIECE_GETTER_RETRY_NUMBER: NonZeroU16 = NonZeroU16::new(<span class="number">4</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
+
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SectorToPlot {
+    sector_index: SectorIndex,
+    <span class="doccomment">/// Progress so far in % (not including this sector)
+    </span>progress: f32,
+    <span class="doccomment">/// Whether this is the last sector queued so far
+    </span>last_queued: bool,
+    acknowledgement_sender: oneshot::Sender&lt;()&gt;,
+}
 
 <span class="doccomment">/// Errors that happen during plotting
 </span><span class="attr">#[derive(Debug, Error)]
@@ -755,8 +798,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: ErasureCoding,
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) target_sector_count: u16,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;(SectorIndex, oneshot::Sender&lt;()&gt;)&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool: Arc&lt;ThreadPool&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) replotting_thread_pool: Arc&lt;ThreadPool&gt;,
 }
@@ -788,7 +830,6 @@
         erasure_coding,
         handlers,
         modifying_sector_index,
-        target_sector_count,
         <span class="kw-2">mut </span>sectors_to_plot_receiver,
         plotting_thread_pool,
         replotting_thread_pool,
@@ -796,8 +837,13 @@
 
     <span class="kw">let </span><span class="kw-2">mut </span>table_generator = PosTable::generator();
     <span class="comment">// TODO: Concurrency
-    </span><span class="kw">while let </span><span class="prelude-val">Some</span>((sector_index, _acknowledgement_sender)) = sectors_to_plot_receiver.next().<span class="kw">await
-    </span>{
+    </span><span class="kw">while let </span><span class="prelude-val">Some</span>(sector_to_plot) = sectors_to_plot_receiver.next().<span class="kw">await </span>{
+        <span class="kw">let </span>SectorToPlot {
+            sector_index,
+            progress,
+            last_queued,
+            acknowledgement_sender: _acknowledgement_sender,
+        } = sector_to_plot;
         <span class="macro">trace!</span>(%sector_index, <span class="string">&quot;Preparing to plot sector&quot;</span>);
 
         <span class="kw">let </span>maybe_old_sector_metadata = sectors_metadata
@@ -808,10 +854,19 @@
         <span class="kw">let </span>replotting = maybe_old_sector_metadata.is_some();
 
         <span class="kw">if </span>replotting {
-            <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Replotting sector&quot;</span>);
+            <span class="macro">info!</span>(%sector_index, <span class="string">&quot;Replotting sector ({progress:.2}% complete)&quot;</span>);
         } <span class="kw">else </span>{
-            <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Plotting sector&quot;</span>);
+            <span class="macro">info!</span>(%sector_index, <span class="string">&quot;Plotting sector ({progress:.2}% complete)&quot;</span>);
         }
+
+        handlers
+            .sector_plotting
+            .call_simple(<span class="kw-2">&amp;</span>SectorPlottingDetails {
+                sector_index,
+                progress,
+                replotting,
+                last_queued,
+            });
 
         <span class="comment">// This `loop` is a workaround for edge-case in local setup if expiration is configured to
         // 1. In that scenario we get replotting notification essentially straight from block import
@@ -937,13 +992,15 @@
         </span>modifying_sector_index.write().<span class="kw">await</span>.take();
 
         <span class="kw">if </span>replotting {
-            <span class="macro">info!</span>(%sector_index, <span class="string">&quot;Sector replotted successfully&quot;</span>);
+            <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Sector replotted successfully&quot;</span>);
+            <span class="kw">if </span>last_queued {
+                <span class="macro">info!</span>(<span class="string">&quot;Replotting complete&quot;</span>);
+            }
         } <span class="kw">else </span>{
-            <span class="macro">info!</span>(
-                %sector_index,
-                <span class="string">&quot;Sector plotted successfully ({:.2}%)&quot;</span>,
-                (sector_index + <span class="number">1</span>) <span class="kw">as </span>f32 / target_sector_count <span class="kw">as </span>f32 * <span class="number">100.0
-            </span>);
+            <span class="macro">debug!</span>(%sector_index, <span class="string">&quot;Sector plotted successfully&quot;</span>);
+            <span class="kw">if </span>last_queued {
+                <span class="macro">info!</span>(<span class="string">&quot;Initial plotting complete&quot;</span>);
+            }
         }
 
         handlers
@@ -962,7 +1019,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) min_sector_lifetime: HistorySize,
     <span class="kw">pub</span>(<span class="kw">super</span>) node_client: NC,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_sender: mpsc::Sender&lt;(SectorIndex, oneshot::Sender&lt;()&gt;)&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>plotting_scheduler&lt;NC&gt;(
@@ -1080,8 +1137,8 @@
 
 <span class="kw">async fn </span>pause_plotting_if_node_not_synced&lt;NC&gt;(
     node_client: <span class="kw-2">&amp;</span>NC,
-    sectors_to_plot_proxy_receiver: mpsc::Receiver&lt;(SectorIndex, oneshot::Sender&lt;()&gt;)&gt;,
-    <span class="kw-2">mut </span>sectors_to_plot_sender: mpsc::Sender&lt;(SectorIndex, oneshot::Sender&lt;()&gt;)&gt;,
+    sectors_to_plot_proxy_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
+    <span class="kw-2">mut </span>sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;
 <span class="kw">where
     </span>NC: NodeClient,
@@ -1159,7 +1216,7 @@
     sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     last_archived_segment: <span class="kw-2">&amp;</span>Atomic&lt;SegmentHeader&gt;,
     <span class="kw-2">mut </span>archived_segments_receiver: mpsc::Receiver&lt;()&gt;,
-    <span class="kw-2">mut </span>sectors_to_plot_sender: mpsc::Sender&lt;(SectorIndex, oneshot::Sender&lt;()&gt;)&gt;,
+    <span class="kw-2">mut </span>sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;
 <span class="kw">where
     </span>NC: NodeClient,
@@ -1168,7 +1225,12 @@
     </span><span class="kw">for </span>sector_index <span class="kw">in </span>sectors_indices_left_to_plot {
         <span class="kw">let </span>(acknowledgement_sender, acknowledgement_receiver) = oneshot::channel();
         <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = sectors_to_plot_sender
-            .send((sector_index, acknowledgement_sender))
+            .send(SectorToPlot {
+                sector_index,
+                progress: sector_index <span class="kw">as </span>f32 / target_sector_count <span class="kw">as </span>f32 * <span class="number">100.0</span>,
+                last_queued: sector_index + <span class="number">1 </span>== target_sector_count,
+                acknowledgement_sender,
+            })
             .<span class="kw">await
         </span>{
             <span class="macro">warn!</span>(%error, <span class="string">&quot;Failed to send sector index for initial plotting&quot;</span>);
@@ -1307,10 +1369,16 @@
             }
         }
 
-        <span class="kw">for </span>sector_index <span class="kw">in </span>sector_indices_to_replot.iter() {
+        <span class="kw">let </span>sectors_queued = sector_indices_to_replot.len();
+        <span class="kw">for </span>(index, sector_index) <span class="kw">in </span>sector_indices_to_replot.drain(..).enumerate() {
             <span class="kw">let </span>(acknowledgement_sender, acknowledgement_receiver) = oneshot::channel();
             <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = sectors_to_plot_sender
-                .send((<span class="kw-2">*</span>sector_index, acknowledgement_sender))
+                .send(SectorToPlot {
+                    sector_index,
+                    progress: index <span class="kw">as </span>f32 / sectors_queued <span class="kw">as </span>f32 * <span class="number">100.0</span>,
+                    last_queued: index + <span class="number">1 </span>== sectors_queued,
+                    acknowledgement_sender,
+                })
                 .<span class="kw">await
             </span>{
                 <span class="macro">warn!</span>(%error, <span class="string">&quot;Failed to send sector index for replotting&quot;</span>);
@@ -1320,10 +1388,8 @@
             <span class="comment">// We do not care if message was sent back or sender was just dropped
             </span><span class="kw">let _ </span>= acknowledgement_receiver.<span class="kw">await</span>;
 
-            sectors_expire_at.remove(sector_index);
+            sectors_expire_at.remove(<span class="kw-2">&amp;</span>sector_index);
         }
-
-        sector_indices_to_replot.clear();
     }
 
     <span class="prelude-val">Ok</span>(())
