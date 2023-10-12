@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PieceGetterRetryPolicy","PlottingError"],"fn":["plot_sector"],"struct":["PlottedSector"],"trait":["PieceGetter"]};
+window.SIDEBAR_ITEMS = {"enum":["PieceGetterRetryPolicy","PlottingError"],"fn":["plot_sector"],"struct":["PlotSectorOptions","PlottedSector"],"trait":["PieceGetter"]};

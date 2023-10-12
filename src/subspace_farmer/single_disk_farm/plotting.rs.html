@@ -696,6 +696,21 @@
 <a href="#696" id="696">696</a>
 <a href="#697" id="697">697</a>
 <a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, SectorPlottingDetails,
     RESERVED_PLOT_METADATA,
@@ -725,12 +740,13 @@
 <span class="kw">use </span>subspace_farmer_components::file_ext::FileExt;
 <span class="kw">use </span>subspace_farmer_components::plotting;
 <span class="kw">use </span>subspace_farmer_components::plotting::{
-    plot_sector, PieceGetter, PieceGetterRetryPolicy, PlottedSector,
+    plot_sector, PieceGetter, PieceGetterRetryPolicy, PlotSectorOptions, PlottedSector,
 };
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadataChecksummed;
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::runtime::Handle;
+<span class="kw">use </span>tokio::sync::Semaphore;
 <span class="kw">use </span>tracing::{debug, info, trace, warn};
 
 <span class="kw">const </span>FARMER_APP_INFO_RETRY_INTERVAL: Duration = Duration::from_millis(<span class="number">500</span>);
@@ -799,6 +815,12 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
+    <span class="doccomment">/// Semaphore for part of the plotting when farmer downloads new sector, allows to limit memory
+    /// usage of the plotting process, permit will be held until the end of the plotting process
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) downloading_semaphore: Arc&lt;Semaphore&gt;,
+    <span class="doccomment">/// Semaphore for part of the plotting when farmer encodes downloaded sector, should typically
+    /// allow one permit at a time for efficient CPU utilization
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) encoding_semaphore: Arc&lt;Semaphore&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool: Arc&lt;ThreadPool&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) replotting_thread_pool: Arc&lt;ThreadPool&gt;,
 }
@@ -831,6 +853,8 @@
         handlers,
         modifying_sector_index,
         <span class="kw-2">mut </span>sectors_to_plot_receiver,
+        downloading_semaphore,
+        encoding_semaphore,
         plotting_thread_pool,
         replotting_thread_pool,
     } = plotting_options;
@@ -909,22 +933,28 @@
             <span class="kw">let </span>piece_getter = piece_getter.clone();
             <span class="kw">let </span>kzg = kzg.clone();
             <span class="kw">let </span>erasure_coding = erasure_coding.clone();
+            <span class="kw">let </span>downloading_semaphore = Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore);
+            <span class="kw">let </span>encoding_semaphore = Arc::clone(<span class="kw-2">&amp;</span>encoding_semaphore);
 
             <span class="kw">let </span>plotting_fn = <span class="kw">move </span>|| {
                 tokio::task::block_in_place(<span class="kw">move </span>|| {
-                    <span class="kw">let </span>plot_sector_fut = plot_sector::&lt;<span class="kw">_</span>, PosTable&gt;(
-                        <span class="kw-2">&amp;</span>public_key,
+                    <span class="kw">let </span>plot_sector_fut = plot_sector::&lt;PosTable, <span class="kw">_</span>&gt;(PlotSectorOptions {
+                        public_key: <span class="kw-2">&amp;</span>public_key,
                         sector_index,
-                        <span class="kw-2">&amp;</span>piece_getter,
-                        PieceGetterRetryPolicy::Limited(PIECE_GETTER_RETRY_NUMBER.get()),
-                        <span class="kw-2">&amp;</span>farmer_app_info.protocol_info,
-                        <span class="kw-2">&amp;</span>kzg,
-                        <span class="kw-2">&amp;</span>erasure_coding,
+                        piece_getter: <span class="kw-2">&amp;</span>piece_getter,
+                        piece_getter_retry_policy: PieceGetterRetryPolicy::Limited(
+                            PIECE_GETTER_RETRY_NUMBER.get(),
+                        ),
+                        farmer_protocol_info: <span class="kw-2">&amp;</span>farmer_app_info.protocol_info,
+                        kzg: <span class="kw-2">&amp;</span>kzg,
+                        erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
                         pieces_in_sector,
-                        <span class="kw-2">&amp;mut </span>sector,
-                        <span class="kw-2">&amp;mut </span>sector_metadata,
-                        <span class="kw-2">&amp;mut </span>table_generator,
-                    );
+                        sector_output: <span class="kw-2">&amp;mut </span>sector,
+                        sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
+                        downloading_semaphore: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>downloading_semaphore),
+                        encoding_semaphore: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>encoding_semaphore),
+                        table_generator: <span class="kw-2">&amp;mut </span>table_generator,
+                    });
 
                     Handle::current()
                         .block_on(plot_sector_fut)
