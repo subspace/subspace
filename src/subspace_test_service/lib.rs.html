@@ -976,6 +976,29 @@
 <a href="#976" id="976">976</a>
 <a href="#977" id="977">977</a>
 <a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1221,8 +1244,10 @@
     </span>next_slot: u64,
     <span class="doccomment">/// The slot notification subscribers
     </span><span class="attr">#[allow(clippy::type_complexity)]
-    </span>new_slot_notification_subscribers:
-        Vec&lt;TracingUnboundedSender&lt;(Slot, Randomness, <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;()&gt;&gt;)&gt;&gt;,
+    </span>new_slot_notification_subscribers: Vec&lt;TracingUnboundedSender&lt;(Slot, Randomness)&gt;&gt;,
+    <span class="doccomment">/// The acknowledgement sender subscribers
+    </span><span class="attr">#[allow(clippy::type_complexity)]
+    </span>acknowledgement_sender_subscribers: Vec&lt;TracingUnboundedSender&lt;mpsc::Sender&lt;()&gt;&gt;&gt;,
     <span class="doccomment">/// Block import pipeline
     </span><span class="attr">#[allow(clippy::type_complexity)]
     </span>block_import: MockBlockImport&lt;
@@ -1362,6 +1387,7 @@
             network_starter: <span class="prelude-val">Some</span>(network_starter),
             next_slot: <span class="number">1</span>,
             new_slot_notification_subscribers: Vec::new(),
+            acknowledgement_sender_subscribers: Vec::new(),
             block_import,
             xdm_gossip_worker_builder: <span class="prelude-val">Some</span>(GossipWorkerBuilder::new()),
             mock_solution,
@@ -1423,33 +1449,11 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         slot: Slot,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;OpaqueBundle&lt;NumberFor&lt;Block&gt;, Hash, DomainNumber, H256, Balance&gt;&gt; {
-        <span class="kw">let </span>(slot_acknowledgement_sender, <span class="kw-2">mut </span>slot_acknowledgement_receiver) = mpsc::channel(<span class="number">0</span>);
+        <span class="kw">let </span>value = (slot, Randomness::from(Hash::random().to_fixed_bytes()));
+        <span class="self">self</span>.new_slot_notification_subscribers
+            .retain(|subscriber| subscriber.unbounded_send(value).is_ok());
 
-        <span class="comment">// Must drop `slot_acknowledgement_sender` after the notification otherwise the receiver
-        // will block forever as there is still a sender not closed.
-        </span>{
-            <span class="kw">let </span>value = (
-                slot,
-                Randomness::from(Hash::random().to_fixed_bytes()),
-                <span class="prelude-val">Some</span>(slot_acknowledgement_sender),
-            );
-            <span class="self">self</span>.new_slot_notification_subscribers
-                .retain(|subscriber| subscriber.unbounded_send(value.clone()).is_ok());
-        }
-
-        <span class="comment">// Wait for all the acknowledgements to progress and proactively drop closed subscribers.
-        </span><span class="kw">loop </span>{
-            <span class="macro">select! </span>{
-                res = slot_acknowledgement_receiver.next() =&gt; <span class="kw">if </span>res.is_none() {
-                    <span class="kw">break</span>;
-                },
-                <span class="comment">// TODO: Workaround for https://github.com/smol-rs/async-channel/issues/23, remove once fix is released
-                </span><span class="kw">_ </span>= futures_timer::Delay::new(time::Duration::from_millis(<span class="number">500</span>)).fuse() =&gt; {
-                    <span class="self">self</span>.new_slot_notification_subscribers.retain(|subscriber| !subscriber.is_closed());
-                }
-            }
-        }
-
+        <span class="self">self</span>.confirm_acknowledgement().<span class="kw">await</span>;
         <span class="self">self</span>.get_bundle_from_tx_pool(slot.into())
     }
 
@@ -1468,12 +1472,52 @@
     }
 
     <span class="doccomment">/// Subscribe the new slot notification
-    </span><span class="kw">pub fn </span>new_slot_notification_stream(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-    ) -&gt; TracingUnboundedReceiver&lt;(Slot, Randomness, <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;()&gt;&gt;)&gt; {
+    </span><span class="kw">pub fn </span>new_slot_notification_stream(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; TracingUnboundedReceiver&lt;(Slot, Randomness)&gt; {
         <span class="kw">let </span>(tx, rx) = tracing_unbounded(<span class="string">&quot;subspace_new_slot_notification_stream&quot;</span>, <span class="number">100</span>);
         <span class="self">self</span>.new_slot_notification_subscribers.push(tx);
         rx
+    }
+
+    <span class="doccomment">/// Subscribe the acknowledgement sender stream
+    </span><span class="kw">pub fn </span>new_acknowledgement_sender_stream(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+    ) -&gt; TracingUnboundedReceiver&lt;mpsc::Sender&lt;()&gt;&gt; {
+        <span class="kw">let </span>(tx, rx) = tracing_unbounded(<span class="string">&quot;subspace_acknowledgement_sender_stream&quot;</span>, <span class="number">100</span>);
+        <span class="self">self</span>.acknowledgement_sender_subscribers.push(tx);
+        rx
+    }
+
+    <span class="doccomment">/// Wait for all the acknowledgements before return
+    ///
+    /// It is used to wait for the acknowledgement of the domain worker to ensure it have
+    /// finish all the previous tasks before return
+    </span><span class="kw">pub async fn </span>confirm_acknowledgement(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">let </span>(acknowledgement_sender, <span class="kw-2">mut </span>acknowledgement_receiver) = mpsc::channel(<span class="number">0</span>);
+
+        <span class="comment">// Must drop `acknowledgement_sender` after the notification otherwise the receiver
+        // will block forever as there is still a sender not closed.
+        </span>{
+            <span class="self">self</span>.acknowledgement_sender_subscribers
+                .retain(|subscriber| {
+                    subscriber
+                        .unbounded_send(acknowledgement_sender.clone())
+                        .is_ok()
+                });
+            drop(acknowledgement_sender);
+        }
+
+        <span class="comment">// Wait for all the acknowledgements to progress and proactively drop closed subscribers.
+        </span><span class="kw">loop </span>{
+            <span class="macro">select! </span>{
+                res = acknowledgement_receiver.next() =&gt; <span class="kw">if </span>res.is_none() {
+                    <span class="kw">break</span>;
+                },
+                <span class="comment">// TODO: Workaround for https://github.com/smol-rs/async-channel/issues/23, remove once fix is released
+                </span><span class="kw">_ </span>= futures_timer::Delay::new(time::Duration::from_millis(<span class="number">500</span>)).fuse() =&gt; {
+                    <span class="self">self</span>.acknowledgement_sender_subscribers.retain(|subscriber| !subscriber.is_closed());
+                }
+            }
+        }
     }
 
     <span class="doccomment">/// Subscribe the block importing notification
@@ -1689,7 +1733,7 @@
 
         log_new_block(<span class="kw-2">&amp;</span>block, block_timer.elapsed().as_millis());
 
-        <span class="kw">match </span><span class="self">self</span>.import_block(block, <span class="prelude-val">Some</span>(storage_changes)).<span class="kw">await </span>{
+        <span class="kw">let </span>res = <span class="kw">match </span><span class="self">self</span>.import_block(block, <span class="prelude-val">Some</span>(storage_changes)).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(hash) =&gt; {
                 <span class="comment">// Remove the tx of the imported block from the tx pool incase re-include them
                 // in the future block by accident.
@@ -1697,7 +1741,9 @@
                 <span class="prelude-val">Ok</span>(hash)
             }
             err =&gt; err,
-        }
+        };
+        <span class="self">self</span>.confirm_acknowledgement().<span class="kw">await</span>;
+        res
     }
 
     <span class="doccomment">/// Produce a new block on top of the current best block, with the extrinsics collected from
@@ -1907,7 +1953,7 @@
             <span class="kw">async </span>{
                 <span class="kw">let </span>domain_fut = {
                     <span class="kw">let </span><span class="kw-2">mut </span>futs: Vec&lt;std::pin::Pin&lt;Box&lt;<span class="kw">dyn </span>futures::Future&lt;Output = ()&gt;&gt;&gt;&gt; = Vec::new();
-                    futs.push(Box::pin(<span class="macro-nonterminal">$operator_node</span>.wait_for_blocks(<span class="number">1</span>)));
+                    futs.push(Box::pin(<span class="macro-nonterminal">$operator_node</span>.wait_for_blocks(<span class="macro-nonterminal">$count</span>)));
                     $( futs.push( Box::pin( <span class="macro-nonterminal">$domain_node</span>.wait_for_blocks(<span class="macro-nonterminal">$count</span>) ) ); )*
                     futures::future::join_all(futs)
                 };
