@@ -7,7 +7,7 @@ var srcIndex = JSON.parse('{\
 "domain_client_operator":["",[],["aux_schema.rs","bootstrapper.rs","bundle_processor.rs","bundle_producer_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","domain_worker_starter.rs","fraud_proof.rs","lib.rs","operator.rs","parent_chain.rs","utils.rs"]],\
 "domain_client_subnet_gossip":["",[],["lib.rs","worker.rs"]],\
 "domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
-"domain_pallet_executive":["",[],["lib.rs"]],\
+"domain_pallet_executive":["",[],["lib.rs","weights.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
 "domain_service":["",[],["domain.rs","domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs"]],\
 "domain_test_primitives":["",[],["lib.rs"]],\

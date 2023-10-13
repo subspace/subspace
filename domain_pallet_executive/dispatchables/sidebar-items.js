@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["sudo_unchecked_weight_unsigned"]};
+window.SIDEBAR_ITEMS = {"fn":["set_code"]};

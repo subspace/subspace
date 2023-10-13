@@ -461,9 +461,6 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-<a href="#465" id="465">465</a>
-<a href="#466" id="466">466</a>
 </pre></div><pre class="rust"><code><span class="comment">// This file is part of Substrate.
 
 // Copyright (C) 2017-2022 Parity Technologies (UK) Ltd.
@@ -489,7 +486,17 @@
 
 </span><span class="attr">#![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
 
-</span><span class="kw">use </span>codec::Codec;
+#[cfg(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>)]
+</span><span class="kw">mod </span>benchmarking;
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>mock;
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests;
+
+<span class="kw">pub mod </span>weights;
+
+<span class="kw">use </span>codec::Codec;
 <span class="kw">use </span>frame_support::dispatch::{DispatchClass, DispatchInfo, GetDispatchInfo, PostDispatchInfo};
 <span class="kw">use </span>frame_support::traits::{
     EnsureInherentsAreFirst, ExecuteBlock, Get, OffchainWorker, OnFinalize, OnIdle, OnInitialize,
@@ -515,19 +522,16 @@
 // calculate the storage root outside the runtime after executing the extrinsic directly.
 </span><span class="attr">#[frame_support::pallet]
 </span><span class="kw">mod </span>pallet {
-    <span class="kw">use </span>frame_support::dispatch::GetDispatchInfo;
+    <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
     <span class="kw">use </span>frame_support::pallet_prelude::<span class="kw-2">*</span>;
-    <span class="kw">use </span>frame_support::traits::UnfilteredDispatchable;
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
-    <span class="kw">use </span>sp_std::boxed::Box;
+    <span class="kw">use </span>frame_system::SetCode;
     <span class="kw">use </span>sp_std::vec::Vec;
 
     <span class="attr">#[pallet::config]
     </span><span class="kw">pub trait </span>Config: frame_system::Config {
         <span class="kw">type </span>RuntimeEvent: From&lt;Event&lt;<span class="self">Self</span>&gt;&gt; + IsType&lt;&lt;<span class="self">Self </span><span class="kw">as </span>frame_system::Config&gt;::RuntimeEvent&gt;;
-        <span class="kw">type </span>RuntimeCall: Parameter
-            + UnfilteredDispatchable&lt;RuntimeOrigin = <span class="self">Self</span>::RuntimeOrigin&gt;
-            + GetDispatchInfo;
+        <span class="kw">type </span>WeightInfo: WeightInfo;
     }
 
     <span class="attr">#[pallet::pallet]
@@ -536,31 +540,21 @@
 
     <span class="attr">#[pallet::call]
     </span><span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
-        <span class="comment">// TODO: this call may be moved to other places if this pallet is no longer necessary.
-        </span><span class="doccomment">/// Unsigned version of `frame_sudo::sudo_unchecked_weight`.
-        </span><span class="attr">#[allow(clippy::boxed_local)]
-        #[pallet::call_index(<span class="number">0</span>)]
-        #[pallet::weight((<span class="kw-2">*</span>_weight, call.get_dispatch_info().class, Pays::No))]
-        </span><span class="kw">pub fn </span>sudo_unchecked_weight_unsigned(
-            origin: OriginFor&lt;T&gt;,
-            call: Box&lt;&lt;T <span class="kw">as </span>Config&gt;::RuntimeCall&gt;,
-            _weight: Weight,
-        ) -&gt; DispatchResult {
+        <span class="doccomment">/// Sets new runtime code after doing necessary checks.
+        /// Same as frame_system::Call::set_code but without root origin.
+        </span><span class="attr">#[pallet::call_index(<span class="number">0</span>)]
+        #[pallet::weight((T::WeightInfo::set_code(), DispatchClass::Operational))]
+        </span><span class="kw">pub fn </span>set_code(origin: OriginFor&lt;T&gt;, code: Vec&lt;u8&gt;) -&gt; DispatchResultWithPostInfo {
             ensure_none(origin)<span class="question-mark">?</span>;
-            <span class="kw">let </span>res = call.dispatch_bypass_filter(frame_system::RawOrigin::Root.into());
-            <span class="self">Self</span>::deposit_event(Event::Sudid {
-                sudo_result: res.map(|<span class="kw">_</span>| ()).map_err(|e| e.error),
-            });
-            <span class="prelude-val">Ok</span>(())
+            &lt;frame_system::pallet::Pallet&lt;T&gt;&gt;::can_set_code(<span class="kw-2">&amp;</span>code)<span class="question-mark">?</span>;
+            &lt;T <span class="kw">as </span>frame_system::Config&gt;::OnSetCode::set_code(code)<span class="question-mark">?</span>;
+            <span class="comment">// consume the rest of the block to prevent further transactions
+            </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(T::BlockWeights::get().max_block).into())
         }
     }
 
     <span class="attr">#[pallet::event]
-    #[pallet::generate_deposit(<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
-    </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {
-        <span class="doccomment">/// A sudo just took place.
-        </span>Sudid { sudo_result: DispatchResult },
-    }
+    </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {}
 
     <span class="attr">#[pallet::hooks]
     </span><span class="kw">impl</span>&lt;T: Config&gt; Hooks&lt;BlockNumberFor&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
