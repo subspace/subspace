@@ -1808,6 +1808,39 @@
 <a href="#1808" id="1808">1808</a>
 <a href="#1809" id="1809">1809</a>
 <a href="#1810" id="1810">1810</a>
+<a href="#1811" id="1811">1811</a>
+<a href="#1812" id="1812">1812</a>
+<a href="#1813" id="1813">1813</a>
+<a href="#1814" id="1814">1814</a>
+<a href="#1815" id="1815">1815</a>
+<a href="#1816" id="1816">1816</a>
+<a href="#1817" id="1817">1817</a>
+<a href="#1818" id="1818">1818</a>
+<a href="#1819" id="1819">1819</a>
+<a href="#1820" id="1820">1820</a>
+<a href="#1821" id="1821">1821</a>
+<a href="#1822" id="1822">1822</a>
+<a href="#1823" id="1823">1823</a>
+<a href="#1824" id="1824">1824</a>
+<a href="#1825" id="1825">1825</a>
+<a href="#1826" id="1826">1826</a>
+<a href="#1827" id="1827">1827</a>
+<a href="#1828" id="1828">1828</a>
+<a href="#1829" id="1829">1829</a>
+<a href="#1830" id="1830">1830</a>
+<a href="#1831" id="1831">1831</a>
+<a href="#1832" id="1832">1832</a>
+<a href="#1833" id="1833">1833</a>
+<a href="#1834" id="1834">1834</a>
+<a href="#1835" id="1835">1835</a>
+<a href="#1836" id="1836">1836</a>
+<a href="#1837" id="1837">1837</a>
+<a href="#1838" id="1838">1838</a>
+<a href="#1839" id="1839">1839</a>
+<a href="#1840" id="1840">1840</a>
+<a href="#1841" id="1841">1841</a>
+<a href="#1842" id="1842">1842</a>
+<a href="#1843" id="1843">1843</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1829,9 +1862,8 @@
 <span class="kw">use </span>derive_more::{Display, From};
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
-<span class="kw">use </span>futures::future::{select, Either};
 <span class="kw">use </span>futures::stream::FuturesUnordered;
-<span class="kw">use </span>futures::StreamExt;
+<span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
@@ -2083,6 +2115,8 @@
     <span class="doccomment">/// Notification for plotter to start, can be used to delay plotting until some initialization
     /// has happened externally
     </span><span class="kw">pub </span>plotting_delay: <span class="prelude-ty">Option</span>&lt;oneshot::Receiver&lt;()&gt;&gt;,
+    <span class="doccomment">/// Whether to farm during initial plotting
+    </span><span class="kw">pub </span>farm_during_initial_plotting: bool,
 }
 
 <span class="doccomment">/// Errors happening when trying to create/open single disk farm
@@ -2375,7 +2409,7 @@
 
     <span class="doccomment">/// Create new single disk farm instance
     ///
-    /// NOTE: Thought this function is async, it will do some blocking I/O.
+    /// NOTE: Though this function is async, it will do some blocking I/O.
     </span><span class="kw">pub async fn </span>new&lt;NC, PG, PosTable&gt;(
         options: SingleDiskFarmOptions&lt;NC, PG&gt;,
         disk_farm_index: usize,
@@ -2404,6 +2438,7 @@
             plotting_thread_pool,
             replotting_thread_pool,
             plotting_delay,
+            farm_during_initial_plotting,
         } = options;
         fs::create_dir_all(<span class="kw-2">&amp;</span>directory)<span class="question-mark">?</span>;
 
@@ -2663,6 +2698,13 @@
         </span><span class="kw">let </span>sectors_indices_left_to_plot =
             metadata_header.plotted_sector_count..target_sector_count;
 
+        <span class="kw">let </span>(farming_delay_sender, delay_farmer_receiver) = <span class="kw">if </span>farm_during_initial_plotting {
+            (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>(sender, receiver) = oneshot::channel();
+            (<span class="prelude-val">Some</span>(sender), <span class="prelude-val">Some</span>(receiver))
+        };
+
         <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">&quot;single_disk_farm&quot;</span>, %disk_farm_index);
 
         <span class="kw">let </span>plotting_join_handle = thread::Builder::new()
@@ -2683,17 +2725,16 @@
                     <span class="kw">let </span>_tokio_handle_guard = handle.enter();
                     <span class="kw">let </span>_span_guard = span.enter();
 
-                    <span class="comment">// Initial plotting
-                    </span><span class="kw">let </span>initial_plotting_fut = <span class="kw">async move </span>{
+                    <span class="kw">let </span>plotting_fut = <span class="kw">async move </span>{
                         <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
                             <span class="comment">// Dropped before starting
-                            </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                            </span><span class="kw">return</span>;
                         }
 
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(plotting_delay) = plotting_delay {
                             <span class="kw">if </span>plotting_delay.<span class="kw">await</span>.is_err() {
                                 <span class="comment">// Dropped before resolving
-                                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                                </span><span class="kw">return</span>;
                             }
                         }
 
@@ -2717,22 +2758,30 @@
                             encoding_semaphore,
                             plotting_thread_pool,
                             replotting_thread_pool,
+                            stop_receiver: stop_receiver.resubscribe(),
                         };
-                        plotting::&lt;<span class="kw">_</span>, <span class="kw">_</span>, PosTable&gt;(plotting_options).<span class="kw">await
-                    </span>};
 
-                    <span class="kw">let </span>initial_plotting_result = handle.block_on(select(
-                        Box::pin(initial_plotting_fut),
-                        Box::pin(stop_receiver.recv()),
-                    ));
+                        <span class="kw">let </span>plotting_fut = plotting::&lt;<span class="kw">_</span>, <span class="kw">_</span>, PosTable&gt;(plotting_options);
 
-                    <span class="kw">if let </span>Either::Left((<span class="prelude-val">Err</span>(error), <span class="kw">_</span>)) = initial_plotting_result {
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take() {
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into()) {
-                                <span class="macro">error!</span>(%error, <span class="string">&quot;Plotting failed to send error to background task&quot;</span>);
+                        <span class="macro">select! </span>{
+                            plotting_result = plotting_fut.fuse() =&gt; {
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = plotting_result
+                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
+                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
+                                {
+                                    <span class="macro">error!</span>(
+                                        %error,
+                                        <span class="string">&quot;Plotting failed to send error to background task&quot;
+                                    </span>);
+                                }
                             }
+                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                                <span class="comment">// Nothing, just exit
+                            </span>}
                         }
-                    }
+                    };
+
+                    handle.block_on(plotting_fut);
                 }
             })<span class="question-mark">?</span>;
 
@@ -2745,6 +2794,7 @@
             node_client: node_client.clone(),
             sectors_metadata: Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata),
             sectors_to_plot_sender,
+            initial_plotting_finished: farming_delay_sender,
         };
         tasks.push(Box::pin(plotting_scheduler(plotting_scheduler_options)));
 
@@ -2809,6 +2859,13 @@
                                 </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
                             }
 
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(farming_delay) = delay_farmer_receiver {
+                                <span class="kw">if </span>farming_delay.<span class="kw">await</span>.is_err() {
+                                    <span class="comment">// Dropped before resolving
+                                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                                }
+                            }
+
                             <span class="kw">let </span>farming_options = FarmingOptions {
                                 public_key,
                                 reward_address,
@@ -2825,21 +2882,24 @@
                             farming::&lt;PosTable, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
                         </span>};
 
-                        <span class="kw">let </span>farming_result = handle.block_on(select(
-                            Box::pin(farming_fut),
-                            Box::pin(stop_receiver.recv()),
-                        ));
-
-                        <span class="kw">if let </span>Either::Left((<span class="prelude-val">Err</span>(error), <span class="kw">_</span>)) = farming_result {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take() {
-                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into()) {
-                                    <span class="macro">error!</span>(
-                                        %error,
-                                        <span class="string">&quot;Farming failed to send error to background task&quot;</span>,
-                                    );
+                        handle.block_on(<span class="kw">async </span>{
+                            <span class="macro">select! </span>{
+                                farming_result = farming_fut.fuse() =&gt; {
+                                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_result
+                                        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
+                                        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
+                                    {
+                                        <span class="macro">error!</span>(
+                                            %error,
+                                            <span class="string">&quot;Farming failed to send error to background task&quot;</span>,
+                                        );
+                                    }
                                 }
+                                <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                                    <span class="comment">// Nothing, just exit
+                                </span>}
                             }
-                        }
+                        });
                     })
                 }
             })<span class="question-mark">?</span>;
@@ -2862,10 +2922,16 @@
                 <span class="kw">move </span>|| {
                     <span class="kw">let </span>_tokio_handle_guard = handle.enter();
 
-                    handle.block_on(select(
-                        Box::pin(reading_fut),
-                        Box::pin(stop_receiver.recv()),
-                    ));
+                    handle.block_on(<span class="kw">async </span>{
+                        <span class="macro">select! </span>{
+                            <span class="kw">_ </span>= reading_fut.fuse() =&gt; {
+                                <span class="comment">// Nothing, just exit
+                            </span>}
+                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                                <span class="comment">// Nothing, just exit
+                            </span>}
+                        }
+                    });
                 }
             })<span class="question-mark">?</span>;
 
