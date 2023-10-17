@@ -219,16 +219,13 @@
 <a href="#219" id="219">219</a>
 <a href="#220" id="220">220</a>
 <a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a>
-<a href="#224" id="224">224</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::runtime_api::{
     ExtractSignerResult, ExtractedStateRoots, InherentExtrinsicConstructor, SetCodeConstructor,
     SignerExtractor, StateRootExtractor,
 };
 <span class="kw">use </span>codec::{Codec, Encode};
 <span class="kw">use </span>domain_runtime_primitives::{DomainCoreApi, InherentExtrinsicApi};
-<span class="kw">use </span>sc_executor_common::runtime_blob::RuntimeBlob;
+<span class="kw">use </span>sc_executor::RuntimeVersionOf;
 <span class="kw">use </span>sp_api::{ApiError, BlockT, Core, Hasher, RuntimeVersion};
 <span class="kw">use </span>sp_core::traits::{CallContext, CodeExecutor, FetchRuntimeCode, RuntimeCode};
 <span class="kw">use </span>sp_messenger::MessengerApi;
@@ -256,7 +253,7 @@
 <span class="kw">impl</span>&lt;Block, Executor&gt; Core&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>__runtime_api_internal_call_api_at(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -271,7 +268,7 @@
 <span class="kw">impl</span>&lt;Block, Executor&gt; DomainCoreApi&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>__runtime_api_internal_call_api_at(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -287,7 +284,7 @@
 <span class="kw">where
     </span>Block: BlockT,
     NumberFor&lt;Block&gt;: Codec,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>__runtime_api_internal_call_api_at(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -307,7 +304,7 @@
 
 <span class="kw">impl</span>&lt;Executor&gt; RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
-    </span>Executor: CodeExecutor,
+    </span>Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="doccomment">/// Create a new instance of [`RuntimeApiLight`] with empty storage.
     </span><span class="kw">pub fn </span>new(executor: Arc&lt;Executor&gt;, runtime_code: Cow&lt;<span class="lifetime">&#39;static</span>, [u8]&gt;) -&gt; <span class="self">Self </span>{
@@ -334,29 +331,26 @@
         }
     }
 
-    <span class="kw">fn </span>runtime_version(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;RuntimeVersion, ApiError&gt; {
-        <span class="kw">let </span>runtime_blob = RuntimeBlob::new(<span class="kw-2">&amp;</span><span class="self">self</span>.runtime_code).map_err(|err| {
-            ApiError::Application(Box::from(<span class="macro">format!</span>(<span class="string">&quot;invalid runtime code: {err}&quot;</span>)))
-        })<span class="question-mark">?</span>;
-        sc_executor::read_embedded_version(<span class="kw-2">&amp;</span>runtime_blob)
-            .map_err(|err| ApiError::Application(Box::new(err)))<span class="question-mark">?
-            </span>.ok_or(ApiError::Application(Box::from(
-                <span class="string">&quot;domain runtime version not found&quot;</span>.to_string(),
-            )))
-    }
-
     <span class="kw">fn </span>dispatch_call(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         fn_name: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(RuntimeVersion) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str,
         input: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, ApiError&gt; {
-        <span class="kw">let </span>runtime_version = <span class="self">self</span>.runtime_version()<span class="question-mark">?</span>;
-        <span class="kw">let </span>fn_name = fn_name(runtime_version);
         <span class="kw">let </span><span class="kw-2">mut </span>ext = BasicExternalities::new(<span class="self">self</span>.storage.clone());
+        <span class="kw">let </span>runtime_code = <span class="self">self</span>.runtime_code();
+        <span class="kw">let </span>runtime_version = <span class="self">self
+            </span>.executor
+            .runtime_version(<span class="kw-2">&amp;mut </span>ext, <span class="kw-2">&amp;</span>runtime_code)
+            .map_err(|err| {
+                ApiError::Application(Box::from(<span class="macro">format!</span>(
+                    <span class="string">&quot;failed to read domain runtime version: {err}&quot;
+                </span>)))
+            })<span class="question-mark">?</span>;
+        <span class="kw">let </span>fn_name = fn_name(runtime_version);
         <span class="self">self</span>.executor
             .call(
                 <span class="kw-2">&amp;mut </span>ext,
-                <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_code(),
+                <span class="kw-2">&amp;</span>runtime_code,
                 fn_name,
                 <span class="kw-2">&amp;</span>input,
                 <span class="bool-val">false</span>,
@@ -372,7 +366,7 @@
 <span class="kw">impl</span>&lt;Block, Executor&gt; StateRootExtractor&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>extract_state_roots(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -391,7 +385,7 @@
 <span class="kw">impl</span>&lt;Executor, Block&gt; InherentExtrinsicApi&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>__runtime_api_internal_call_api_at(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -406,7 +400,7 @@
 <span class="kw">impl</span>&lt;Executor, Block&gt; SignerExtractor&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>extract_signer(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -420,7 +414,7 @@
 <span class="kw">impl</span>&lt;Executor, Block&gt; SetCodeConstructor&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>construct_set_code_extrinsic(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -434,7 +428,7 @@
 <span class="kw">impl</span>&lt;Executor, Block&gt; InherentExtrinsicConstructor&lt;Block&gt; <span class="kw">for </span>RuntimeApiLight&lt;Executor&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Executor: CodeExecutor,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
     <span class="kw">fn </span>construct_timestamp_inherent_extrinsic(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
