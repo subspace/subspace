@@ -139,6 +139,21 @@
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
 <a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farmer_piece_getter;
 <span class="kw">pub mod </span>piece_validator;
 <span class="kw">pub mod </span>readers_and_pieces;
@@ -148,8 +163,7 @@
 
 <span class="kw">use </span>futures::channel::oneshot;
 <span class="kw">use </span>futures::channel::oneshot::Canceled;
-<span class="kw">use </span>futures::future::{Either, Fuse, FusedFuture};
-<span class="kw">use </span>futures::FutureExt;
+<span class="kw">use </span>futures::future::Either;
 <span class="kw">use </span>rayon::ThreadBuilder;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::ops::Deref;
@@ -161,23 +175,34 @@
 <span class="kw">use </span>tracing::debug;
 
 <span class="doccomment">/// Joins async join handle on drop
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>AsyncJoinOnDrop&lt;T&gt;(<span class="prelude-ty">Option</span>&lt;Fuse&lt;task::JoinHandle&lt;T&gt;&gt;&gt;);
+</span><span class="kw">pub struct </span>AsyncJoinOnDrop&lt;T&gt; {
+    handle: <span class="prelude-ty">Option</span>&lt;task::JoinHandle&lt;T&gt;&gt;,
+    abort_on_drop: bool,
+}
 
 <span class="kw">impl</span>&lt;T&gt; Drop <span class="kw">for </span>AsyncJoinOnDrop&lt;T&gt; {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">let </span>handle = <span class="self">self</span>.<span class="number">0</span>.take().expect(<span class="string">&quot;Always called exactly once; qed&quot;</span>);
-        <span class="kw">if </span>!handle.is_terminated() {
-            task::block_in_place(<span class="kw">move </span>|| {
-                <span class="kw">let _ </span>= Handle::current().block_on(handle);
-            });
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.handle.take() {
+            <span class="kw">if </span><span class="self">self</span>.abort_on_drop {
+                handle.abort();
+            }
+
+            <span class="kw">if </span>!handle.is_finished() {
+                task::block_in_place(<span class="kw">move </span>|| {
+                    <span class="kw">let _ </span>= Handle::current().block_on(handle);
+                });
+            }
         }
     }
 }
 
 <span class="kw">impl</span>&lt;T&gt; AsyncJoinOnDrop&lt;T&gt; {
-    <span class="comment">// Create new instance
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(handle: task::JoinHandle&lt;T&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>(<span class="prelude-val">Some</span>(handle.fuse()))
+    <span class="doccomment">/// Create new instance.
+    </span><span class="kw">pub fn </span>new(handle: task::JoinHandle&lt;T&gt;, abort_on_drop: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            handle: <span class="prelude-val">Some</span>(handle),
+            abort_on_drop,
+        }
     }
 }
 
@@ -185,7 +210,12 @@
     <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T, task::JoinError&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-        Pin::new(<span class="self">self</span>.<span class="number">0</span>.as_mut().expect(<span class="string">&quot;Only dropped in Drop impl; qed&quot;</span>)).poll(cx)
+        Pin::new(
+            <span class="self">self</span>.handle
+                .as_mut()
+                .expect(<span class="string">&quot;Only dropped in Drop impl; qed&quot;</span>),
+        )
+        .poll(cx)
     }
 }
 
