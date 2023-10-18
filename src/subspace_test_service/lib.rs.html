@@ -987,18 +987,6 @@
 <a href="#987" id="987">987</a>
 <a href="#988" id="988">988</a>
 <a href="#989" id="989">989</a>
-<a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
-<a href="#992" id="992">992</a>
-<a href="#993" id="993">993</a>
-<a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a>
-<a href="#996" id="996">996</a>
-<a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
-<a href="#1001" id="1001">1001</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1036,7 +1024,6 @@
 <span class="kw">use </span>sc_consensus::{
     BasicQueue, BlockImport, SharedBlockImport, StateAction, Verifier <span class="kw">as </span>VerifierT,
 };
-<span class="kw">use </span>sc_consensus_fraud_proof::FraudProofBlockImport;
 <span class="kw">use </span>sc_executor::NativeElseWasmExecutor;
 <span class="kw">use </span>sc_network::config::{NetworkConfiguration, TransportConfig};
 <span class="kw">use </span>sc_network::multiaddr;
@@ -1250,11 +1237,7 @@
     </span>acknowledgement_sender_subscribers: Vec&lt;TracingUnboundedSender&lt;mpsc::Sender&lt;()&gt;&gt;&gt;,
     <span class="doccomment">/// Block import pipeline
     </span><span class="attr">#[allow(clippy::type_complexity)]
-    </span>block_import: MockBlockImport&lt;
-        FraudProofBlockImport&lt;Block, Client, Arc&lt;Client&gt;, FraudProofVerifier, DomainNumber, H256&gt;,
-        Client,
-        Block,
-    &gt;,
+    </span>block_import: MockBlockImport&lt;Client, Block&gt;,
     xdm_gossip_worker_builder: <span class="prelude-ty">Option</span>&lt;GossipWorkerBuilder&gt;,
     <span class="doccomment">/// Mock subspace solution used to mock the subspace `PreDigest`
     </span>mock_solution: Solution&lt;FarmerPublicKey, AccountId&gt;,
@@ -1329,10 +1312,7 @@
             tx_pre_validator,
         );
 
-        <span class="kw">let </span>fraud_proof_block_import =
-            sc_consensus_fraud_proof::block_import(client.clone(), client.clone(), proof_verifier);
-
-        <span class="kw">let </span>block_import = MockBlockImport::&lt;<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(fraud_proof_block_import);
+        <span class="kw">let </span>block_import = MockBlockImport::&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;::new(client.clone());
 
         <span class="kw">let </span>net_config = sc_network::config::FullNetworkConfiguration::new(<span class="kw-2">&amp;</span>config.network);
 
@@ -1838,19 +1818,17 @@
 <span class="comment">// `MockBlockImport` is mostly port from `sc-consensus-subspace::SubspaceBlockImport` with all
 // the consensus related logic removed.
 </span><span class="attr">#[allow(clippy::type_complexity)]
-</span><span class="kw">struct </span>MockBlockImport&lt;Inner, Client, Block: BlockT&gt; {
-    inner: Inner,
+</span><span class="kw">struct </span>MockBlockImport&lt;Client, Block: BlockT&gt; {
+    inner: Arc&lt;Client&gt;,
     block_importing_notification_subscribers:
         Arc&lt;Mutex&lt;Vec&lt;TracingUnboundedSender&lt;(NumberFor&lt;Block&gt;, mpsc::Sender&lt;()&gt;)&gt;&gt;&gt;&gt;,
-    _phantom_data: PhantomData&lt;Client&gt;,
 }
 
-<span class="kw">impl</span>&lt;Inner, Client, Block: BlockT&gt; MockBlockImport&lt;Inner, Client, Block&gt; {
-    <span class="kw">fn </span>new(inner: Inner) -&gt; <span class="self">Self </span>{
+<span class="kw">impl</span>&lt;Client, Block: BlockT&gt; MockBlockImport&lt;Client, Block&gt; {
+    <span class="kw">fn </span>new(inner: Arc&lt;Client&gt;) -&gt; <span class="self">Self </span>{
         MockBlockImport {
             inner,
             block_importing_notification_subscribers: Arc::new(Mutex::new(Vec::new())),
-            _phantom_data: Default::default(),
         }
     }
 
@@ -1866,24 +1844,22 @@
     }
 }
 
-<span class="kw">impl</span>&lt;Inner: Clone, Client, Block: BlockT&gt; MockBlockImport&lt;Inner, Client, Block&gt; {
+<span class="kw">impl</span>&lt;Client, Block: BlockT&gt; MockBlockImport&lt;Client, Block&gt; {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         MockBlockImport {
             inner: <span class="self">self</span>.inner.clone(),
             block_importing_notification_subscribers: <span class="self">self
                 </span>.block_importing_notification_subscribers
                 .clone(),
-            _phantom_data: Default::default(),
         }
     }
 }
 
 <span class="attr">#[async_trait::async_trait]
-</span><span class="kw">impl</span>&lt;Inner, Client, Block&gt; BlockImport&lt;Block&gt; <span class="kw">for </span>MockBlockImport&lt;Inner, Client, Block&gt;
+</span><span class="kw">impl</span>&lt;Client, Block&gt; BlockImport&lt;Block&gt; <span class="kw">for </span>MockBlockImport&lt;Client, Block&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Inner: BlockImport&lt;Block, Error = ConsensusError&gt; + Send + Sync,
-    Inner::Error: Into&lt;ConsensusError&gt;,
+    <span class="kw">for</span>&lt;<span class="lifetime">&#39;r</span>&gt; <span class="kw-2">&amp;</span><span class="lifetime">&#39;r </span>Client: BlockImport&lt;Block, Error = ConsensusError&gt; + Send + Sync,
     Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt; + Send + Sync + <span class="lifetime">&#39;static</span>,
     Client::Api: ApiExt&lt;Block&gt;,
 {
