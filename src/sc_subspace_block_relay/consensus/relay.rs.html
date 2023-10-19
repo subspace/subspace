@@ -724,16 +724,27 @@
 <a href="#724" id="724">724</a>
 <a href="#725" id="725">725</a>
 <a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Consensus block relay implementation.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::consensus::types::{
-    BlockHash, ConsensusClientMetrics, ConsensusServerMetrics, Extrinsic, FullDownloadRequest,
-    FullDownloadResponse, InitialRequest, InitialResponse, PartialBlock, ServerMessage,
+    BlockHash, ConsensusClientMetrics, ConsensusRequest, ConsensusServerMetrics, Extrinsic,
+    FullDownloadRequest, FullDownloadResponse, InitialRequest, InitialResponse, PartialBlock,
+    ProtocolInitialRequest, ProtocolInitialResponse, ProtocolMessage,
 };
-<span class="kw">use </span><span class="kw">crate</span>::protocol::compact_block::{CompactBlockClient, CompactBlockServer};
-<span class="kw">use </span><span class="kw">crate</span>::protocol::{
-    ClientBackend, ProtocolClient, ProtocolServer, ProtocolUnitInfo, ServerBackend,
+<span class="kw">use </span><span class="kw">crate</span>::protocol::compact_block::{
+    CompactBlockClient, CompactBlockHandshake, CompactBlockServer,
 };
+<span class="kw">use </span><span class="kw">crate</span>::protocol::{ClientBackend, ProtocolUnitInfo, ServerBackend};
 <span class="kw">use </span><span class="kw">crate</span>::types::{RelayError, RequestResponseErr};
 <span class="kw">use </span><span class="kw">crate</span>::utils::{NetworkPeerHandle, NetworkWrapper};
 <span class="kw">use </span><span class="kw">crate</span>::LOG_TARGET;
@@ -778,38 +789,36 @@
 </span><span class="kw">const </span>TX_SIZE_THRESHOLD: NonZeroUsize = NonZeroUsize::new(<span class="number">32</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
 <span class="doccomment">/// The client side of the consensus block relay
-</span><span class="kw">struct </span>ConsensusRelayClient&lt;Block, Pool, ProtoClient&gt;
+</span><span class="kw">struct </span>ConsensusRelayClient&lt;Block, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Pool: TransactionPool,
-    ProtoClient: ProtocolClient&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
 {
     network: Arc&lt;NetworkWrapper&gt;,
     protocol_name: ProtocolName,
-    protocol: Arc&lt;ProtoClient&gt;,
+    compact_block: CompactBlockClient&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
     backend: Arc&lt;ConsensusClientBackend&lt;Pool&gt;&gt;,
     metrics: ConsensusClientMetrics,
     _phantom_data: std::marker::PhantomData&lt;(Block, Pool)&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, Pool, ProtoClient&gt; ConsensusRelayClient&lt;Block, Pool, ProtoClient&gt;
+<span class="kw">impl</span>&lt;Block, Pool&gt; ConsensusRelayClient&lt;Block, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
-    ProtoClient: ProtocolClient&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
 {
     <span class="doccomment">/// Creates the consensus relay client.
     </span><span class="kw">fn </span>new(
         network: Arc&lt;NetworkWrapper&gt;,
         protocol_name: ProtocolName,
-        protocol: Arc&lt;ProtoClient&gt;,
+        compact_block: CompactBlockClient&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
         backend: Arc&lt;ConsensusClientBackend&lt;Pool&gt;&gt;,
         metrics: ConsensusClientMetrics,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             network,
             protocol_name,
-            protocol,
+            compact_block,
             backend,
             metrics,
             _phantom_data: Default::default(),
@@ -834,19 +843,23 @@
                 FromBlock::Number(n) =&gt; BlockId::&lt;Block&gt;::Number(n),
             },
             block_attributes: request.fields,
-            protocol_request: <span class="self">self</span>.protocol.build_initial_request(<span class="self">self</span>.backend.as_ref()),
+            protocol_request: ProtocolInitialRequest::from(
+                <span class="self">self</span>.compact_block
+                    .build_initial_request(<span class="self">self</span>.backend.as_ref()),
+            ),
         };
         <span class="kw">let </span>initial_response = network_peer_handle
-            .request::&lt;<span class="kw">_</span>, InitialResponse&lt;Block, ProtoClient::Response&gt;&gt;(
-                ServerMessage::InitialRequest(initial_request),
-            )
+            .request::&lt;<span class="kw">_</span>, InitialResponse&lt;Block, TxHash&lt;Pool&gt;&gt;&gt;(ConsensusRequest::&lt;
+                Block,
+                TxHash&lt;Pool&gt;,
+            &gt;::from(initial_request))
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// Resolve the protocol response to get the extrinsics
         </span><span class="kw">let </span>(body, local_miss) = <span class="kw">if let </span><span class="prelude-val">Some</span>(protocol_response) = initial_response.protocol_response
         {
             <span class="kw">let </span>(body, local_miss) = <span class="self">self
-                </span>.resolve_extrinsics::&lt;ServerMessage&lt;Block, ProtoClient::Request&gt;&gt;(
+                </span>.resolve_extrinsics::&lt;ConsensusRequest&lt;Block, TxHash&lt;Pool&gt;&gt;&gt;(
                     protocol_response,
                     <span class="kw-2">&amp;</span>network_peer_handle,
                 )
@@ -880,8 +893,8 @@
             </span>.network
             .network_peer_handle(<span class="self">self</span>.protocol_name.clone(), who)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>server_request: ServerMessage&lt;Block, ProtoClient::Request&gt; =
-            ServerMessage::FullDownloadRequest(FullDownloadRequest(request.clone()));
+        <span class="kw">let </span>server_request =
+            ConsensusRequest::&lt;Block, TxHash&lt;Pool&gt;&gt;::from(FullDownloadRequest(request.clone()));
         <span class="kw">let </span>full_response = network_peer_handle
             .request::&lt;<span class="kw">_</span>, FullDownloadResponse&lt;Block&gt;&gt;(server_request)
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -901,16 +914,17 @@
     <span class="doccomment">/// Resolves the extrinsics from the initial response
     </span><span class="kw">async fn </span>resolve_extrinsics&lt;Request&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        protocol_response: ProtoClient::Response,
+        protocol_response: ProtocolInitialResponse&lt;Block, TxHash&lt;Pool&gt;&gt;,
         network_peer_handle: <span class="kw-2">&amp;</span>NetworkPeerHandle,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;Extrinsic&lt;Block&gt;&gt;, usize), RelayError&gt;
     <span class="kw">where
-        </span>Request: From&lt;ProtoClient::Request&gt; + Encode + Send + Sync,
+        </span>Request: From&lt;CompactBlockHandshake&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;&gt;&gt; + Encode + Send + Sync,
     {
+        <span class="kw">let </span>ProtocolInitialResponse::CompactBlock(compact_response) = protocol_response;
         <span class="kw">let </span>(block_hash, resolved) = <span class="self">self
-            </span>.protocol
+            </span>.compact_block
             .resolve_initial_response::&lt;Request&gt;(
-                protocol_response,
+                compact_response,
                 network_peer_handle,
                 <span class="self">self</span>.backend.as_ref(),
             )
@@ -939,12 +953,10 @@
 }
 
 <span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;Block, Pool, ProtoClient&gt; BlockDownloader&lt;Block&gt;
-    <span class="kw">for </span>ConsensusRelayClient&lt;Block, Pool, ProtoClient&gt;
+</span><span class="kw">impl</span>&lt;Block, Pool&gt; BlockDownloader&lt;Block&gt; <span class="kw">for </span>ConsensusRelayClient&lt;Block, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
-    ProtoClient: ProtocolClient&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
 {
     <span class="kw">async fn </span>download_block(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -1006,34 +1018,33 @@
 }
 
 <span class="doccomment">/// The server side of the consensus block relay
-</span><span class="kw">struct </span>ConsensusRelayServer&lt;Block: BlockT, Client, Pool, ProtoServer&gt; {
+</span><span class="kw">struct </span>ConsensusRelayServer&lt;Block: BlockT, Client, Pool: TransactionPool&gt; {
     client: Arc&lt;Client&gt;,
-    protocol: Box&lt;ProtoServer&gt;,
+    compact_block: CompactBlockServer&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
     request_receiver: async_channel::Receiver&lt;IncomingRequest&gt;,
     backend: Arc&lt;ConsensusServerBackend&lt;Client, Pool&gt;&gt;,
     metrics: ConsensusServerMetrics,
     _block: std::marker::PhantomData&lt;Block&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, Client, Pool, ProtoServer&gt; ConsensusRelayServer&lt;Block, Client, Pool, ProtoServer&gt;
+<span class="kw">impl</span>&lt;Block, Client, Pool&gt; ConsensusRelayServer&lt;Block, Client, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
-    ProtoServer: ProtocolServer&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt; + Send,
 {
     <span class="doccomment">/// Creates the consensus relay server.
     </span><span class="kw">fn </span>new(
         client: Arc&lt;Client&gt;,
-        protocol: Box&lt;ProtoServer&gt;,
+        compact_block: CompactBlockServer&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt;,
         request_receiver: async_channel::Receiver&lt;IncomingRequest&gt;,
         backend: Arc&lt;ConsensusServerBackend&lt;Client, Pool&gt;&gt;,
         metrics: ConsensusServerMetrics,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             client,
-            protocol,
+            compact_block,
             request_receiver,
             backend,
             metrics,
@@ -1042,7 +1053,7 @@
     }
 
     <span class="doccomment">/// Handles the received request from the client side
-    </span><span class="kw">async fn </span>on_request(<span class="kw-2">&amp;mut </span><span class="self">self</span>, request: IncomingRequest) {
+    </span><span class="kw">async fn </span>process_incoming_request(<span class="kw-2">&amp;mut </span><span class="self">self</span>, request: IncomingRequest) {
         <span class="comment">// Drop the request in case of errors and let the client time out.
         // This is the behavior of the current substrate block handler.
         </span><span class="kw">let </span>IncomingRequest {
@@ -1050,24 +1061,28 @@
             payload,
             pending_response,
         } = request;
-        <span class="kw">let </span>server_msg: ServerMessage&lt;Block, ProtoServer::Request&gt; =
-            <span class="kw">match </span>Decode::decode(<span class="kw-2">&amp;mut </span>payload.as_ref()) {
-                <span class="prelude-val">Ok</span>(msg) =&gt; msg,
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">warn!</span>(
-                        target: LOG_TARGET,
-                        <span class="question-mark">?</span>peer,
-                        <span class="question-mark">?</span>err,
-                        <span class="string">&quot;Decode failed&quot;
-                    </span>);
-                    <span class="kw">return</span>;
-                }
-            };
+        <span class="kw">let </span>req: ConsensusRequest&lt;Block, TxHash&lt;Pool&gt;&gt; = <span class="kw">match </span>Decode::decode(<span class="kw-2">&amp;mut </span>payload.as_ref())
+        {
+            <span class="prelude-val">Ok</span>(msg) =&gt; msg,
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">warn!</span>(
+                    target: LOG_TARGET,
+                    <span class="question-mark">?</span>peer,
+                    <span class="question-mark">?</span>err,
+                    <span class="string">&quot;Decode failed&quot;
+                </span>);
+                <span class="kw">return</span>;
+            }
+        };
 
-        <span class="kw">let </span>ret = <span class="kw">match </span>server_msg {
-            ServerMessage::InitialRequest(req) =&gt; <span class="self">self</span>.on_initial_request(req),
-            ServerMessage::ProtocolRequest(req) =&gt; <span class="self">self</span>.on_protocol_request(req),
-            ServerMessage::FullDownloadRequest(req) =&gt; <span class="self">self</span>.on_full_download_request(req),
+        <span class="kw">let </span>ret = <span class="kw">match </span>req {
+            ConsensusRequest::BlockDownloadV0(req) =&gt; {
+                <span class="self">self</span>.on_initial_request(req).map(|rsp| rsp.encode())
+            }
+            ConsensusRequest::ProtocolMessageV0(msg) =&gt; <span class="self">self</span>.on_protocol_message(msg),
+            ConsensusRequest::FullBlockDownloadV0(req) =&gt; {
+                <span class="self">self</span>.on_full_download_request(req).map(|rsp| rsp.encode())
+            }
         };
 
         <span class="kw">match </span>ret {
@@ -1095,45 +1110,52 @@
     <span class="doccomment">/// Handles the initial request from the client
     </span><span class="kw">fn </span>on_initial_request(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        initial_request: InitialRequest&lt;Block, ProtoServer::Request&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, RelayError&gt; {
+        initial_request: InitialRequest&lt;Block&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;InitialResponse&lt;Block, TxHash&lt;Pool&gt;&gt;, RelayError&gt; {
         <span class="kw">let </span>block_hash = <span class="self">self</span>.block_hash(<span class="kw-2">&amp;</span>initial_request.from_block)<span class="question-mark">?</span>;
         <span class="kw">let </span>block_attributes = initial_request.block_attributes;
 
         <span class="comment">// Build the generic and the protocol specific parts of the response
         </span><span class="kw">let </span>partial_block = <span class="self">self</span>.get_partial_block(<span class="kw-2">&amp;</span>block_hash, block_attributes)<span class="question-mark">?</span>;
+        <span class="kw">let </span>ProtocolInitialRequest::CompactBlock(compact_request) =
+            initial_request.protocol_request;
         <span class="kw">let </span>protocol_response = <span class="kw">if </span>block_attributes.contains(BlockAttributes::BODY) {
-            <span class="prelude-val">Some</span>(<span class="self">self</span>.protocol.build_initial_response(
+            <span class="kw">let </span>compact_response = <span class="self">self</span>.compact_block.build_initial_response(
                 <span class="kw-2">&amp;</span>block_hash,
-                initial_request.protocol_request,
+                compact_request,
                 <span class="self">self</span>.backend.as_ref(),
-            )<span class="question-mark">?</span>)
+            )<span class="question-mark">?</span>;
+            <span class="prelude-val">Some</span>(ProtocolInitialResponse::from(compact_response))
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>};
 
-        <span class="kw">let </span>initial_response: InitialResponse&lt;Block, ProtoServer::Response&gt; = InitialResponse {
+        <span class="prelude-val">Ok</span>(InitialResponse {
             block_hash,
             partial_block,
             protocol_response,
-        };
-        <span class="prelude-val">Ok</span>(initial_response.encode())
+        })
     }
 
-    <span class="doccomment">/// Handles the protocol request from the client
-    </span><span class="kw">fn </span>on_protocol_request(
+    <span class="doccomment">/// Handles the protocol message from the client
+    </span><span class="kw">fn </span>on_protocol_message(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        request: ProtoServer::Request,
+        msg: ProtocolMessage&lt;Block, TxHash&lt;Pool&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, RelayError&gt; {
-        <span class="kw">let </span>response = <span class="self">self</span>.protocol.on_request(request, <span class="self">self</span>.backend.as_ref())<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(response.encode())
+        <span class="kw">let </span>response = <span class="kw">match </span>msg {
+            ProtocolMessage::CompactBlock(msg) =&gt; <span class="self">self
+                </span>.compact_block
+                .on_protocol_message(msg, <span class="self">self</span>.backend.as_ref())<span class="question-mark">?
+                </span>.encode(),
+        };
+        <span class="prelude-val">Ok</span>(response)
     }
 
     <span class="doccomment">/// Handles the full download request from the client
     </span><span class="kw">fn </span>on_full_download_request(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         full_download_request: FullDownloadRequest&lt;Block&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, RelayError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;FullDownloadResponse&lt;Block&gt;, RelayError&gt; {
         <span class="kw">let </span>block_request = full_download_request.<span class="number">0</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>blocks = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>block_id = <span class="kw">match </span>block_request.from {
@@ -1177,7 +1199,7 @@
             };
         }
 
-        <span class="prelude-val">Ok</span>(blocks.encode())
+        <span class="prelude-val">Ok</span>(FullDownloadResponse(blocks))
     }
 
     <span class="doccomment">/// Builds the partial block response
@@ -1263,14 +1285,12 @@
 }
 
 <span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;Block, Client, Pool, ProtoServer&gt; BlockServer&lt;Block&gt;
-    <span class="kw">for </span>ConsensusRelayServer&lt;Block, Client, Pool, ProtoServer&gt;
+</span><span class="kw">impl</span>&lt;Block, Client, Pool&gt; BlockServer&lt;Block&gt; <span class="kw">for </span>ConsensusRelayServer&lt;Block, Client, Pool&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     Pool: TransactionPool&lt;Block = Block&gt; + <span class="lifetime">&#39;static</span>,
-    ProtoServer: ProtocolServer&lt;BlockHash&lt;Block&gt;, TxHash&lt;Pool&gt;, Extrinsic&lt;Block&gt;&gt; + Send,
 {
     <span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="macro">info!</span>(
@@ -1278,7 +1298,7 @@
             <span class="string">&quot;relay::consensus block server: starting&quot;
         </span>);
         <span class="kw">while let </span><span class="prelude-val">Some</span>(request) = <span class="self">self</span>.request_receiver.next().<span class="kw">await </span>{
-            <span class="self">self</span>.on_request(request).<span class="kw">await</span>;
+            <span class="self">self</span>.process_incoming_request(request).<span class="kw">await</span>;
         }
     }
 }
@@ -1412,10 +1432,10 @@
     });
     <span class="kw">let </span>metrics = ConsensusClientMetrics::new(registry)
         .map_err(BlockRelayConfigurationError::PrometheusError)<span class="question-mark">?</span>;
-    <span class="kw">let </span>relay_client: ConsensusRelayClient&lt;Block, Pool, <span class="kw">_</span>&gt; = ConsensusRelayClient::new(
+    <span class="kw">let </span>relay_client: ConsensusRelayClient&lt;Block, Pool&gt; = ConsensusRelayClient::new(
         network,
         SYNC_PROTOCOL.into(),
-        Arc::new(CompactBlockClient::new()),
+        CompactBlockClient::new(),
         backend,
         metrics,
     );
@@ -1428,7 +1448,7 @@
         .map_err(BlockRelayConfigurationError::PrometheusError)<span class="question-mark">?</span>;
     <span class="kw">let </span>relay_server = ConsensusRelayServer::new(
         client,
-        Box::new(CompactBlockServer::new()),
+        CompactBlockServer::new(),
         request_receiver,
         backend,
         metrics,

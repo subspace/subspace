@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["FarmingError"],"fn":["audit_plot"],"struct":["PlotAuditOptions"]};
+window.SIDEBAR_ITEMS = {"enum":["FarmingError"],"mod":["monoio","sync_fallback"],"struct":["PlotAuditOptions"],"trait":["PlotAudit"]};

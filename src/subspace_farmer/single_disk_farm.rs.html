@@ -1894,6 +1894,19 @@
 <a href="#1894" id="1894">1894</a>
 <a href="#1895" id="1895">1895</a>
 <a href="#1896" id="1896">1896</a>
+<a href="#1897" id="1897">1897</a>
+<a href="#1898" id="1898">1898</a>
+<a href="#1899" id="1899">1899</a>
+<a href="#1900" id="1900">1900</a>
+<a href="#1901" id="1901">1901</a>
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
+<a href="#1905" id="1905">1905</a>
+<a href="#1906" id="1906">1906</a>
+<a href="#1907" id="1907">1907</a>
+<a href="#1908" id="1908">1908</a>
+<a href="#1909" id="1909">1909</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1902,6 +1915,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::identity::{Identity, IdentityError};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::reward_signing::reward_signing;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::sync_fallback::SyncPlotAudit;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::farming::FarmingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::{farming, slot_notification_forwarder, FarmingOptions};
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, DiskPieceCacheError};
@@ -2157,6 +2171,8 @@
     <span class="doccomment">/// Semaphore for part of the plotting when farmer encodes downloaded sector, should typically
     /// allow one permit at a time for efficient CPU utilization
     </span><span class="kw">pub </span>encoding_semaphore: Arc&lt;Semaphore&gt;,
+    <span class="doccomment">/// Whether to farm during initial plotting
+    </span><span class="kw">pub </span>farm_during_initial_plotting: bool,
     <span class="doccomment">/// Thread pool size used for farming (mostly for blocking I/O, but also for some
     /// compute-intensive operations during proving)
     </span><span class="kw">pub </span>farming_thread_pool_size: usize,
@@ -2168,8 +2184,6 @@
     <span class="doccomment">/// Notification for plotter to start, can be used to delay plotting until some initialization
     /// has happened externally
     </span><span class="kw">pub </span>plotting_delay: <span class="prelude-ty">Option</span>&lt;oneshot::Receiver&lt;()&gt;&gt;,
-    <span class="doccomment">/// Whether to farm during initial plotting
-    </span><span class="kw">pub </span>farm_during_initial_plotting: bool,
 }
 
 <span class="doccomment">/// Errors happening when trying to create/open single disk farm
@@ -2919,11 +2933,23 @@
                                 }
                             }
 
+                            <span class="attr">#[cfg(not(windows))]
+                            </span><span class="kw">let </span>plot_audit = <span class="kw-2">&amp;</span>SyncPlotAudit::new(<span class="kw-2">&amp;*</span>plot_file);
+                            <span class="attr">#[cfg(windows)]
+                            </span><span class="kw">let </span>plot_mmap = <span class="kw">unsafe </span>{
+                                memmap2::Mmap::map(<span class="kw-2">&amp;*</span>plot_file).map_err(FarmingError::from)<span class="question-mark">?
+                            </span>};
+                            <span class="comment">// On Windows random read is horrible in terms of performance, memory-mapped I/O helps
+                            // TODO: Remove this once https://internals.rust-lang.org/t/introduce-write-all-at-read-exact-at-on-windows/19649
+                            //  or similar exists in standard library
+                            </span><span class="attr">#[cfg(windows)]
+                            </span><span class="kw">let </span>plot_audit = <span class="kw-2">&amp;</span>SyncPlotAudit::new(<span class="kw-2">&amp;*</span>plot_mmap);
+
                             <span class="kw">let </span>farming_options = FarmingOptions {
                                 public_key,
                                 reward_address,
                                 node_client,
-                                plot_file: <span class="kw-2">&amp;</span>plot_file,
+                                plot_audit,
                                 sectors_metadata,
                                 kzg,
                                 erasure_coding,
@@ -2931,7 +2957,7 @@
                                 modifying_sector_index,
                                 slot_info_notifications: slot_info_forwarder_receiver,
                             };
-                            farming::&lt;PosTable, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
+                            farming::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
                         </span>};
 
                         handle.block_on(<span class="kw">async </span>{
