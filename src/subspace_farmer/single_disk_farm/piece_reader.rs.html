@@ -211,6 +211,11 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{SinkExt, StreamExt};
@@ -220,7 +225,7 @@
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceOffset, PublicKey, SectorId, SectorIndex};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_farmer_components::sector::{sector_size, SectorMetadataChecksummed};
-<span class="kw">use </span>subspace_farmer_components::{reading, ReadAt};
+<span class="kw">use </span>subspace_farmer_components::{reading, ReadAt, ReadAtAsync, ReadAtSync};
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>tracing::{error, warn};
 
@@ -372,44 +377,49 @@
         <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
         <span class="kw">let </span>sector = plot_file.offset(sector_index <span class="kw">as </span>usize * sector_size);
 
-        <span class="kw">let </span>maybe_piece = read_piece::&lt;PosTable, <span class="kw">_</span>&gt;(
+        <span class="kw">let </span>maybe_piece = read_piece::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             <span class="kw-2">&amp;</span>public_key,
             piece_offset,
             <span class="kw-2">&amp;</span>sector_metadata,
-            <span class="kw-2">&amp;</span>sector,
+            <span class="comment">// TODO: Async
+            </span><span class="kw-2">&amp;</span>ReadAt::from_sync(<span class="kw-2">&amp;</span>sector),
             <span class="kw-2">&amp;</span>erasure_coding,
             <span class="kw-2">&amp;mut </span>table_generator,
-        );
+        )
+        .<span class="kw">await</span>;
 
         <span class="comment">// Doesn&#39;t matter if receiver still cares about it
         </span><span class="kw">let _ </span>= response_sender.send(maybe_piece);
     }
 }
 
-<span class="kw">fn </span>read_piece&lt;PosTable, Sector&gt;(
+<span class="kw">async fn </span>read_piece&lt;PosTable, S, A&gt;(
     public_key: <span class="kw-2">&amp;</span>PublicKey,
     piece_offset: PieceOffset,
     sector_metadata: <span class="kw-2">&amp;</span>SectorMetadataChecksummed,
-    sector: <span class="kw-2">&amp;</span>Sector,
+    sector: <span class="kw-2">&amp;</span>ReadAt&lt;S, A&gt;,
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
     table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
 ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt;
 <span class="kw">where
     </span>PosTable: Table,
-    Sector: ReadAt + <span class="question-mark">?</span>Sized,
+    S: ReadAtSync,
+    A: ReadAtAsync,
 {
     <span class="kw">let </span>sector_index = sector_metadata.sector_index;
 
     <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
 
-    <span class="kw">let </span>piece = <span class="kw">match </span>reading::read_piece::&lt;PosTable, <span class="kw">_</span>&gt;(
+    <span class="kw">let </span>piece = <span class="kw">match </span>reading::read_piece::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
         piece_offset,
         <span class="kw-2">&amp;</span>sector_id,
         sector_metadata,
         sector,
         erasure_coding,
         table_generator,
-    ) {
+    )
+    .<span class="kw">await
+    </span>{
         <span class="prelude-val">Ok</span>(piece) =&gt; piece,
         <span class="prelude-val">Err</span>(error) =&gt; {
             <span class="macro">error!</span>(

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["audit_sector"],"struct":["AuditResult"]};
+window.SIDEBAR_ITEMS = {"fn":["audit_plot_async","audit_plot_sync","audit_sector_sync"],"struct":["AuditResult"]};

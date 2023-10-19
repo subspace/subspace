@@ -279,6 +279,8 @@
 <a href="#279" id="279">279</a>
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -303,7 +305,7 @@
 <span class="kw">pub mod </span>domain_chain_spec;
 
 <span class="kw">use </span>futures::executor::block_on;
-<span class="kw">use </span>futures::StreamExt;
+<span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>sc_client_api::{BlockBackend, HeaderBackend};
 <span class="kw">use </span>sc_consensus_subspace::archiver::encode_block;
 <span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
@@ -319,7 +321,7 @@
     HistorySize, PosSeed, PublicKey, Record, SegmentIndex, Solution, REWARD_SIGNING_CONTEXT,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
-<span class="kw">use </span>subspace_farmer_components::auditing::audit_sector;
+<span class="kw">use </span>subspace_farmer_components::auditing::audit_sector_sync;
 <span class="kw">use </span>subspace_farmer_components::plotting::{
     plot_sector, PieceGetterRetryPolicy, PlotSectorOptions, PlottedSector,
 };
@@ -456,7 +458,6 @@
     });
 
     <span class="kw">let </span>(sector, plotted_sector, <span class="kw-2">mut </span>table_generator) = plotting_result_receiver.<span class="kw">await</span>.unwrap();
-    <span class="kw">let </span>sector_index = <span class="number">0</span>;
     <span class="kw">let </span>public_key = PublicKey::from(keypair.public.to_bytes());
 
     <span class="kw">let </span><span class="kw-2">mut </span>new_slot_notification_stream = new_slot_notification_stream.subscribe();
@@ -470,23 +471,26 @@
             <span class="kw">let </span>global_challenge = new_slot_info
                 .global_randomness
                 .derive_global_challenge(new_slot_info.slot.into());
-            <span class="kw">let </span>audit_result = audit_sector(
+            <span class="kw">let </span>audit_result = audit_sector_sync(
                 <span class="kw-2">&amp;</span>public_key,
-                sector_index,
                 <span class="kw-2">&amp;</span>global_challenge,
                 new_slot_info.solution_range,
                 <span class="kw-2">&amp;</span>sector,
                 <span class="kw-2">&amp;</span>plotted_sector.sector_metadata,
-            )
-            .expect(<span class="string">&quot;With max solution range there must be a sector eligible; qed&quot;</span>);
+            );
 
             <span class="kw">let </span>solution = audit_result
+                .unwrap()
                 .solution_candidates
                 .into_solutions(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>kzg, <span class="kw-2">&amp;</span>erasure_coding, |seed: <span class="kw-2">&amp;</span>PosSeed| {
                     table_generator.generate_parallel(seed)
                 })
+                .now_or_never()
+                .expect(<span class="string">&quot;Implementation of the sector is synchronous here; qed&quot;</span>)
                 .unwrap()
                 .next()
+                .now_or_never()
+                .expect(<span class="string">&quot;Implementation of the sector is synchronous here; qed&quot;</span>)
                 .expect(<span class="string">&quot;With max solution range there must be a solution; qed&quot;</span>)
                 .unwrap();
             <span class="comment">// Lazy conversion to a different type of public key and reward address

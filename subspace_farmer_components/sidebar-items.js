@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["auditing","file_ext","plotting","proving","reading","sector"],"struct":["FarmerProtocolInfo","ReadAtOffset"],"trait":["ReadAt"]};
+window.SIDEBAR_ITEMS = {"enum":["ReadAt"],"mod":["auditing","file_ext","plotting","proving","reading","sector"],"struct":["FarmerProtocolInfo","ReadAtOffset"],"trait":["ReadAtAsync","ReadAtSync"]};
