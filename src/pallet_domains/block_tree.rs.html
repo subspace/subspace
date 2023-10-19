@@ -954,12 +954,14 @@
 <a href="#954" id="954">954</a>
 <a href="#955" id="955">955</a>
 <a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::StateRoots;
 <span class="kw">use crate</span>::{
-    BalanceOf, BlockTree, Config, ConsensusBlockHash, DomainBlockDescendants, DomainBlockNumberFor,
-    DomainBlocks, ExecutionInbox, ExecutionReceiptOf, HeadReceiptNumber, InboxedBundleAuthor,
+    BalanceOf, BlockTree, BlockTreeNodes, Config, ConsensusBlockHash, DomainBlockDescendants,
+    DomainBlockNumberFor, ExecutionInbox, ExecutionReceiptOf, HeadReceiptNumber,
+    InboxedBundleAuthor,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
@@ -989,7 +991,7 @@
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
-</span><span class="kw">pub struct </span>DomainBlock&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
+</span><span class="kw">pub struct </span>BlockTreeNode&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt; {
     <span class="doccomment">/// The full ER for this block.
     </span><span class="kw">pub </span>execution_receipt: ExecutionReceipt&lt;Number, Hash, DomainNumber, DomainHash, Balance&gt;,
     <span class="doccomment">/// A set of all operators who have committed to this ER within a bundle. Used to determine who to
@@ -1233,10 +1235,10 @@
                     .cloned()
                     .expect(<span class="string">&quot;should always have a value due to check above&quot;</span>);
 
-                <span class="kw">let </span>DomainBlock {
+                <span class="kw">let </span>BlockTreeNode {
                     execution_receipt,
                     operator_ids,
-                } = DomainBlocks::&lt;T&gt;::take(receipt_hash).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
+                } = BlockTreeNodes::&lt;T&gt;::take(receipt_hash).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
 
                 <span class="kw">_ </span>= StateRoots::&lt;T&gt;::take((
                     domain_id,
@@ -1282,11 +1284,11 @@
         AcceptedReceiptType::CurrentHead =&gt; {
             <span class="comment">// Add confirmation to the current head receipt
             </span><span class="kw">let </span>er_hash = execution_receipt.hash();
-            DomainBlocks::&lt;T&gt;::mutate(er_hash, |maybe_domain_block| {
-                <span class="kw">let </span>domain_block = maybe_domain_block.as_mut().expect(
+            BlockTreeNodes::&lt;T&gt;::mutate(er_hash, |maybe_node| {
+                <span class="kw">let </span>node = maybe_node.as_mut().expect(
                     <span class="string">&quot;The domain block of `CurrentHead` receipt is checked to be exist in `execution_receipt_type`; qed&quot;
                 </span>);
-                domain_block.operator_ids.push(submitter);
+                node.operator_ids.push(submitter);
             });
         }
     }
@@ -1319,11 +1321,11 @@
             er_hashes.insert(er_hash);
         },
     );
-    <span class="kw">let </span>domain_block = DomainBlock {
+    <span class="kw">let </span>block_tree_node = BlockTreeNode {
         execution_receipt,
         operator_ids: <span class="macro">sp_std::vec!</span>[submitter],
     };
-    DomainBlocks::&lt;T&gt;::insert(er_hash, domain_block);
+    BlockTreeNodes::&lt;T&gt;::insert(er_hash, block_tree_node);
 }
 
 <span class="doccomment">/// Import the genesis receipt to the block tree
@@ -1333,7 +1335,7 @@
 ) {
     <span class="kw">let </span>er_hash = genesis_receipt.hash();
     <span class="kw">let </span>domain_block_number = genesis_receipt.domain_block_number;
-    <span class="kw">let </span>domain_block = DomainBlock {
+    <span class="kw">let </span>block_tree_node = BlockTreeNode {
         execution_receipt: genesis_receipt,
         operator_ids: <span class="macro">sp_std::vec!</span>[],
     };
@@ -1345,11 +1347,11 @@
         (
             domain_id,
             domain_block_number,
-            domain_block.execution_receipt.domain_block_hash,
+            block_tree_node.execution_receipt.domain_block_hash,
         ),
-        domain_block.execution_receipt.final_state_root,
+        block_tree_node.execution_receipt.final_state_root,
     );
-    DomainBlocks::&lt;T&gt;::insert(er_hash, domain_block);
+    BlockTreeNodes::&lt;T&gt;::insert(er_hash, block_tree_node);
 }
 
 <span class="attr">#[cfg(test)]
@@ -1377,7 +1379,7 @@
             <span class="macro">assert_eq!</span>(block_tree_node_at_0.len(), <span class="number">1</span>);
 
             <span class="kw">let </span>genesis_node =
-                DomainBlocks::&lt;Test&gt;::get(block_tree_node_at_0.first().unwrap()).unwrap();
+                BlockTreeNodes::&lt;Test&gt;::get(block_tree_node_at_0.first().unwrap()).unwrap();
             <span class="macro">assert!</span>(genesis_node.operator_ids.is_empty());
             <span class="macro">assert_eq!</span>(HeadReceiptNumber::&lt;Test&gt;::get(domain_id), <span class="number">0</span>);
 
@@ -1403,7 +1405,7 @@
     </span><span class="kw">fn </span>test_new_head_receipt() {
         <span class="kw">let </span>creator = <span class="number">0u64</span>;
         <span class="kw">let </span>operator_id = <span class="number">1u64</span>;
-        <span class="kw">let </span>block_tree_pruning_depth = &lt;Test <span class="kw">as </span>Config&gt;::BlockTreePruningDepth::get() <span class="kw">as </span>u64;
+        <span class="kw">let </span>block_tree_pruning_depth = &lt;Test <span class="kw">as </span>Config&gt;::BlockTreePruningDepth::get();
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
         ext.execute_with(|| {
@@ -1418,7 +1420,7 @@
             );
             <span class="kw">let </span><span class="kw-2">mut </span>receipt_of_block_1 = <span class="prelude-val">None</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>bundle_header_hash_of_block_1 = <span class="prelude-val">None</span>;
-            <span class="kw">for </span>block_number <span class="kw">in </span><span class="number">1</span>..=(block_tree_pruning_depth + <span class="number">3</span>) {
+            <span class="kw">for </span>block_number <span class="kw">in </span><span class="number">1</span>..=(block_tree_pruning_depth <span class="kw">as </span>u64 + <span class="number">3</span>) {
                 <span class="comment">// Finilize parent block and initialize block at `block_number`
                 </span>run_to_block::&lt;Test&gt;(block_number, receipt.consensus_block_hash);
 
@@ -1451,7 +1453,7 @@
                 ));
                 <span class="comment">// `bundle_extrinsics_root` should be tracked in `ExecutionInbox`
                 </span><span class="macro">assert_eq!</span>(
-                    ExecutionInbox::&lt;Test&gt;::get((domain_id, block_number, block_number)),
+                    ExecutionInbox::&lt;Test&gt;::get((domain_id, block_number <span class="kw">as </span>u32, block_number)),
                     <span class="macro">vec!</span>[BundleDigest {
                         header_hash: bundle_header_hash,
                         extrinsics_root: bundle_extrinsics_root,
@@ -1463,7 +1465,7 @@
 
                 <span class="comment">// Head receipt number should be updated
                 </span><span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
-                <span class="macro">assert_eq!</span>(head_receipt_number, block_number - <span class="number">1</span>);
+                <span class="macro">assert_eq!</span>(head_receipt_number, block_number <span class="kw">as </span>u32 - <span class="number">1</span>);
 
                 <span class="comment">// As we only extending the block tree there should be no fork
                 </span><span class="kw">let </span>parent_block_tree_nodes =
@@ -1472,7 +1474,7 @@
 
                 <span class="comment">// The submitter should be added to `operator_ids`
                 </span><span class="kw">let </span>parent_domain_block_receipt = parent_block_tree_nodes.first().unwrap();
-                <span class="kw">let </span>parent_node = DomainBlocks::&lt;Test&gt;::get(parent_domain_block_receipt).unwrap();
+                <span class="kw">let </span>parent_node = BlockTreeNodes::&lt;Test&gt;::get(parent_domain_block_receipt).unwrap();
                 <span class="macro">assert_eq!</span>(parent_node.operator_ids.len(), <span class="number">1</span>);
                 <span class="macro">assert_eq!</span>(parent_node.operator_ids[<span class="number">0</span>], operator_id);
 
@@ -1597,7 +1599,7 @@
             ));
 
             <span class="macro">assert_eq!</span>(
-                DomainBlocks::&lt;Test&gt;::get(stale_receipt_hash)
+                BlockTreeNodes::&lt;Test&gt;::get(stale_receipt_hash)
                     .unwrap()
                     .operator_ids,
                 <span class="macro">vec!</span>[operator_id1]
@@ -1658,11 +1660,11 @@
             <span class="kw">let </span>nodes = BlockTree::&lt;Test&gt;::get(domain_id, head_receipt_number);
             <span class="macro">assert_eq!</span>(nodes.len(), <span class="number">2</span>);
             <span class="kw">for </span>n <span class="kw">in </span>nodes.iter() {
-                <span class="kw">let </span>block = DomainBlocks::&lt;Test&gt;::get(n).unwrap();
+                <span class="kw">let </span>node = BlockTreeNodes::&lt;Test&gt;::get(n).unwrap();
                 <span class="kw">if </span><span class="kw-2">*</span>n == new_branch_receipt_hash {
-                    <span class="macro">assert_eq!</span>(block.operator_ids, <span class="macro">vec!</span>[operator_id2]);
+                    <span class="macro">assert_eq!</span>(node.operator_ids, <span class="macro">vec!</span>[operator_id2]);
                 } <span class="kw">else </span>{
-                    <span class="macro">assert_eq!</span>(block.operator_ids, <span class="macro">vec!</span>[operator_id1]);
+                    <span class="macro">assert_eq!</span>(node.operator_ids, <span class="macro">vec!</span>[operator_id1]);
                 }
             }
         });
@@ -1686,7 +1688,7 @@
             <span class="comment">// Construct a future receipt
             </span><span class="kw">let </span><span class="kw-2">mut </span>future_receipt = current_head_receipt.clone();
             future_receipt.domain_block_number = head_receipt_number + <span class="number">2</span>;
-            future_receipt.consensus_block_number = head_receipt_number + <span class="number">2</span>;
+            future_receipt.consensus_block_number = head_receipt_number <span class="kw">as </span>u64 + <span class="number">2</span>;
             ExecutionInbox::&lt;Test&gt;::insert(
                 (
                     domain_id,
@@ -1839,7 +1841,7 @@
             </span><span class="kw">let </span>current_block_number = frame_system::Pallet::&lt;Test&gt;::current_block_number();
             <span class="kw">let </span>execution_inbox = ExecutionInbox::&lt;Test&gt;::get((
                 domain_id,
-                current_block_number,
+                current_block_number <span class="kw">as </span>u32,
                 current_block_number,
             ));
             <span class="kw">let </span>bundles_extrinsics_roots: Vec&lt;<span class="kw">_</span>&gt; = execution_inbox
@@ -1890,7 +1892,7 @@
             </span><span class="kw">let </span>next_receipt = extend_block_tree(
                 domain_id,
                 operator_set[<span class="number">0</span>],
-                current_block_number + challenge_period - <span class="number">1</span>,
+                (current_block_number + challenge_period) <span class="kw">as </span>u32 - <span class="number">1</span>,
             );
             <span class="comment">// Confirm `target_receipt`
             </span><span class="kw">let </span>confirmed_domain_block = process_execution_receipt::&lt;Test&gt;(

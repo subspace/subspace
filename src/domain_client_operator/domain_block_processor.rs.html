@@ -1225,6 +1225,12 @@
 <a href="#1225" id="1225">1225</a>
 <a href="#1226" id="1226">1226</a>
 <a href="#1227" id="1227">1227</a>
+<a href="#1228" id="1228">1228</a>
+<a href="#1229" id="1229">1229</a>
+<a href="#1230" id="1230">1230</a>
+<a href="#1231" id="1231">1231</a>
+<a href="#1232" id="1232">1232</a>
+<a href="#1233" id="1233">1233</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::aux_schema::{BundleMismatchType, ReceiptMismatchInfo};
 <span class="kw">use </span><span class="kw">crate</span>::fraud_proof::{find_trace_mismatch, FraudProofGenerator};
 <span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
@@ -1498,7 +1504,7 @@
         (consensus_block_hash, consensus_block_number): (CBlock::Hash, NumberFor&lt;CBlock&gt;),
         (parent_hash, parent_number): (Block::Hash, NumberFor&lt;Block&gt;),
         preprocess_result: PreprocessResult&lt;Block&gt;,
-        digests: Digest,
+        inherent_digests: Digest,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;DomainBlockResult&lt;Block, CBlock&gt;, sp_blockchain::Error&gt; {
         <span class="kw">let </span>PreprocessResult {
             extrinsics,
@@ -1521,7 +1527,13 @@
             header_number,
             header_hash,
         } = <span class="self">self
-            </span>.build_and_import_block(parent_hash, parent_number, extrinsics, fork_choice, digests)
+            </span>.build_and_import_block(
+                parent_hash,
+                parent_number,
+                extrinsics,
+                fork_choice,
+                inherent_digests,
+            )
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">tracing::debug!</span>(
@@ -1623,14 +1635,14 @@
         parent_number: NumberFor&lt;Block&gt;,
         extrinsics: Vec&lt;Block::Extrinsic&gt;,
         fork_choice: ForkChoiceStrategy,
-        digests: Digest,
+        inherent_digests: Digest,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;DomainBlockBuildResult&lt;Block&gt;, sp_blockchain::Error&gt; {
         <span class="kw">let </span>block_builder = BlockBuilder::new(
             <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
             parent_hash,
             parent_number,
             RecordProof::No,
-            digests,
+            inherent_digests,
             <span class="kw-2">&amp;*</span><span class="self">self</span>.backend,
             extrinsics,
         )<span class="question-mark">?</span>;
@@ -1936,7 +1948,7 @@
             </span>.parent_chain
             .extract_fraud_proofs(parent_chain_block_hash, extrinsics)<span class="question-mark">?</span>;
 
-        <span class="self">self</span>.check_receipts(receipts, fraud_proofs)<span class="question-mark">?</span>;
+        <span class="self">self</span>.check_receipts(parent_chain_block_hash, receipts, fraud_proofs)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -1967,6 +1979,7 @@
 
     <span class="kw">fn </span>check_receipts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        parent_chain_block_hash: ParentChainBlock::Hash,
         receipts: Vec&lt;ExecutionReceiptFor&lt;Block, ParentChainBlock&gt;&gt;,
         fraud_proofs: Vec&lt;FraudProof&lt;NumberFor&lt;ParentChainBlock&gt;, ParentChainBlock::Hash&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt; {
@@ -2051,31 +2064,30 @@
             }
         }
 
-        <span class="kw">let </span>bad_receipts_to_delete = fraud_proofs
-            .into_iter()
-            .filter_map(|fraud_proof| {
-                <span class="kw">match </span>fraud_proof {
-                    FraudProof::InvalidStateTransition(fraud_proof) =&gt; {
-                        <span class="kw">let </span>bad_receipt_number = fraud_proof.parent_number + <span class="number">1</span>;
-                        <span class="kw">let </span>bad_receipt_hash = fraud_proof.bad_receipt_hash;
-
-                        <span class="comment">// In order to not delete a receipt which was just inserted, accumulate the write&amp;delete operations
-                        // in case the bad receipt and corresponding fraud proof are included in the same block.
-                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(index) = bad_receipts_to_write
-                            .iter()
-                            .map(|(<span class="kw">_</span>, receipt_hash, <span class="kw">_</span>)| receipt_hash)
-                            .position(|v| <span class="kw-2">*</span>v == bad_receipt_hash)
-                        {
-                            bad_receipts_to_write.swap_remove(index);
-                            <span class="prelude-val">None
-                        </span>} <span class="kw">else </span>{
-                            <span class="prelude-val">Some</span>((bad_receipt_number, bad_receipt_hash))
-                        }
-                    }
-                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+        <span class="comment">// Use the `parent_chain_parent_hash` to get the `bad_receipt` because fraud proof already pruned the bad
+        // receipt in `parent_chain_block_hash`
+        </span><span class="kw">let </span>parent_chain_parent_hash = <span class="self">self</span>.parent_chain.parent_hash(parent_chain_block_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>bad_receipts_to_delete = <span class="macro">vec!</span>[];
+        <span class="kw">for </span>fraud_proof <span class="kw">in </span>fraud_proofs {
+            <span class="kw">let </span>bad_receipt_hash = fraud_proof.bad_receipt_hash();
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(bad_receipt) = <span class="self">self
+                </span>.parent_chain
+                .execution_receipt(parent_chain_parent_hash, bad_receipt_hash)<span class="question-mark">?
+            </span>{
+                <span class="comment">// In order to not delete a receipt which was just inserted, accumulate the write&amp;delete operations
+                // in case the bad receipt and corresponding fraud proof are included in the same block.
+                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(index) = bad_receipts_to_write
+                    .iter()
+                    .map(|(<span class="kw">_</span>, receipt_hash, <span class="kw">_</span>)| receipt_hash)
+                    .position(|v| <span class="kw-2">*</span>v == bad_receipt_hash)
+                {
+                    bad_receipts_to_write.swap_remove(index);
+                } <span class="kw">else </span>{
+                    bad_receipts_to_delete
+                        .push((bad_receipt.consensus_block_number, bad_receipt_hash));
                 }
-            })
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+            }
+        }
 
         <span class="kw">for </span>(bad_receipt_number, bad_receipt_hash, mismatch_info) <span class="kw">in </span>bad_receipts_to_write {
             <span class="kw">crate</span>::aux_schema::write_bad_receipt::&lt;<span class="kw">_</span>, ParentChainBlock&gt;(
@@ -2087,7 +2099,7 @@
         }
 
         <span class="kw">for </span>(bad_receipt_number, bad_receipt_hash) <span class="kw">in </span>bad_receipts_to_delete {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="kw">crate</span>::aux_schema::delete_bad_receipt(
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="kw">crate</span>::aux_schema::delete_bad_receipt::&lt;<span class="kw">_</span>, ParentChainBlock&gt;(
                 <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
                 bad_receipt_number,
                 bad_receipt_hash,

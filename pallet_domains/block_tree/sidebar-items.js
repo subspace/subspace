@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["DomainBlock"]};
+window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["BlockTreeNode"]};

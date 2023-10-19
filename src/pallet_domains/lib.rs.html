@@ -1844,6 +1844,30 @@
 <a href="#1844" id="1844">1844</a>
 <a href="#1845" id="1845">1845</a>
 <a href="#1846" id="1846">1846</a>
+<a href="#1847" id="1847">1847</a>
+<a href="#1848" id="1848">1848</a>
+<a href="#1849" id="1849">1849</a>
+<a href="#1850" id="1850">1850</a>
+<a href="#1851" id="1851">1851</a>
+<a href="#1852" id="1852">1852</a>
+<a href="#1853" id="1853">1853</a>
+<a href="#1854" id="1854">1854</a>
+<a href="#1855" id="1855">1855</a>
+<a href="#1856" id="1856">1856</a>
+<a href="#1857" id="1857">1857</a>
+<a href="#1858" id="1858">1858</a>
+<a href="#1859" id="1859">1859</a>
+<a href="#1860" id="1860">1860</a>
+<a href="#1861" id="1861">1861</a>
+<a href="#1862" id="1862">1862</a>
+<a href="#1863" id="1863">1863</a>
+<a href="#1864" id="1864">1864</a>
+<a href="#1865" id="1865">1865</a>
+<a href="#1866" id="1866">1866</a>
+<a href="#1867" id="1867">1867</a>
+<a href="#1868" id="1868">1868</a>
+<a href="#1869" id="1869">1869</a>
+<a href="#1870" id="1870">1870</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1863,6 +1887,7 @@
 
 </span><span class="attr">#![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
 #![feature(array_windows)]
+#![feature(associated_type_bounds)]
 
 #[cfg(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>)]
 </span><span class="kw">mod </span>benchmarking;
@@ -1895,12 +1920,13 @@
 <span class="kw">use </span>sp_domains::verification::verify_invalid_total_rewards_fraud_proof;
 <span class="kw">use </span>sp_domains::{
     DomainBlockLimit, DomainId, DomainInstanceData, ExecutionReceipt, OpaqueBundle, OperatorId,
-    OperatorPublicKey, ProofOfElection, RuntimeId, DOMAIN_EXTRINSICS_SHUFFLING_SEED_SUBJECT,
-    EMPTY_EXTRINSIC_ROOT,
+    OperatorPublicKey, ProofOfElection, ReceiptHash, RuntimeId,
+    DOMAIN_EXTRINSICS_SHUFFLING_SEED_SUBJECT, EMPTY_EXTRINSIC_ROOT,
 };
 <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof_runtime_interface::get_fraud_proof_verification_info;
 <span class="kw">use </span>sp_domains_fraud_proof::verification::{
-    verify_invalid_domain_block_hash_fraud_proof, verify_invalid_domain_extrinsics_root_fraud_proof,
+    verify_invalid_domain_block_hash_fraud_proof,
+    verify_invalid_domain_extrinsics_root_fraud_proof, verify_invalid_state_transition_fraud_proof,
 };
 <span class="kw">use </span>sp_domains_fraud_proof::{
     FraudProofVerificationInfoRequest, FraudProofVerificationInfoResponse,
@@ -1958,7 +1984,7 @@
     <span class="attr">#![allow(clippy::large_enum_variant)]
 
     </span><span class="kw">use </span><span class="kw">crate</span>::block_tree::{
-        execution_receipt_type, process_execution_receipt, DomainBlock, Error <span class="kw">as </span>BlockTreeError,
+        execution_receipt_type, process_execution_receipt, BlockTreeNode, Error <span class="kw">as </span>BlockTreeError,
         ReceiptType,
     };
     <span class="kw">use </span><span class="kw">crate</span>::domain_registry::{
@@ -2017,10 +2043,13 @@
     <span class="kw">use </span>subspace_core_primitives::U256;
 
     <span class="attr">#[pallet::config]
-    </span><span class="kw">pub trait </span>Config: frame_system::Config {
+    </span><span class="kw">pub trait </span>Config: frame_system::Config&lt;Hash: Into&lt;H256&gt;&gt; {
         <span class="kw">type </span>RuntimeEvent: From&lt;Event&lt;<span class="self">Self</span>&gt;&gt; + IsType&lt;&lt;<span class="self">Self </span><span class="kw">as </span>frame_system::Config&gt;::RuntimeEvent&gt;;
 
-        <span class="doccomment">/// Domain block hash type.
+        <span class="comment">// TODO: `DomainHash` can be derived from `DomainHeader`, it is still needed just for
+        // converting `DomainHash` to/from `H256` without encode/decode, remove it once we found
+        // other ways to do this.
+        </span><span class="doccomment">/// Domain block hash type.
         </span><span class="kw">type </span>DomainHash: Parameter
             + Member
             + MaybeSerializeDeserialize
@@ -2301,8 +2330,8 @@
         OptionQuery,
     &gt;;
 
-    <span class="doccomment">/// The domain block tree, map (`domain_id`, `domain_block_number`) to the hash of a domain blocks,
-    /// which can be used get the domain block in `DomainBlocks`
+    <span class="doccomment">/// The domain block tree, map (`domain_id`, `domain_block_number`) to the hash of ER,
+    /// which can be used get the block tree node in `BlockTreeNodes`
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>BlockTree&lt;T: Config&gt; = StorageDoubleMap&lt;
         <span class="kw">_</span>,
@@ -2314,13 +2343,13 @@
         ValueQuery,
     &gt;;
 
-    <span class="doccomment">/// Mapping of domain block hash to domain block
+    <span class="doccomment">/// Mapping of block tree node hash to the node, each node represent a domain block
     </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>DomainBlocks&lt;T: Config&gt; = StorageMap&lt;
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>BlockTreeNodes&lt;T: Config&gt; = StorageMap&lt;
         <span class="kw">_</span>,
         Identity,
         ReceiptHash,
-        DomainBlock&lt;
+        BlockTreeNode&lt;
             BlockNumberFor&lt;T&gt;,
             T::Hash,
             DomainBlockNumberFor&lt;T&gt;,
@@ -2453,6 +2482,8 @@
         </span>InvalidDomainBlockHashFraudProof(sp_domains::verification::VerificationError),
         <span class="doccomment">/// Invalid domain extrinsic fraud proof
         </span>InvalidExtrinsicRootFraudProof(sp_domains::verification::VerificationError),
+        <span class="doccomment">/// Invalid state transition fraud proof
+        </span>InvalidStateTransitionFraudProof,
         <span class="doccomment">/// Failed to get block randomness.
         </span>FailedToGetBlockRandomness,
         <span class="doccomment">/// Failed to get domain timestamp extrinsic.
@@ -2737,10 +2768,10 @@
             <span class="comment">// Prune the bad ER and all of its descendants from the block tree. ER are pruning
             // with BFS order from lower height to higher height.
             </span><span class="kw">while let </span><span class="prelude-val">Some</span>(receipt_hash) = receipt_to_remove.pop() {
-                <span class="kw">let </span>DomainBlock {
+                <span class="kw">let </span>BlockTreeNode {
                     execution_receipt,
                     operator_ids,
-                } = DomainBlocks::&lt;T&gt;::take(receipt_hash)
+                } = BlockTreeNodes::&lt;T&gt;::take(receipt_hash)
                     .ok_or::&lt;Error&lt;T&gt;&gt;(FraudProofError::BadReceiptNotFound.into())<span class="question-mark">?</span>;
 
                 BlockTree::&lt;T&gt;::mutate_exists(
@@ -3215,7 +3246,7 @@
     <span class="kw">pub fn </span>genesis_state_root(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;H256&gt; {
         BlockTree::&lt;T&gt;::get(domain_id, DomainBlockNumberFor::&lt;T&gt;::zero())
             .first()
-            .and_then(DomainBlocks::&lt;T&gt;::get)
+            .and_then(BlockTreeNodes::&lt;T&gt;::get)
             .map(|block| block.execution_receipt.final_state_root.into())
     }
 
@@ -3368,7 +3399,7 @@
     <span class="kw">fn </span>validate_fraud_proof(
         fraud_proof: <span class="kw-2">&amp;</span>FraudProof&lt;BlockNumberFor&lt;T&gt;, T::Hash&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), FraudProofError&gt; {
-        <span class="kw">let </span>bad_receipt = DomainBlocks::&lt;T&gt;::get(fraud_proof.bad_receipt_hash())
+        <span class="kw">let </span>bad_receipt = BlockTreeNodes::&lt;T&gt;::get(fraud_proof.bad_receipt_hash())
             .ok_or(FraudProofError::BadReceiptNotFound)<span class="question-mark">?
             </span>.execution_receipt;
 
@@ -3393,7 +3424,7 @@
                 ..
             }) =&gt; {
                 <span class="kw">let </span>parent_receipt =
-                    DomainBlocks::&lt;T&gt;::get(bad_receipt.parent_domain_block_receipt_hash)
+                    BlockTreeNodes::&lt;T&gt;::get(bad_receipt.parent_domain_block_receipt_hash)
                         .ok_or(FraudProofError::ParentReceiptNotFound)<span class="question-mark">?
                         </span>.execution_receipt;
                 verify_invalid_domain_block_hash_fraud_proof::&lt;
@@ -3447,6 +3478,19 @@
                     domain_timestamp_extrinsic,
                 )
                 .map_err(FraudProofError::InvalidExtrinsicRootFraudProof)<span class="question-mark">?</span>;
+            }
+            FraudProof::InvalidStateTransition(proof) =&gt; {
+                <span class="kw">let </span>bad_receipt_parent =
+                    BlockTreeNodes::&lt;T&gt;::get(bad_receipt.parent_domain_block_receipt_hash)
+                        .ok_or(FraudProofError::ParentReceiptNotFound)<span class="question-mark">?
+                        </span>.execution_receipt;
+
+                verify_invalid_state_transition_fraud_proof::&lt;
+                    T::Block,
+                    T::DomainHeader,
+                    BalanceOf&lt;T&gt;,
+                &gt;(bad_receipt, bad_receipt_parent, proof)
+                .map_err(|<span class="kw">_</span>| FraudProofError::InvalidStateTransitionFraudProof)<span class="question-mark">?</span>;
             }
             <span class="kw">_ </span>=&gt; {}
         }
@@ -3623,6 +3667,10 @@
         <span class="kw">let </span>seed = DOMAIN_EXTRINSICS_SHUFFLING_SEED_SUBJECT;
         <span class="kw">let </span>(randomness, <span class="kw">_</span>) = T::Randomness::random(seed);
         randomness
+    }
+
+    <span class="kw">pub fn </span>execution_receipt(receipt_hash: ReceiptHash) -&gt; <span class="prelude-ty">Option</span>&lt;ExecutionReceiptOf&lt;T&gt;&gt; {
+        BlockTreeNodes::&lt;T&gt;::get(receipt_hash).map(|db| db.execution_receipt)
     }
 }
 

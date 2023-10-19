@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["valued_ordered_trie_root"]};
+window.SIDEBAR_ITEMS = {"fn":["generate_proof","valued_ordered_trie_root","verify_proof"]};

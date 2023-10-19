@@ -443,58 +443,7 @@
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a>
-<a href="#453" id="453">453</a>
-<a href="#454" id="454">454</a>
-<a href="#455" id="455">455</a>
-<a href="#456" id="456">456</a>
-<a href="#457" id="457">457</a>
-<a href="#458" id="458">458</a>
-<a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a>
-<a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a>
-<a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-<a href="#465" id="465">465</a>
-<a href="#466" id="466">466</a>
-<a href="#467" id="467">467</a>
-<a href="#468" id="468">468</a>
-<a href="#469" id="469">469</a>
-<a href="#470" id="470">470</a>
-<a href="#471" id="471">471</a>
-<a href="#472" id="472">472</a>
-<a href="#473" id="473">473</a>
-<a href="#474" id="474">474</a>
-<a href="#475" id="475">475</a>
-<a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a>
-<a href="#478" id="478">478</a>
-<a href="#479" id="479">479</a>
-<a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-<a href="#495" id="495">495</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::aux_schema::BundleMismatchType;
-<span class="kw">use </span><span class="kw">crate</span>::utils::to_number_primitive;
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>domain_block_builder::{BlockBuilder, RecordProof};
@@ -505,6 +454,7 @@
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
 <span class="kw">use </span>sp_core::H256;
+<span class="kw">use </span>sp_domain_digests::AsPredigest;
 <span class="kw">use </span>sp_domains::fraud_proof::{
     ExecutionPhase, ExtrinsicDigest, FraudProof, InvalidBundlesFraudProof,
     InvalidDomainBlockHashProof, InvalidExtrinsicsRootProof, InvalidStateTransitionProof,
@@ -513,7 +463,7 @@
 };
 <span class="kw">use </span>sp_domains::{DomainId, DomainsApi};
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, HashingFor, Header <span class="kw">as </span>HeaderT, NumberFor};
-<span class="kw">use </span>sp_runtime::Digest;
+<span class="kw">use </span>sp_runtime::{Digest, DigestItem};
 <span class="kw">use </span>sp_trie::{LayoutV1, StorageProof};
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
@@ -522,10 +472,6 @@
 <span class="doccomment">/// Error type for fraud proof generation.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>FraudProofError {
-    <span class="attr">#[error(<span class="string">&quot;State root not using H256&quot;</span>)]
-    </span>InvalidStateRootType,
-    <span class="attr">#[error(<span class="string">&quot;Invalid trace index, got: {index}, max: {max}&quot;</span>)]
-    </span>InvalidTraceIndex { index: usize, max: usize },
     <span class="attr">#[error(<span class="string">&quot;Invalid extrinsic index for creating the execution proof, got: {index}, max: {max}&quot;</span>)]
     </span>InvalidExtrinsicIndex { index: usize, max: usize },
     <span class="attr">#[error(transparent)]
@@ -536,6 +482,8 @@
     </span>MissingBundle { bundle_index: usize },
     <span class="attr">#[error(<span class="string">&quot;Invalid bundle extrinsic at bundle index[{bundle_index}]&quot;</span>)]
     </span>InvalidBundleExtrinsic { bundle_index: usize },
+    <span class="attr">#[error(<span class="string">&quot;Fail to generate the proof of inclusion&quot;</span>)]
+    </span>FailToGenerateProofOfInclusion,
 }
 
 <span class="kw">pub struct </span>FraudProofGenerator&lt;Block, CBlock, Client, CClient, Backend, E&gt; {
@@ -757,62 +705,28 @@
         </span>PCB: BlockT,
     {
         <span class="kw">let </span>block_hash = local_receipt.domain_block_hash;
-        <span class="kw">let </span>block_number = to_number_primitive(local_receipt.consensus_block_number);
-
+        <span class="kw">let </span>block_number = local_receipt.domain_block_number;
         <span class="kw">let </span>header = <span class="self">self</span>.header(block_hash)<span class="question-mark">?</span>;
         <span class="kw">let </span>parent_header = <span class="self">self</span>.header(<span class="kw-2">*</span>header.parent_hash())<span class="question-mark">?</span>;
 
-        <span class="comment">// TODO: avoid the encode &amp; decode?
-        </span><span class="kw">let </span>as_h256 = |state_root: <span class="kw-2">&amp;</span>Block::Hash| {
-            H256::decode(<span class="kw-2">&amp;mut </span>state_root.encode().as_slice())
-                .map_err(|<span class="kw">_</span>| FraudProofError::InvalidStateRootType)
-        };
-
         <span class="kw">let </span>prover = ExecutionProver::new(<span class="self">self</span>.backend.clone(), <span class="self">self</span>.code_executor.clone());
 
-        <span class="kw">let </span>parent_number = to_number_primitive(<span class="kw-2">*</span>parent_header.number());
-
-        <span class="kw">let </span>local_root = local_receipt
-            .execution_trace
-            .get(local_trace_index <span class="kw">as </span>usize)
-            .ok_or(FraudProofError::InvalidTraceIndex {
-                index: local_trace_index <span class="kw">as </span>usize,
-                max: local_receipt.execution_trace.len() - <span class="number">1</span>,
-            })<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>consensus_parent_hash = H256::decode(
-            <span class="kw-2">&amp;mut </span><span class="self">self
-                </span>.consensus_client
-                .header(local_receipt.consensus_block_hash)<span class="question-mark">?
-                </span>.ok_or_else(|| {
-                    sp_blockchain::Error::Backend(<span class="macro">format!</span>(
-                        <span class="string">&quot;Header not found for consensus block {:?}&quot;</span>,
-                        local_receipt.consensus_block_hash
-                    ))
-                })<span class="question-mark">?
-                </span>.parent_hash()
-                .encode()
-                .as_slice(),
-        )
-        .map_err(|<span class="kw">_</span>| FraudProofError::InvalidStateRootType)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>digest = Digest::default();
+        <span class="kw">let </span>inherent_digests = Digest {
+            logs: <span class="macro">vec!</span>[DigestItem::consensus_block_info(
+                local_receipt.consensus_block_hash,
+            )],
+        };
 
         <span class="kw">let </span>invalid_state_transition_proof = <span class="kw">if </span>local_trace_index == <span class="number">0 </span>{
             <span class="comment">// `initialize_block` execution proof.
-            </span><span class="kw">let </span>pre_state_root = as_h256(parent_header.state_root())<span class="question-mark">?</span>;
-            <span class="kw">let </span>post_state_root = as_h256(local_root)<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>new_header = Block::Header::new(
-                block_number.into(),
+            </span><span class="kw">let </span>new_header = Block::Header::new(
+                block_number,
                 Default::default(),
                 Default::default(),
                 parent_header.hash(),
-                digest,
+                inherent_digests,
             );
-            <span class="kw">let </span>execution_phase = ExecutionPhase::InitializeBlock {
-                domain_parent_hash: as_h256(<span class="kw-2">&amp;</span>parent_header.hash())<span class="question-mark">?</span>,
-            };
+            <span class="kw">let </span>execution_phase = ExecutionPhase::InitializeBlock;
             <span class="kw">let </span>initialize_block_call_data = new_header.encode();
 
             <span class="kw">let </span>proof = prover.prove_execution::&lt;sp_trie::PrefixedMemoryDB&lt;HashingFor&lt;Block&gt;&gt;&gt;(
@@ -825,22 +739,13 @@
             InvalidStateTransitionProof {
                 domain_id,
                 bad_receipt_hash,
-                parent_number,
-                consensus_parent_hash,
-                pre_state_root,
-                post_state_root,
                 proof,
                 execution_phase,
             }
         } <span class="kw">else if </span>local_trace_index <span class="kw">as </span>usize == local_receipt.execution_trace.len() - <span class="number">1 </span>{
             <span class="comment">// `finalize_block` execution proof.
-            </span><span class="kw">let </span>pre_state_root =
-                as_h256(<span class="kw-2">&amp;</span>local_receipt.execution_trace[local_trace_index <span class="kw">as </span>usize - <span class="number">1</span>])<span class="question-mark">?</span>;
-            <span class="kw">let </span>post_state_root = as_h256(local_root)<span class="question-mark">?</span>;
-            <span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(block_hash)<span class="question-mark">?</span>;
-            <span class="kw">let </span>execution_phase = ExecutionPhase::FinalizeBlock {
-                total_extrinsics: local_trace_index - <span class="number">1</span>,
-            };
+            </span><span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(block_hash)<span class="question-mark">?</span>;
+            <span class="kw">let </span>execution_phase = ExecutionPhase::FinalizeBlock;
             <span class="kw">let </span>finalize_block_call_data = Vec::new();
 
             <span class="kw">let </span>block_builder = BlockBuilder::new(
@@ -848,7 +753,7 @@
                 parent_header.hash(),
                 <span class="kw-2">*</span>parent_header.number(),
                 RecordProof::No,
-                digest,
+                inherent_digests,
                 <span class="kw-2">&amp;*</span><span class="self">self</span>.backend,
                 extrinsics,
             )<span class="question-mark">?</span>;
@@ -867,35 +772,23 @@
             InvalidStateTransitionProof {
                 domain_id,
                 bad_receipt_hash,
-                parent_number,
-                consensus_parent_hash,
-                pre_state_root,
-                post_state_root,
                 proof,
                 execution_phase,
             }
         } <span class="kw">else </span>{
             <span class="comment">// Regular extrinsic execution proof.
-            </span><span class="kw">let </span>pre_state_root =
-                as_h256(<span class="kw-2">&amp;</span>local_receipt.execution_trace[local_trace_index <span class="kw">as </span>usize - <span class="number">1</span>])<span class="question-mark">?</span>;
-            <span class="kw">let </span>post_state_root = as_h256(local_root)<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>(proof, execution_phase) = <span class="self">self</span>.create_extrinsic_execution_proof(
+            </span><span class="kw">let </span>(proof, execution_phase) = <span class="self">self</span>.create_extrinsic_execution_proof(
                 local_trace_index <span class="kw">as </span>usize - <span class="number">1</span>,
                 <span class="kw-2">&amp;</span>parent_header,
                 block_hash,
                 <span class="kw-2">&amp;</span>prover,
-                digest,
+                inherent_digests,
             )<span class="question-mark">?</span>;
 
             <span class="comment">// TODO: proof should be a CompactProof.
             </span>InvalidStateTransitionProof {
                 domain_id,
                 bad_receipt_hash,
-                parent_number,
-                consensus_parent_hash,
-                pre_state_root,
-                post_state_root,
                 proof,
                 execution_phase,
             }
@@ -927,21 +820,28 @@
         digest: Digest,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(StorageProof, ExecutionPhase), FraudProofError&gt; {
         <span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(current_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span>encoded_extrinsics: Vec&lt;<span class="kw">_</span>&gt; = extrinsics.iter().map(Encode::encode).collect();
 
-        <span class="kw">let </span>encoded_extrinsic = extrinsics
-            .get(extrinsic_index)
-            .ok_or(FraudProofError::InvalidExtrinsicIndex {
+        <span class="kw">let </span>target_extrinsic = encoded_extrinsics.get(extrinsic_index).ok_or(
+            FraudProofError::InvalidExtrinsicIndex {
                 index: extrinsic_index,
                 max: extrinsics.len() - <span class="number">1</span>,
-            })<span class="question-mark">?
-            </span>.encode();
+            },
+        )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>execution_phase = ExecutionPhase::ApplyExtrinsic(
-            extrinsic_index
-                .try_into()
-                .expect(<span class="string">&quot;extrinsic_index must fit into u32&quot;</span>),
-        );
-        <span class="kw">let </span>apply_extrinsic_call_data = encoded_extrinsic;
+        <span class="kw">let </span>execution_phase = {
+            <span class="kw">let </span>proof_of_inclusion = sp_domains::valued_trie_root::generate_proof::&lt;
+                LayoutV1&lt;BlakeTwo256&gt;,
+            &gt;(
+                encoded_extrinsics.as_slice(), extrinsic_index <span class="kw">as </span>u32
+            )
+            .ok_or(FraudProofError::FailToGenerateProofOfInclusion)<span class="question-mark">?</span>;
+            ExecutionPhase::ApplyExtrinsic {
+                proof_of_inclusion,
+                mismatch_index: extrinsic_index <span class="kw">as </span>u32,
+                extrinsic: target_extrinsic.clone(),
+            }
+        };
 
         <span class="kw">let </span>block_builder = BlockBuilder::new(
             <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
@@ -959,7 +859,7 @@
         <span class="kw">let </span>execution_proof = prover.prove_execution(
             parent_header.hash(),
             <span class="kw-2">&amp;</span>execution_phase,
-            <span class="kw-2">&amp;</span>apply_extrinsic_call_data,
+            target_extrinsic,
             <span class="prelude-val">Some</span>((delta, post_delta_root)),
         )<span class="question-mark">?</span>;
 

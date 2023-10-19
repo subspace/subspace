@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ExecutionProver","InvalidStateTransitionProofVerifier"],"trait":["VerifyInvalidStateTransitionProof"]};
+window.SIDEBAR_ITEMS = {"struct":["ExecutionProver"]};
