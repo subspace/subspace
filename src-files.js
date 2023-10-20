@@ -37,6 +37,7 @@ var srcIndex = JSON.parse('{\
 "sp_domain_digests":["",[],["lib.rs"]],\
 "sp_domains":["",[],["bundle_producer_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","storage.rs","transaction.rs","valued_trie_root.rs","verification.rs"]],\
 "sp_domains_fraud_proof":["",[],["host_functions.rs","lib.rs","runtime_interface.rs","verification.rs"]],\
+"sp_executive":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
 "subspace_archiving":["",[["archiver",[],["incremental_record_commitments.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs"]],\

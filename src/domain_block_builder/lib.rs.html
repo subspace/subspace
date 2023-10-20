@@ -361,6 +361,19 @@
 <a href="#361" id="361">361</a>
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
 </pre></div><pre class="rust"><code><span class="comment">// This file is part of Substrate.
 
 // Copyright (C) 2017-2021 Parity Technologies (UK) Ltd.
@@ -399,6 +412,7 @@
 <span class="kw">use </span>sp_runtime::generic::BlockId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash, HashingFor, Header <span class="kw">as </span>HeaderT, NumberFor, One};
 <span class="kw">use </span>sp_runtime::Digest;
+<span class="kw">use </span>std::collections::VecDeque;
 
 <span class="doccomment">/// Used as parameter to [`BlockBuilderProvider`] to express if proof recording should be enabled.
 ///
@@ -490,7 +504,7 @@
 
 <span class="doccomment">/// Utility for building new (valid) blocks from a stream of extrinsics.
 </span><span class="kw">pub struct </span>BlockBuilder&lt;<span class="lifetime">&#39;a</span>, Block: BlockT, A: ProvideRuntimeApi&lt;Block&gt;, B&gt; {
-    extrinsics: Vec&lt;Block::Extrinsic&gt;,
+    extrinsics: VecDeque&lt;Block::Extrinsic&gt;,
     api: ApiRef&lt;<span class="lifetime">&#39;a</span>, A::Api&gt;,
     parent_hash: Block::Hash,
     backend: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>B,
@@ -510,6 +524,7 @@
     /// While proof recording is enabled, all accessed trie nodes are saved.
     /// These recorded trie nodes can be used by a third party to prove the
     /// output of this block builder without having access to the full storage.
+    </span><span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="kw">pub fn </span>new(
         api: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>A,
         parent_hash: Block::Hash,
@@ -517,7 +532,8 @@
         record_proof: RecordProof,
         inherent_digests: Digest,
         backend: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>B,
-        extrinsics: Vec&lt;Block::Extrinsic&gt;,
+        <span class="kw-2">mut </span>extrinsics: VecDeque&lt;Block::Extrinsic&gt;,
+        maybe_inherent_data: <span class="prelude-ty">Option</span>&lt;sp_inherents::InherentData&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
         <span class="kw">let </span>header = &lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Header <span class="kw">as </span>HeaderT&gt;::new(
             parent_number + One::one(),
@@ -536,6 +552,13 @@
         }
 
         api.initialize_block(parent_hash, <span class="kw-2">&amp;</span>header)<span class="question-mark">?</span>;
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(inherent_data) = maybe_inherent_data {
+            <span class="kw">let </span>inherent_extrinsics = <span class="self">Self</span>::create_inherents(parent_hash, <span class="kw-2">&amp;</span>api, inherent_data)<span class="question-mark">?</span>;
+            <span class="kw">for </span>inherent_extrinsic <span class="kw">in </span>inherent_extrinsics {
+                extrinsics.push_front(inherent_extrinsic)
+            }
+        }
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             parent_hash,
@@ -638,7 +661,7 @@
         <span class="kw">let </span>storage_changes = <span class="self">self</span>.collect_storage_changes()<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(BuiltBlock {
-            block: &lt;Block <span class="kw">as </span>BlockT&gt;::new(header, <span class="self">self</span>.extrinsics),
+            block: &lt;Block <span class="kw">as </span>BlockT&gt;::new(header, <span class="self">self</span>.extrinsics.into()),
             storage_changes,
             proof,
         })
@@ -648,17 +671,18 @@
     ///
     /// Returns the inherents created by the runtime or an error if something failed.
     </span><span class="kw">pub fn </span>create_inherents(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        parent_hash: Block::Hash,
+        api: <span class="kw-2">&amp;</span>ApiRef&lt;A::Api&gt;,
         inherent_data: sp_inherents::InherentData,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;Block::Extrinsic&gt;, Error&gt; {
-        <span class="kw">let </span>parent_hash = <span class="self">self</span>.parent_hash;
-        <span class="self">self</span>.api
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;VecDeque&lt;Block::Extrinsic&gt;, Error&gt; {
+        <span class="kw">let </span>exts = api
             .execute_in_transaction(<span class="kw">move </span>|api| {
                 <span class="comment">// `create_inherents` should not change any state, to ensure this we always rollback
                 // the transaction.
                 </span>TransactionOutcome::Rollback(api.inherent_extrinsics(parent_hash, inherent_data))
             })
-            .map_err(|e| Error::Application(Box::new(e)))
+            .map_err(|e| Error::Application(Box::new(e)))<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(VecDeque::from(exts))
     }
 
     <span class="doccomment">/// Estimate the size of the block in the current state.
@@ -687,7 +711,8 @@
     <span class="kw">use </span>sp_core::Blake2Hasher;
     <span class="kw">use </span>sp_state_machine::Backend;
     <span class="comment">// TODO: Remove `substrate_test_runtime_client` dependency for faster build time
-    </span><span class="kw">use </span>substrate_test_runtime_client::{DefaultTestClientBuilderExt, TestClientBuilderExt};
+    </span><span class="kw">use </span>std::collections::VecDeque;
+    <span class="kw">use </span>substrate_test_runtime_client::{DefaultTestClientBuilderExt, TestClientBuilderExt};
 
     <span class="comment">// TODO: Unlock this test, it got broken in https://github.com/subspace/subspace/pull/1548 and
     //  doesn&#39;t run on Windows at all
@@ -704,7 +729,8 @@
             RecordProof::Yes,
             Default::default(),
             <span class="kw-2">&amp;*</span>backend,
-            <span class="macro">vec!</span>[],
+            VecDeque::new(),
+            Default::default(),
         )
         .unwrap()
         .build()
