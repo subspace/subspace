@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["verify_invalid_domain_block_hash_fraud_proof","verify_invalid_domain_extrinsics_root_fraud_proof","verify_invalid_state_transition_fraud_proof"]};
+window.SIDEBAR_ITEMS = {"fn":["verify_invalid_domain_block_hash_fraud_proof","verify_invalid_domain_extrinsics_root_fraud_proof","verify_invalid_state_transition_fraud_proof","verify_invalid_total_rewards_fraud_proof"]};

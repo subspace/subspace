@@ -35,8 +35,8 @@ var srcIndex = JSON.parse('{\
 "sc_subspace_chain_specs":["",[],["lib.rs","utils.rs"]],\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
-"sp_domains":["",[],["bundle_producer_election.rs","fraud_proof.rs","lib.rs","merkle_tree.rs","storage.rs","transaction.rs","valued_trie_root.rs","verification.rs"]],\
-"sp_domains_fraud_proof":["",[],["host_functions.rs","lib.rs","runtime_interface.rs","verification.rs"]],\
+"sp_domains":["",[],["bundle_producer_election.rs","extrinsics.rs","lib.rs","merkle_tree.rs","proof_provider_and_verifier.rs","storage.rs","valued_trie.rs"]],\
+"sp_domains_fraud_proof":["",[],["fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","transaction.rs","verification.rs"]],\
 "sp_executive":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\

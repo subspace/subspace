@@ -1854,16 +1854,6 @@
 <a href="#1854" id="1854">1854</a>
 <a href="#1855" id="1855">1855</a>
 <a href="#1856" id="1856">1856</a>
-<a href="#1857" id="1857">1857</a>
-<a href="#1858" id="1858">1858</a>
-<a href="#1859" id="1859">1859</a>
-<a href="#1860" id="1860">1860</a>
-<a href="#1861" id="1861">1861</a>
-<a href="#1862" id="1862">1862</a>
-<a href="#1863" id="1863">1863</a>
-<a href="#1864" id="1864">1864</a>
-<a href="#1865" id="1865">1865</a>
-<a href="#1866" id="1866">1866</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1912,19 +1902,19 @@
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::bundle_producer_election::{is_below_threshold, BundleProducerElectionParams};
-<span class="kw">use </span>sp_domains::fraud_proof::{FraudProof, InvalidDomainBlockHashProof, InvalidTotalRewardsProof};
-<span class="kw">use </span>sp_domains::verification::verify_invalid_total_rewards_fraud_proof;
 <span class="kw">use </span>sp_domains::{
     DomainBlockLimit, DomainId, DomainInstanceData, ExecutionReceipt, OpaqueBundle, OperatorId,
     OperatorPublicKey, ProofOfElection, ReceiptHash, RuntimeId,
     DOMAIN_EXTRINSICS_SHUFFLING_SEED_SUBJECT, EMPTY_EXTRINSIC_ROOT,
 };
-<span class="kw">use </span>sp_domains_fraud_proof::fraud_proof_runtime_interface::get_fraud_proof_verification_info;
+<span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::{
+    FraudProof, InvalidDomainBlockHashProof, InvalidTotalRewardsProof,
+};
 <span class="kw">use </span>sp_domains_fraud_proof::verification::{
     verify_invalid_domain_block_hash_fraud_proof,
     verify_invalid_domain_extrinsics_root_fraud_proof, verify_invalid_state_transition_fraud_proof,
+    verify_invalid_total_rewards_fraud_proof,
 };
-<span class="kw">use </span>sp_domains_fraud_proof::FraudProofVerificationInfoRequest;
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, CheckedSub, Hash, Header, One, Zero};
 <span class="kw">use </span>sp_runtime::{RuntimeAppPublic, SaturatedConversion, Saturating};
 <span class="kw">use </span>sp_std::boxed::Box;
@@ -2017,12 +2007,12 @@
     <span class="kw">use </span>frame_support::{Identity, PalletError};
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>sp_core::H256;
-    <span class="kw">use </span>sp_domains::fraud_proof::FraudProof;
-    <span class="kw">use </span>sp_domains::transaction::InvalidTransactionCode;
     <span class="kw">use </span>sp_domains::{
         BundleDigest, DomainId, EpochIndex, GenesisDomain, OperatorAllowList, OperatorId,
         ReceiptHash, RuntimeId, RuntimeType,
     };
+    <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::FraudProof;
+    <span class="kw">use </span>sp_domains_fraud_proof::transaction::InvalidTransactionCode;
     <span class="kw">use </span>sp_runtime::traits::{
         AtLeast32BitUnsigned, BlockNumberProvider, CheckEqual, CheckedAdd, Header <span class="kw">as </span>HeaderT,
         MaybeDisplay, One, SimpleBitOps, Zero,
@@ -2463,7 +2453,7 @@
 
     <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
     </span><span class="kw">pub enum </span>FraudProofError {
-        <span class="doccomment">/// The targetted bad receipt not found which may already pruned by other
+        <span class="doccomment">/// The targeted bad receipt not found which may already pruned by other
         /// fraud proof or the fraud proof is submitted to the wrong fork.
         </span>BadReceiptNotFound,
         <span class="doccomment">/// The genesis receipt is unchallengeable.
@@ -2471,21 +2461,15 @@
         <span class="doccomment">/// The descendants of the fraudulent ER is not pruned
         </span>DescendantsOfFraudulentERNotPruned,
         <span class="doccomment">/// Invalid fraud proof since total rewards are not mismatched.
-        </span>InvalidTotalRewardsFraudProof(sp_domains::verification::VerificationError),
+        </span>InvalidTotalRewardsFraudProof,
         <span class="doccomment">/// Invalid domain block hash fraud proof.
-        </span>InvalidDomainBlockHashFraudProof(sp_domains::verification::VerificationError),
+        </span>InvalidDomainBlockHashFraudProof,
         <span class="doccomment">/// Invalid domain extrinsic fraud proof
-        </span>InvalidExtrinsicRootFraudProof(sp_domains::verification::VerificationError),
+        </span>InvalidExtrinsicRootFraudProof,
         <span class="doccomment">/// Invalid state transition fraud proof
         </span>InvalidStateTransitionFraudProof,
-        <span class="doccomment">/// Failed to get block randomness.
-        </span>FailedToGetBlockRandomness,
-        <span class="doccomment">/// Failed to get domain timestamp extrinsic.
-        </span>FailedToGetDomainTimestampExtrinsic,
         <span class="doccomment">/// Parent receipt not found.
         </span>ParentReceiptNotFound,
-        <span class="doccomment">/// Failed to get domain set code extrinsic.
-        </span>FailedToGetDomainSetCodeExtrinsic,
     }
 
     <span class="kw">impl</span>&lt;T&gt; From&lt;FraudProofError&gt; <span class="kw">for </span>Error&lt;T&gt; {
@@ -3409,9 +3393,15 @@
                     DomainBlockNumberFor&lt;T&gt;,
                     T::DomainHash,
                     BalanceOf&lt;T&gt;,
-                    T::Hashing,
+                    DomainHashingFor&lt;T&gt;,
                 &gt;(bad_receipt, storage_proof)
-                .map_err(FraudProofError::InvalidTotalRewardsFraudProof)<span class="question-mark">?</span>;
+                .map_err(|err| {
+                    <span class="macro">log::error!</span>(
+                        target: <span class="string">&quot;runtime::domains&quot;</span>,
+                        <span class="string">&quot;Total rewards proof verification failed: {err:?}&quot;
+                    </span>);
+                    FraudProofError::InvalidTotalRewardsFraudProof
+                })<span class="question-mark">?</span>;
             }
             FraudProof::InvalidDomainBlockHash(InvalidDomainBlockHashProof {
                 digest_storage_proof,
@@ -3430,31 +3420,15 @@
                     digest_storage_proof.clone(),
                     parent_receipt.domain_block_hash,
                 )
-                .map_err(FraudProofError::InvalidDomainBlockHashFraudProof)<span class="question-mark">?</span>;
+                .map_err(|err| {
+                    <span class="macro">log::error!</span>(
+                        target: <span class="string">&quot;runtime::domains&quot;</span>,
+                        <span class="string">&quot;Invalid Domain block hash proof verification failed: {err:?}&quot;
+                    </span>);
+                    FraudProofError::InvalidDomainBlockHashFraudProof
+                })<span class="question-mark">?</span>;
             }
             FraudProof::InvalidExtrinsicsRoot(proof) =&gt; {
-                <span class="kw">let </span>consensus_block_hash = bad_receipt.consensus_block_hash;
-                <span class="kw">let </span>block_randomness = get_fraud_proof_verification_info(
-                    H256::from_slice(consensus_block_hash.as_ref()),
-                    FraudProofVerificationInfoRequest::BlockRandomness,
-                )
-                .and_then(|resp| resp.into_block_randomness())
-                .ok_or(FraudProofError::FailedToGetBlockRandomness)<span class="question-mark">?</span>;
-
-                <span class="kw">let </span>domain_timestamp_extrinsic = get_fraud_proof_verification_info(
-                    H256::from_slice(consensus_block_hash.as_ref()),
-                    FraudProofVerificationInfoRequest::DomainTimestampExtrinsic(proof.domain_id),
-                )
-                .and_then(|resp| resp.into_domain_timestamp_extrinsic())
-                .ok_or(FraudProofError::FailedToGetDomainTimestampExtrinsic)<span class="question-mark">?</span>;
-
-                <span class="kw">let </span>maybe_domain_set_code_extrinsic = get_fraud_proof_verification_info(
-                    H256::from_slice(consensus_block_hash.as_ref()),
-                    FraudProofVerificationInfoRequest::DomainSetCodeExtrinsic(proof.domain_id),
-                )
-                .map(|resp| resp.into_domain_set_code_extrinsic())
-                .ok_or(FraudProofError::FailedToGetDomainSetCodeExtrinsic)<span class="question-mark">?</span>;
-
                 verify_invalid_domain_extrinsics_root_fraud_proof::&lt;
                     T::Block,
                     DomainBlockNumberFor&lt;T&gt;,
@@ -3462,14 +3436,14 @@
                     BalanceOf&lt;T&gt;,
                     T::Hashing,
                     DomainHashingFor&lt;T&gt;,
-                &gt;(
-                    bad_receipt,
-                    proof,
-                    block_randomness,
-                    domain_timestamp_extrinsic,
-                    maybe_domain_set_code_extrinsic,
-                )
-                .map_err(FraudProofError::InvalidExtrinsicRootFraudProof)<span class="question-mark">?</span>;
+                &gt;(bad_receipt, proof)
+                .map_err(|err| {
+                    <span class="macro">log::error!</span>(
+                        target: <span class="string">&quot;runtime::domains&quot;</span>,
+                        <span class="string">&quot;Invalid Domain extrinsic root proof verification failed: {err:?}&quot;
+                    </span>);
+                    FraudProofError::InvalidExtrinsicRootFraudProof
+                })<span class="question-mark">?</span>;
             }
             FraudProof::InvalidStateTransition(proof) =&gt; {
                 <span class="kw">let </span>bad_receipt_parent =
@@ -3482,7 +3456,13 @@
                     T::DomainHeader,
                     BalanceOf&lt;T&gt;,
                 &gt;(bad_receipt, bad_receipt_parent, proof)
-                .map_err(|<span class="kw">_</span>| FraudProofError::InvalidStateTransitionFraudProof)<span class="question-mark">?</span>;
+                .map_err(|err| {
+                    <span class="macro">log::error!</span>(
+                        target: <span class="string">&quot;runtime::domains&quot;</span>,
+                        <span class="string">&quot;Invalid State transition proof verification failed: {err:?}&quot;
+                    </span>);
+                    FraudProofError::InvalidStateTransitionFraudProof
+                })<span class="question-mark">?</span>;
             }
             <span class="kw">_ </span>=&gt; {}
         }
