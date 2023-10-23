@@ -371,15 +371,6 @@
 <a href="#371" id="371">371</a>
 <a href="#372" id="372">372</a>
 <a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the consensus block.
 //!
@@ -408,14 +399,13 @@
 <span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sp_api::{HashT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
-<span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::extrinsics::deduplicate_and_shuffle_extrinsics;
 <span class="kw">use </span>sp_domains::{
-    DomainId, DomainsApi, ExecutionReceipt, InboxedBundle, InvalidBundleType, OpaqueBundle,
-    OpaqueBundles, ReceiptValidity,
+    DomainId, DomainsApi, ExecutionReceipt, HeaderHashingFor, InboxedBundle, InvalidBundleType,
+    OpaqueBundle, OpaqueBundles, ReceiptValidity,
 };
 <span class="kw">use </span>sp_messenger::MessengerApi;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, NumberFor};
 <span class="kw">use </span>std::collections::VecDeque;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
@@ -438,7 +428,7 @@
     </span>Block: BlockT,
     CBlock: BlockT,
     CClient: HeaderBackend&lt;CBlock&gt; + BlockBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + Send + Sync,
-    CClient::Api: DomainsApi&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;,
 {
     <span class="kw">let </span>extrinsics = consensus_client.block_body(block_hash)<span class="question-mark">?</span>.ok_or_else(|| {
         sp_blockchain::Error::Backend(<span class="macro">format!</span>(<span class="string">&quot;BlockBody of {block_hash:?} unavailable&quot;</span>))
@@ -453,7 +443,7 @@
 
 <span class="kw">pub struct </span>PreprocessResult&lt;Block: BlockT&gt; {
     <span class="kw">pub </span>extrinsics: VecDeque&lt;Block::Extrinsic&gt;,
-    <span class="kw">pub </span>bundles: Vec&lt;InboxedBundle&gt;,
+    <span class="kw">pub </span>bundles: Vec&lt;InboxedBundle&lt;Block::Hash&gt;&gt;,
 }
 
 <span class="kw">pub struct </span>DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt; {
@@ -501,7 +491,6 @@
     DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt;
 <span class="kw">where
     </span>Block: BlockT,
-    Block::Hash: Into&lt;H256&gt;,
     CBlock: BlockT,
     CBlock::Hash: From&lt;Block::Hash&gt;,
     NumberFor&lt;CBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
@@ -510,15 +499,14 @@
         + SetCodeConstructor&lt;Block&gt;
         + TimestampExtrinsicConstructor&lt;Block&gt;,
     Client: HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
-    Client::Api: DomainCoreApi&lt;Block&gt;,
+    Client::Api: DomainCoreApi&lt;Block&gt; + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
     CClient: HeaderBackend&lt;CBlock&gt;
         + BlockBackend&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    CClient::Api:
-        DomainsApi&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash&gt; + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt; + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;,
     ReceiptValidator: ValidateReceipt&lt;Block, CBlock&gt;,
 {
     <span class="kw">pub fn </span>new(
@@ -587,11 +575,11 @@
     </span><span class="attr">#[allow(clippy::type_complexity)]
     </span><span class="kw">fn </span>compile_bundles_to_extrinsics(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        bundles: OpaqueBundles&lt;CBlock, NumberFor&lt;Block&gt;, Block::Hash, Balance&gt;,
+        bundles: OpaqueBundles&lt;CBlock, Block::Header, Balance&gt;,
         tx_range: U256,
         at: Block::Hash,
     ) -&gt; sp_blockchain::Result&lt;(
-        Vec&lt;InboxedBundle&gt;,
+        Vec&lt;InboxedBundle&lt;Block::Hash&gt;&gt;,
         Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Block::Extrinsic)&gt;,
     )&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>inboxed_bundles = Vec::with_capacity(bundles.len());
@@ -613,12 +601,12 @@
                         .map(|(signer, tx)| {
                             (
                                 signer.clone(),
-                                &lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing::hash_of(tx),
+                                HeaderHashingFor::&lt;Block::Header&gt;::hash_of(tx),
                             )
                         })
                         .collect();
                     inboxed_bundles.push(InboxedBundle::valid(
-                        &lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing::hash_of(<span class="kw-2">&amp;</span>bundle_digest).into(),
+                        HeaderHashingFor::&lt;Block::Header&gt;::hash_of(<span class="kw-2">&amp;</span>bundle_digest),
                         extrinsic_root,
                     ));
                     valid_extrinsics.extend(extrinsics);
@@ -635,13 +623,7 @@
 
     <span class="kw">fn </span>check_bundle_validity(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        bundle: <span class="kw-2">&amp;</span>OpaqueBundle&lt;
-            NumberFor&lt;CBlock&gt;,
-            CBlock::Hash,
-            NumberFor&lt;Block&gt;,
-            Block::Hash,
-            Balance,
-        &gt;,
+        bundle: <span class="kw-2">&amp;</span>OpaqueBundle&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, Block::Header, Balance&gt;,
         tx_range: <span class="kw-2">&amp;</span>U256,
         at: Block::Hash,
     ) -&gt; sp_blockchain::Result&lt;BundleValidity&lt;Block::Extrinsic&gt;&gt; {
@@ -711,7 +693,7 @@
             </span><span class="kw">if </span>!is_valid_xdm::&lt;CClient, CBlock, Block, <span class="kw">_</span>&gt;(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.consensus_client,
                 at,
-                <span class="kw-2">&amp;</span><span class="self">self</span>.runtime_api,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.client,
                 <span class="kw-2">&amp;</span>extrinsic,
             )<span class="question-mark">? </span>{
                 <span class="comment">// TODO: Generate a fraud proof for this invalid bundle

@@ -620,17 +620,17 @@
 <a href="#620" id="620">620</a>
 <a href="#621" id="621">621</a>
 <a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>codec::{Decode, Encode};
-<span class="kw">use </span>hash_db::Hasher;
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domain_digests::AsPredigest;
 <span class="kw">use </span>sp_domains::proof_provider_and_verifier::StorageProofVerifier;
-<span class="kw">use </span>sp_domains::{DomainId, ExecutionReceipt, ReceiptHash, SealedBundleHeader};
-<span class="kw">use </span>sp_runtime::traits::{
-    BlakeTwo256, Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT, NumberFor,
+<span class="kw">use </span>sp_domains::{
+    DomainId, ExecutionReceipt, HeaderHashFor, HeaderHashingFor, ReceiptHash, SealedBundleHeader,
 };
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT, NumberFor};
 <span class="kw">use </span>sp_runtime::{Digest, DigestItem};
 <span class="kw">use </span>sp_std::vec::Vec;
 <span class="kw">use </span>sp_trie::StorageProof;
@@ -754,7 +754,6 @@
     <span class="kw">where
         </span>CBlock: BlockT,
         DomainHeader: HeaderT,
-        DomainHeader::Hash: From&lt;H256&gt;,
     {
         <span class="prelude-val">Ok</span>(<span class="kw">match </span><span class="self">self </span>{
             ExecutionPhase::InitializeBlock =&gt; {
@@ -784,7 +783,7 @@
                     );
                 <span class="kw">if </span>!StorageProofVerifier::&lt;DomainHeader::Hashing&gt;::verify_storage_proof(
                     proof_of_inclusion.clone(),
-                    <span class="kw-2">&amp;</span>bad_receipt.domain_block_extrinsic_root.into(),
+                    <span class="kw-2">&amp;</span>bad_receipt.domain_block_extrinsic_root,
                     extrinsic.clone(),
                     storage_key,
                 ) {
@@ -976,10 +975,10 @@
 </span><span class="comment">// TODO: Revisit when fraud proof v2 is implemented.
 </span><span class="attr">#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub enum </span>FraudProof&lt;Number, Hash&gt; {
+</span><span class="kw">pub enum </span>FraudProof&lt;Number, Hash, DomainHeader: HeaderT&gt; {
     InvalidStateTransition(InvalidStateTransitionProof),
     InvalidTransaction(InvalidTransactionProof),
-    BundleEquivocation(BundleEquivocationProof&lt;Number, Hash&gt;),
+    BundleEquivocation(BundleEquivocationProof&lt;Number, Hash, DomainHeader&gt;),
     ImproperTransactionSortition(ImproperTransactionSortitionProof),
     InvalidTotalRewards(InvalidTotalRewardsProof),
     InvalidExtrinsicsRoot(InvalidExtrinsicsRootProof),
@@ -996,7 +995,7 @@
     InvalidBundles(InvalidBundlesFraudProof),
 }
 
-<span class="kw">impl</span>&lt;Number, Hash&gt; FraudProof&lt;Number, Hash&gt; {
+<span class="kw">impl</span>&lt;Number, Hash, DomainHeader: HeaderT&gt; FraudProof&lt;Number, Hash, DomainHeader&gt; {
     <span class="kw">pub fn </span>domain_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DomainId {
         <span class="kw">match </span><span class="self">self </span>{
             <span class="self">Self</span>::InvalidStateTransition(proof) =&gt; proof.domain_id,
@@ -1039,7 +1038,7 @@
     </span><span class="kw">pub fn </span>dummy_fraud_proof(
         domain_id: DomainId,
         bad_receipt_hash: ReceiptHash,
-    ) -&gt; FraudProof&lt;Number, Hash&gt; {
+    ) -&gt; FraudProof&lt;Number, Hash, DomainHeader&gt; {
         FraudProof::Dummy {
             domain_id,
             bad_receipt_hash,
@@ -1047,13 +1046,13 @@
     }
 }
 
-<span class="kw">impl</span>&lt;Number, Hash&gt; FraudProof&lt;Number, Hash&gt;
+<span class="kw">impl</span>&lt;Number, Hash, DomainHeader: HeaderT&gt; FraudProof&lt;Number, Hash, DomainHeader&gt;
 <span class="kw">where
     </span>Number: Encode,
     Hash: Encode,
 {
-    <span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; H256 {
-        &lt;BlakeTwo256 <span class="kw">as </span>HashT&gt;::hash(<span class="kw-2">&amp;</span><span class="self">self</span>.encode())
+    <span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; HeaderHashFor&lt;DomainHeader&gt; {
+        HeaderHashingFor::&lt;DomainHeader&gt;::hash(<span class="kw-2">&amp;</span><span class="self">self</span>.encode())
     }
 }
 
@@ -1084,7 +1083,7 @@
 /// are the given distinct bundle headers that were signed by the validator and which
 /// include the slot number.
 </span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>BundleEquivocationProof&lt;Number, Hash&gt; {
+</span><span class="kw">pub struct </span>BundleEquivocationProof&lt;Number, Hash, DomainHeader: HeaderT&gt; {
     <span class="doccomment">/// The id of the domain this fraud proof targeted
     </span><span class="kw">pub </span>domain_id: DomainId,
     <span class="doccomment">/// The authority id of the equivocator.
@@ -1095,17 +1094,20 @@
     // TODO: `SealedBundleHeader` contains `ExecutionReceipt` which make the size of the proof
     // large, revisit when proceeding to fraud proof v2.
     </span><span class="doccomment">/// The first header involved in the equivocation.
-    </span><span class="kw">pub </span>first_header: SealedBundleHeader&lt;Number, Hash, Number, H256, Balance&gt;,
+    </span><span class="kw">pub </span>first_header: SealedBundleHeader&lt;Number, Hash, DomainHeader, Balance&gt;,
     <span class="doccomment">/// The second header involved in the equivocation.
-    </span><span class="kw">pub </span>second_header: SealedBundleHeader&lt;Number, Hash, Number, H256, Balance&gt;,
+    </span><span class="kw">pub </span>second_header: SealedBundleHeader&lt;Number, Hash, DomainHeader, Balance&gt;,
 }
 
-<span class="kw">impl</span>&lt;Number: Clone + From&lt;u32&gt; + Encode, Hash: Clone + Default + Encode&gt;
-    BundleEquivocationProof&lt;Number, Hash&gt;
+<span class="kw">impl</span>&lt;Number, Hash, DomainHeader&gt; BundleEquivocationProof&lt;Number, Hash, DomainHeader&gt;
+<span class="kw">where
+    </span>Number: Clone + From&lt;u32&gt; + Encode,
+    Hash: Clone + Default + Encode,
+    DomainHeader: HeaderT,
 {
     <span class="doccomment">/// Returns the hash of this bundle equivocation proof.
-    </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; H256 {
-        BlakeTwo256::hash_of(<span class="self">self</span>)
+    </span><span class="kw">pub fn </span>hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; HeaderHashFor&lt;DomainHeader&gt; {
+        HeaderHashingFor::&lt;DomainHeader&gt;::hash_of(<span class="self">self</span>)
     }
 }
 
@@ -1169,8 +1171,8 @@
 <span class="kw">impl </span>ExtrinsicDigest {
     <span class="kw">pub fn </span>new&lt;Layout: TrieLayout&gt;(ext: Vec&lt;u8&gt;) -&gt; <span class="self">Self
     </span><span class="kw">where
-        </span>Layout::Hash: Hasher,
-        &lt;Layout::Hash <span class="kw">as </span>Hasher&gt;::Out: Into&lt;H256&gt;,
+        </span>Layout::Hash: HashT,
+        &lt;Layout::Hash <span class="kw">as </span>HashT&gt;::Output: Into&lt;H256&gt;,
     {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(threshold) = Layout::MAX_INLINE_VALUE {
             <span class="kw">if </span>ext.len() &gt;= threshold <span class="kw">as </span>usize {

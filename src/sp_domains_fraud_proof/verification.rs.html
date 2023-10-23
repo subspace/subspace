@@ -317,9 +317,6 @@
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::fraud_proof::{
     ExtrinsicDigest, InvalidExtrinsicsRootProof, InvalidStateTransitionProof, ValidBundleProof,
     VerificationError,
@@ -336,28 +333,21 @@
 <span class="kw">use </span>sp_domains::extrinsics::{deduplicate_and_shuffle_extrinsics, extrinsics_shuffling_seed};
 <span class="kw">use </span>sp_domains::proof_provider_and_verifier::StorageProofVerifier;
 <span class="kw">use </span>sp_domains::valued_trie::valued_ordered_trie_root;
-<span class="kw">use </span>sp_domains::ExecutionReceipt;
+<span class="kw">use </span>sp_domains::{ExecutionReceipt, HeaderHashFor, HeaderHashingFor, HeaderNumberFor};
 <span class="kw">use </span>sp_runtime::generic::Digest;
-<span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, Block, Hash, Header <span class="kw">as </span>HeaderT, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash, Header <span class="kw">as </span>HeaderT, NumberFor};
 <span class="kw">use </span>sp_std::vec::Vec;
 <span class="kw">use </span>sp_trie::{LayoutV1, StorageProof};
 <span class="kw">use </span>subspace_core_primitives::Randomness;
 <span class="kw">use </span>trie_db::node::Value;
 
 <span class="doccomment">/// Verifies invalid domain extrinsic root fraud proof.
-</span><span class="kw">pub fn </span>verify_invalid_domain_extrinsics_root_fraud_proof&lt;
-    CBlock,
-    DomainNumber,
-    DomainHash,
-    Balance,
-    Hashing,
-    DomainHashing,
-&gt;(
+</span><span class="kw">pub fn </span>verify_invalid_domain_extrinsics_root_fraud_proof&lt;CBlock, Balance, Hashing, DomainHeader&gt;(
     bad_receipt: ExecutionReceipt&lt;
         NumberFor&lt;CBlock&gt;,
         CBlock::Hash,
-        DomainNumber,
-        DomainHash,
+        HeaderNumberFor&lt;DomainHeader&gt;,
+        HeaderHashFor&lt;DomainHeader&gt;,
         Balance,
     &gt;,
     fraud_proof: <span class="kw-2">&amp;</span>InvalidExtrinsicsRootProof,
@@ -365,8 +355,8 @@
 <span class="kw">where
     </span>CBlock: BlockT,
     Hashing: Hasher&lt;Out = CBlock::Hash&gt;,
-    DomainHashing: Hasher&lt;Out = DomainHash&gt;,
-    DomainHash: Into&lt;H256&gt;,
+    DomainHeader: HeaderT,
+    DomainHeader::Hash: Into&lt;H256&gt; + PartialEq + Copy,
 {
     <span class="kw">let </span>InvalidExtrinsicsRootProof {
         valid_bundle_digests,
@@ -402,7 +392,8 @@
         .into_iter()
         .zip(valid_bundle_digests)
     {
-        <span class="kw">let </span>bundle_digest_hash = BlakeTwo256::hash_of(<span class="kw-2">&amp;</span>bundle_digest.bundle_digest);
+        <span class="kw">let </span>bundle_digest_hash =
+            HeaderHashingFor::&lt;DomainHeader&gt;::hash_of(<span class="kw-2">&amp;</span>bundle_digest.bundle_digest);
         <span class="kw">if </span>bundle_digest_hash != bad_receipt_valid_bundle_digest {
             <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidBundleDigest);
         }
@@ -421,13 +412,15 @@
     <span class="kw">if let </span>SetCodeExtrinsic::EncodedExtrinsic(domain_set_code_extrinsic) =
         maybe_domain_set_code_extrinsic
     {
-        <span class="kw">let </span>domain_set_code_extrinsic =
-            ExtrinsicDigest::new::&lt;LayoutV1&lt;DomainHashing&gt;&gt;(domain_set_code_extrinsic);
+        <span class="kw">let </span>domain_set_code_extrinsic = ExtrinsicDigest::new::&lt;
+            LayoutV1&lt;HeaderHashingFor&lt;DomainHeader&gt;&gt;,
+        &gt;(domain_set_code_extrinsic);
         ordered_extrinsics.push_front(domain_set_code_extrinsic);
     }
 
-    <span class="kw">let </span>timestamp_extrinsic =
-        ExtrinsicDigest::new::&lt;LayoutV1&lt;DomainHashing&gt;&gt;(domain_timestamp_extrinsic);
+    <span class="kw">let </span>timestamp_extrinsic = ExtrinsicDigest::new::&lt;LayoutV1&lt;HeaderHashingFor&lt;DomainHeader&gt;&gt;&gt;(
+        domain_timestamp_extrinsic,
+    );
     ordered_extrinsics.push_front(timestamp_extrinsic);
 
     <span class="kw">let </span>ordered_trie_node_values = ordered_extrinsics
@@ -438,8 +431,9 @@
         })
         .collect();
 
-    <span class="kw">let </span>extrinsics_root =
-        valued_ordered_trie_root::&lt;LayoutV1&lt;BlakeTwo256&gt;&gt;(ordered_trie_node_values);
+    <span class="kw">let </span>extrinsics_root = valued_ordered_trie_root::&lt;LayoutV1&lt;HeaderHashingFor&lt;DomainHeader&gt;&gt;&gt;(
+        ordered_trie_node_values,
+    );
     <span class="kw">if </span>bad_receipt.domain_block_extrinsic_root == extrinsics_root {
         <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProof);
     }
@@ -461,6 +455,7 @@
 <span class="kw">where
     </span>CBlock: BlockT,
     CBlock::Hash: Into&lt;H256&gt;,
+    DomainHash: Copy + Into&lt;H256&gt;,
 {
     <span class="kw">let </span>ValidBundleProof {
         domain_id,
@@ -489,7 +484,7 @@
         .valid_bundle_digest_at(<span class="kw-2">*</span>bundle_index <span class="kw">as </span>usize)
         .ok_or(VerificationError::TargetValidBundleNotFound)<span class="question-mark">?</span>;
 
-    <span class="kw">if </span>bad_valid_bundle_digest == valid_bundle_digest {
+    <span class="kw">if </span>bad_valid_bundle_digest.into() == valid_bundle_digest {
         <span class="prelude-val">Err</span>(VerificationError::InvalidProof)
     } <span class="kw">else </span>{
         <span class="prelude-val">Ok</span>(())
@@ -576,7 +571,6 @@
     </span>CBlock: BlockT,
     Balance: PartialEq + Decode,
     DomainHeader: HeaderT,
-    DomainHeader::Hash: From&lt;H256&gt;,
 {
     <span class="kw">let </span>state_root = bad_receipt.final_state_root;
     <span class="kw">let </span>digest_storage_key = StorageKey(<span class="kw">crate</span>::fraud_proof::system_digest_final_key());
@@ -590,7 +584,7 @@
 
     <span class="kw">let </span>derived_domain_block_hash = sp_domains::derive_domain_block_hash::&lt;DomainHeader&gt;(
         bad_receipt.domain_block_number,
-        bad_receipt.domain_block_extrinsic_root.into(),
+        bad_receipt.domain_block_extrinsic_root,
         state_root,
         parent_domain_block_hash,
         digest,
@@ -621,7 +615,7 @@
     storage_proof: <span class="kw-2">&amp;</span>StorageProof,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&gt;
 <span class="kw">where
-    </span>CBlock: Block,
+    </span>CBlock: BlockT,
     Balance: PartialEq + Decode,
     DomainHashing: Hasher&lt;Out = DomainHash&gt;,
 {

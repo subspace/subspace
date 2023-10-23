@@ -9,7 +9,7 @@ var srcIndex = JSON.parse('{\
 "domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs","weights.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
-"domain_service":["",[],["domain.rs","domain_tx_pre_validator.rs","lib.rs","providers.rs","rpc.rs"]],\
+"domain_service":["",[],["domain.rs","lib.rs","providers.rs","rpc.rs","transaction_pool.rs"]],\
 "domain_test_primitives":["",[],["lib.rs"]],\
 "domain_test_service":["",[],["chain_spec.rs","domain.rs","keyring.rs","lib.rs"]],\
 "evm_domain_runtime":["",[],["lib.rs","precompiles.rs"]],\
@@ -36,7 +36,7 @@ var srcIndex = JSON.parse('{\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
 "sp_domains":["",[],["bundle_producer_election.rs","extrinsics.rs","lib.rs","merkle_tree.rs","proof_provider_and_verifier.rs","storage.rs","valued_trie.rs"]],\
-"sp_domains_fraud_proof":["",[],["fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","transaction.rs","verification.rs"]],\
+"sp_domains_fraud_proof":["",[],["execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","verification.rs"]],\
 "sp_executive":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
@@ -45,7 +45,6 @@ var srcIndex = JSON.parse('{\
 "subspace_erasure_coding":["",[],["lib.rs"]],\
 "subspace_farmer":["",[["node_client",[],["node_rpc_client.rs"]],["single_disk_farm",[["farming",[],["monoio.rs","sync_fallback.rs"]]],["farming.rs","piece_cache.rs","piece_reader.rs","plotting.rs"]],["utils",[],["farmer_piece_getter.rs","piece_validator.rs","readers_and_pieces.rs","ss58.rs"]]],["identity.rs","lib.rs","node_client.rs","piece_cache.rs","reward_signing.rs","single_disk_farm.rs","utils.rs"]],\
 "subspace_farmer_components":["",[],["auditing.rs","file_ext.rs","lib.rs","plotting.rs","proving.rs","reading.rs","sector.rs","segment_reconstruction.rs"]],\
-"subspace_fraud_proof":["",[],["domain_runtime_code.rs","invalid_state_transition_proof.rs","invalid_transaction_proof.rs","lib.rs","verifier_api.rs"]],\
 "subspace_metrics":["",[],["lib.rs"]],\
 "subspace_networking":["",[["behavior",[],["persistent_parameters.rs"]],["constructor",[],["temporary_bans.rs","transport.rs"]],["protocols",[["connected_peers",[],["handler.rs"]],["peer_info",[],["handler.rs","protocol.rs"]],["request_response",[["handlers",[],["generic_request_handler.rs","piece_by_index.rs","segment_header.rs"]]],["handlers.rs","request_response_factory.rs"]],["reserved_peers",[],["handler.rs"]]],["connected_peers.rs","peer_info.rs","request_response.rs","reserved_peers.rs"]],["utils",[["rate_limiter",[],["resizable_semaphore.rs"]]],["multihash.rs","piece_provider.rs","rate_limiter.rs","unique_record_binary_heap.rs"]]],["behavior.rs","constructor.rs","lib.rs","node.rs","node_runner.rs","protocols.rs","shared.rs","utils.rs"]],\
 "subspace_node":["",[["domain",[],["cli.rs","domain_instance_starter.rs","evm_chain_spec.rs"]]],["chain_spec.rs","chain_spec_utils.rs","domain.rs","lib.rs"]],\
@@ -54,11 +53,10 @@ var srcIndex = JSON.parse('{\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
-"subspace_service":["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs","tx_pre_validator.rs"]],\
+"subspace_service":["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs"]],\
 "subspace_test_client":["",[],["chain_spec.rs","domain_chain_spec.rs","lib.rs"]],\
 "subspace_test_runtime":["",[],["lib.rs"]],\
 "subspace_test_service":["",[],["lib.rs"]],\
-"subspace_transaction_pool":["",[],["lib.rs"]],\
 "subspace_verification":["",[],["lib.rs"]]\
 }');
 createSrcSidebar();
