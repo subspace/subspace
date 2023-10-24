@@ -51,7 +51,7 @@ var srcIndex = JSON.parse('{\
 "subspace_proof_of_space":["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]],\
 "subspace_proof_of_time":["",[["aes",[],["x86_64.rs"]]],["aes.rs","lib.rs"]],\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
-"subspace_runtime":["",[],["domains.rs","feed_processor.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
+"subspace_runtime":["",[],["domains.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
 "subspace_service":["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs"]],\
 "subspace_test_client":["",[],["chain_spec.rs","domain_chain_spec.rs","lib.rs"]],\
