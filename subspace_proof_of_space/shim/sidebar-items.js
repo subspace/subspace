@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ShimQuality","ShimTable","ShimTableGenerator"]};
+window.SIDEBAR_ITEMS = {"struct":["ShimTable","ShimTableGenerator"]};
