@@ -593,12 +593,25 @@
 <a href="#593" id="593">593</a>
 <a href="#594" id="594">594</a>
 <a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
 </span><span class="kw">use </span><span class="kw">crate</span>::Error;
 <span class="kw">use </span>futures::lock::Mutex;
 <span class="kw">use </span>log::{debug, info, trace, warn};
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
+<span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
 <span class="kw">use </span>sc_consensus::block_import::BlockImportParams;
 <span class="kw">use </span>sc_consensus::import_queue::Verifier;
@@ -621,6 +634,7 @@
 };
 <span class="kw">use </span>sp_runtime::traits::NumberFor;
 <span class="kw">use </span>sp_runtime::{DigestItem, Justifications};
+<span class="kw">use </span>std::iter;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::atomic::{AtomicU32, Ordering};
@@ -874,10 +888,8 @@
                 <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::MissingSubspaceJustification);
             };
 
-            <span class="kw">let </span>SubspaceJustification::PotCheckpoints {
-                <span class="kw-2">mut </span>seed,
-                checkpoints,
-            } = subspace_justification;
+            <span class="kw">let </span>SubspaceJustification::PotCheckpoints { seed, checkpoints } =
+                subspace_justification;
 
             <span class="comment">// Last checkpoint must be our future proof of time, this is how we anchor the rest of
             // checks together
@@ -888,12 +900,12 @@
             }
 
             <span class="kw">let </span>future_slot = slot + <span class="self">self</span>.chain_constants.block_authoring_delay();
-            <span class="kw">let </span><span class="kw-2">mut </span>slot_to_check = Slot::from(
+            <span class="kw">let </span>slot_to_check = Slot::from(
                 future_slot
                     .checked_sub(checkpoints.len() <span class="kw">as </span>u64 - <span class="number">1</span>)
                     .ok_or(VerificationError::InvalidProofOfTime)<span class="question-mark">?</span>,
             );
-            <span class="kw">let </span><span class="kw-2">mut </span>slot_iterations = subspace_digest_items
+            <span class="kw">let </span>slot_iterations = subspace_digest_items
                 .pot_parameters_change
                 .as_ref()
                 .and_then(|parameters_change| {
@@ -902,40 +914,60 @@
                 })
                 .unwrap_or(subspace_digest_items.pot_slot_iterations);
 
-            <span class="comment">// All checkpoints must be valid, at least according to the seed included in
-            // justifications
-            </span><span class="kw">for </span>checkpoints <span class="kw">in </span><span class="kw-2">&amp;</span>checkpoints {
-                <span class="kw">if </span>full_pot_verification {
-                    <span class="comment">// Try to find invalid checkpoints
-                    </span><span class="kw">if </span>!<span class="self">self
-                        </span>.pot_verifier
-                        .verify_checkpoints(seed, slot_iterations, checkpoints)
-                    {
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProofOfTime);
-                    }
-                } <span class="kw">else </span>{
-                    <span class="comment">// We inject verified checkpoints in order to avoid full proving when votes
-                    // included in the block will inevitably be verified during block execution
-                    </span><span class="self">self</span>.pot_verifier.inject_verified_checkpoints(
-                        seed,
-                        slot_iterations,
-                        <span class="kw-2">*</span>checkpoints,
+            <span class="kw">let </span><span class="kw-2">mut </span>pot_input = PotNextSlotInput {
+                slot: slot_to_check,
+                slot_iterations,
+                seed,
+            };
+            <span class="comment">// Collect all the data we will use for verification so we can process it in parallel
+            </span><span class="kw">let </span>checkpoints_verification_input = iter::once((
+                pot_input,
+                <span class="kw-2">*</span>checkpoints
+                    .first()
+                    .expect(<span class="string">&quot;Not empty, contents was checked above; qed&quot;</span>),
+            ));
+            <span class="kw">let </span>checkpoints_verification_input = checkpoints_verification_input
+                .chain(checkpoints.windows(<span class="number">2</span>).map(|checkpoints_pair| {
+                    pot_input = PotNextSlotInput::derive(
+                        pot_input.slot_iterations,
+                        pot_input.slot,
+                        checkpoints_pair[<span class="number">0</span>].output(),
+                        <span class="kw-2">&amp;</span>subspace_digest_items.pot_parameters_change,
                     );
-                }
 
-                <span class="kw">let </span>pot_input = PotNextSlotInput::derive(
-                    slot_iterations,
-                    slot_to_check,
-                    checkpoints.output(),
-                    <span class="kw-2">&amp;</span>subspace_digest_items.pot_parameters_change,
-                );
+                    (pot_input, checkpoints_pair[<span class="number">1</span>])
+                }))
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-                <span class="comment">// TODO: Consider carrying of the whole `PotNextSlotInput` rather than individual
-                //  variables
-                </span>slot_to_check = pot_input.slot;
-                slot_iterations = pot_input.slot_iterations;
-                seed = pot_input.seed;
-            }
+            <span class="comment">// All checkpoints must be valid, at least according to the seed included in
+            // justifications, search for the first error
+            </span><span class="kw">let </span>pot_verifier = <span class="kw-2">&amp;</span><span class="self">self</span>.pot_verifier;
+            checkpoints_verification_input
+                .into_par_iter()
+                .find_map_first(|(pot_input, checkpoints)| {
+                    <span class="kw">if </span>full_pot_verification {
+                        <span class="comment">// Try to find invalid checkpoints
+                        </span><span class="kw">if </span>!pot_verifier.verify_checkpoints(
+                            pot_input.seed,
+                            pot_input.slot_iterations,
+                            <span class="kw-2">&amp;</span>checkpoints,
+                        ) {
+                            <span class="kw">return </span><span class="prelude-val">Some</span>(VerificationError::InvalidProofOfTime);
+                        }
+                    } <span class="kw">else </span>{
+                        <span class="comment">// We inject verified checkpoints in order to avoid full proving when votes
+                        // included in the block will inevitably be verified during block execution
+                        </span>pot_verifier.inject_verified_checkpoints(
+                            pot_input.seed,
+                            pot_input.slot_iterations,
+                            checkpoints,
+                        );
+                    }
+
+                    <span class="comment">// We search for errors
+                    </span><span class="prelude-val">None
+                </span>})
+                .map_or(<span class="prelude-val">Ok</span>(()), <span class="prelude-val">Err</span>)<span class="question-mark">?</span>;
         }
 
         <span class="comment">// Verify that block is signed properly
@@ -1046,15 +1078,7 @@
     SN: Fn() -&gt; Slot + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>verification_concurrency(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NonZeroUsize {
-        available_parallelism()
-            .ok()
-            .and_then(|concurrency| {
-                <span class="comment">// Multiply by two because with optimistic verification we will not actually spend a
-                // lot of CPU time verifying blocks, increasing this will help with CPU utilization
-                // and will make sync faster
-                </span>concurrency.checked_mul(NonZeroUsize::new(<span class="number">2</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>))
-            })
-            .unwrap_or(NonZeroUsize::new(<span class="number">1</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>))
+        available_parallelism().unwrap_or(NonZeroUsize::new(<span class="number">1</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>))
     }
 
     <span class="kw">async fn </span>verify(
