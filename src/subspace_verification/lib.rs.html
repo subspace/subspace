@@ -349,18 +349,6 @@
 <a href="#349" id="349">349</a>
 <a href="#350" id="350">350</a>
 <a href="#351" id="351">351</a>
-<a href="#352" id="352">352</a>
-<a href="#353" id="353">353</a>
-<a href="#354" id="354">354</a>
-<a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
-<a href="#360" id="360">360</a>
-<a href="#361" id="361">361</a>
-<a href="#362" id="362">362</a>
-<a href="#363" id="363">363</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -468,27 +456,25 @@
 /// solution distance is within solution range (see [`is_within_solution_range()`]).
 </span><span class="kw">fn </span>calculate_solution_distance(
     global_challenge: <span class="kw-2">&amp;</span>Blake3Hash,
-    audit_chunk: SolutionRange,
+    chunk: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>],
     sector_slot_challenge: <span class="kw-2">&amp;</span>SectorSlotChallenge,
 ) -&gt; SolutionRange {
+    <span class="kw">let </span>audit_chunk = blake3_hash_with_key(sector_slot_challenge, chunk);
+    <span class="kw">let </span>audit_chunk_as_solution_range: SolutionRange = SolutionRange::from_le_bytes(
+        <span class="kw-2">*</span>audit_chunk
+            .array_chunks::&lt;{ mem::size_of::&lt;SolutionRange&gt;() }&gt;()
+            .next()
+            .expect(<span class="string">&quot;Solution range is smaller in size than global challenge; qed&quot;</span>),
+    );
     <span class="kw">let </span>global_challenge_as_solution_range: SolutionRange = SolutionRange::from_le_bytes(
         <span class="kw-2">*</span>global_challenge
             .array_chunks::&lt;{ mem::size_of::&lt;SolutionRange&gt;() }&gt;()
             .next()
             .expect(<span class="string">&quot;Solution range is smaller in size than global challenge; qed&quot;</span>),
     );
-    <span class="kw">let </span>sector_slot_challenge_with_audit_chunk =
-        blake3_hash_with_key(sector_slot_challenge, <span class="kw-2">&amp;</span>audit_chunk.to_le_bytes());
-    <span class="kw">let </span>sector_slot_challenge_with_audit_chunk_as_solution_range: SolutionRange =
-        SolutionRange::from_le_bytes(
-            <span class="kw-2">*</span>sector_slot_challenge_with_audit_chunk
-                .array_chunks::&lt;{ mem::size_of::&lt;SolutionRange&gt;() }&gt;()
-                .next()
-                .expect(<span class="string">&quot;Solution range is smaller in size than blake3 hash; qed&quot;</span>),
-        );
     subspace_core_primitives::bidirectional_distance(
         <span class="kw-2">&amp;</span>global_challenge_as_solution_range,
-        <span class="kw-2">&amp;</span>sector_slot_challenge_with_audit_chunk_as_solution_range,
+        <span class="kw-2">&amp;</span>audit_chunk_as_solution_range,
     )
 }
 
@@ -496,12 +482,12 @@
 /// parameters.
 </span><span class="kw">pub fn </span>is_within_solution_range(
     global_challenge: <span class="kw-2">&amp;</span>Blake3Hash,
-    audit_chunk: SolutionRange,
+    chunk: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>],
     sector_slot_challenge: <span class="kw-2">&amp;</span>SectorSlotChallenge,
     solution_range: SolutionRange,
 ) -&gt; <span class="prelude-ty">Option</span>&lt;SolutionRange&gt; {
     <span class="kw">let </span>solution_distance =
-        calculate_solution_distance(global_challenge, audit_chunk, sector_slot_challenge);
+        calculate_solution_distance(global_challenge, chunk, sector_slot_challenge);
     (solution_distance &lt;= solution_range / <span class="number">2</span>).then_some(solution_distance)
 }
 
@@ -582,19 +568,9 @@
     <span class="kw">let </span>masked_chunk = (Simd::from(solution.chunk.to_bytes())
         ^ Simd::from(solution.proof_of_space.hash()))
     .to_array();
-    <span class="comment">// Extract audit chunk from masked chunk
-    </span><span class="kw">let </span>audit_chunk = <span class="kw">match </span>masked_chunk
-        .array_chunks::&lt;{ mem::size_of::&lt;SolutionRange&gt;() }&gt;()
-        .nth(usize::from(solution.audit_chunk_offset))
-    {
-        <span class="prelude-val">Some</span>(audit_chunk) =&gt; SolutionRange::from_le_bytes(<span class="kw-2">*</span>audit_chunk),
-        <span class="prelude-val">None </span>=&gt; {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidAuditChunkOffset);
-        }
-    };
 
     <span class="kw">let </span>solution_distance =
-        calculate_solution_distance(<span class="kw-2">&amp;</span>global_challenge, audit_chunk, <span class="kw-2">&amp;</span>sector_slot_challenge);
+        calculate_solution_distance(<span class="kw-2">&amp;</span>global_challenge, <span class="kw-2">&amp;</span>masked_chunk, <span class="kw-2">&amp;</span>sector_slot_challenge);
 
     <span class="comment">// Check that solution is within solution range
     </span><span class="kw">if </span>solution_distance &gt; solution_range / <span class="number">2 </span>{
