@@ -1149,12 +1149,6 @@
 <a href="#1149" id="1149">1149</a>
 <a href="#1150" id="1150">1150</a>
 <a href="#1151" id="1151">1151</a>
-<a href="#1152" id="1152">1152</a>
-<a href="#1153" id="1153">1153</a>
-<a href="#1154" id="1154">1154</a>
-<a href="#1155" id="1155">1155</a>
-<a href="#1156" id="1156">1156</a>
-<a href="#1157" id="1157">1157</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2019-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -1727,7 +1721,11 @@
         <span class="self">self</span>.archived_segment_notification_stream.clone()
     }
 
-    <span class="doccomment">/// Get stream with notifications about each imported block.
+    <span class="doccomment">/// Get stream with notifications about each imported block right BEFORE import actually
+    /// happens.
+    ///
+    /// NOTE: all Subspace checks have already happened for this block, but block can still
+    /// potentially fail to import in Substrate&#39;s internals.
     </span><span class="kw">pub fn </span>block_importing_notification_stream(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; SubspaceNotificationStream&lt;BlockImportingNotification&lt;Block&gt;&gt; {
@@ -1756,8 +1754,6 @@
 {
     inner: I,
     client: Arc&lt;Client&gt;,
-    block_importing_notification_sender:
-        SubspaceNotificationSender&lt;BlockImportingNotification&lt;Block&gt;&gt;,
     subspace_link: SubspaceLink&lt;Block&gt;,
     create_inherent_data_providers: CIDP,
     chain_constants: ChainConstants,
@@ -1777,7 +1773,6 @@
         SubspaceBlockImport {
             inner: <span class="self">self</span>.inner.clone(),
             client: <span class="self">self</span>.client.clone(),
-            block_importing_notification_sender: <span class="self">self</span>.block_importing_notification_sender.clone(),
             subspace_link: <span class="self">self</span>.subspace_link.clone(),
             create_inherent_data_providers: <span class="self">self</span>.create_inherent_data_providers.clone(),
             chain_constants: <span class="self">self</span>.chain_constants,
@@ -1798,14 +1793,9 @@
     AS: AuxStore + Send + Sync + <span class="lifetime">&#39;static</span>,
     BlockNumber: From&lt;&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Header <span class="kw">as </span>HeaderT&gt;::Number&gt;,
 {
-    <span class="comment">// TODO: Create a struct for these parameters
-    </span><span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="kw">fn </span>new(
+    <span class="kw">fn </span>new(
         client: Arc&lt;Client&gt;,
         block_import: I,
-        block_importing_notification_sender: SubspaceNotificationSender&lt;
-            BlockImportingNotification&lt;Block&gt;,
-        &gt;,
         subspace_link: SubspaceLink&lt;Block&gt;,
         create_inherent_data_providers: CIDP,
         chain_constants: ChainConstants,
@@ -1815,7 +1805,6 @@
         <span class="self">Self </span>{
             client,
             inner: block_import,
-            block_importing_notification_sender,
             subspace_link,
             create_inherent_data_providers,
             chain_constants,
@@ -2157,8 +2146,6 @@
         <span class="kw">let </span>added_weight = calculate_block_weight(subspace_digest_items.solution_range);
         <span class="kw">let </span>total_weight = parent_weight + added_weight;
 
-        <span class="kw">let </span>info = <span class="self">self</span>.client.info();
-
         aux_schema::write_block_weight(block_hash, total_weight, |values| {
             block
                 .auxiliary
@@ -2191,12 +2178,14 @@
             }
         }
 
-        <span class="comment">// The fork choice rule is that we pick the heaviest chain (i.e. smallest solution
-        // range), if there&#39;s a tie we go with the longest chain.
+        <span class="comment">// The fork choice rule is that we pick the heaviest chain (i.e. smallest solution range),
+        // if there&#39;s a tie we go with the longest chain
         </span><span class="kw">let </span>fork_choice = {
+            <span class="kw">let </span>info = <span class="self">self</span>.client.info();
+
             <span class="kw">let </span>last_best_weight = <span class="kw">if </span><span class="kw-2">&amp;</span>info.best_hash == block.header.parent_hash() {
-                <span class="comment">// the parent=genesis case is already covered for loading parent weight,
-                // so we don&#39;t need to cover again here.
+                <span class="comment">// the parent=genesis case is already covered for loading parent weight, so we don&#39;t
+                // need to cover again here
                 </span>parent_weight
             } <span class="kw">else </span>{
                 aux_schema::load_block_weight(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, info.best_hash)
@@ -2212,21 +2201,21 @@
         };
         block.fork_choice = <span class="prelude-val">Some</span>(fork_choice);
 
-        <span class="kw">let </span>import_result = <span class="self">self</span>.inner.import_block(block).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(acknowledgement_sender, <span class="kw-2">mut </span>acknowledgement_receiver) = mpsc::channel(<span class="number">0</span>);
 
-        <span class="self">self</span>.block_importing_notification_sender
+        <span class="self">self</span>.subspace_link
+            .block_importing_notification_sender
             .notify(<span class="kw">move </span>|| BlockImportingNotification {
                 block_number,
                 acknowledgement_sender,
             });
 
-        <span class="kw">while </span>(acknowledgement_receiver.next().<span class="kw">await</span>).is_some() {
+        <span class="kw">while </span>acknowledgement_receiver.next().<span class="kw">await</span>.is_some() {
             <span class="comment">// Wait for all the acknowledgements to finish.
         </span>}
 
-        <span class="prelude-val">Ok</span>(import_result)
-    }
+        <span class="self">self</span>.inner.import_block(block).<span class="kw">await
+    </span>}
 
     <span class="kw">async fn </span>check_block(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -2286,7 +2275,7 @@
         reward_signing_notification_stream,
         archived_segment_notification_sender,
         archived_segment_notification_stream,
-        block_importing_notification_sender: block_importing_notification_sender.clone(),
+        block_importing_notification_sender,
         block_importing_notification_stream,
         <span class="comment">// TODO: Consider making `confirmation_depth_k` non-zero
         </span>segment_headers: Arc::new(Mutex::new(LruCache::new(
@@ -2302,7 +2291,6 @@
     <span class="kw">let </span>import = SubspaceBlockImport::new(
         client,
         block_import_inner,
-        block_importing_notification_sender,
         link.clone(),
         create_inherent_data_providers,
         chain_constants,

@@ -1898,6 +1898,19 @@
 <a href="#1898" id="1898">1898</a>
 <a href="#1899" id="1899">1899</a>
 <a href="#1900" id="1900">1900</a>
+<a href="#1901" id="1901">1901</a>
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
+<a href="#1905" id="1905">1905</a>
+<a href="#1906" id="1906">1906</a>
+<a href="#1907" id="1907">1907</a>
+<a href="#1908" id="1908">1908</a>
+<a href="#1909" id="1909">1909</a>
+<a href="#1910" id="1910">1910</a>
+<a href="#1911" id="1911">1911</a>
+<a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1916,7 +1929,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions,
 };
-<span class="kw">use </span><span class="kw">crate</span>::utils::{tokio_rayon_spawn_handler, JoinOnDrop};
+<span class="kw">use </span><span class="kw">crate</span>::utils::{tokio_rayon_spawn_handler, AsyncJoinOnDrop};
 <span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>derive_more::{Display, From};
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
@@ -1937,7 +1950,7 @@
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
 <span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::{fs, io, mem, thread};
+<span class="kw">use </span>std::{fs, io, mem};
 <span class="kw">use </span>subspace_core_primitives::crypto::blake3_hash;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
@@ -2400,6 +2413,9 @@
     <span class="doccomment">/// Farming error
     </span><span class="attr">#[error(transparent)]
     </span>Farming(<span class="attr">#[from] </span>FarmingError),
+    <span class="doccomment">/// Background task panicked
+    </span><span class="attr">#[error(<span class="string">&quot;Background task {task} panicked&quot;</span>)]
+    </span>BackgroundTaskPanicked { task: String },
 }
 
 <span class="kw">type </span>BackgroundTask = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;&gt; + Send&gt;&gt;;
@@ -2442,9 +2458,6 @@
     handlers: Arc&lt;Handlers&gt;,
     piece_cache: DiskPieceCache,
     piece_reader: PieceReader,
-    _plotting_join_handle: JoinOnDrop,
-    _farming_join_handle: JoinOnDrop,
-    _reading_join_handle: JoinOnDrop,
     <span class="doccomment">/// Sender that will be used to signal to background threads that they should start
     </span>start_sender: <span class="prelude-ty">Option</span>&lt;broadcast::Sender&lt;()&gt;&gt;,
     <span class="doccomment">/// Sender that will be used to signal to background threads that they must stop
@@ -2478,8 +2491,6 @@
         PG: PieceGetter + Clone + Send + <span class="lifetime">&#39;static</span>,
         PosTable: Table,
     {
-        <span class="kw">let </span>handle = Handle::current();
-
         <span class="kw">let </span>SingleDiskFarmOptions {
             directory,
             farmer_app_info,
@@ -2766,83 +2777,89 @@
 
         <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">&quot;single_disk_farm&quot;</span>, %disk_farm_index);
 
-        <span class="kw">let </span>plotting_join_handle = thread::Builder::new()
-            .name(<span class="macro">format!</span>(<span class="string">&quot;plotting-{disk_farm_index}&quot;</span>))
-            .spawn({
-                <span class="kw">let </span>handle = handle.clone();
-                <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
-                <span class="kw">let </span>kzg = kzg.clone();
-                <span class="kw">let </span>erasure_coding = erasure_coding.clone();
-                <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
-                <span class="kw">let </span>modifying_sector_index = Arc::clone(<span class="kw-2">&amp;</span>modifying_sector_index);
-                <span class="kw">let </span>node_client = node_client.clone();
-                <span class="kw">let </span>plot_file = Arc::clone(<span class="kw-2">&amp;</span>plot_file);
-                <span class="kw">let </span>error_sender = Arc::clone(<span class="kw-2">&amp;</span>error_sender);
-                <span class="kw">let </span>span = span.clone();
+        <span class="kw">let </span>plotting_join_handle = tokio::task::spawn_blocking({
+            <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
+            <span class="kw">let </span>kzg = kzg.clone();
+            <span class="kw">let </span>erasure_coding = erasure_coding.clone();
+            <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
+            <span class="kw">let </span>modifying_sector_index = Arc::clone(<span class="kw-2">&amp;</span>modifying_sector_index);
+            <span class="kw">let </span>node_client = node_client.clone();
+            <span class="kw">let </span>plot_file = Arc::clone(<span class="kw-2">&amp;</span>plot_file);
+            <span class="kw">let </span>error_sender = Arc::clone(<span class="kw-2">&amp;</span>error_sender);
+            <span class="kw">let </span>span = span.clone();
 
-                <span class="kw">move </span>|| {
-                    <span class="kw">let </span>_tokio_handle_guard = handle.enter();
-                    <span class="kw">let </span>_span_guard = span.enter();
+            <span class="kw">move </span>|| {
+                <span class="kw">let </span>_span_guard = span.enter();
 
-                    <span class="kw">let </span>plotting_fut = <span class="kw">async move </span>{
-                        <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
-                            <span class="comment">// Dropped before starting
+                <span class="kw">let </span>plotting_fut = <span class="kw">async move </span>{
+                    <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
+                        <span class="comment">// Dropped before starting
+                        </span><span class="kw">return</span>;
+                    }
+
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(plotting_delay) = plotting_delay {
+                        <span class="kw">if </span>plotting_delay.<span class="kw">await</span>.is_err() {
+                            <span class="comment">// Dropped before resolving
                             </span><span class="kw">return</span>;
                         }
+                    }
 
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(plotting_delay) = plotting_delay {
-                            <span class="kw">if </span>plotting_delay.<span class="kw">await</span>.is_err() {
-                                <span class="comment">// Dropped before resolving
-                                </span><span class="kw">return</span>;
-                            }
-                        }
-
-                        <span class="kw">let </span>plotting_options = PlottingOptions {
-                            public_key,
-                            node_client,
-                            pieces_in_sector,
-                            sector_size,
-                            sector_metadata_size,
-                            metadata_header,
-                            plot_file,
-                            metadata_file,
-                            sectors_metadata,
-                            piece_getter,
-                            kzg,
-                            erasure_coding,
-                            handlers,
-                            modifying_sector_index,
-                            sectors_to_plot_receiver,
-                            downloading_semaphore,
-                            encoding_semaphore,
-                            plotting_thread_pool,
-                            replotting_thread_pool,
-                            stop_receiver: stop_receiver.resubscribe(),
-                        };
-
-                        <span class="kw">let </span>plotting_fut = plotting::&lt;<span class="kw">_</span>, <span class="kw">_</span>, PosTable&gt;(plotting_options);
-
-                        <span class="macro">select! </span>{
-                            plotting_result = plotting_fut.fuse() =&gt; {
-                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = plotting_result
-                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
-                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
-                                {
-                                    <span class="macro">error!</span>(
-                                        %error,
-                                        <span class="string">&quot;Plotting failed to send error to background task&quot;
-                                    </span>);
-                                }
-                            }
-                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
-                                <span class="comment">// Nothing, just exit
-                            </span>}
-                        }
+                    <span class="kw">let </span>plotting_options = PlottingOptions {
+                        public_key,
+                        node_client,
+                        pieces_in_sector,
+                        sector_size,
+                        sector_metadata_size,
+                        metadata_header,
+                        plot_file,
+                        metadata_file,
+                        sectors_metadata,
+                        piece_getter,
+                        kzg,
+                        erasure_coding,
+                        handlers,
+                        modifying_sector_index,
+                        sectors_to_plot_receiver,
+                        downloading_semaphore,
+                        encoding_semaphore,
+                        plotting_thread_pool,
+                        replotting_thread_pool,
+                        stop_receiver: stop_receiver.resubscribe(),
                     };
 
-                    handle.block_on(plotting_fut);
+                    <span class="kw">let </span>plotting_fut = plotting::&lt;<span class="kw">_</span>, <span class="kw">_</span>, PosTable&gt;(plotting_options);
+
+                    <span class="macro">select! </span>{
+                        plotting_result = plotting_fut.fuse() =&gt; {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = plotting_result
+                                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
+                                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
+                            {
+                                <span class="macro">error!</span>(
+                                    %error,
+                                    <span class="string">&quot;Plotting failed to send error to background task&quot;
+                                </span>);
+                            }
+                        }
+                        <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                            <span class="comment">// Nothing, just exit
+                        </span>}
+                    }
+                };
+
+                Handle::current().block_on(plotting_fut);
+            }
+        });
+        <span class="kw">let </span>plotting_join_handle = AsyncJoinOnDrop::new(plotting_join_handle, <span class="bool-val">false</span>);
+
+        tasks.push(Box::pin(<span class="kw">async move </span>{
+            <span class="comment">// Panic will already be printed by now
+            </span>plotting_join_handle.<span class="kw">await</span>.map_err(|_error| {
+                BackgroundTaskError::BackgroundTaskPanicked {
+                    task: <span class="macro">format!</span>(<span class="string">&quot;plotting-{disk_farm_index}&quot;</span>),
                 }
-            })<span class="question-mark">?</span>;
+            })
+        }));
 
         <span class="kw">let </span>plotting_scheduler_options = PlottingSchedulerOptions {
             public_key_hash: public_key.hash(),
@@ -2869,100 +2886,106 @@
             }
         }));
 
-        <span class="kw">let </span>farming_join_handle = thread::Builder::new()
-            .name(<span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}&quot;</span>))
-            .spawn({
-                <span class="kw">let </span>handle = handle.clone();
-                <span class="kw">let </span>erasure_coding = erasure_coding.clone();
-                <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
-                <span class="kw">let </span>modifying_sector_index = Arc::clone(<span class="kw-2">&amp;</span>modifying_sector_index);
-                <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
-                <span class="kw">let </span><span class="kw-2">mut </span>start_receiver = start_sender.subscribe();
-                <span class="kw">let </span><span class="kw-2">mut </span>stop_receiver = stop_sender.subscribe();
-                <span class="kw">let </span>node_client = node_client.clone();
-                <span class="kw">let </span>span = span.clone();
+        <span class="kw">let </span>farming_join_handle = tokio::task::spawn_blocking({
+            <span class="kw">let </span>erasure_coding = erasure_coding.clone();
+            <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
+            <span class="kw">let </span>modifying_sector_index = Arc::clone(<span class="kw-2">&amp;</span>modifying_sector_index);
+            <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
+            <span class="kw">let </span><span class="kw-2">mut </span>start_receiver = start_sender.subscribe();
+            <span class="kw">let </span><span class="kw-2">mut </span>stop_receiver = stop_sender.subscribe();
+            <span class="kw">let </span>node_client = node_client.clone();
+            <span class="kw">let </span>span = span.clone();
 
-                <span class="kw">move </span>|| {
-                    <span class="kw">let </span>_tokio_handle_guard = handle.enter();
+            <span class="kw">move </span>|| {
+                <span class="kw">let </span>thread_pool = <span class="kw">match </span>ThreadPoolBuilder::new()
+                    .thread_name(<span class="kw">move </span>|thread_index| {
+                        <span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}.{thread_index}&quot;</span>)
+                    })
+                    .num_threads(farming_thread_pool_size)
+                    .spawn_handler(tokio_rayon_spawn_handler())
+                    .build()
+                    .map_err(FarmingError::FailedToCreateThreadPool)
+                {
+                    <span class="prelude-val">Ok</span>(thread_pool) =&gt; thread_pool,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take() {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into()) {
+                                <span class="macro">error!</span>(
+                                    %error,
+                                    <span class="string">&quot;Farming failed to send error to background task&quot;</span>,
+                                );
+                            }
+                        }
+                        <span class="kw">return</span>;
+                    }
+                };
 
-                    <span class="kw">let </span>thread_pool = <span class="kw">match </span>ThreadPoolBuilder::new()
-                        .thread_name(<span class="kw">move </span>|thread_index| {
-                            <span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}.{thread_index}&quot;</span>)
-                        })
-                        .num_threads(farming_thread_pool_size)
-                        .spawn_handler(tokio_rayon_spawn_handler())
-                        .build()
-                        .map_err(FarmingError::FailedToCreateThreadPool)
-                    {
-                        <span class="prelude-val">Ok</span>(thread_pool) =&gt; thread_pool,
-                        <span class="prelude-val">Err</span>(error) =&gt; {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take() {
-                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into()) {
+                <span class="kw">let </span>handle = Handle::current();
+                thread_pool.install(<span class="kw">move </span>|| {
+                    <span class="kw">let </span>_span_guard = span.enter();
+
+                    <span class="kw">let </span>farming_fut = <span class="kw">async move </span>{
+                        <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
+                            <span class="comment">// Dropped before starting
+                            </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                        }
+
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(farming_delay) = delay_farmer_receiver {
+                            <span class="kw">if </span>farming_delay.<span class="kw">await</span>.is_err() {
+                                <span class="comment">// Dropped before resolving
+                                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                            }
+                        }
+
+                        <span class="kw">let </span>plot = RayonFiles::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE))<span class="question-mark">?</span>;
+                        <span class="kw">let </span>plot_audit = <span class="kw-2">&amp;</span>SyncPlotAudit::new(<span class="kw-2">&amp;</span>plot);
+
+                        <span class="kw">let </span>farming_options = FarmingOptions {
+                            public_key,
+                            reward_address,
+                            node_client,
+                            plot_audit,
+                            sectors_metadata,
+                            kzg,
+                            erasure_coding,
+                            handlers,
+                            modifying_sector_index,
+                            slot_info_notifications: slot_info_forwarder_receiver,
+                        };
+                        farming::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
+                    </span>};
+
+                    handle.block_on(<span class="kw">async </span>{
+                        <span class="macro">select! </span>{
+                            farming_result = farming_fut.fuse() =&gt; {
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_result
+                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
+                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
+                                {
                                     <span class="macro">error!</span>(
                                         %error,
                                         <span class="string">&quot;Farming failed to send error to background task&quot;</span>,
                                     );
                                 }
                             }
-                            <span class="kw">return</span>;
+                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                                <span class="comment">// Nothing, just exit
+                            </span>}
                         }
-                    };
+                    });
+                })
+            }
+        });
+        <span class="kw">let </span>farming_join_handle = AsyncJoinOnDrop::new(farming_join_handle, <span class="bool-val">false</span>);
 
-                    thread_pool.install(<span class="kw">move </span>|| {
-                        <span class="kw">let </span>_span_guard = span.enter();
-
-                        <span class="kw">let </span>farming_fut = <span class="kw">async move </span>{
-                            <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
-                                <span class="comment">// Dropped before starting
-                                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                            }
-
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(farming_delay) = delay_farmer_receiver {
-                                <span class="kw">if </span>farming_delay.<span class="kw">await</span>.is_err() {
-                                    <span class="comment">// Dropped before resolving
-                                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                                }
-                            }
-
-                            <span class="kw">let </span>plot = RayonFiles::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE))<span class="question-mark">?</span>;
-                            <span class="kw">let </span>plot_audit = <span class="kw-2">&amp;</span>SyncPlotAudit::new(<span class="kw-2">&amp;</span>plot);
-
-                            <span class="kw">let </span>farming_options = FarmingOptions {
-                                public_key,
-                                reward_address,
-                                node_client,
-                                plot_audit,
-                                sectors_metadata,
-                                kzg,
-                                erasure_coding,
-                                handlers,
-                                modifying_sector_index,
-                                slot_info_notifications: slot_info_forwarder_receiver,
-                            };
-                            farming::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
-                        </span>};
-
-                        handle.block_on(<span class="kw">async </span>{
-                            <span class="macro">select! </span>{
-                                farming_result = farming_fut.fuse() =&gt; {
-                                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_result
-                                        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
-                                        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
-                                    {
-                                        <span class="macro">error!</span>(
-                                            %error,
-                                            <span class="string">&quot;Farming failed to send error to background task&quot;</span>,
-                                        );
-                                    }
-                                }
-                                <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
-                                    <span class="comment">// Nothing, just exit
-                                </span>}
-                            }
-                        });
-                    })
+        tasks.push(Box::pin(<span class="kw">async move </span>{
+            <span class="comment">// Panic will already be printed by now
+            </span>farming_join_handle.<span class="kw">await</span>.map_err(|_error| {
+                BackgroundTaskError::BackgroundTaskPanicked {
+                    task: <span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}&quot;</span>),
                 }
-            })<span class="question-mark">?</span>;
+            })
+        }));
 
         <span class="kw">let </span>(piece_reader, reading_fut) = PieceReader::new::&lt;PosTable&gt;(
             public_key,
@@ -2973,27 +2996,33 @@
             modifying_sector_index,
         );
 
-        <span class="kw">let </span>reading_join_handle = thread::Builder::new()
-            .name(<span class="macro">format!</span>(<span class="string">&quot;reading-{disk_farm_index}&quot;</span>))
-            .spawn({
-                <span class="kw">let </span><span class="kw-2">mut </span>stop_receiver = stop_sender.subscribe();
-                <span class="kw">let </span>reading_fut = reading_fut.instrument(span.clone());
+        <span class="kw">let </span>reading_join_handle = tokio::task::spawn_blocking({
+            <span class="kw">let </span><span class="kw-2">mut </span>stop_receiver = stop_sender.subscribe();
+            <span class="kw">let </span>reading_fut = reading_fut.instrument(span.clone());
 
-                <span class="kw">move </span>|| {
-                    <span class="kw">let </span>_tokio_handle_guard = handle.enter();
+            <span class="kw">move </span>|| {
+                Handle::current().block_on(<span class="kw">async </span>{
+                    <span class="macro">select! </span>{
+                        <span class="kw">_ </span>= reading_fut.fuse() =&gt; {
+                            <span class="comment">// Nothing, just exit
+                        </span>}
+                        <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                            <span class="comment">// Nothing, just exit
+                        </span>}
+                    }
+                });
+            }
+        });
+        <span class="kw">let </span>reading_join_handle = AsyncJoinOnDrop::new(reading_join_handle, <span class="bool-val">false</span>);
 
-                    handle.block_on(<span class="kw">async </span>{
-                        <span class="macro">select! </span>{
-                            <span class="kw">_ </span>= reading_fut.fuse() =&gt; {
-                                <span class="comment">// Nothing, just exit
-                            </span>}
-                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
-                                <span class="comment">// Nothing, just exit
-                            </span>}
-                        }
-                    });
+        tasks.push(Box::pin(<span class="kw">async move </span>{
+            <span class="comment">// Panic will already be printed by now
+            </span>reading_join_handle.<span class="kw">await</span>.map_err(|_error| {
+                BackgroundTaskError::BackgroundTaskPanicked {
+                    task: <span class="macro">format!</span>(<span class="string">&quot;reading-{disk_farm_index}&quot;</span>),
                 }
-            })<span class="question-mark">?</span>;
+            })
+        }));
 
         tasks.push(Box::pin(<span class="kw">async move </span>{
             <span class="comment">// TODO: Error handling here
@@ -3012,9 +3041,6 @@
             handlers,
             piece_cache,
             piece_reader,
-            _plotting_join_handle: JoinOnDrop::new(plotting_join_handle),
-            _farming_join_handle: JoinOnDrop::new(farming_join_handle),
-            _reading_join_handle: JoinOnDrop::new(reading_join_handle),
             start_sender: <span class="prelude-val">Some</span>(start_sender),
             stop_sender: <span class="prelude-val">Some</span>(stop_sender),
         };
