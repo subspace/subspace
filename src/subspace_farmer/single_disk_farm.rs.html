@@ -1911,6 +1911,52 @@
 <a href="#1911" id="1911">1911</a>
 <a href="#1912" id="1912">1912</a>
 <a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
+<a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a>
+<a href="#1920" id="1920">1920</a>
+<a href="#1921" id="1921">1921</a>
+<a href="#1922" id="1922">1922</a>
+<a href="#1923" id="1923">1923</a>
+<a href="#1924" id="1924">1924</a>
+<a href="#1925" id="1925">1925</a>
+<a href="#1926" id="1926">1926</a>
+<a href="#1927" id="1927">1927</a>
+<a href="#1928" id="1928">1928</a>
+<a href="#1929" id="1929">1929</a>
+<a href="#1930" id="1930">1930</a>
+<a href="#1931" id="1931">1931</a>
+<a href="#1932" id="1932">1932</a>
+<a href="#1933" id="1933">1933</a>
+<a href="#1934" id="1934">1934</a>
+<a href="#1935" id="1935">1935</a>
+<a href="#1936" id="1936">1936</a>
+<a href="#1937" id="1937">1937</a>
+<a href="#1938" id="1938">1938</a>
+<a href="#1939" id="1939">1939</a>
+<a href="#1940" id="1940">1940</a>
+<a href="#1941" id="1941">1941</a>
+<a href="#1942" id="1942">1942</a>
+<a href="#1943" id="1943">1943</a>
+<a href="#1944" id="1944">1944</a>
+<a href="#1945" id="1945">1945</a>
+<a href="#1946" id="1946">1946</a>
+<a href="#1947" id="1947">1947</a>
+<a href="#1948" id="1948">1948</a>
+<a href="#1949" id="1949">1949</a>
+<a href="#1950" id="1950">1950</a>
+<a href="#1951" id="1951">1951</a>
+<a href="#1952" id="1952">1952</a>
+<a href="#1953" id="1953">1953</a>
+<a href="#1954" id="1954">1954</a>
+<a href="#1955" id="1955">1955</a>
+<a href="#1956" id="1956">1956</a>
+<a href="#1957" id="1957">1957</a>
+<a href="#1958" id="1958">1958</a>
+<a href="#1959" id="1959">1959</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -1939,7 +1985,7 @@
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuilder};
+<span class="kw">use </span>rayon::ThreadPoolBuilder;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>static_assertions::const_assert;
 <span class="kw">use </span>std::fs::{File, OpenOptions};
@@ -2181,11 +2227,11 @@
     <span class="doccomment">/// Thread pool size used for farming (mostly for blocking I/O, but also for some
     /// compute-intensive operations during proving)
     </span><span class="kw">pub </span>farming_thread_pool_size: usize,
-    <span class="doccomment">/// Thread pool used for plotting
-    </span><span class="kw">pub </span>plotting_thread_pool: Arc&lt;ThreadPool&gt;,
-    <span class="doccomment">/// Thread pool used for replotting, typically smaller pool than for plotting to not affect
+    <span class="doccomment">/// Thread pool size used for plotting
+    </span><span class="kw">pub </span>plotting_thread_pool_size: usize,
+    <span class="doccomment">/// Thread pool size used for replotting, typically smaller pool than for plotting to not affect
     /// farming as much
-    </span><span class="kw">pub </span>replotting_thread_pool: Arc&lt;ThreadPool&gt;,
+    </span><span class="kw">pub </span>replotting_thread_pool_size: usize,
     <span class="doccomment">/// Notification for plotter to start, can be used to delay plotting until some initialization
     /// has happened externally
     </span><span class="kw">pub </span>plotting_delay: <span class="prelude-ty">Option</span>&lt;oneshot::Receiver&lt;()&gt;&gt;,
@@ -2505,8 +2551,8 @@
             downloading_semaphore,
             encoding_semaphore,
             farming_thread_pool_size,
-            plotting_thread_pool,
-            replotting_thread_pool,
+            plotting_thread_pool_size,
+            replotting_thread_pool_size,
             plotting_delay,
             farm_during_initial_plotting,
         } = options;
@@ -2790,6 +2836,50 @@
 
             <span class="kw">move </span>|| {
                 <span class="kw">let </span>_span_guard = span.enter();
+                <span class="kw">let </span>plotting_thread_pool = <span class="kw">match </span>ThreadPoolBuilder::new()
+                    .thread_name(<span class="kw">move </span>|thread_index| {
+                        <span class="macro">format!</span>(<span class="string">&quot;plotting-{disk_farm_index}.{thread_index}&quot;</span>)
+                    })
+                    .num_threads(plotting_thread_pool_size)
+                    .spawn_handler(tokio_rayon_spawn_handler())
+                    .build()
+                    .map_err(PlottingError::FailedToCreateThreadPool)
+                {
+                    <span class="prelude-val">Ok</span>(thread_pool) =&gt; thread_pool,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take() {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into()) {
+                                <span class="macro">error!</span>(
+                                    %error,
+                                    <span class="string">&quot;Plotting failed to send error to background task&quot;</span>,
+                                );
+                            }
+                        }
+                        <span class="kw">return</span>;
+                    }
+                };
+                <span class="kw">let </span>replotting_thread_pool = <span class="kw">match </span>ThreadPoolBuilder::new()
+                    .thread_name(<span class="kw">move </span>|thread_index| {
+                        <span class="macro">format!</span>(<span class="string">&quot;replotting-{disk_farm_index}.{thread_index}&quot;</span>)
+                    })
+                    .num_threads(replotting_thread_pool_size)
+                    .spawn_handler(tokio_rayon_spawn_handler())
+                    .build()
+                    .map_err(PlottingError::FailedToCreateThreadPool)
+                {
+                    <span class="prelude-val">Ok</span>(thread_pool) =&gt; thread_pool,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take() {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into()) {
+                                <span class="macro">error!</span>(
+                                    %error,
+                                    <span class="string">&quot;Plotting failed to send error to background task&quot;</span>,
+                                );
+                            }
+                        }
+                        <span class="kw">return</span>;
+                    }
+                };
 
                 <span class="kw">let </span>plotting_fut = <span class="kw">async move </span>{
                     <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
@@ -2897,6 +2987,7 @@
             <span class="kw">let </span>span = span.clone();
 
             <span class="kw">move </span>|| {
+                <span class="kw">let </span>_span_guard = span.enter();
                 <span class="kw">let </span>thread_pool = <span class="kw">match </span>ThreadPoolBuilder::new()
                     .thread_name(<span class="kw">move </span>|thread_index| {
                         <span class="macro">format!</span>(<span class="string">&quot;farming-{disk_farm_index}.{thread_index}&quot;</span>)
@@ -2921,6 +3012,7 @@
                 };
 
                 <span class="kw">let </span>handle = Handle::current();
+                <span class="kw">let </span>span = span.clone();
                 thread_pool.install(<span class="kw">move </span>|| {
                     <span class="kw">let </span>_span_guard = span.enter();
 
