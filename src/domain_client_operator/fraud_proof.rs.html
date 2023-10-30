@@ -461,6 +461,23 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::aux_schema::BundleMismatchType;
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::{Decode, Encode};
@@ -473,12 +490,12 @@
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
 <span class="kw">use </span>sp_domain_digests::AsPredigest;
 <span class="kw">use </span>sp_domains::proof_provider_and_verifier::StorageProofProvider;
-<span class="kw">use </span>sp_domains::{DomainId, DomainsApi};
+<span class="kw">use </span>sp_domains::{DomainId, DomainsApi, HeaderHashingFor};
 <span class="kw">use </span>sp_domains_fraud_proof::execution_prover::ExecutionProver;
 <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::{
     ExecutionPhase, ExtrinsicDigest, FraudProof, InvalidBundlesFraudProof,
     InvalidDomainBlockHashProof, InvalidExtrinsicsRootProof, InvalidStateTransitionProof,
-    InvalidTotalRewardsProof, ProofDataPerInvalidBundleType, ValidBundleDigest,
+    InvalidTotalRewardsProof, ValidBundleDigest,
 };
 <span class="kw">use </span>sp_runtime::traits::{BlakeTwo256, Block <span class="kw">as </span>BlockT, HashingFor, Header <span class="kw">as </span>HeaderT, NumberFor};
 <span class="kw">use </span>sp_runtime::{Digest, DigestItem};
@@ -501,6 +518,8 @@
     </span>InvalidBundleExtrinsic { bundle_index: usize },
     <span class="attr">#[error(<span class="string">&quot;Fail to generate the proof of inclusion&quot;</span>)]
     </span>FailToGenerateProofOfInclusion,
+    <span class="attr">#[error(<span class="string">&quot;Missing extrinsics in the Consesnsus block&quot;</span>)]
+    </span>MissingConsensusExtrinsics,
 }
 
 <span class="kw">pub struct </span>FraudProofGenerator&lt;Block, CBlock, Client, CClient, Backend, E&gt; {
@@ -612,7 +631,7 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>generate_invalid_bundle_field_proof&lt;PCB&gt;(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         domain_id: DomainId,
-        _local_receipt: <span class="kw-2">&amp;</span>ExecutionReceiptFor&lt;Block, CBlock&gt;,
+        local_receipt: <span class="kw-2">&amp;</span>ExecutionReceiptFor&lt;Block, CBlock&gt;,
         mismatch_type: BundleMismatchType,
         bundle_index: u32,
         bad_receipt_hash: Block::Hash,
@@ -620,38 +639,53 @@
     <span class="kw">where
         </span>PCB: BlockT,
     {
-        <span class="kw">match </span>mismatch_type {
-            <span class="comment">// TODO: Generate a proper proof once fields are in place
-            </span>BundleMismatchType::TrueInvalid(_invalid_type) =&gt; {
-                <span class="prelude-val">Ok</span>(FraudProof::InvalidBundles(InvalidBundlesFraudProof::new(
-                    bad_receipt_hash,
-                    domain_id,
-                    bundle_index,
-                    <span class="number">0</span>,
-                    <span class="macro">vec!</span>[],
-                    <span class="bool-val">true</span>,
-                    ProofDataPerInvalidBundleType::OutOfRangeTx,
-                )))
+        <span class="kw">let </span>consensus_block_hash = local_receipt.consensus_block_hash;
+        <span class="kw">let </span>consensus_extrinsics = <span class="self">self
+            </span>.consensus_client
+            .block_body(consensus_block_hash)<span class="question-mark">?
+            </span>.ok_or(FraudProofError::MissingConsensusExtrinsics)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>bundles = <span class="self">self
+            </span>.consensus_client
+            .runtime_api()
+            .extract_successful_bundles(consensus_block_hash, domain_id, consensus_extrinsics)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>bundle = bundles
+            .get(bundle_index <span class="kw">as </span>usize)
+            .ok_or(FraudProofError::MissingBundle {
+                bundle_index: bundle_index <span class="kw">as </span>usize,
+            })<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>(invalid_type, is_true_invalid) = <span class="kw">match </span>mismatch_type {
+            BundleMismatchType::TrueInvalid(invalid_type) =&gt; (invalid_type, <span class="bool-val">true</span>),
+            BundleMismatchType::FalseInvalid(invalid_type) =&gt; (invalid_type, <span class="bool-val">false</span>),
+            BundleMismatchType::Valid =&gt; {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Application(
+                    <span class="string">&quot;Unexpected bundle mismatch type, this should not happen&quot;
+                        </span>.to_string()
+                        .into(),
+                )
+                .into())
             }
-            <span class="comment">// TODO: Generate a proper proof once fields are in place
-            </span>BundleMismatchType::FalseInvalid(_invalid_type) =&gt; {
-                <span class="prelude-val">Ok</span>(FraudProof::InvalidBundles(InvalidBundlesFraudProof::new(
-                    bad_receipt_hash,
-                    domain_id,
-                    bundle_index,
-                    <span class="number">0</span>,
-                    <span class="macro">vec!</span>[],
-                    <span class="bool-val">false</span>,
-                    ProofDataPerInvalidBundleType::OutOfRangeTx,
-                )))
-            }
-            BundleMismatchType::Valid =&gt; <span class="prelude-val">Err</span>(sp_blockchain::Error::Application(
-                <span class="string">&quot;Unexpected bundle mismatch type, this should not happen&quot;
-                    </span>.to_string()
-                    .into(),
-            )
-            .into()),
-        }
+        };
+
+        <span class="kw">let </span>extrinsic_index = invalid_type.extrinsic_index();
+        <span class="kw">let </span>encoded_extrinsics: Vec&lt;<span class="kw">_</span>&gt; = bundle.extrinsics.iter().map(Encode::encode).collect();
+        <span class="kw">let </span>extrinsic_inclusion_proof = StorageProofProvider::&lt;
+            LayoutV1&lt;HeaderHashingFor&lt;Block::Header&gt;&gt;,
+        &gt;::generate_enumerated_proof_of_inclusion(
+            encoded_extrinsics.as_slice(), extrinsic_index
+        )
+        .ok_or(FraudProofError::FailToGenerateProofOfInclusion)<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(FraudProof::InvalidBundles(InvalidBundlesFraudProof::new(
+            bad_receipt_hash,
+            domain_id,
+            bundle_index,
+            invalid_type,
+            extrinsic_inclusion_proof,
+            is_true_invalid,
+        )))
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>generate_invalid_domain_extrinsics_root_proof&lt;PCB&gt;(
