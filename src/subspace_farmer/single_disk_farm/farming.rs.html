@@ -250,10 +250,62 @@
 <a href="#250" id="250">250</a>
 <a href="#251" id="251">251</a>
 <a href="#252" id="252">252</a>
-</pre></div><pre class="rust"><code><span class="attr">#[cfg(any(target_os = <span class="string">&quot;linux&quot;</span>, target_os = <span class="string">&quot;macos&quot;</span>))]
-</span><span class="kw">pub mod </span>monoio;
-<span class="kw">pub mod </span>rayon_files;
-<span class="kw">pub mod </span>sync_fallback;
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+</pre></div><pre class="rust"><code><span class="kw">pub mod </span>rayon_files;
 
 <span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
@@ -263,17 +315,17 @@
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::ThreadPoolBuildError;
-<span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Instant;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
-<span class="kw">use </span>subspace_core_primitives::{PublicKey, SectorIndex, Solution, SolutionRange};
+<span class="kw">use </span>subspace_core_primitives::{PosSeed, PublicKey, SectorIndex, Solution, SolutionRange};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
-<span class="kw">use </span>subspace_farmer_components::proving;
-<span class="kw">use </span>subspace_farmer_components::proving::ProvableSolutions;
+<span class="kw">use </span>subspace_farmer_components::auditing::audit_plot_sync;
+<span class="kw">use </span>subspace_farmer_components::proving::{ProvableSolutions, ProvingError};
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadataChecksummed;
-<span class="kw">use </span>subspace_proof_of_space::Table;
+<span class="kw">use </span>subspace_farmer_components::{proving, ReadAtSync};
+<span class="kw">use </span>subspace_proof_of_space::{Table, TableGenerator};
 <span class="kw">use </span>subspace_rpc_primitives::{SlotInfo, SolutionResponse};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
@@ -357,30 +409,90 @@
     </span><span class="kw">pub </span>table_generator: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Mutex&lt;PosTable::Generator&gt;,
 }
 
-<span class="doccomment">/// Auditing implementation used by farming
-</span><span class="kw">pub trait </span>PlotAudit&lt;<span class="lifetime">&#39;p</span>&gt; {
-    <span class="kw">fn </span>audit&lt;<span class="lifetime">&#39;a</span>, PosTable&gt;(
-        <span class="kw-2">&amp;</span><span class="lifetime">&#39;p </span><span class="self">self</span>,
+<span class="doccomment">/// Plot auditing implementation
+</span><span class="kw">pub struct </span>PlotAudit&lt;Plot&gt;(Plot)
+<span class="kw">where
+    </span>Plot: ReadAtSync;
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, Plot&gt; PlotAudit&lt;Plot&gt;
+<span class="kw">where
+    </span>Plot: ReadAtSync + <span class="lifetime">&#39;a</span>,
+{
+    <span class="doccomment">/// Create new instance
+    </span><span class="kw">pub fn </span>new(plot: Plot) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>(plot)
+    }
+
+    <span class="kw">pub fn </span>audit&lt;PosTable&gt;(
+        <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>,
         options: PlotAuditOptions&lt;<span class="lifetime">&#39;a</span>, PosTable&gt;,
-    ) -&gt; <span class="kw">impl </span>Future&lt;
-        Output = Vec&lt;(
-            SectorIndex,
-            <span class="kw">impl </span>ProvableSolutions&lt;
-                    Item = <span class="prelude-ty">Result</span>&lt;Solution&lt;PublicKey, PublicKey&gt;, proving::ProvingError&gt;,
-                &gt; + Unpin
-                + <span class="lifetime">&#39;a</span>,
-        )&gt;,
-    &gt;
+    ) -&gt; Vec&lt;(
+        SectorIndex,
+        <span class="kw">impl </span>ProvableSolutions&lt;Item = <span class="prelude-ty">Result</span>&lt;Solution&lt;PublicKey, PublicKey&gt;, ProvingError&gt;&gt; + <span class="lifetime">&#39;a</span>,
+    )&gt;
     <span class="kw">where
-        </span><span class="lifetime">&#39;p</span>: <span class="lifetime">&#39;a</span>,
-        PosTable: Table;
+        </span>PosTable: Table,
+    {
+        <span class="kw">let </span>PlotAuditOptions {
+            public_key,
+            reward_address,
+            slot_info,
+            sectors_metadata,
+            kzg,
+            erasure_coding,
+            maybe_sector_being_modified,
+            table_generator,
+        } = options;
+
+        <span class="kw">let </span>audit_results = audit_plot_sync(
+            public_key,
+            <span class="kw-2">&amp;</span>slot_info.global_challenge,
+            slot_info.voting_solution_range,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>,
+            sectors_metadata,
+            maybe_sector_being_modified,
+        );
+
+        audit_results
+            .into_iter()
+            .filter_map(|audit_results| {
+                <span class="kw">let </span>sector_index = audit_results.sector_index;
+
+                <span class="kw">let </span>sector_solutions = audit_results.solution_candidates.into_solutions(
+                    reward_address,
+                    kzg,
+                    erasure_coding,
+                    |seed: <span class="kw-2">&amp;</span>PosSeed| table_generator.lock().generate_parallel(seed),
+                );
+
+                <span class="kw">let </span>sector_solutions = <span class="kw">match </span>sector_solutions {
+                    <span class="prelude-val">Ok</span>(solutions) =&gt; solutions,
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="macro">warn!</span>(
+                            %error,
+                            %sector_index,
+                            <span class="string">&quot;Failed to turn solution candidates into solutions&quot;</span>,
+                        );
+
+                        <span class="kw">return </span><span class="prelude-val">None</span>;
+                    }
+                };
+
+                <span class="kw">if </span>sector_solutions.len() == <span class="number">0 </span>{
+                    <span class="kw">return </span><span class="prelude-val">None</span>;
+                }
+
+                <span class="prelude-val">Some</span>((sector_index, sector_solutions))
+            })
+            .collect()
+    }
 }
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>FarmingOptions&lt;<span class="lifetime">&#39;a</span>, NC, PA&gt; {
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>FarmingOptions&lt;NC, PlotAudit&gt; {
     <span class="kw">pub</span>(<span class="kw">super</span>) public_key: PublicKey,
     <span class="kw">pub</span>(<span class="kw">super</span>) reward_address: PublicKey,
     <span class="kw">pub</span>(<span class="kw">super</span>) node_client: NC,
-    <span class="kw">pub</span>(<span class="kw">super</span>) plot_audit: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>PA,
+    <span class="kw">pub</span>(<span class="kw">super</span>) plot_audit: PlotAudit,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) kzg: Kzg,
     <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: ErasureCoding,
@@ -393,13 +505,13 @@
 ///
 /// NOTE: Returned future is async, but does blocking operations and should be running in dedicated
 /// thread.
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>farming&lt;<span class="lifetime">&#39;a</span>, PosTable, NC, PA&gt;(
-    farming_options: FarmingOptions&lt;<span class="lifetime">&#39;a</span>, NC, PA&gt;,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>farming&lt;<span class="lifetime">&#39;a</span>, PosTable, NC, Plot&gt;(
+    farming_options: FarmingOptions&lt;NC, PlotAudit&lt;Plot&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), FarmingError&gt;
 <span class="kw">where
     </span>PosTable: Table,
     NC: NodeClient,
-    PA: PlotAudit&lt;<span class="lifetime">&#39;a</span>&gt;,
+    Plot: ReadAtSync + <span class="lifetime">&#39;a</span>,
 {
     <span class="kw">let </span>FarmingOptions {
         public_key,
@@ -435,19 +547,17 @@
             <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read().<span class="kw">await</span>;
             <span class="kw">let </span>maybe_sector_being_modified = modifying_sector_guard.as_ref().copied();
 
-            plot_audit
-                .audit(PlotAuditOptions::&lt;PosTable&gt; {
-                    public_key: <span class="kw-2">&amp;</span>public_key,
-                    reward_address: <span class="kw-2">&amp;</span>reward_address,
-                    slot_info,
-                    sectors_metadata: <span class="kw-2">&amp;</span>sectors_metadata,
-                    kzg: <span class="kw-2">&amp;</span>kzg,
-                    erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
-                    maybe_sector_being_modified,
-                    table_generator: <span class="kw-2">&amp;</span>table_generator,
-                })
-                .<span class="kw">await
-        </span>};
+            plot_audit.audit(PlotAuditOptions::&lt;PosTable&gt; {
+                public_key: <span class="kw-2">&amp;</span>public_key,
+                reward_address: <span class="kw-2">&amp;</span>reward_address,
+                slot_info,
+                sectors_metadata: <span class="kw-2">&amp;</span>sectors_metadata,
+                kzg: <span class="kw-2">&amp;</span>kzg,
+                erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
+                maybe_sector_being_modified,
+                table_generator: <span class="kw-2">&amp;</span>table_generator,
+            })
+        };
 
         sectors_solutions.sort_by(|a, b| {
             <span class="kw">let </span>a_solution_distance = a.<span class="number">1</span>.best_solution_distance().unwrap_or(SolutionRange::MAX);
@@ -456,8 +566,8 @@
             a_solution_distance.cmp(<span class="kw-2">&amp;</span>b_solution_distance)
         });
 
-        <span class="lifetime">&#39;solutions_processing</span>: <span class="kw">for </span>(sector_index, <span class="kw-2">mut </span>sector_solutions) <span class="kw">in </span>sectors_solutions {
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_solution) = sector_solutions.next().<span class="kw">await </span>{
+        <span class="lifetime">&#39;solutions_processing</span>: <span class="kw">for </span>(sector_index, sector_solutions) <span class="kw">in </span>sectors_solutions {
+            <span class="kw">for </span>maybe_solution <span class="kw">in </span>sector_solutions {
                 <span class="kw">let </span>solution = <span class="kw">match </span>maybe_solution {
                     <span class="prelude-val">Ok</span>(solution) =&gt; solution,
                     <span class="prelude-val">Err</span>(error) =&gt; {

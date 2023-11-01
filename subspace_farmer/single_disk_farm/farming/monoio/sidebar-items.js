@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["build_monoio_runtime"],"struct":["MonoioFile","MonoioPlotAudit"],"type":["MonoioRuntime"]};

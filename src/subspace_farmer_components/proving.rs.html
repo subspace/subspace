@@ -395,61 +395,15 @@
 <a href="#395" id="395">395</a>
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
-<a href="#422" id="422">422</a>
-<a href="#423" id="423">423</a>
-<a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
-<a href="#427" id="427">427</a>
-<a href="#428" id="428">428</a>
-<a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a>
-<a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a>
-<a href="#434" id="434">434</a>
-<a href="#435" id="435">435</a>
-<a href="#436" id="436">436</a>
-<a href="#437" id="437">437</a>
-<a href="#438" id="438">438</a>
-<a href="#439" id="439">439</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::auditing::ChunkCandidate;
 <span class="kw">use </span><span class="kw">crate</span>::reading::{read_record_metadata, read_sector_record_chunks, ReadingError};
 <span class="kw">use </span><span class="kw">crate</span>::sector::{
     SectorContentsMap, SectorContentsMapFromBytesError, SectorMetadataChecksummed,
 };
-<span class="kw">use crate</span>::{ReadAt, ReadAtAsync, ReadAtSync};
-<span class="kw">use </span>futures::Stream;
+<span class="kw">use crate</span>::{ReadAt, ReadAtSync};
+<span class="kw">use </span>futures::FutureExt;
 <span class="kw">use </span>std::collections::VecDeque;
 <span class="kw">use </span>std::io;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::task::{Context, Poll};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
     ChunkWitness, PieceOffset, PosSeed, PublicKey, Record, SBucket, SectorId, Solution,
@@ -460,20 +414,9 @@
 <span class="kw">use </span>thiserror::Error;
 
 <span class="doccomment">/// Solutions that can be proven if necessary.
-///
-/// NOTE: Even though this implements async stream, it will do blocking proof os space table
-/// derivation and should be running on a dedicated thread.
-</span><span class="kw">pub trait </span>ProvableSolutions: Stream {
+</span><span class="kw">pub trait </span>ProvableSolutions: ExactSizeIterator {
     <span class="doccomment">/// Best solution distance found, `None` in case there are no solutions
     </span><span class="kw">fn </span>best_solution_distance(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SolutionRange&gt;;
-
-    <span class="doccomment">/// Returns the exact remaining number of solutions
-    </span><span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
-
-    <span class="doccomment">/// Returns `true` if there are no solutions
-    </span><span class="kw">fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.len() == <span class="number">0
-    </span>}
 }
 
 <span class="doccomment">/// Errors that happen during proving
@@ -554,16 +497,15 @@
     }
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, S, A&gt; SolutionCandidates&lt;<span class="lifetime">&#39;a</span>, ReadAt&lt;S, A&gt;&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, Sector&gt; SolutionCandidates&lt;<span class="lifetime">&#39;a</span>, Sector&gt;
 <span class="kw">where
-    </span>S: ReadAtSync + <span class="lifetime">&#39;a</span>,
-    A: ReadAtAsync + <span class="lifetime">&#39;a</span>,
+    </span>Sector: ReadAtSync + <span class="lifetime">&#39;a</span>,
 {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
         public_key: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>PublicKey,
         sector_id: SectorId,
         s_bucket: SBucket,
-        sector: ReadAt&lt;S, A&gt;,
+        sector: Sector,
         sector_metadata: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>SectorMetadataChecksummed,
         chunk_candidates: VecDeque&lt;ChunkCandidate&gt;,
     ) -&gt; <span class="self">Self </span>{
@@ -588,7 +530,7 @@
     }
 
     <span class="doccomment">/// Turn solution candidates into actual solutions
-    </span><span class="kw">pub async fn </span>into_solutions&lt;RewardAddress, PosTable, TableGenerator&gt;(
+    </span><span class="kw">pub fn </span>into_solutions&lt;RewardAddress, PosTable, TableGenerator&gt;(
         <span class="self">self</span>,
         reward_address: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>RewardAddress,
         kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
@@ -600,27 +542,26 @@
         PosTable: Table,
         TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
     {
-        <span class="kw">let </span>solutions_iterator_fut =
-            SolutionsIterator::&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt;::new::&lt;PosTable, TableGenerator, S, A&gt;(
-                <span class="self">self</span>.public_key,
-                reward_address,
-                <span class="self">self</span>.sector_id,
-                <span class="self">self</span>.s_bucket,
-                <span class="self">self</span>.sector,
-                <span class="self">self</span>.sector_metadata,
-                kzg,
-                erasure_coding,
-                <span class="self">self</span>.chunk_candidates,
-                table_generator,
-            );
-
-        solutions_iterator_fut.<span class="kw">await
-    </span>}
+        SolutionsIterator::&lt;<span class="lifetime">&#39;a</span>, <span class="kw">_</span>, PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(
+            <span class="self">self</span>.public_key,
+            reward_address,
+            <span class="self">self</span>.sector_id,
+            <span class="self">self</span>.s_bucket,
+            <span class="self">self</span>.sector,
+            <span class="self">self</span>.sector_metadata,
+            kzg,
+            erasure_coding,
+            <span class="self">self</span>.chunk_candidates,
+            table_generator,
+        )
+    }
 }
 
-<span class="kw">struct </span>SolutionsIteratorState&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
+<span class="kw">type </span>MaybeSolution&lt;RewardAddress&gt; = <span class="prelude-ty">Result</span>&lt;Solution&lt;PublicKey, RewardAddress&gt;, ProvingError&gt;;
+
+<span class="kw">struct </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
 <span class="kw">where
-    </span>Sector: <span class="lifetime">&#39;a</span>,
+    </span>Sector: ReadAtSync + <span class="lifetime">&#39;a</span>,
     PosTable: Table,
     TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
 {
@@ -633,74 +574,163 @@
     kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
     erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>ErasureCoding,
     sector_contents_map: SectorContentsMap,
-    sector: Sector,
+    sector: ReadAt&lt;Sector, !&gt;,
     winning_chunks: VecDeque&lt;WinningChunk&gt;,
-    count: Arc&lt;AtomicUsize&gt;,
+    count: usize,
+    best_solution_distance: <span class="prelude-ty">Option</span>&lt;SolutionRange&gt;,
     table_generator: TableGenerator,
 }
 
-<span class="kw">type </span>MaybeSolution&lt;RewardAddress&gt; = <span class="prelude-ty">Result</span>&lt;Solution&lt;PublicKey, RewardAddress&gt;, ProvingError&gt;;
-
-<span class="attr">#[pin_project::pin_project]
-</span><span class="kw">struct </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt; {
-    <span class="attr">#[pin]
-    </span>stream: Pin&lt;Box&lt;<span class="kw">dyn </span>Stream&lt;Item = MaybeSolution&lt;RewardAddress&gt;&gt; + <span class="lifetime">&#39;a</span>&gt;&gt;,
-    count: Arc&lt;AtomicUsize&gt;,
-    best_solution_distance: <span class="prelude-ty">Option</span>&lt;SolutionRange&gt;,
-}
-
-<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt; Stream <span class="kw">for </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt; ExactSizeIterator
+    <span class="kw">for </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
 <span class="kw">where
     </span>RewardAddress: Copy,
+    Sector: ReadAtSync + <span class="lifetime">&#39;a</span>,
+    PosTable: Table,
+    TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
+{
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt; Iterator
+    <span class="kw">for </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
+<span class="kw">where
+    </span>RewardAddress: Copy,
+    Sector: ReadAtSync + <span class="lifetime">&#39;a</span>,
+    PosTable: Table,
+    TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
 {
     <span class="kw">type </span>Item = MaybeSolution&lt;RewardAddress&gt;;
 
-    <span class="kw">fn </span>poll_next(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="self">self</span>.project().stream.poll_next(cx)
+    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
+        <span class="kw">let </span>WinningChunk {
+            chunk_offset,
+            piece_offset,
+            solution_distance: <span class="kw">_</span>,
+        } = <span class="self">self</span>.winning_chunks.pop_front()<span class="question-mark">?</span>;
+
+        <span class="self">self</span>.count -= <span class="number">1</span>;
+
+        <span class="comment">// Derive PoSpace table
+        </span><span class="kw">let </span>pos_table = (<span class="self">self</span>.table_generator)(
+            <span class="kw-2">&amp;</span><span class="self">self
+                </span>.sector_id
+                .derive_evaluation_seed(piece_offset, <span class="self">self</span>.sector_metadata.history_size),
+        );
+
+        <span class="kw">let </span>maybe_solution: <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ProvingError&gt; = <span class="kw">try </span>{
+            <span class="kw">let </span>sector_record_chunks_fut = read_sector_record_chunks(
+                piece_offset,
+                <span class="self">self</span>.sector_metadata.pieces_in_sector,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.s_bucket_offsets,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.sector_contents_map,
+                <span class="kw-2">&amp;</span>pos_table,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.sector,
+            );
+            <span class="kw">let </span>sector_record_chunks = sector_record_chunks_fut
+                .now_or_never()
+                .expect(<span class="string">&quot;Sync reader; qed&quot;</span>)<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>chunk = sector_record_chunks
+                .get(usize::from(<span class="self">self</span>.s_bucket))
+                .expect(<span class="string">&quot;Within s-bucket range; qed&quot;</span>)
+                .expect(<span class="string">&quot;Winning chunk was plotted; qed&quot;</span>);
+
+            <span class="kw">let </span>source_chunks_polynomial = <span class="self">self
+                </span>.erasure_coding
+                .recover_poly(sector_record_chunks.as_slice())
+                .map_err(|error| ReadingError::FailedToErasureDecodeRecord {
+                    piece_offset,
+                    error,
+                })<span class="question-mark">?</span>;
+            drop(sector_record_chunks);
+
+            <span class="comment">// NOTE: We do not check plot consistency using checksum because it is more
+            // expensive and consensus will verify validity of the proof anyway
+            </span><span class="kw">let </span>record_metadata_fut = read_record_metadata(
+                piece_offset,
+                <span class="self">self</span>.sector_metadata.pieces_in_sector,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.sector,
+            );
+            <span class="kw">let </span>record_metadata = record_metadata_fut
+                .now_or_never()
+                .expect(<span class="string">&quot;Sync reader; qed&quot;</span>)<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>proof_of_space = pos_table.find_proof(<span class="self">self</span>.s_bucket.into()).expect(
+                <span class="string">&quot;Quality exists for this s-bucket, otherwise it wouldn&#39;t be a winning chunk; qed&quot;</span>,
+            );
+
+            <span class="kw">let </span>chunk_witness = <span class="self">self
+                </span>.kzg
+                .create_witness(
+                    <span class="kw-2">&amp;</span>source_chunks_polynomial,
+                    Record::NUM_S_BUCKETS,
+                    <span class="self">self</span>.s_bucket.into(),
+                )
+                .map_err(|error| ProvingError::FailedToCreateChunkWitness {
+                    piece_offset,
+                    chunk_offset,
+                    error,
+                })<span class="question-mark">?</span>;
+
+            Solution {
+                public_key: <span class="kw-2">*</span><span class="self">self</span>.public_key,
+                reward_address: <span class="kw-2">*</span><span class="self">self</span>.reward_address,
+                sector_index: <span class="self">self</span>.sector_metadata.sector_index,
+                history_size: <span class="self">self</span>.sector_metadata.history_size,
+                piece_offset,
+                record_commitment: record_metadata.commitment,
+                record_witness: record_metadata.witness,
+                chunk,
+                chunk_witness: ChunkWitness::from(chunk_witness),
+                proof_of_space,
+            }
+        };
+
+        <span class="kw">match </span>maybe_solution {
+            <span class="prelude-val">Ok</span>(solution) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(solution)),
+            <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(error)),
+        }
     }
 
     <span class="kw">fn </span>size_hint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (usize, <span class="prelude-ty">Option</span>&lt;usize&gt;) {
-        <span class="kw">let </span>count = <span class="self">self</span>.count.load(Ordering::Acquire);
-        (count, <span class="prelude-val">Some</span>(count))
+        (<span class="self">self</span>.count, <span class="prelude-val">Some</span>(<span class="self">self</span>.count))
     }
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt; ProvableSolutions <span class="kw">for </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt; ProvableSolutions
+    <span class="kw">for </span>SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
 <span class="kw">where
     </span>RewardAddress: Copy,
+    Sector: ReadAtSync + <span class="lifetime">&#39;a</span>,
+    PosTable: Table,
+    TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
 {
     <span class="kw">fn </span>best_solution_distance(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SolutionRange&gt; {
         <span class="self">self</span>.best_solution_distance
     }
-
-    <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.count.load(Ordering::Acquire)
-    }
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt; SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
+    SolutionsIterator&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, Sector&gt;
 <span class="kw">where
     </span>RewardAddress: Copy,
+    Sector: ReadAtSync + <span class="lifetime">&#39;a</span>,
+    PosTable: Table,
+    TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
 {
     <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="kw">async fn </span>new&lt;PosTable, TableGenerator, S, A&gt;(
+    </span><span class="kw">fn </span>new(
         public_key: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>PublicKey,
         reward_address: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>RewardAddress,
         sector_id: SectorId,
         s_bucket: SBucket,
-        sector: ReadAt&lt;S, A&gt;,
+        sector: Sector,
         sector_metadata: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>SectorMetadataChecksummed,
         kzg: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Kzg,
         erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>ErasureCoding,
         chunk_candidates: VecDeque&lt;ChunkCandidate&gt;,
         table_generator: TableGenerator,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ProvingError&gt;
-    <span class="kw">where
-        </span>S: ReadAtSync + <span class="lifetime">&#39;a</span>,
-        A: ReadAtAsync + <span class="lifetime">&#39;a</span>,
-        PosTable: Table,
-        TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
-    {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ProvingError&gt; {
         <span class="kw">if </span>erasure_coding.max_shards() &lt; Record::NUM_S_BUCKETS {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ProvingError::InvalidErasureCodingInstance);
         }
@@ -709,15 +739,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>sector_contents_map_bytes =
                 <span class="macro">vec!</span>[<span class="number">0</span>; SectorContentsMap::encoded_size(sector_metadata.pieces_in_sector)];
 
-            <span class="kw">match </span><span class="kw-2">&amp;</span>sector {
-                ReadAt::Sync(sector) =&gt; {
-                    sector.read_at(<span class="kw-2">&amp;mut </span>sector_contents_map_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
-                }
-                ReadAt::Async(sector) =&gt; {
-                    sector_contents_map_bytes =
-                        sector.read_at(sector_contents_map_bytes, <span class="number">0</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-                }
-            }
+            sector.read_at(<span class="kw-2">&amp;mut </span>sector_contents_map_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
 
             SectorContentsMap::from_bytes(
                 <span class="kw-2">&amp;</span>sector_contents_map_bytes,
@@ -750,9 +772,9 @@
 
         <span class="kw">let </span>s_bucket_offsets = sector_metadata.s_bucket_offsets();
 
-        <span class="kw">let </span>count = Arc::new(AtomicUsize::new(winning_chunks.len()));
+        <span class="kw">let </span>count = winning_chunks.len();
 
-        <span class="kw">let </span>state = SolutionsIteratorState {
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             public_key,
             reward_address,
             sector_id,
@@ -762,118 +784,12 @@
             kzg,
             erasure_coding,
             sector_contents_map,
-            sector,
+            sector: ReadAt::from_sync(sector),
             winning_chunks,
-            count: Arc::clone(<span class="kw-2">&amp;</span>count),
-            table_generator,
-        };
-
-        <span class="kw">let </span>stream = futures::stream::unfold(state, solutions_iterator_next);
-
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            stream: Box::pin(stream),
             count,
             best_solution_distance,
+            table_generator,
         })
-    }
-}
-
-<span class="kw">async fn </span>solutions_iterator_next&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, S, A&gt;(
-    <span class="kw-2">mut </span>state: SolutionsIteratorState&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, ReadAt&lt;S, A&gt;&gt;,
-) -&gt; <span class="prelude-ty">Option</span>&lt;(
-    MaybeSolution&lt;RewardAddress&gt;,
-    SolutionsIteratorState&lt;<span class="lifetime">&#39;a</span>, RewardAddress, PosTable, TableGenerator, ReadAt&lt;S, A&gt;&gt;,
-)&gt;
-<span class="kw">where
-    </span>RewardAddress: Copy,
-    PosTable: Table,
-    TableGenerator: (FnMut(<span class="kw-2">&amp;</span>PosSeed) -&gt; PosTable) + <span class="lifetime">&#39;a</span>,
-    S: ReadAtSync + <span class="lifetime">&#39;a</span>,
-    A: ReadAtAsync + <span class="lifetime">&#39;a</span>,
-{
-    <span class="kw">let </span>WinningChunk {
-        chunk_offset,
-        piece_offset,
-        solution_distance: <span class="kw">_</span>,
-    } = state.winning_chunks.pop_front()<span class="question-mark">?</span>;
-
-    state.count.fetch_sub(<span class="number">1</span>, Ordering::SeqCst);
-
-    <span class="comment">// Derive PoSpace table
-    </span><span class="kw">let </span>pos_table = (state.table_generator)(
-        <span class="kw-2">&amp;</span>state
-            .sector_id
-            .derive_evaluation_seed(piece_offset, state.sector_metadata.history_size),
-    );
-
-    <span class="kw">let </span>maybe_solution: <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, ProvingError&gt; = <span class="kw">try </span>{
-        <span class="kw">let </span>sector_record_chunks_fut = read_sector_record_chunks(
-            piece_offset,
-            state.sector_metadata.pieces_in_sector,
-            <span class="kw-2">&amp;</span>state.s_bucket_offsets,
-            <span class="kw-2">&amp;</span>state.sector_contents_map,
-            <span class="kw-2">&amp;</span>pos_table,
-            <span class="kw-2">&amp;</span>state.sector,
-        );
-        <span class="kw">let </span>sector_record_chunks = sector_record_chunks_fut.<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>chunk = sector_record_chunks
-            .get(usize::from(state.s_bucket))
-            .expect(<span class="string">&quot;Within s-bucket range; qed&quot;</span>)
-            .expect(<span class="string">&quot;Winning chunk was plotted; qed&quot;</span>);
-
-        <span class="kw">let </span>source_chunks_polynomial = state
-            .erasure_coding
-            .recover_poly(sector_record_chunks.as_slice())
-            .map_err(|error| ReadingError::FailedToErasureDecodeRecord {
-                piece_offset,
-                error,
-            })<span class="question-mark">?</span>;
-        drop(sector_record_chunks);
-
-        <span class="comment">// NOTE: We do not check plot consistency using checksum because it is more
-        // expensive and consensus will verify validity of the proof anyway
-        </span><span class="kw">let </span>record_metadata_fut = read_record_metadata(
-            piece_offset,
-            state.sector_metadata.pieces_in_sector,
-            <span class="kw-2">&amp;</span>state.sector,
-        );
-        <span class="kw">let </span>record_metadata = record_metadata_fut.<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>proof_of_space = pos_table.find_proof(state.s_bucket.into()).expect(
-            <span class="string">&quot;Quality exists for this s-bucket, otherwise it wouldn&#39;t be a winning chunk; qed&quot;</span>,
-        );
-
-        <span class="kw">let </span>chunk_witness = state
-            .kzg
-            .create_witness(
-                <span class="kw-2">&amp;</span>source_chunks_polynomial,
-                Record::NUM_S_BUCKETS,
-                state.s_bucket.into(),
-            )
-            .map_err(|error| ProvingError::FailedToCreateChunkWitness {
-                piece_offset,
-                chunk_offset,
-                error,
-            })<span class="question-mark">?</span>;
-
-        Solution {
-            public_key: <span class="kw-2">*</span>state.public_key,
-            reward_address: <span class="kw-2">*</span>state.reward_address,
-            sector_index: state.sector_metadata.sector_index,
-            history_size: state.sector_metadata.history_size,
-            piece_offset,
-            record_commitment: record_metadata.commitment,
-            record_witness: record_metadata.witness,
-            chunk,
-            chunk_witness: ChunkWitness::from(chunk_witness),
-            proof_of_space,
-        }
-    };
-
-    <span class="kw">match </span>maybe_solution {
-        <span class="prelude-val">Ok</span>(solution) =&gt; <span class="prelude-val">Some</span>((<span class="prelude-val">Ok</span>(solution), state)),
-        <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Some</span>((<span class="prelude-val">Err</span>(error), state)),
     }
 }
 </code></pre></div></section></main></body></html>
