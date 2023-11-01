@@ -210,18 +210,47 @@
 <a href="#210" id="210">210</a>
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>futures::{select, FutureExt};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend};
-<span class="kw">use </span>sc_transaction_pool_api::InPoolTransaction;
+<span class="kw">use </span>sc_transaction_pool_api::{InPoolTransaction, TransactionSource};
 <span class="kw">use </span>sp_api::{HeaderT, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_domains::{BundleHeader, ExecutionReceipt, HeaderHashingFor, ProofOfElection};
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, One, Zero};
+<span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>sp_weights::Weight;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
@@ -261,7 +290,7 @@
     CBlock: BlockT,
     NumberFor&lt;Block&gt;: Into&lt;NumberFor&lt;CBlock&gt;&gt;,
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + AuxStore + ProvideRuntimeApi&lt;Block&gt;,
-    Client::Api: BlockBuilder&lt;Block&gt; + DomainCoreApi&lt;Block&gt;,
+    Client::Api: BlockBuilder&lt;Block&gt; + DomainCoreApi&lt;Block&gt; + TaggedTransactionQueue&lt;Block&gt;,
     CClient: HeaderBackend&lt;CBlock&gt;,
     TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = Block&gt;,
 {
@@ -326,32 +355,59 @@
                     </span>);
                 })
                 .unwrap_or(<span class="bool-val">false</span>);
-
-            <span class="kw">if </span>is_within_tx_range {
-                <span class="kw">let </span>tx_weight = <span class="self">self
-                    </span>.client
-                    .runtime_api()
-                    .extrinsic_weight(parent_hash, pending_tx_data)
-                    .map_err(|error| {
-                        sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
-                            <span class="string">&quot;Error getting extrinsic weight: {error}&quot;
-                        </span>)))
-                    })<span class="question-mark">?</span>;
-                <span class="kw">let </span>next_estimated_bundle_weight =
-                    estimated_bundle_weight.saturating_add(tx_weight);
-                <span class="kw">if </span>next_estimated_bundle_weight.any_gt(domain_block_limit.max_block_weight) {
-                    <span class="kw">break</span>;
-                }
-
-                <span class="kw">let </span>next_bundle_size = bundle_size + pending_tx_data.encoded_size() <span class="kw">as </span>u32;
-                <span class="kw">if </span>next_bundle_size &gt; domain_block_limit.max_block_size {
-                    <span class="kw">break</span>;
-                }
-
-                estimated_bundle_weight = next_estimated_bundle_weight;
-                bundle_size = next_bundle_size;
-                extrinsics.push(pending_tx_data.clone());
+            <span class="kw">if </span>!is_within_tx_range {
+                <span class="kw">continue</span>;
             }
+
+            <span class="comment">// Double check the transaction validity, because the tx pool are re-validate the transaction
+            // in pool asynchronously so there is race condition that the operator imported a domain block
+            // and start producing bundle immediately before the re-validation based on the latest block
+            // is finished, cause the bundle contains illegal tx accidentally and being considered as invalid
+            // bundle and slashing on the honest operator.
+            //
+            // NOTE: this check need to be kept aligned with how the illegal tx is detected in the block-preprocessor
+            // thus when https://github.com/subspace/subspace/issues/2184 is implemented, we also need to
+            // perfome the check for bundle as a whole instead of checking tx one by one.
+            </span><span class="kw">let </span>transaction_validity = <span class="self">self
+                </span>.client
+                .runtime_api()
+                .validate_transaction(
+                    parent_hash,
+                    TransactionSource::External,
+                    pending_tx_data.clone(),
+                    parent_hash,
+                )
+                .map_err(|error| {
+                    sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                        <span class="string">&quot;Error getting transaction validity: {error}&quot;
+                    </span>)))
+                })<span class="question-mark">?</span>;
+            <span class="kw">if </span>transaction_validity.is_err() {
+                <span class="kw">continue</span>;
+            }
+
+            <span class="kw">let </span>tx_weight = <span class="self">self
+                </span>.client
+                .runtime_api()
+                .extrinsic_weight(parent_hash, pending_tx_data)
+                .map_err(|error| {
+                    sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                        <span class="string">&quot;Error getting extrinsic weight: {error}&quot;
+                    </span>)))
+                })<span class="question-mark">?</span>;
+            <span class="kw">let </span>next_estimated_bundle_weight = estimated_bundle_weight.saturating_add(tx_weight);
+            <span class="kw">if </span>next_estimated_bundle_weight.any_gt(domain_block_limit.max_block_weight) {
+                <span class="kw">break</span>;
+            }
+
+            <span class="kw">let </span>next_bundle_size = bundle_size + pending_tx_data.encoded_size() <span class="kw">as </span>u32;
+            <span class="kw">if </span>next_bundle_size &gt; domain_block_limit.max_block_size {
+                <span class="kw">break</span>;
+            }
+
+            estimated_bundle_weight = next_estimated_bundle_weight;
+            bundle_size = next_bundle_size;
+            extrinsics.push(pending_tx_data.clone());
         }
 
         <span class="kw">let </span>extrinsics_root = HeaderHashingFor::&lt;Block::Header&gt;::ordered_trie_root(
