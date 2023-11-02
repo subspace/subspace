@@ -605,6 +605,8 @@
 <a href="#605" id="605">605</a>
 <a href="#606" id="606">606</a>
 <a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
 </span><span class="kw">use </span><span class="kw">crate</span>::Error;
@@ -703,7 +705,7 @@
 }
 
 <span class="doccomment">/// Options for Subspace block verifier
-</span><span class="kw">pub struct </span>SubspaceVerifierOptions&lt;Block, Client, SelectChain, SlotNow&gt;
+</span><span class="kw">pub struct </span>SubspaceVerifierOptions&lt;Block, Client, SelectChain&gt;
 <span class="kw">where
     </span>Block: BlockT,
 {
@@ -713,9 +715,6 @@
     </span><span class="kw">pub </span>kzg: Kzg,
     <span class="doccomment">/// Chain selection rule
     </span><span class="kw">pub </span>select_chain: SelectChain,
-    <span class="doccomment">/// Callback for determining current slot based on timestamp
-    </span><span class="comment">// TODO: Remove field once PoT is the only option
-    </span><span class="kw">pub </span>slot_now: SlotNow,
     <span class="doccomment">/// Telemetry
     </span><span class="kw">pub </span>telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
     <span class="doccomment">/// The offchain transaction pool factory.
@@ -733,15 +732,13 @@
 }
 
 <span class="doccomment">/// A verifier for Subspace blocks.
-</span><span class="kw">pub struct </span>SubspaceVerifier&lt;PosTable, Block, Client, SelectChain, SlotNow&gt;
+</span><span class="kw">pub struct </span>SubspaceVerifier&lt;PosTable, Block, Client, SelectChain&gt;
 <span class="kw">where
     </span>Block: BlockT,
 {
     client: Arc&lt;Client&gt;,
     kzg: Kzg,
     select_chain: SelectChain,
-    <span class="comment">// TODO: Remove field once PoT is the only option
-    </span>slot_now: SlotNow,
     telemetry: <span class="prelude-ty">Option</span>&lt;TelemetryHandle&gt;,
     offchain_tx_pool_factory: OffchainTransactionPoolFactory&lt;Block&gt;,
     chain_constants: ChainConstants,
@@ -755,8 +752,7 @@
     _block: PhantomData&lt;Block&gt;,
 }
 
-<span class="kw">impl</span>&lt;PosTable, Block, Client, SelectChain, SN&gt;
-    SubspaceVerifier&lt;PosTable, Block, Client, SelectChain, SN&gt;
+<span class="kw">impl</span>&lt;PosTable, Block, Client, SelectChain&gt; SubspaceVerifier&lt;PosTable, Block, Client, SelectChain&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
@@ -767,13 +763,12 @@
 {
     <span class="doccomment">/// Create new instance
     </span><span class="kw">pub fn </span>new(
-        options: SubspaceVerifierOptions&lt;Block, Client, SelectChain, SN&gt;,
+        options: SubspaceVerifierOptions&lt;Block, Client, SelectChain&gt;,
     ) -&gt; sp_blockchain::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>SubspaceVerifierOptions {
             client,
             kzg,
             select_chain,
-            slot_now,
             telemetry,
             offchain_tx_pool_factory,
             reward_signing_context,
@@ -790,7 +785,6 @@
             client,
             kzg,
             select_chain,
-            slot_now,
             telemetry,
             offchain_tx_pool_factory,
             chain_constants,
@@ -1066,8 +1060,8 @@
 }
 
 <span class="attr">#[async_trait::async_trait]
-</span><span class="kw">impl</span>&lt;PosTable, Block, Client, SelectChain, SN&gt; Verifier&lt;Block&gt;
-    <span class="kw">for </span>SubspaceVerifier&lt;PosTable, Block, Client, SelectChain, SN&gt;
+</span><span class="kw">impl</span>&lt;PosTable, Block, Client, SelectChain&gt; Verifier&lt;Block&gt;
+    <span class="kw">for </span>SubspaceVerifier&lt;PosTable, Block, Client, SelectChain&gt;
 <span class="kw">where
     </span>PosTable: Table,
     Block: BlockT,
@@ -1075,7 +1069,6 @@
     Client: HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + Send + Sync + AuxStore,
     Client::Api: BlockBuilderApi&lt;Block&gt; + SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     SelectChain: sp_consensus::SelectChain&lt;Block&gt;,
-    SN: Fn() -&gt; Slot + Send + Sync + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">fn </span>verification_concurrency(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NonZeroUsize {
         available_parallelism().unwrap_or(NonZeroUsize::new(<span class="number">1</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>))
@@ -1141,8 +1134,6 @@
             }
         }
 
-        <span class="kw">let </span>slot_now = (<span class="self">self</span>.slot_now)();
-
         <span class="kw">let </span>full_pot_verification = <span class="self">self</span>.full_pot_verification(<span class="kw-2">*</span>block.header.number());
 
         <span class="comment">// Stateless header verification only. This means only check that header contains required
@@ -1176,6 +1167,19 @@
         } = checked_header;
 
         <span class="kw">let </span>slot = pre_digest.slot();
+        <span class="comment">// Estimate what the &quot;current&quot; slot is according to sync target since we don&#39;t have other way to know it
+        </span><span class="kw">let </span>diff_in_blocks = <span class="self">self
+            </span>.sync_target_block_number
+            .load(Ordering::Relaxed)
+            .saturating_sub(BlockNumber::from(<span class="kw-2">*</span>pre_header.number()));
+        <span class="kw">let </span>slot_now = <span class="kw">if </span>diff_in_blocks &gt; <span class="number">0 </span>{
+            slot + Slot::from(
+                u64::from(diff_in_blocks) * <span class="self">self</span>.chain_constants.slot_probability().<span class="number">1
+                    </span>/ <span class="self">self</span>.chain_constants.slot_probability().<span class="number">0</span>,
+            )
+        } <span class="kw">else </span>{
+            slot
+        };
 
         <span class="comment">// the header is valid but let&#39;s check if there was something else already proposed at the
         // same slot by the given author. if there was, we will report the equivocation to the
