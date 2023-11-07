@@ -238,8 +238,14 @@
 <a href="#238" id="238">238</a>
 <a href="#239" id="239">239</a>
 <a href="#240" id="240">240</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::parent_chain::ParentChainInterface;
-<span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>futures::{select, FutureExt};
@@ -248,7 +254,9 @@
 <span class="kw">use </span>sp_api::{HeaderT, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
-<span class="kw">use </span>sp_domains::{BundleHeader, ExecutionReceipt, HeaderHashingFor, ProofOfElection};
+<span class="kw">use </span>sp_domains::{
+    BundleHeader, DomainId, DomainsApi, ExecutionReceipt, HeaderHashingFor, ProofOfElection,
+};
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, One, Zero};
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>sp_weights::Weight;
@@ -259,6 +267,7 @@
 <span class="kw">use </span>subspace_runtime_primitives::Balance;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt; {
+    domain_id: DomainId,
     client: Arc&lt;Client&gt;,
     consensus_client: Arc&lt;CClient&gt;,
     transaction_pool: Arc&lt;TransactionPool&gt;,
@@ -270,6 +279,7 @@
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
+            domain_id: <span class="self">self</span>.domain_id,
             client: <span class="self">self</span>.client.clone(),
             consensus_client: <span class="self">self</span>.consensus_client.clone(),
             transaction_pool: <span class="self">self</span>.transaction_pool.clone(),
@@ -291,15 +301,18 @@
     NumberFor&lt;Block&gt;: Into&lt;NumberFor&lt;CBlock&gt;&gt;,
     Client: HeaderBackend&lt;Block&gt; + BlockBackend&lt;Block&gt; + AuxStore + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: BlockBuilder&lt;Block&gt; + DomainCoreApi&lt;Block&gt; + TaggedTransactionQueue&lt;Block&gt;,
-    CClient: HeaderBackend&lt;CBlock&gt;,
+    CClient: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;,
     TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = Block&gt;,
 {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+        domain_id: DomainId,
         client: Arc&lt;Client&gt;,
         consensus_client: Arc&lt;CClient&gt;,
         transaction_pool: Arc&lt;TransactionPool&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
+            domain_id,
             client,
             consensus_client,
             transaction_pool,
@@ -307,16 +320,11 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>propose_bundle_at&lt;ParentChain, ParentChainBlock&gt;(
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>propose_bundle_at(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         proof_of_election: ProofOfElection,
-        parent_chain: ParentChain,
         tx_range: U256,
-    ) -&gt; sp_blockchain::Result&lt;ProposeBundleOutput&lt;Block, CBlock&gt;&gt;
-    <span class="kw">where
-        </span>ParentChainBlock: BlockT,
-        ParentChain: ParentChainInterface&lt;Block, ParentChainBlock&gt;,
-    {
+    ) -&gt; sp_blockchain::Result&lt;ProposeBundleOutput&lt;Block, CBlock&gt;&gt; {
         <span class="kw">let </span>parent_number = <span class="self">self</span>.client.info().best_number;
         <span class="kw">let </span>parent_hash = <span class="self">self</span>.client.info().best_hash;
 
@@ -336,7 +344,15 @@
         };
 
         <span class="kw">let </span>bundle_vrf_hash = U256::from_be_bytes(proof_of_election.vrf_hash());
-        <span class="kw">let </span>domain_block_limit = parent_chain.domain_block_limit(parent_chain.best_hash())<span class="question-mark">?</span>;
+        <span class="kw">let </span>domain_block_limit = <span class="self">self
+            </span>.consensus_client
+            .runtime_api()
+            .domain_block_limit(<span class="self">self</span>.consensus_client.info().best_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?
+            </span>.ok_or_else(|| {
+                sp_blockchain::Error::Application(
+                    <span class="macro">format!</span>(<span class="string">&quot;Domain block limit for {:?} not found&quot;</span>, <span class="self">self</span>.domain_id).into(),
+                )
+            })<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>estimated_bundle_weight = Weight::default();
         <span class="kw">let </span><span class="kw-2">mut </span>bundle_size = <span class="number">0u32</span>;
@@ -415,7 +431,7 @@
             sp_core::storage::StateVersion::V1,
         );
 
-        <span class="kw">let </span>receipt = <span class="self">self</span>.load_bundle_receipt(parent_number, parent_chain)<span class="question-mark">?</span>;
+        <span class="kw">let </span>receipt = <span class="self">self</span>.load_bundle_receipt(parent_number)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>header = BundleHeader {
             proof_of_election,
@@ -429,24 +445,22 @@
     }
 
     <span class="doccomment">/// Returns the receipt in the next domain bundle.
-    </span><span class="kw">fn </span>load_bundle_receipt&lt;ParentChain, ParentChainBlock&gt;(
+    </span><span class="kw">fn </span>load_bundle_receipt(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         header_number: NumberFor&lt;Block&gt;,
-        parent_chain: ParentChain,
-    ) -&gt; sp_blockchain::Result&lt;ExecutionReceiptFor&lt;Block, CBlock&gt;&gt;
-    <span class="kw">where
-        </span>ParentChainBlock: BlockT,
-        ParentChain: ParentChainInterface&lt;Block, ParentChainBlock&gt;,
-    {
-        <span class="kw">let </span>parent_chain_block_hash = parent_chain.best_hash();
-        <span class="kw">let </span>head_receipt_number = parent_chain.head_receipt_number(parent_chain_block_hash)<span class="question-mark">?</span>;
+    ) -&gt; sp_blockchain::Result&lt;ExecutionReceiptFor&lt;Block, CBlock&gt;&gt; {
+        <span class="kw">let </span>consensus_chain_block_hash = <span class="self">self</span>.consensus_client.info().best_hash;
+        <span class="kw">let </span>head_receipt_number = <span class="self">self
+            </span>.consensus_client
+            .runtime_api()
+            .head_receipt_number(consensus_chain_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
         <span class="kw">let </span>receipt_number = (head_receipt_number + One::one()).min(header_number);
 
         <span class="macro">tracing::trace!</span>(
             <span class="question-mark">?</span>header_number,
             <span class="question-mark">?</span>head_receipt_number,
             <span class="question-mark">?</span>receipt_number,
-            <span class="string">&quot;Collecting receipts at {parent_chain_block_hash:?}&quot;
+            <span class="string">&quot;Collecting receipts at {consensus_chain_block_hash:?}&quot;
         </span>);
 
         <span class="kw">if </span>receipt_number.is_zero() {

@@ -321,37 +321,39 @@
 <a href="#321" id="321">321</a>
 <a href="#322" id="322">322</a>
 <a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::domain_block_processor::{
     DomainBlockProcessor, PendingConsensusBlocks, ReceiptsChecker,
 };
-<span class="kw">use crate</span>::{DomainParentChain, ExecutionReceiptFor};
+<span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>domain_block_preprocessor::runtime_api_full::RuntimeApiFull;
 <span class="kw">use </span>domain_block_preprocessor::DomainBlockPreprocessor;
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, Finalizer, ProofProvider};
 <span class="kw">use </span>sc_consensus::{BlockImportParams, ForkChoiceStrategy, StateAction};
-<span class="kw">use </span>sp_api::{NumberFor, ProvideRuntimeApi};
+<span class="kw">use </span>sp_api::{ApiExt, NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_consensus::BlockOrigin;
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
+<span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domain_digests::AsPredigest;
 <span class="kw">use </span>sp_domains::{DomainId, DomainsApi, ReceiptValidity};
+<span class="kw">use </span>sp_domains_fraud_proof::FraudProofApi;
 <span class="kw">use </span>sp_keystore::KeystorePtr;
 <span class="kw">use </span>sp_messenger::MessengerApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Zero};
 <span class="kw">use </span>sp_runtime::{Digest, DigestItem};
 <span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">type </span>DomainReceiptsChecker&lt;Block, CBlock, Client, CClient, Backend, E&gt; = ReceiptsChecker&lt;
-    Block,
-    Client,
-    CBlock,
-    CClient,
-    Backend,
-    E,
-    DomainParentChain&lt;Block, CBlock, CClient&gt;,
-    CBlock,
-&gt;;
+<span class="kw">type </span>DomainReceiptsChecker&lt;Block, CBlock, Client, CClient, Backend, E&gt; =
+    ReceiptsChecker&lt;Block, Client, CBlock, CClient, Backend, E&gt;;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>BundleProcessor&lt;Block, CBlock, Client, CClient, Backend, E&gt;
 <span class="kw">where
@@ -448,6 +450,7 @@
     BundleProcessor&lt;Block, CBlock, Client, CClient, Backend, E&gt;
 <span class="kw">where
     </span>Block: BlockT,
+    Block::Hash: Into&lt;H256&gt;,
     CBlock: BlockT,
     NumberFor&lt;CBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt; + Into&lt;NumberFor&lt;Block&gt;&gt;,
     CBlock::Hash: From&lt;Block::Hash&gt;,
@@ -468,8 +471,10 @@
         + ProofProvider&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + <span class="lifetime">&#39;static</span>,
-    CClient::Api:
-        DomainsApi&lt;CBlock, Block::Header&gt; + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt; + <span class="lifetime">&#39;static</span>,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;
+        + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
+        + FraudProofApi&lt;CBlock, Block::Header&gt;
+        + <span class="lifetime">&#39;static</span>,
     Backend: sc_client_api::Backend&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     E: CodeExecutor,
 {
@@ -582,8 +587,7 @@
         <span class="kw">let </span>head_receipt_number = <span class="self">self
             </span>.consensus_client
             .runtime_api()
-            .head_receipt_number(consensus_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?
-            </span>.into();
+            .head_receipt_number(consensus_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
 
         <span class="kw">let </span><span class="prelude-val">Some</span>(preprocess_result) = <span class="self">self
             </span>.domain_block_preprocessor
@@ -633,13 +637,25 @@
             head_receipt_number,
         )<span class="question-mark">?</span>;
 
-        <span class="comment">// TODO: Remove as ReceiptsChecker has been superseded by ReceiptValidator in block-preprocessor.
-        </span><span class="self">self</span>.domain_receipts_checker
-            .check_state_transition(consensus_block_hash)<span class="question-mark">?</span>;
+        <span class="comment">// Check the consensus runtime version before checking bad ER and submit fraud proof.
+        //
+        // TODO: this is used to keep compatible with the gemini-3g network, because some necessary
+        // runtime API are introduced in `#[api_version(2)]`, remove this before the next network
+        </span><span class="kw">let </span>domains_api_version = <span class="self">self
+            </span>.consensus_client
+            .runtime_api()
+            .api_version::&lt;<span class="kw">dyn </span>DomainsApi&lt;CBlock, Block::Header&gt;&gt;(consensus_block_hash)<span class="question-mark">?
+            </span><span class="comment">// safe to return default version as 1 since there will always be version 1.
+            </span>.unwrap_or(<span class="number">1</span>);
+        <span class="kw">if </span>domains_api_version &gt;= <span class="number">2 </span>{
+            <span class="comment">// TODO: Remove as ReceiptsChecker has been superseded by ReceiptValidator in block-preprocessor.
+            </span><span class="self">self</span>.domain_receipts_checker
+                .check_state_transition(consensus_block_hash)<span class="question-mark">?</span>;
 
-        <span class="self">self</span>.domain_receipts_checker
-            .submit_fraud_proof(consensus_block_hash)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="self">self</span>.domain_receipts_checker
+                .submit_fraud_proof(consensus_block_hash)
+                .<span class="kw">await</span><span class="question-mark">?</span>;
+        }
 
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(built_block_info))
     }

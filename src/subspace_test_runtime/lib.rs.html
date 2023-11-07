@@ -1333,6 +1333,8 @@
 <a href="#1333" id="1333">1333</a>
 <a href="#1334" id="1334">1334</a>
 <a href="#1335" id="1335">1335</a>
+<a href="#1336" id="1336">1336</a>
+<a href="#1337" id="1337">1337</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1389,7 +1391,7 @@
 <span class="kw">use </span>sp_core::{OpaqueMetadata, H256};
 <span class="kw">use </span>sp_domains::bundle_producer_election::BundleProducerElectionParams;
 <span class="kw">use </span>sp_domains::{
-    DomainId, DomainInstanceData, DomainsHoldIdentifier, ExecutionReceipt, OpaqueBundle,
+    DomainId, DomainInstanceData, DomainsHoldIdentifier, ExecutionReceiptFor, OpaqueBundle,
     OpaqueBundles, OperatorId, OperatorPublicKey, StakingHoldIdentifier,
 };
 <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::FraudProof;
@@ -2271,39 +2273,17 @@
         .collect()
 }
 
-<span class="comment">// TODO: Remove when proceeding to fraud proof v2.
-</span><span class="attr">#[allow(unused)]
-</span><span class="kw">fn </span>extract_receipts(
-    extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>extract_fraud_proofs(
     domain_id: DomainId,
-) -&gt; Vec&lt;ExecutionReceipt&lt;BlockNumber, Hash, DomainNumber, DomainHash, Balance&gt;&gt; {
-    <span class="kw">let </span>successful_bundles = Domains::successful_bundles(domain_id);
+    extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
+) -&gt; Vec&lt;FraudProof&lt;NumberFor&lt;Block&gt;, Hash, DomainHeader&gt;&gt; {
+    <span class="kw">let </span>successful_fraud_proofs = Domains::successful_fraud_proofs(domain_id);
     extrinsics
         .into_iter()
         .filter_map(|uxt| <span class="kw">match </span>uxt.function {
-            RuntimeCall::Domains(pallet_domains::Call::submit_bundle { opaque_bundle })
-                <span class="kw">if </span>opaque_bundle.domain_id() == domain_id
-                    &amp;&amp; successful_bundles.contains(<span class="kw-2">&amp;</span>opaque_bundle.hash()) =&gt;
-            {
-                <span class="prelude-val">Some</span>(opaque_bundle.into_receipt())
-            }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-        })
-        .collect()
-}
-
-<span class="comment">// TODO: Remove when proceeding to fraud proof v2.
-</span><span class="attr">#[allow(unused)]
-</span><span class="kw">fn </span>extract_fraud_proofs(
-    extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
-    domain_id: DomainId,
-) -&gt; Vec&lt;FraudProof&lt;NumberFor&lt;Block&gt;, Hash, DomainHeader&gt;&gt; {
-    <span class="comment">// TODO: Ensure fraud proof extrinsic is infallible.
-    </span>extrinsics
-        .into_iter()
-        .filter_map(|uxt| <span class="kw">match </span>uxt.function {
             RuntimeCall::Domains(pallet_domains::Call::submit_fraud_proof { fraud_proof })
-                <span class="kw">if </span>fraud_proof.domain_id() == domain_id =&gt;
+                <span class="kw">if </span>fraud_proof.domain_id() == domain_id
+                    &amp;&amp; successful_fraud_proofs.contains(<span class="kw-2">&amp;</span>fraud_proof.hash()) =&gt;
             {
                 <span class="prelude-val">Some</span>(<span class="kw-2">*</span>fraud_proof)
             }
@@ -2498,7 +2478,8 @@
         }
     }
 
-    <span class="kw">impl </span>sp_domains::DomainsApi&lt;Block, DomainHeader&gt; <span class="kw">for </span>Runtime {
+    <span class="attr">#[api_version(<span class="number">2</span>)]
+    </span><span class="kw">impl </span>sp_domains::DomainsApi&lt;Block, DomainHeader&gt; <span class="kw">for </span>Runtime {
         <span class="kw">fn </span>submit_bundle_unsigned(
             opaque_bundle: OpaqueBundle&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainHeader, Balance&gt;,
         ) {
@@ -2510,6 +2491,16 @@
             extrinsics: Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
         ) -&gt; OpaqueBundles&lt;Block, DomainHeader, Balance&gt; {
             extract_successful_bundles(domain_id, extrinsics)
+        }
+
+        <span class="kw">fn </span>extract_receipts(
+            domain_id: DomainId,
+            extrinsics: Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
+        ) -&gt; Vec&lt;ExecutionReceiptFor&lt;DomainHeader, Block, Balance&gt;&gt; {
+            extract_successful_bundles(domain_id, extrinsics)
+                .into_iter()
+                .map(|bundle| bundle.into_receipt())
+                .collect()
         }
 
         <span class="kw">fn </span>extrinsics_shuffling_seed() -&gt; Randomness {
@@ -2540,15 +2531,15 @@
             Domains::genesis_state_root(domain_id)
         }
 
-        <span class="kw">fn </span>head_receipt_number(domain_id: DomainId) -&gt; NumberFor&lt;Block&gt; {
+        <span class="kw">fn </span>head_receipt_number(domain_id: DomainId) -&gt; DomainNumber {
             Domains::head_receipt_number(domain_id)
         }
 
-        <span class="kw">fn </span>oldest_receipt_number(domain_id: DomainId) -&gt; NumberFor&lt;Block&gt; {
+        <span class="kw">fn </span>oldest_receipt_number(domain_id: DomainId) -&gt; DomainNumber {
             Domains::oldest_receipt_number(domain_id)
         }
 
-        <span class="kw">fn </span>block_tree_pruning_depth() -&gt; NumberFor&lt;Block&gt; {
+        <span class="kw">fn </span>block_tree_pruning_depth() -&gt; DomainNumber {
             Domains::block_tree_pruning_depth()
         }
 
@@ -2568,7 +2559,7 @@
             Domains::domain_state_root(domain_id, number, hash)
         }
 
-        <span class="kw">fn </span>execution_receipt(receipt_hash: DomainHash) -&gt; <span class="prelude-ty">Option</span>&lt;ExecutionReceipt&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainNumber, DomainHash, Balance&gt;&gt; {
+        <span class="kw">fn </span>execution_receipt(receipt_hash: DomainHash) -&gt; <span class="prelude-ty">Option</span>&lt;ExecutionReceiptFor&lt;DomainHeader, Block, Balance&gt;&gt; {
             Domains::execution_receipt(receipt_hash)
         }
     }
@@ -2665,6 +2656,19 @@
 
         <span class="kw">fn </span>should_relay_inbox_message_response(dst_chain_id: ChainId, msg_id: MessageId) -&gt; bool {
             Messenger::should_relay_inbox_message_response(dst_chain_id, msg_id)
+        }
+    }
+
+    <span class="kw">impl </span>sp_domains_fraud_proof::FraudProofApi&lt;Block, DomainHeader&gt; <span class="kw">for </span>Runtime {
+        <span class="kw">fn </span>submit_fraud_proof_unsigned(fraud_proof: FraudProof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainHeader&gt;) {
+            Domains::submit_fraud_proof_unsigned(fraud_proof)
+        }
+
+        <span class="kw">fn </span>extract_fraud_proofs(
+            domain_id: DomainId,
+            extrinsics: Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
+        ) -&gt; Vec&lt;FraudProof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainHeader&gt;&gt; {
+            extract_fraud_proofs(domain_id, extrinsics)
         }
     }
 }
