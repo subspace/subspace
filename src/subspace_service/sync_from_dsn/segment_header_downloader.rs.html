@@ -331,9 +331,19 @@
 <a href="#331" id="331">331</a>
 <a href="#332" id="332">332</a>
 <a href="#333" id="333">333</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>futures::StreamExt;
-<span class="kw">use </span>std::collections::{BTreeMap, BTreeSet, HashMap};
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>futures::stream::FuturesUnordered;
+<span class="kw">use </span>futures::StreamExt;
+<span class="kw">use </span>std::collections::{BTreeSet, HashMap};
 <span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>subspace_core_primitives::{SegmentHeader, SegmentIndex};
 <span class="kw">use </span>subspace_networking::libp2p::PeerId;
 <span class="kw">use </span>subspace_networking::{Node, SegmentHeaderRequest, SegmentHeaderResponse};
@@ -429,7 +439,7 @@
     </span><span class="kw">async fn </span>get_last_segment_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;(SegmentHeader, Vec&lt;PeerId&gt;)&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>last_peer_blocks = BTreeMap::default();
+        <span class="kw">let </span><span class="kw-2">mut </span>peer_segment_headers = HashMap::&lt;PeerId, Vec&lt;SegmentHeader&gt;&gt;::default();
         <span class="kw">for </span>(required_peers, retry_attempt) <span class="kw">in </span>(<span class="number">1</span>..=SEGMENT_HEADER_CONSENSUS_INITIAL_NODES)
             .rev()
             .zip(<span class="number">1_usize</span>..)
@@ -444,8 +454,8 @@
                 .<span class="kw">await</span>;
 
             <span class="comment">// Acquire segment headers from peers.
-            </span><span class="kw">let </span>get_peers_stream = <span class="kw">match </span>get_peers_result {
-                <span class="prelude-val">Ok</span>(get_peers_stream) =&gt; get_peers_stream,
+            </span><span class="kw">let </span>peers = <span class="kw">match </span>get_peers_result {
+                <span class="prelude-val">Ok</span>(get_peers_stream) =&gt; get_peers_stream.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().<span class="kw">await</span>,
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">&quot;get_closest_peers returned an error&quot;</span>);
 
@@ -453,9 +463,9 @@
                 }
             };
 
-            <span class="comment">// Hashmap here just to potentially peers
-            </span><span class="kw">let </span>peer_blocks: BTreeMap&lt;PeerId, Vec&lt;SegmentHeader&gt;&gt; = get_peers_stream
-                .filter_map(|peer_id| <span class="kw">async move </span>{
+            <span class="kw">let </span>new_last_known_segment_headers = peers
+                .into_iter()
+                .map(|peer_id| <span class="kw">async move </span>{
                     <span class="kw">let </span>request_result = <span class="self">self
                         </span>.dsn_node
                         .send_generic_request(
@@ -496,21 +506,27 @@
                         </span>}
                     }
                 })
-                .collect()
-                .<span class="kw">await</span>;
+                .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;()
+                .filter_map(|maybe_result| <span class="kw">async move </span>{ maybe_result });
+            <span class="kw">let </span><span class="kw-2">mut </span>new_last_known_segment_headers = <span class="macro">pin!</span>(new_last_known_segment_headers);
 
-            <span class="kw">let </span>peer_count = peer_blocks.len();
+            <span class="kw">let </span>last_peers_count = peer_segment_headers.len();
+
+            <span class="kw">while let </span><span class="prelude-val">Some</span>((peer_id, segment_headers)) = new_last_known_segment_headers.next().<span class="kw">await
+            </span>{
+                peer_segment_headers.insert(peer_id, segment_headers);
+            }
+
+            <span class="kw">let </span>peer_count = peer_segment_headers.len();
 
             <span class="kw">if </span>peer_count &lt; required_peers {
-                <span class="kw">if </span>last_peer_blocks.is_empty() || last_peer_blocks != peer_blocks {
+                <span class="kw">if </span>last_peers_count == <span class="number">0 </span>|| last_peers_count != peer_count {
                     <span class="macro">debug!</span>(
                         %peer_count,
                         %required_peers,
                         %retry_attempt,
                         <span class="string">&quot;Segment headers consensus requires more peers, will retry&quot;
                     </span>);
-
-                    last_peer_blocks = peer_blocks;
 
                     <span class="kw">continue</span>;
                 } <span class="kw">else </span>{
@@ -527,7 +543,7 @@
             <span class="comment">// Calculate votes
             </span><span class="kw">let </span><span class="kw-2">mut </span>segment_header_peers: HashMap&lt;SegmentHeader, Vec&lt;PeerId&gt;&gt; = HashMap::new();
 
-            <span class="kw">for </span>(peer_id, segment_headers) <span class="kw">in </span>peer_blocks {
+            <span class="kw">for </span>(peer_id, segment_headers) <span class="kw">in </span>peer_segment_headers {
                 <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
                     segment_header_peers
                         .entry(segment_header)
