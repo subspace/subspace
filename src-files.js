@@ -36,7 +36,7 @@ var srcIndex = JSON.parse('{\
 "sp_consensus_subspace":["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]],\
 "sp_domain_digests":["",[],["lib.rs"]],\
 "sp_domains":["",[],["bundle_producer_election.rs","extrinsics.rs","lib.rs","merkle_tree.rs","proof_provider_and_verifier.rs","storage.rs","valued_trie.rs"]],\
-"sp_domains_fraud_proof":["",[],["execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","verification.rs"]],\
+"sp_domains_fraud_proof":["",[],["bundle_equivocation.rs","execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","verification.rs"]],\
 "sp_executive":["",[],["lib.rs"]],\
 "sp_messenger":["",[],["endpoint.rs","lib.rs","messages.rs"]],\
 "sp_objects":["",[],["lib.rs"]],\
@@ -53,7 +53,7 @@ var srcIndex = JSON.parse('{\
 "subspace_rpc_primitives":["",[],["lib.rs"]],\
 "subspace_runtime":["",[],["domains.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]],\
 "subspace_runtime_primitives":["",[],["lib.rs"]],\
-"subspace_service":["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs"]],\
+"subspace_service":["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs","transaction_pool.rs"]],\
 "subspace_test_client":["",[],["chain_spec.rs","domain_chain_spec.rs","lib.rs"]],\
 "subspace_test_runtime":["",[],["lib.rs"]],\
 "subspace_test_service":["",[],["lib.rs"]],\

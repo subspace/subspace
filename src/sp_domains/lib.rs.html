@@ -986,6 +986,18 @@
 <a href="#986" id="986">986</a>
 <a href="#987" id="987">987</a>
 <a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1018,7 +1030,7 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::storage::{RawGenesis, StorageKey};
 <span class="kw">use </span>alloc::string::String;
-<span class="kw">use </span>bundle_producer_election::{BundleProducerElectionParams, VrfProofError};
+<span class="kw">use </span>bundle_producer_election::{BundleProducerElectionParams, ProofOfElectionError};
 <span class="kw">use </span>hexlit::hex;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 <span class="kw">use </span>scale_info::TypeInfo;
@@ -1173,7 +1185,7 @@
 <span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
 </span><span class="kw">pub struct </span>BundleHeader&lt;Number, Hash, DomainHeader: HeaderT, Balance&gt; {
     <span class="doccomment">/// Proof of bundle producer election.
-    </span><span class="kw">pub </span>proof_of_election: ProofOfElection,
+    </span><span class="kw">pub </span>proof_of_election: ProofOfElection&lt;Hash&gt;,
     <span class="doccomment">/// Execution receipt that should extend the receipt chain or add confirmations
     /// to the head receipt.
     </span><span class="kw">pub </span>receipt: ExecutionReceipt&lt;
@@ -1330,7 +1342,12 @@
 }
 
 <span class="attr">#[cfg(any(feature = <span class="string">&quot;std&quot;</span>, feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
-</span><span class="kw">pub fn </span>dummy_opaque_bundle&lt;Number: Encode, Hash: Encode, DomainHeader: HeaderT, Balance: Encode&gt;(
+</span><span class="kw">pub fn </span>dummy_opaque_bundle&lt;
+    Number: Encode,
+    Hash: Default + Encode,
+    DomainHeader: HeaderT,
+    Balance: Encode,
+&gt;(
     domain_id: DomainId,
     operator_id: OperatorId,
     receipt: ExecutionReceipt&lt;
@@ -1515,7 +1532,7 @@
 }
 
 <span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-</span><span class="kw">pub struct </span>ProofOfElection {
+</span><span class="kw">pub struct </span>ProofOfElection&lt;CHash&gt; {
     <span class="doccomment">/// Domain id.
     </span><span class="kw">pub </span>domain_id: DomainId,
     <span class="doccomment">/// The slot number.
@@ -1526,13 +1543,15 @@
     </span><span class="kw">pub </span>vrf_signature: VrfSignature,
     <span class="doccomment">/// Operator index in the OperatorRegistry.
     </span><span class="kw">pub </span>operator_id: OperatorId,
+    <span class="doccomment">/// Consensus block hash at which proof of election was derived.
+    </span><span class="kw">pub </span>consensus_block_hash: CHash,
 }
 
-<span class="kw">impl </span>ProofOfElection {
+<span class="kw">impl</span>&lt;CHash&gt; ProofOfElection&lt;CHash&gt; {
     <span class="kw">pub fn </span>verify_vrf_signature(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         operator_signing_key: <span class="kw-2">&amp;</span>OperatorPublicKey,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VrfProofError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProofOfElectionError&gt; {
         <span class="kw">let </span>global_challenge = <span class="self">self
             </span>.global_randomness
             .derive_global_challenge(<span class="self">self</span>.slot_number);
@@ -1552,7 +1571,7 @@
     }
 }
 
-<span class="kw">impl </span>ProofOfElection {
+<span class="kw">impl</span>&lt;CHash: Default&gt; ProofOfElection&lt;CHash&gt; {
     <span class="attr">#[cfg(any(feature = <span class="string">&quot;std&quot;</span>, feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
     </span><span class="kw">pub fn </span>dummy(domain_id: DomainId, operator_id: OperatorId) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>output_bytes = <span class="macro">sp_std::vec!</span>[<span class="number">0u8</span>; VrfOutput::max_encoded_len()];
@@ -1567,6 +1586,7 @@
             global_randomness: Randomness::default(),
             vrf_signature,
             operator_id,
+            consensus_block_hash: Default::default(),
         }
     }
 }
@@ -1911,6 +1931,10 @@
             domain_id: DomainId,
             extrinsics: Vec&lt;Block::Extrinsic&gt;,
         ) -&gt; OpaqueBundles&lt;Block, DomainHeader, Balance&gt;;
+
+        <span class="doccomment">/// Extract bundle from the extrinsic if the extrinsic is `submit_bundle`.
+        </span><span class="attr">#[api_version(<span class="number">2</span>)]
+        </span><span class="kw">fn </span>extract_bundle(extrinsic: Block::Extrinsic) -&gt; <span class="prelude-ty">Option</span>&lt;OpaqueBundle&lt;NumberFor&lt;Block&gt;, Block::Hash, DomainHeader, Balance&gt;&gt;;
 
         <span class="doccomment">/// Extract the execution receipt stored successfully from the given extrinsics.
         </span><span class="attr">#[api_version(<span class="number">2</span>)]

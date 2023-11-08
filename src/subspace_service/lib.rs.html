@@ -1058,6 +1058,17 @@
 <a href="#1058" id="1058">1058</a>
 <a href="#1059" id="1059">1059</a>
 <a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1088,9 +1099,11 @@
 <span class="kw">mod </span>metrics;
 <span class="kw">pub mod </span>rpc;
 <span class="kw">mod </span>sync_from_dsn;
+<span class="kw">pub mod </span>transaction_pool;
 
 <span class="kw">use </span><span class="kw">crate</span>::dsn::{create_dsn_instance, DsnConfigurationError};
 <span class="kw">use </span><span class="kw">crate</span>::metrics::NodeMetrics;
+<span class="kw">use </span><span class="kw">crate</span>::transaction_pool::FullPool;
 <span class="kw">use </span>core::sync::atomic::{AtomicU32, Ordering};
 <span class="kw">use </span>cross_domain_message_gossip::cdm_gossip_peers_set_config;
 <span class="kw">use </span>domain_runtime_primitives::opaque::{Block <span class="kw">as </span>DomainBlock, Header <span class="kw">as </span>DomainHeader};
@@ -1104,7 +1117,9 @@
 <span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="kw">use </span>sc_basic_authorship::ProposerFactory;
 <span class="kw">use </span>sc_client_api::execution_extensions::ExtensionsFactory;
-<span class="kw">use </span>sc_client_api::{Backend, BlockBackend, BlockchainEvents, ExecutorProvider, HeaderBackend};
+<span class="kw">use </span>sc_client_api::{
+    AuxStore, Backend, BlockBackend, BlockchainEvents, ExecutorProvider, HeaderBackend,
+};
 <span class="kw">use </span>sc_consensus::{BasicQueue, DefaultImportQueue, ImportQueue, SharedBlockImport};
 <span class="kw">use </span>sc_consensus_slots::SlotProportion;
 <span class="kw">use </span>sc_consensus_subspace::archiver::{create_subspace_archiver, SegmentHeadersStore};
@@ -1125,7 +1140,6 @@
     build_consensus_relay, BlockRelayConfigurationError, NetworkWrapper,
 };
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker};
-<span class="kw">use </span>sc_transaction_pool::FullPool;
 <span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
 <span class="kw">use </span>sp_api::{ApiExt, ConstructRuntimeApi, Metadata, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
@@ -1137,8 +1151,8 @@
 };
 <span class="kw">use </span>sp_core::traits::{CodeExecutor, SpawnEssentialNamed};
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_domains::DomainsApi;
-<span class="kw">use </span>sp_domains_fraud_proof::{FraudProofExtension, FraudProofHostFunctionsImpl};
+<span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainsApi};
+<span class="kw">use </span>sp_domains_fraud_proof::{FraudProofApi, FraudProofExtension, FraudProofHostFunctionsImpl};
 <span class="kw">use </span>sp_externalities::Extensions;
 <span class="kw">use </span>sp_objects::ObjectsApi;
 <span class="kw">use </span>sp_offchain::OffchainWorkerApi;
@@ -1281,7 +1295,9 @@
         + Send
         + Sync
         + <span class="lifetime">&#39;static</span>,
-    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt; + DomainsApi&lt;Block, DomainBlock::Header&gt;,
+    Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;
+        + DomainsApi&lt;Block, DomainBlock::Header&gt;
+        + BundleProducerElectionApi&lt;Block, Balance&gt;,
     ExecutorDispatch: CodeExecutor + sc_executor::RuntimeVersionOf,
 {
     <span class="kw">fn </span>extensions_for(
@@ -1437,7 +1453,7 @@
     FullBackend,
     FullSelectChain,
     DefaultImportQueue&lt;Block&gt;,
-    FullPool&lt;Block, FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;,
+    FullPool&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;, Block, DomainHeader&gt;,
     OtherPartialComponents&lt;RuntimeApi, ExecutorDispatch&gt;,
 &gt;;
 
@@ -1461,6 +1477,8 @@
         + TaggedTransactionQueue&lt;Block&gt;
         + SubspaceApi&lt;Block, FarmerPublicKey&gt;
         + DomainsApi&lt;Block, DomainHeader&gt;
+        + FraudProofApi&lt;Block, DomainHeader&gt;
+        + BundleProducerElectionApi&lt;Block, Balance&gt;
         + ObjectsApi&lt;Block&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
 {
@@ -1514,14 +1532,6 @@
 
     <span class="kw">let </span>select_chain = sc_consensus::LongestChain::new(backend.clone());
 
-    <span class="kw">let </span>transaction_pool = sc_transaction_pool::BasicPool::new_full(
-        config.transaction_pool.clone(),
-        config.role.is_authority().into(),
-        config.prometheus_registry(),
-        task_manager.spawn_essential_handle(),
-        client.clone(),
-    );
-
     <span class="kw">let </span>segment_headers_store = SegmentHeadersStore::new(client.clone())
         .map_err(|error| ServiceError::Application(error.into()))<span class="question-mark">?</span>;
 
@@ -1569,6 +1579,13 @@
     )<span class="question-mark">?</span>;
 
     <span class="kw">let </span>sync_target_block_number = Arc::new(AtomicU32::new(<span class="number">0</span>));
+    <span class="kw">let </span>transaction_pool = <span class="kw">crate</span>::transaction_pool::new_full(
+        config,
+        <span class="kw-2">&amp;</span>task_manager,
+        client.clone(),
+        sync_target_block_number.clone(),
+    )<span class="question-mark">?</span>;
+
     <span class="kw">let </span>verifier = SubspaceVerifier::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(SubspaceVerifierOptions {
         client: client.clone(),
         kzg,
@@ -1615,12 +1632,16 @@
 </span><span class="kw">pub struct </span>NewFull&lt;Client&gt;
 <span class="kw">where
     </span>Client: ProvideRuntimeApi&lt;Block&gt;
+        + AuxStore
         + BlockBackend&lt;Block&gt;
         + BlockIdTo&lt;Block&gt;
         + HeaderBackend&lt;Block&gt;
         + HeaderMetadata&lt;Block, Error = sp_blockchain::Error&gt;
         + <span class="lifetime">&#39;static</span>,
-    Client::Api: TaggedTransactionQueue&lt;Block&gt; + DomainsApi&lt;Block, DomainHeader&gt;,
+    Client::Api: TaggedTransactionQueue&lt;Block&gt;
+        + DomainsApi&lt;Block, DomainHeader&gt;
+        + FraudProofApi&lt;Block, DomainHeader&gt;
+        + SubspaceApi&lt;Block, FarmerPublicKey&gt;,
 {
     <span class="doccomment">/// Task manager.
     </span><span class="kw">pub </span>task_manager: TaskManager,
@@ -1649,7 +1670,7 @@
     <span class="doccomment">/// Network starter.
     </span><span class="kw">pub </span>network_starter: NetworkStarter,
     <span class="doccomment">/// Transaction pool.
-    </span><span class="kw">pub </span>transaction_pool: Arc&lt;FullPool&lt;Block, Client&gt;&gt;,
+    </span><span class="kw">pub </span>transaction_pool: Arc&lt;FullPool&lt;Client, Block, DomainHeader&gt;&gt;,
 }
 
 <span class="kw">type </span>FullNode&lt;RuntimeApi, ExecutorDispatch&gt; = NewFull&lt;FullClient&lt;RuntimeApi, ExecutorDispatch&gt;&gt;;
@@ -1677,6 +1698,7 @@
         + TransactionPaymentApi&lt;Block, Balance&gt;
         + SubspaceApi&lt;Block, FarmerPublicKey&gt;
         + DomainsApi&lt;Block, DomainHeader&gt;
+        + FraudProofApi&lt;Block, DomainHeader&gt;
         + ObjectsApi&lt;Block&gt;,
     ExecutorDispatch: NativeExecutionDispatch + <span class="lifetime">&#39;static</span>,
 {
