@@ -583,6 +583,21 @@
 <a href="#583" id="583">583</a>
 <a href="#584" id="584">584</a>
 <a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
 <span class="kw">mod </span>transport;
 
@@ -613,14 +628,13 @@
 <span class="kw">use </span>libp2p::identify::Config <span class="kw">as </span>IdentifyConfig;
 <span class="kw">use </span>libp2p::kad::store::RecordStore;
 <span class="kw">use </span>libp2p::kad::{
-    store, KademliaBucketInserts, KademliaConfig, KademliaStoreInserts, Mode, ProviderRecord,
-    Record, RecordKey,
+    store, BucketInserts, Config <span class="kw">as </span>KademliaConfig, Mode, ProviderRecord, Record, RecordKey,
+    StoreInserts,
 };
 <span class="kw">use </span>libp2p::metrics::Metrics;
 <span class="kw">use </span>libp2p::multiaddr::Protocol;
-<span class="kw">use </span>libp2p::swarm::SwarmBuilder;
 <span class="kw">use </span>libp2p::yamux::Config <span class="kw">as </span>YamuxConfig;
-<span class="kw">use </span>libp2p::{identity, Multiaddr, PeerId, StreamProtocol, TransportError};
+<span class="kw">use </span>libp2p::{identity, Multiaddr, PeerId, StreamProtocol, SwarmBuilder, TransportError};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::iter::Empty;
@@ -646,6 +660,8 @@
 <span class="doccomment">/// Defines max_negotiating_inbound_streams constant for the swarm.
 /// It must be set for large plots.
 </span><span class="kw">const </span>SWARM_MAX_NEGOTIATING_INBOUND_STREAMS: usize = <span class="number">100000</span>;
+<span class="doccomment">/// How long will connection be allowed to be open without any usage
+</span><span class="kw">const </span>IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 <span class="doccomment">/// The default maximum established incoming connection number for the swarm.
 </span><span class="kw">const </span>SWARM_MAX_ESTABLISHED_INCOMING_CONNECTIONS: u32 = <span class="number">100</span>;
 <span class="doccomment">/// The default maximum established incoming connection number for the swarm.
@@ -891,8 +907,8 @@
             .expect(<span class="string">&quot;Manual protocol name creation.&quot;</span>)])
             .disjoint_query_paths(<span class="bool-val">true</span>)
             .set_max_packet_size(<span class="number">2 </span>* Piece::SIZE)
-            .set_kbucket_inserts(KademliaBucketInserts::Manual)
-            .set_record_filtering(KademliaStoreInserts::FilterBoth)
+            .set_kbucket_inserts(BucketInserts::Manual)
+            .set_record_filtering(StoreInserts::FilterBoth)
             <span class="comment">// We don&#39;t use records and providers publication.
             </span>.set_provider_record_ttl(<span class="prelude-val">None</span>)
             .set_provider_publication_interval(<span class="prelude-val">None</span>)
@@ -982,6 +998,11 @@
     <span class="doccomment">/// I/O error.
     </span><span class="attr">#[error(<span class="string">&quot;I/O error: {0}&quot;</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
+    <span class="doccomment">/// Transport creation error.
+    </span><span class="attr">#[error(<span class="string">&quot;Transport creation error: {0}&quot;</span>)]
+    </span><span class="comment">// TODO: Restore `#[from] TransportError` once https://github.com/libp2p/rust-libp2p/issues/4824
+    //  is resolved
+    </span>TransportCreationError(Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;),
     <span class="doccomment">/// Transport error when attempting to listen on multiaddr.
     </span><span class="attr">#[error(<span class="string">&quot;Transport error when attempting to listen on multiaddr: {0}&quot;</span>)]
     </span>TransportError(<span class="attr">#[from] </span>TransportError&lt;io::Error&gt;),
@@ -1037,18 +1058,6 @@
         disable_bootstrap_on_start,
     } = config;
     <span class="kw">let </span>local_peer_id = peer_id(<span class="kw-2">&amp;</span>keypair);
-
-    <span class="kw">let </span>temporary_bans = Arc::new(Mutex::new(TemporaryBans::new(
-        temporary_bans_cache_size,
-        temporary_ban_backoff,
-    )));
-    <span class="kw">let </span>transport = build_transport(
-        allow_non_global_addresses_in_dht,
-        <span class="kw-2">&amp;</span>keypair,
-        Arc::clone(<span class="kw-2">&amp;</span>temporary_bans),
-        timeout,
-        yamux_config,
-    )<span class="question-mark">?</span>;
 
     <span class="macro">info!</span>(
         %allow_non_global_addresses_in_dht,
@@ -1106,8 +1115,30 @@
         }),
     });
 
-    <span class="kw">let </span><span class="kw-2">mut </span>swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id)
-        .max_negotiating_inbound_streams(SWARM_MAX_NEGOTIATING_INBOUND_STREAMS)
+    <span class="kw">let </span>temporary_bans = Arc::new(Mutex::new(TemporaryBans::new(
+        temporary_bans_cache_size,
+        temporary_ban_backoff,
+    )));
+
+    <span class="kw">let </span><span class="kw-2">mut </span>swarm = SwarmBuilder::with_existing_identity(keypair)
+        .with_tokio()
+        .with_other_transport(|keypair| {
+            <span class="prelude-val">Ok</span>(build_transport(
+                allow_non_global_addresses_in_dht,
+                keypair,
+                Arc::clone(<span class="kw-2">&amp;</span>temporary_bans),
+                timeout,
+                yamux_config,
+            )<span class="question-mark">?</span>)
+        })
+        .map_err(|error| CreationError::TransportCreationError(error.into()))<span class="question-mark">?
+        </span>.with_behaviour(<span class="kw">move </span>|_keypair| <span class="prelude-val">Ok</span>(behaviour))
+        .expect(<span class="string">&quot;Not fallible; qed&quot;</span>)
+        .with_swarm_config(|config| {
+            config
+                .with_max_negotiating_inbound_streams(SWARM_MAX_NEGOTIATING_INBOUND_STREAMS)
+                .with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT)
+        })
         .build();
 
     <span class="comment">// Setup listen_on addresses
@@ -1162,7 +1193,6 @@
             special_connection_decision_handler,
             bootstrap_addresses,
             kademlia_mode,
-            external_addresses,
             disable_bootstrap_on_start,
         });
 

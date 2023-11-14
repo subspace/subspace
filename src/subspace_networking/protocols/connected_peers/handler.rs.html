@@ -81,13 +81,32 @@
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>libp2p::core::upgrade::DeniedUpgrade;
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>futures::pin_mut;
+<span class="kw">use </span>libp2p::core::upgrade::DeniedUpgrade;
 <span class="kw">use </span>libp2p::swarm::handler::ConnectionEvent;
-<span class="kw">use </span>libp2p::swarm::{ConnectionHandler, ConnectionHandlerEvent, KeepAlive, SubstreamProtocol};
-<span class="kw">use </span>std::error::Error;
-<span class="kw">use </span>std::fmt;
+<span class="kw">use </span>libp2p::swarm::{ConnectionHandler, ConnectionHandlerEvent, SubstreamProtocol};
+<span class="kw">use </span>std::future::Future;
+<span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::task::{Context, Poll};
+<span class="kw">use </span>std::time::Instant;
 <span class="kw">use </span>tracing::trace;
+
+<span class="kw">pub type </span>KeepAlive = bool;
 
 <span class="doccomment">/// Connection handler for managing connections within our `connected peers` protocol.
 ///
@@ -103,30 +122,27 @@
 </span><span class="kw">pub struct </span>Handler {
     <span class="doccomment">/// Specifies whether we should keep the connection alive.
     </span>keep_alive: KeepAlive,
+    <span class="doccomment">/// Optional future that keeps connection alive for a certain amount of time.
+    </span>keep_alive_timeout_future: <span class="prelude-ty">Option</span>&lt;Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">&#39;static</span>&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>Handler {
     <span class="doccomment">/// Builds a new [`Handler`].
-    </span><span class="kw">pub fn </span>new(keep_alive: KeepAlive) -&gt; <span class="self">Self </span>{
-        Handler { keep_alive }
+    </span><span class="kw">pub fn </span>new(keep_alive: KeepAlive, keep_alive_until: <span class="prelude-ty">Option</span>&lt;Instant&gt;) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>keep_alive_timeout_future = keep_alive_until.map(|keep_alive_until| {
+            Box::pin(<span class="kw">async move </span>{ tokio::time::sleep_until(keep_alive_until.into()).<span class="kw">await </span>}) <span class="kw">as _
+        </span>});
+
+        Handler {
+            keep_alive,
+            keep_alive_timeout_future,
+        }
     }
 }
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ConnectedPeersError;
-
-<span class="kw">impl </span>fmt::Display <span class="kw">for </span>ConnectedPeersError {
-    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; fmt::Result {
-        <span class="macro">write!</span>(f, <span class="string">&quot;Connected peers protocol error.&quot;</span>)
-    }
-}
-
-<span class="kw">impl </span>Error <span class="kw">for </span>ConnectedPeersError {}
 
 <span class="kw">impl </span>ConnectionHandler <span class="kw">for </span>Handler {
     <span class="kw">type </span>FromBehaviour = KeepAlive;
     <span class="kw">type </span>ToBehaviour = ();
-    <span class="kw">type </span>Error = ConnectedPeersError;
     <span class="kw">type </span>InboundProtocol = DeniedUpgrade;
     <span class="kw">type </span>OutboundProtocol = DeniedUpgrade;
     <span class="kw">type </span>OutboundOpenInfo = ();
@@ -140,6 +156,8 @@
         <span class="macro">trace!</span>(<span class="question-mark">?</span>keep_alive, <span class="string">&quot;Behaviour event arrived.&quot;</span>);
 
         <span class="self">self</span>.keep_alive = keep_alive;
+        <span class="comment">// Drop timeout future
+        </span><span class="self">self</span>.keep_alive_timeout_future.take();
     }
 
     <span class="kw">fn </span>connection_keep_alive(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; KeepAlive {
@@ -148,8 +166,20 @@
 
     <span class="kw">fn </span>poll(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        <span class="kw">_</span>: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">&#39;_</span>&gt;,
-    ) -&gt; Poll&lt;ConnectionHandlerEvent&lt;DeniedUpgrade, (), (), <span class="self">Self</span>::Error&gt;&gt; {
+        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">&#39;_</span>&gt;,
+    ) -&gt; Poll&lt;ConnectionHandlerEvent&lt;DeniedUpgrade, (), ()&gt;&gt; {
+        {
+            <span class="kw">let </span>maybe_keep_alive_timeout_future = <span class="kw-2">&amp;mut </span><span class="self">self</span>.keep_alive_timeout_future;
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(keep_alive_timeout_future) = maybe_keep_alive_timeout_future {
+                <span class="macro">pin_mut!</span>(keep_alive_timeout_future);
+
+                <span class="kw">if </span><span class="macro">matches!</span>(keep_alive_timeout_future.poll(cx), Poll::Ready(())) {
+                    maybe_keep_alive_timeout_future.take();
+                    <span class="self">self</span>.keep_alive = <span class="bool-val">false</span>;
+                }
+            }
+        }
+
         Poll::Pending
     }
 
