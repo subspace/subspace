@@ -284,6 +284,38 @@
 <a href="#284" id="284">284</a>
 <a href="#285" id="285">285</a>
 <a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>import_blocks;
 <span class="kw">mod </span>piece_validator;
 <span class="kw">mod </span>segment_header_downloader;
@@ -293,7 +325,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::segment_header_downloader::SegmentHeaderDownloader;
 <span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>futures::channel::mpsc;
-<span class="kw">use </span>futures::{FutureExt, StreamExt};
+<span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, BlockchainEvents};
 <span class="kw">use </span>sc_consensus::import_queue::ImportQueueService;
 <span class="kw">use </span>sc_consensus_subspace::archiver::SegmentHeadersStore;
@@ -302,9 +334,10 @@
 <span class="kw">use </span>sp_api::{BlockT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi};
+<span class="kw">use </span>sp_runtime::traits::{CheckedSub, NumberFor};
 <span class="kw">use </span>sp_runtime::Saturating;
 <span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::sync::atomic::Ordering;
+<span class="kw">use </span>std::sync::atomic::{AtomicU32, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
@@ -313,10 +346,12 @@
 <span class="kw">use </span>subspace_networking::Node;
 <span class="kw">use </span>tracing::{info, warn};
 
-<span class="doccomment">/// How much time to wait for new block to be imported before timing out and starting sync from DSN.
+<span class="doccomment">/// How much time to wait for new block to be imported before timing out and starting sync from DSN
 </span><span class="kw">const </span>NO_IMPORTED_BLOCKS_TIMEOUT: Duration = Duration::from_secs(<span class="number">10 </span>* <span class="number">60</span>);
 <span class="doccomment">/// Frequency with which to check whether node is online or not
 </span><span class="kw">const </span>CHECK_ONLINE_STATUS_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
+<span class="doccomment">/// Frequency with which to check whether node is almost synced to the tip of the observed chain
+</span><span class="kw">const </span>CHECK_ALMOST_SYNCED_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 <span class="doccomment">/// Period of time during which node should be offline for DSN sync to kick-in
 </span><span class="kw">const </span>MIN_OFFLINE_PERIOD: Duration = Duration::from_secs(<span class="number">60</span>);
 
@@ -329,12 +364,14 @@
 
 <span class="doccomment">/// Create node observer that will track node state and send notifications to worker to start sync
 /// from DSN.
+</span><span class="attr">#[allow(clippy::too_many_arguments)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_observer_and_worker&lt;Block, AS, Client&gt;(
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     network_service: Arc&lt;NetworkService&lt;Block, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
     node: Node,
     client: Arc&lt;Client&gt;,
     <span class="kw-2">mut </span>import_queue_service: Box&lt;<span class="kw">dyn </span>ImportQueueService&lt;Block&gt;&gt;,
+    sync_target_block_number: Arc&lt;AtomicU32&gt;,
     sync_mode: Arc&lt;Atomic&lt;SyncMode&gt;&gt;,
     kzg: Kzg,
 ) -&gt; (
@@ -366,6 +403,7 @@
             <span class="kw-2">&amp;</span>node,
             client.as_ref(),
             import_queue_service.as_mut(),
+            sync_target_block_number,
             sync_mode,
             rx,
             <span class="kw-2">&amp;</span>kzg,
@@ -490,11 +528,13 @@
     }
 }
 
-<span class="kw">async fn </span>create_worker&lt;Block, AS, IQS, Client&gt;(
+<span class="attr">#[allow(clippy::too_many_arguments)]
+</span><span class="kw">async fn </span>create_worker&lt;Block, AS, IQS, Client&gt;(
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     node: <span class="kw-2">&amp;</span>Node,
     client: <span class="kw-2">&amp;</span>Client,
     import_queue_service: <span class="kw-2">&amp;mut </span>IQS,
+    sync_target_block_number: Arc&lt;AtomicU32&gt;,
     sync_mode: Arc&lt;Atomic&lt;SyncMode&gt;&gt;,
     <span class="kw-2">mut </span>notifications: mpsc::Receiver&lt;NotificationReason&gt;,
     kzg: <span class="kw-2">&amp;</span>Kzg,
@@ -511,22 +551,20 @@
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     IQS: ImportQueueService&lt;Block&gt; + <span class="question-mark">?</span>Sized,
 {
+    <span class="kw">let </span>info = client.info();
+    <span class="kw">let </span>chain_constants = client
+        .runtime_api()
+        .chain_constants(info.best_hash)
+        .map_err(|error| error.to_string())<span class="question-mark">?</span>;
+
     <span class="comment">// Corresponds to contents of block one, everyone has it, so we consider it being processed
     // right away
     </span><span class="kw">let </span><span class="kw-2">mut </span>last_processed_segment_index = SegmentIndex::ZERO;
     <span class="comment">// TODO: We&#39;ll be able to just take finalized block once we are able to decouple pruning from
     //  finality: https://github.com/paritytech/polkadot-sdk/issues/1570
-    </span><span class="kw">let </span><span class="kw-2">mut </span>last_processed_block_number = {
-        <span class="kw">let </span>info = client.info();
-        info.best_number.saturating_sub(
-            client
-                .runtime_api()
-                .chain_constants(info.best_hash)
-                .map_err(|error| error.to_string())<span class="question-mark">?
-                </span>.confirmation_depth_k()
-                .into(),
-        )
-    };
+    </span><span class="kw">let </span><span class="kw-2">mut </span>last_processed_block_number = info
+        .best_number
+        .saturating_sub(chain_constants.confirmation_depth_k().into());
     <span class="kw">let </span>segment_header_downloader = SegmentHeaderDownloader::new(node);
     <span class="kw">let </span>piece_provider = PieceProvider::new(
         node.clone(),
@@ -544,7 +582,7 @@
 
         <span class="macro">info!</span>(<span class="question-mark">?</span>reason, <span class="string">&quot;Received notification to sync from DSN&quot;</span>);
         <span class="comment">// TODO: Maybe handle failed block imports, additional helpful logging
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = import_blocks_from_dsn(
+        </span><span class="kw">let </span>import_froms_from_dsn_fut = import_blocks_from_dsn(
             <span class="kw-2">&amp;</span>segment_headers_store,
             <span class="kw-2">&amp;</span>segment_header_downloader,
             client,
@@ -552,10 +590,36 @@
             import_queue_service,
             <span class="kw-2">&amp;mut </span>last_processed_segment_index,
             <span class="kw-2">&amp;mut </span>last_processed_block_number,
-        )
-        .<span class="kw">await
-        </span>{
-            <span class="macro">warn!</span>(%error, <span class="string">&quot;Error when syncing blocks from DSN&quot;</span>);
+        );
+        <span class="kw">let </span>wait_almost_synced_fut = <span class="kw">async </span>{
+            <span class="kw">loop </span>{
+                tokio::time::sleep(CHECK_ALMOST_SYNCED_INTERVAL).<span class="kw">await</span>;
+
+                <span class="kw">let </span>info = client.info();
+                <span class="kw">let </span>target_block_number =
+                    NumberFor::&lt;Block&gt;::from(sync_target_block_number.load(Ordering::Relaxed));
+
+                <span class="comment">// If less blocks than confirmation depth to the tip of the chain, no need to worry about DSN sync
+                // anymore, it will not be helpful anyway
+                </span><span class="kw">if </span>target_block_number
+                    .checked_sub(<span class="kw-2">&amp;</span>info.best_number)
+                    .map(|diff| diff &lt; chain_constants.confirmation_depth_k().into())
+                    .unwrap_or_default()
+                {
+                    <span class="kw">break</span>;
+                }
+            }
+        };
+
+        <span class="macro">select! </span>{
+            result = import_froms_from_dsn_fut.fuse() =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = result {
+                    <span class="macro">warn!</span>(%error, <span class="string">&quot;Error when syncing blocks from DSN&quot;</span>);
+                }
+            }
+            <span class="kw">_ </span>= wait_almost_synced_fut.fuse() =&gt; {
+                <span class="comment">// Almost synced, DSN sync can&#39;t possibly help here
+            </span>}
         }
 
         sync_mode.store(
