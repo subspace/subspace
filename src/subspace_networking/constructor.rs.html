@@ -598,6 +598,10 @@
 <a href="#598" id="598">598</a>
 <a href="#599" id="599">599</a>
 <a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
 <span class="kw">mod </span>transport;
 
@@ -705,10 +709,7 @@
     <span class="doccomment">/// The Kademlia mode is static for the duration of the application.
     </span>Static(Mode),
     <span class="doccomment">/// Kademlia mode will be changed using Autonat protocol when max confidence reached.
-    </span>Dynamic {
-        <span class="doccomment">/// Defines initial Kademlia mode.
-        </span>initial_mode: Mode,
-    },
+    </span>Dynamic,
 }
 
 <span class="doccomment">/// Trait to be implemented on providers of local records
@@ -860,8 +861,6 @@
     <span class="doccomment">/// Known external addresses to the local peer. The addresses will be added on the swarm start
     /// and enable peer to notify others about its reachable address.
     </span><span class="kw">pub </span>external_addresses: Vec&lt;Multiaddr&gt;,
-    <span class="doccomment">/// Enable autonat protocol. Helps detecting whether we&#39;re behind the firewall.
-    </span><span class="kw">pub </span>enable_autonat: bool,
     <span class="doccomment">/// Defines whether we should run blocking Kademlia bootstrap() operation before other requests.
     </span><span class="kw">pub </span>disable_bootstrap_on_start: bool,
 }
@@ -983,7 +982,6 @@
             bootstrap_addresses: Vec::new(),
             kademlia_mode: KademliaMode::Static(Mode::Client),
             external_addresses: Vec::new(),
-            enable_autonat: <span class="bool-val">true</span>,
             disable_bootstrap_on_start: <span class="bool-val">false</span>,
         }
     }
@@ -1054,7 +1052,6 @@
         bootstrap_addresses,
         kademlia_mode,
         external_addresses,
-        enable_autonat,
         disable_bootstrap_on_start,
     } = config;
     <span class="kw">let </span>local_peer_id = peer_id(<span class="kw-2">&amp;</span>keypair);
@@ -1075,7 +1072,7 @@
 
     <span class="macro">debug!</span>(<span class="question-mark">?</span>connection_limits, <span class="string">&quot;DSN connection limits set.&quot;</span>);
 
-    <span class="kw">let </span>behaviour = Behavior::new(BehaviorConfig {
+    <span class="kw">let </span><span class="kw-2">mut </span>behaviour = Behavior::new(BehaviorConfig {
         peer_id: local_peer_id,
         identify,
         kademlia,
@@ -1107,13 +1104,25 @@
                 ..ConnectedPeersConfig::default()
             }
         }),
-        autonat: enable_autonat.then(|| AutonatConfig {
+        autonat: external_addresses.is_empty().then(|| AutonatConfig {
             use_connected: <span class="bool-val">true</span>,
             only_global_ips: !config.allow_non_global_addresses_in_dht,
             confidence_max: AUTONAT_MAX_CONFIDENCE,
             ..Default::default()
         }),
     });
+
+    <span class="kw">match </span>(kademlia_mode, external_addresses.is_empty()) {
+        (KademliaMode::Static(mode), <span class="kw">_</span>) =&gt; {
+            behaviour.kademlia.set_mode(<span class="prelude-val">Some</span>(mode));
+        }
+        (KademliaMode::Dynamic, <span class="bool-val">false</span>) =&gt; {
+            behaviour.kademlia.set_mode(<span class="prelude-val">Some</span>(Mode::Server));
+        }
+        <span class="kw">_ </span>=&gt; {
+            <span class="comment">// Autonat will figure it out
+        </span>}
+    };
 
     <span class="kw">let </span>temporary_bans = Arc::new(Mutex::new(TemporaryBans::new(
         temporary_bans_cache_size,
@@ -1192,7 +1201,6 @@
             general_connection_decision_handler,
             special_connection_decision_handler,
             bootstrap_addresses,
-            kademlia_mode,
             disable_bootstrap_on_start,
         });
 

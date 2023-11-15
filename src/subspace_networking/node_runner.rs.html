@@ -1545,6 +1545,7 @@
 <a href="#1545" id="1545">1545</a>
 <a href="#1546" id="1546">1546</a>
 <a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::{
     append_p2p_suffix, remove_p2p_suffix, NetworkingParametersRegistry, PeerAddressRemovedEvent,
     PEERS_ADDRESSES_BATCH_SIZE,
@@ -1554,7 +1555,7 @@
 };
 <span class="kw">use </span><span class="kw">crate</span>::constructor;
 <span class="kw">use </span><span class="kw">crate</span>::constructor::temporary_bans::TemporaryBans;
-<span class="kw">use </span><span class="kw">crate</span>::constructor::{ConnectedPeersHandler, KademliaMode, LocalOnlyRecordStore};
+<span class="kw">use </span><span class="kw">crate</span>::constructor::{ConnectedPeersHandler, LocalOnlyRecordStore};
 <span class="kw">use </span><span class="kw">crate</span>::protocols::connected_peers::Event <span class="kw">as </span>ConnectedPeersEvent;
 <span class="kw">use </span><span class="kw">crate</span>::protocols::peer_info::{Event <span class="kw">as </span>PeerInfoEvent, PeerInfoSuccess};
 <span class="kw">use </span><span class="kw">crate</span>::protocols::request_response::request_response_factory::{
@@ -1576,8 +1577,7 @@
 <span class="kw">use </span>libp2p::kad::{
     Behaviour <span class="kw">as </span>Kademlia, BootstrapOk, Event <span class="kw">as </span>KademliaEvent, GetClosestPeersError,
     GetClosestPeersOk, GetProvidersError, GetProvidersOk, GetRecordError, GetRecordOk,
-    InboundRequest, Mode, PeerRecord, ProgressStep, PutRecordOk, QueryId, QueryResult, Quorum,
-    Record,
+    InboundRequest, PeerRecord, ProgressStep, PutRecordOk, QueryId, QueryResult, Quorum, Record,
 };
 <span class="kw">use </span>libp2p::metrics::{Metrics, Recorder};
 <span class="kw">use </span>libp2p::swarm::{DialError, SwarmEvent};
@@ -1685,8 +1685,6 @@
     </span>bootstrap_addresses: Vec&lt;Multiaddr&gt;,
     <span class="doccomment">/// Ensures a single bootstrap on run() invocation.
     </span>bootstrap_command_state: Arc&lt;AsyncMutex&lt;BootstrapCommandState&gt;&gt;,
-    <span class="doccomment">/// Kademlia mode.
-    </span>kademlia_mode: KademliaMode,
     <span class="doccomment">/// Receives an event on peer address removal from the persistent storage.
     </span>removed_addresses_rx: mpsc::UnboundedReceiver&lt;PeerAddressRemovedEvent&gt;,
     <span class="doccomment">/// Optional storage for the [`HandlerId`] of the address removal task.
@@ -1714,7 +1712,6 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) general_connection_decision_handler: <span class="prelude-ty">Option</span>&lt;ConnectedPeersHandler&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) special_connection_decision_handler: <span class="prelude-ty">Option</span>&lt;ConnectedPeersHandler&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) bootstrap_addresses: Vec&lt;Multiaddr&gt;,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) kademlia_mode: KademliaMode,
     <span class="kw">pub</span>(<span class="kw">crate</span>) disable_bootstrap_on_start: bool,
 }
 
@@ -1737,7 +1734,6 @@
             general_connection_decision_handler,
             special_connection_decision_handler,
             bootstrap_addresses,
-            kademlia_mode,
             disable_bootstrap_on_start,
         }: NodeRunnerConfig&lt;LocalRecordProvider&gt;,
     ) -&gt; <span class="self">Self </span>{
@@ -1778,7 +1774,6 @@
             rng: StdRng::seed_from_u64(KADEMLIA_PEERS_ADDRESSES_BATCH_SIZE <span class="kw">as </span>u64), <span class="comment">// any seed
             </span>bootstrap_addresses,
             bootstrap_command_state: Arc::new(AsyncMutex::new(BootstrapCommandState::default())),
-            kademlia_mode,
             removed_addresses_rx,
             _address_removal_task_handler_id: address_removal_task_handler_id,
             disable_bootstrap_on_start,
@@ -1868,18 +1863,6 @@
         };
 
         <span class="macro">debug!</span>(<span class="string">&quot;Bootstrap started.&quot;</span>);
-
-        <span class="kw">let </span>initial_mode = <span class="kw">match </span><span class="self">self</span>.kademlia_mode {
-            KademliaMode::Static(mode) =&gt; mode,
-            KademliaMode::Dynamic { initial_mode } =&gt; initial_mode,
-        };
-
-        <span class="self">self</span>.swarm
-            .behaviour_mut()
-            .kademlia
-            .set_mode(<span class="prelude-val">Some</span>(initial_mode));
-
-        <span class="macro">debug!</span>(<span class="string">&quot;Kademlia mode set: {:?}.&quot;</span>, initial_mode);
 
         <span class="kw">let </span><span class="kw-2">mut </span>bootstrap_step = <span class="number">0</span>;
         <span class="kw">loop </span>{
@@ -2171,6 +2154,15 @@
             }
             SwarmEvent::ExternalAddrConfirmed { address } =&gt; {
                 <span class="macro">info!</span>(%address, <span class="string">&quot;Confirmed external address&quot;</span>);
+
+                <span class="kw">let </span>connected_peers = <span class="self">self</span>.swarm.connected_peers().copied().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+                <span class="self">self</span>.swarm.behaviour_mut().identify.push(connected_peers);
+            }
+            SwarmEvent::ExternalAddrExpired { address } =&gt; {
+                <span class="macro">info!</span>(%address, <span class="string">&quot;External address expired&quot;</span>);
+
+                <span class="kw">let </span>connected_peers = <span class="self">self</span>.swarm.connected_peers().copied().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+                <span class="self">self</span>.swarm.behaviour_mut().identify.push(connected_peers);
             }
             other =&gt; {
                 <span class="macro">trace!</span>(<span class="string">&quot;Other swarm event: {:?}&quot;</span>, other);
@@ -2278,6 +2270,22 @@
             });
 
             <span class="kw">if </span>full_kademlia_support {
+                <span class="kw">let </span>old_addresses = kademlia
+                    .kbucket(peer_id)
+                    .and_then(|peers| {
+                        <span class="kw">let </span>key = peer_id.into();
+                        peers.iter().find_map(|peer| {
+                            (peer.node.key == <span class="kw-2">&amp;</span>key).then_some(
+                                peer.node
+                                    .value
+                                    .iter()
+                                    .filter(|address| info.listen_addrs.contains(address))
+                                    .cloned()
+                                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+                            )
+                        })
+                    })
+                    .unwrap_or_default();
                 <span class="kw">for </span>address <span class="kw">in </span>info.listen_addrs {
                     <span class="kw">if </span>!<span class="self">self</span>.allow_non_global_addresses_in_dht
                         &amp;&amp; !is_global_address_or_dns(<span class="kw-2">&amp;</span>address)
@@ -2298,7 +2306,18 @@
                         protocol_names = <span class="question-mark">?</span>kademlia.protocol_names(),
                         <span class="string">&quot;Adding self-reported address to Kademlia DHT&quot;</span>,
                     );
+
                     kademlia.add_address(<span class="kw-2">&amp;</span>peer_id, address);
+                }
+                <span class="kw">for </span>old_address <span class="kw">in </span>old_addresses {
+                    <span class="macro">trace!</span>(
+                        %local_peer_id,
+                        %peer_id,
+                        %old_address,
+                        <span class="string">&quot;Removing old self-reported address from Kademlia DHT&quot;</span>,
+                    );
+
+                    kademlia.remove_address(<span class="kw-2">&amp;</span>peer_id, <span class="kw-2">&amp;</span>old_address);
                 }
             } <span class="kw">else </span>{
                 <span class="macro">debug!</span>(
@@ -2719,32 +2738,15 @@
         <span class="kw">if let </span>AutonatEvent::StatusChanged { old, new } = event {
             <span class="macro">info!</span>(<span class="question-mark">?</span>old, <span class="question-mark">?</span>new, <span class="string">&quot;Public address status changed.&quot;</span>);
 
-            <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.kademlia_mode, KademliaMode::Dynamic { .. }) {
-                <span class="kw">let </span>mode = <span class="kw">match </span><span class="kw-2">&amp;</span>new {
-                    NatStatus::Public(address) =&gt; {
-                        <span class="kw">if </span>is_global_address_or_dns(address)
-                            || <span class="self">self</span>.allow_non_global_addresses_in_dht
-                        {
-                            Mode::Server
-                        } <span class="kw">else </span>{
-                            <span class="macro">debug!</span>(
-                                <span class="question-mark">?</span>old,
-                                <span class="question-mark">?</span>new,
-                                <span class="question-mark">?</span>address,
-                                non_global_addresses=%<span class="self">self</span>.allow_non_global_addresses_in_dht,
-                                <span class="string">&quot;Kademlia mode wasn&#39;t set.&quot;
-                            </span>);
-                            Mode::Client
-                        }
-                    }
-                    NatStatus::Private =&gt; Mode::Client,
-                    NatStatus::Unknown =&gt; Mode::Client,
-                };
+            <span class="comment">// TODO: Remove block once https://github.com/libp2p/rust-libp2p/issues/4863 is resolved
+            </span><span class="kw">if let </span>(NatStatus::Public(old_address), NatStatus::Private) = (old, new) {
+                <span class="self">self</span>.swarm.remove_external_address(<span class="kw-2">&amp;</span>old_address);
+                <span class="comment">// Trigger potential mode change manually
+                </span><span class="self">self</span>.swarm.behaviour_mut().kademlia.set_mode(<span class="prelude-val">None</span>);
 
-                <span class="self">self</span>.swarm.behaviour_mut().kademlia.set_mode(<span class="prelude-val">Some</span>(mode));
-
-                <span class="macro">debug!</span>(<span class="string">&quot;Kademlia mode set: {:?}.&quot;</span>, mode);
-            };
+                <span class="kw">let </span>connected_peers = <span class="self">self</span>.swarm.connected_peers().copied().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+                <span class="self">self</span>.swarm.behaviour_mut().identify.push(connected_peers);
+            }
         }
     }
 
