@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["RuntimeObject","ScheduledRuntimeUpgrade"]};
+window.SIDEBAR_ITEMS = {"enum":["DomainRuntimeInfo","Error"],"struct":["RuntimeObject","ScheduledRuntimeUpgrade"]};

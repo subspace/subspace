@@ -366,10 +366,27 @@
 <a href="#366" id="366">366</a>
 <a href="#367" id="367">367</a>
 <a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain registry for domains
 
 </span><span class="kw">use </span><span class="kw">crate</span>::block_tree::import_genesis_receipt;
-<span class="kw">use </span><span class="kw">crate</span>::pallet::DomainStakingSummary;
+<span class="kw">use </span><span class="kw">crate</span>::pallet::{DomainStakingSummary, NextEVMChainId};
+<span class="kw">use </span><span class="kw">crate</span>::runtime_registry::DomainRuntimeInfo;
 <span class="kw">use </span><span class="kw">crate</span>::staking::StakingSummary;
 <span class="kw">use crate</span>::{
     Config, DomainHashingFor, DomainRegistry, ExecutionReceiptOf, HoldIdentifier, NextDomainId,
@@ -386,6 +403,7 @@
 <span class="kw">use </span>sp_core::Get;
 <span class="kw">use </span>sp_domains::{
     derive_domain_block_hash, DomainId, DomainsDigestItem, OperatorAllowList, RuntimeId,
+    RuntimeType,
 };
 <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, Zero};
 <span class="kw">use </span>sp_runtime::DigestItem;
@@ -399,6 +417,7 @@
     ExceedMaxDomainBlockWeight,
     ExceedMaxDomainBlockSize,
     MaxDomainId,
+    MaxEVMChainId,
     InvalidSlotProbability,
     RuntimeNotFound,
     InsufficientFund,
@@ -438,6 +457,8 @@
     </span><span class="kw">pub </span>genesis_receipt_hash: ReceiptHash,
     <span class="doccomment">/// The domain config.
     </span><span class="kw">pub </span>domain_config: DomainConfig&lt;AccountId&gt;,
+    <span class="doccomment">/// Domain runtime specific information.
+    </span><span class="kw">pub </span>domain_runtime_info: DomainRuntimeInfo,
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>can_instantiate_domain&lt;T: Config&gt;(
@@ -490,13 +511,23 @@
     can_instantiate_domain::&lt;T&gt;(<span class="kw-2">&amp;</span>owner_account_id, <span class="kw-2">&amp;</span>domain_config)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>domain_id = NextDomainId::&lt;T&gt;::get();
+    <span class="kw">let </span>runtime_obj = RuntimeRegistry::&lt;T&gt;::get(domain_config.runtime_id)
+        .expect(<span class="string">&quot;Runtime object must exist as checked in `can_instantiate_domain`; qed&quot;</span>);
+
+    <span class="kw">let </span>domain_runtime_info = <span class="kw">match </span>runtime_obj.runtime_type {
+        RuntimeType::Evm =&gt; {
+            <span class="kw">let </span>evm_chain_id = NextEVMChainId::&lt;T&gt;::get();
+            <span class="kw">let </span>next_evm_chain_id = evm_chain_id.checked_add(<span class="number">1</span>).ok_or(Error::MaxEVMChainId)<span class="question-mark">?</span>;
+            NextEVMChainId::&lt;T&gt;::set(next_evm_chain_id);
+            DomainRuntimeInfo::EVM {
+                chain_id: evm_chain_id,
+            }
+        }
+    };
 
     <span class="kw">let </span>genesis_receipt = {
-        <span class="kw">let </span>runtime_obj = RuntimeRegistry::&lt;T&gt;::get(domain_config.runtime_id)
-            .expect(<span class="string">&quot;Runtime object must exist as checked in `can_instantiate_domain`; qed&quot;</span>);
-
         <span class="kw">let </span>state_version = runtime_obj.version.state_version();
-        <span class="kw">let </span>raw_genesis = runtime_obj.into_complete_raw_genesis(domain_id);
+        <span class="kw">let </span>raw_genesis = runtime_obj.into_complete_raw_genesis(domain_id, domain_runtime_info);
         <span class="kw">let </span>state_root = raw_genesis.state_root::&lt;DomainHashingFor&lt;T&gt;&gt;(state_version);
         <span class="kw">let </span>genesis_block_hash = derive_domain_block_hash::&lt;T::DomainHeader&gt;(
             Zero::zero(),
@@ -519,6 +550,7 @@
         created_at,
         genesis_receipt_hash,
         domain_config,
+        domain_runtime_info,
     };
     DomainRegistry::&lt;T&gt;::insert(domain_id, domain_obj);
 
