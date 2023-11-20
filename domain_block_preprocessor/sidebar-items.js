@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["inherents","runtime_api","runtime_api_full","runtime_api_light","xdm_verifier"],"struct":["DomainBlockPreprocessor","PreprocessResult"],"trait":["ValidateReceipt"]};
+window.SIDEBAR_ITEMS = {"mod":["inherents","stateless_runtime","xdm_verifier"],"struct":["DomainBlockPreprocessor","PreprocessResult"],"trait":["ValidateReceipt"]};

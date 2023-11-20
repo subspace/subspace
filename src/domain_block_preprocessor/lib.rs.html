@@ -371,17 +371,6 @@
 <a href="#371" id="371">371</a>
 <a href="#372" id="372">372</a>
 <a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
-<a href="#383" id="383">383</a>
-<a href="#384" id="384">384</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the consensus block.
 //!
@@ -395,18 +384,14 @@
 </span><span class="attr">#![warn(rust_2018_idioms)]
 
 </span><span class="kw">pub mod </span>inherents;
-<span class="kw">pub mod </span>runtime_api;
-<span class="kw">pub mod </span>runtime_api_full;
-<span class="kw">pub mod </span>runtime_api_light;
+<span class="kw">pub mod </span>stateless_runtime;
 <span class="kw">pub mod </span>xdm_verifier;
 
 <span class="kw">use </span><span class="kw">crate</span>::inherents::is_runtime_upgraded;
-<span class="kw">use </span><span class="kw">crate</span>::runtime_api::{SetCodeConstructor, SignerExtractor, StateRootExtractor};
 <span class="kw">use </span><span class="kw">crate</span>::xdm_verifier::is_valid_xdm;
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>domain_runtime_primitives::opaque::AccountId;
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
-<span class="kw">use </span>runtime_api::TimestampExtrinsicConstructor;
 <span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sp_api::{HashT, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
@@ -458,24 +443,22 @@
     <span class="kw">pub </span>bundles: Vec&lt;InboxedBundle&lt;Block::Hash&gt;&gt;,
 }
 
-<span class="kw">pub struct </span>DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt; {
+<span class="kw">pub struct </span>DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, ReceiptValidator&gt; {
     domain_id: DomainId,
     client: Arc&lt;Client&gt;,
     consensus_client: Arc&lt;CClient&gt;,
-    runtime_api: RuntimeApi,
     receipt_validator: ReceiptValidator,
     _phantom_data: PhantomData&lt;(Block, CBlock)&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, CBlock, Client, CClient, RuntimeApi: Clone, ReceiptValidator: Clone&gt; Clone
-    <span class="kw">for </span>DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt;
+<span class="kw">impl</span>&lt;Block, CBlock, Client, CClient, ReceiptValidator: Clone&gt; Clone
+    <span class="kw">for </span>DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, ReceiptValidator&gt;
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             domain_id: <span class="self">self</span>.domain_id,
             client: <span class="self">self</span>.client.clone(),
             consensus_client: <span class="self">self</span>.consensus_client.clone(),
-            runtime_api: <span class="self">self</span>.runtime_api.clone(),
             receipt_validator: <span class="self">self</span>.receipt_validator.clone(),
             _phantom_data: <span class="self">self</span>._phantom_data,
         }
@@ -499,18 +482,14 @@
     ) -&gt; sp_blockchain::Result&lt;ReceiptValidity&gt;;
 }
 
-<span class="kw">impl</span>&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt;
-    DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, RuntimeApi, ReceiptValidator&gt;
+<span class="kw">impl</span>&lt;Block, CBlock, Client, CClient, ReceiptValidator&gt;
+    DomainBlockPreprocessor&lt;Block, CBlock, Client, CClient, ReceiptValidator&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Block::Hash: Into&lt;H256&gt;,
     CBlock: BlockT,
     CBlock::Hash: From&lt;Block::Hash&gt;,
     NumberFor&lt;CBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
-    RuntimeApi: SignerExtractor&lt;Block&gt;
-        + StateRootExtractor&lt;Block&gt;
-        + SetCodeConstructor&lt;Block&gt;
-        + TimestampExtrinsicConstructor&lt;Block&gt;,
     Client: HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + <span class="lifetime">&#39;static</span>,
     Client::Api: DomainCoreApi&lt;Block&gt; + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
     CClient: HeaderBackend&lt;CBlock&gt;
@@ -526,14 +505,12 @@
         domain_id: DomainId,
         client: Arc&lt;Client&gt;,
         consensus_client: Arc&lt;CClient&gt;,
-        runtime_api: RuntimeApi,
         receipt_validator: ReceiptValidator,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             domain_id,
             client,
             consensus_client,
-            runtime_api,
             receipt_validator,
             _phantom_data: Default::default(),
         }
@@ -598,11 +575,12 @@
         <span class="kw">let </span><span class="kw-2">mut </span>inboxed_bundles = Vec::with_capacity(bundles.len());
         <span class="kw">let </span><span class="kw-2">mut </span>valid_extrinsics = Vec::new();
 
+        <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
         <span class="kw">for </span>bundle <span class="kw">in </span>bundles {
             <span class="kw">let </span>extrinsic_root = bundle.extrinsics_root();
             <span class="kw">match </span><span class="self">self</span>.check_bundle_validity(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>tx_range, at)<span class="question-mark">? </span>{
                 BundleValidity::Valid(extrinsics) =&gt; {
-                    <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span><span class="self">self</span>.runtime_api.extract_signer(at, extrinsics) {
+                    <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>runtime_api.extract_signer(at, extrinsics) {
                         <span class="prelude-val">Ok</span>(res) =&gt; res,
                         <span class="prelude-val">Err</span>(e) =&gt; {
                             <span class="macro">tracing::error!</span>(error = <span class="question-mark">?</span>e, <span class="string">&quot;Error at calling runtime api: extract_signer&quot;</span>);

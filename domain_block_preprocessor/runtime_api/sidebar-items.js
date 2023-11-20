@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"trait":["IsInherentExtrinsic","SetCodeConstructor","SignerExtractor","StateRootExtractor","TimestampExtrinsicConstructor"],"type":["ExtractSignerResult","ExtractedStateRoots"]};
