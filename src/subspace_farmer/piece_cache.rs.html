@@ -765,6 +765,16 @@
 <a href="#765" id="765">765</a>
 <a href="#766" id="766">766</a>
 <a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, Offset};
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
@@ -1098,29 +1108,44 @@
         <span class="kw">let </span><span class="kw-2">mut </span>downloaded_pieces_count = <span class="number">0</span>;
         <span class="self">self</span>.handlers.progress.call_simple(<span class="kw-2">&amp;</span><span class="number">0.0</span>);
         <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_piece) = downloading_pieces.next().<span class="kw">await </span>{
+            <span class="comment">// Push another piece to download
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(piece_index_to_download) = piece_indices_to_store.next() {
+                downloading_pieces.push(download_piece(piece_index_to_download));
+            }
+
             <span class="kw">let </span><span class="prelude-val">Some</span>((piece_index, piece)) = maybe_piece <span class="kw">else </span>{
                 <span class="kw">continue</span>;
             };
 
             <span class="comment">// Find plot in which there is a place for new piece to be stored
-            </span><span class="kw">for </span>(disk_farm_index, cache) <span class="kw">in </span>caches.iter_mut().enumerate() {
-                <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.free_offsets.pop() <span class="kw">else </span>{
-                    <span class="kw">continue</span>;
-                };
+            </span><span class="kw">if </span>!caches
+                .iter_mut()
+                .enumerate()
+                .any(|(disk_farm_index, cache)| {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.free_offsets.pop() <span class="kw">else </span>{
+                        <span class="kw">return </span><span class="bool-val">false</span>;
+                    };
 
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece) {
-                    <span class="macro">error!</span>(
-                        %error,
-                        %disk_farm_index,
-                        %piece_index,
-                        %offset,
-                        <span class="string">&quot;Failed to write piece into cache&quot;
-                    </span>);
-                    <span class="kw">continue</span>;
-                }
-                cache
-                    .stored_pieces
-                    .insert(RecordKey::from(piece_index.to_multihash()), offset);
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece) {
+                        <span class="macro">error!</span>(
+                            %error,
+                            %disk_farm_index,
+                            %piece_index,
+                            %offset,
+                            <span class="string">&quot;Failed to write piece into cache&quot;
+                        </span>);
+                        <span class="kw">return </span><span class="bool-val">false</span>;
+                    }
+                    cache
+                        .stored_pieces
+                        .insert(RecordKey::from(piece_index.to_multihash()), offset);
+                    <span class="bool-val">true
+                </span>})
+            {
+                <span class="macro">error!</span>(
+                    %piece_index,
+                    <span class="string">&quot;Failed to store piece in cache, there was no space&quot;
+                </span>);
             }
 
             downloaded_pieces_count += <span class="number">1</span>;
@@ -1131,11 +1156,6 @@
 
                 <span class="macro">info!</span>(<span class="string">&quot;Piece cache sync {progress:.2}% complete&quot;</span>);
                 <span class="self">self</span>.handlers.progress.call_simple(<span class="kw-2">&amp;</span>progress);
-            }
-
-            <span class="comment">// Push another piece to download
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(piece_index_to_download) = piece_indices_to_store.next() {
-                downloading_pieces.push(download_piece(piece_index_to_download));
             }
         }
 
