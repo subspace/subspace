@@ -1931,6 +1931,47 @@
 <a href="#1931" id="1931">1931</a>
 <a href="#1932" id="1932">1932</a>
 <a href="#1933" id="1933">1933</a>
+<a href="#1934" id="1934">1934</a>
+<a href="#1935" id="1935">1935</a>
+<a href="#1936" id="1936">1936</a>
+<a href="#1937" id="1937">1937</a>
+<a href="#1938" id="1938">1938</a>
+<a href="#1939" id="1939">1939</a>
+<a href="#1940" id="1940">1940</a>
+<a href="#1941" id="1941">1941</a>
+<a href="#1942" id="1942">1942</a>
+<a href="#1943" id="1943">1943</a>
+<a href="#1944" id="1944">1944</a>
+<a href="#1945" id="1945">1945</a>
+<a href="#1946" id="1946">1946</a>
+<a href="#1947" id="1947">1947</a>
+<a href="#1948" id="1948">1948</a>
+<a href="#1949" id="1949">1949</a>
+<a href="#1950" id="1950">1950</a>
+<a href="#1951" id="1951">1951</a>
+<a href="#1952" id="1952">1952</a>
+<a href="#1953" id="1953">1953</a>
+<a href="#1954" id="1954">1954</a>
+<a href="#1955" id="1955">1955</a>
+<a href="#1956" id="1956">1956</a>
+<a href="#1957" id="1957">1957</a>
+<a href="#1958" id="1958">1958</a>
+<a href="#1959" id="1959">1959</a>
+<a href="#1960" id="1960">1960</a>
+<a href="#1961" id="1961">1961</a>
+<a href="#1962" id="1962">1962</a>
+<a href="#1963" id="1963">1963</a>
+<a href="#1964" id="1964">1964</a>
+<a href="#1965" id="1965">1965</a>
+<a href="#1966" id="1966">1966</a>
+<a href="#1967" id="1967">1967</a>
+<a href="#1968" id="1968">1968</a>
+<a href="#1969" id="1969">1969</a>
+<a href="#1970" id="1970">1970</a>
+<a href="#1971" id="1971">1971</a>
+<a href="#1972" id="1972">1972</a>
+<a href="#1973" id="1973">1973</a>
+<a href="#1974" id="1974">1974</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2087,6 +2128,7 @@
     <span class="kw">use </span>frame_support::weights::Weight;
     <span class="kw">use </span>frame_support::{Identity, PalletError};
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
+    <span class="kw">use </span>sp_consensus_slots::Slot;
     <span class="kw">use </span>sp_core::H256;
     <span class="kw">use </span>sp_domains::bundle_producer_election::ProofOfElectionError;
     <span class="kw">use </span>sp_domains::{
@@ -2642,6 +2684,17 @@
         </span>BlockTree(BlockTreeError),
     }
 
+    <span class="doccomment">/// Reason for slashing an operator
+    </span><span class="attr">#[derive(Clone, Debug, PartialEq, Encode, Decode, TypeInfo)]
+    </span><span class="kw">pub enum </span>SlashedReason&lt;DomainBlock, ReceiptHash&gt; {
+        <span class="doccomment">/// Operator produced bad bundle.
+        </span>InvalidBundle(DomainBlock),
+        <span class="doccomment">/// Operator submitted bad Execution receipt.
+        </span>BadExecutionReceipt(ReceiptHash),
+        <span class="doccomment">/// Operator caused Bundle equivocation
+        </span>BundleEquivocation(Slot),
+    }
+
     <span class="attr">#[pallet::event]
     #[pallet::generate_deposit(<span class="kw">pub </span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
     </span><span class="kw">pub enum </span>Event&lt;T: Config&gt; {
@@ -2706,6 +2759,10 @@
         },
         DomainOperatorAllowListUpdated {
             domain_id: DomainId,
+        },
+        OperatorSlashed {
+            operator_id: OperatorId,
+            reason: SlashedReason&lt;DomainBlockNumberFor&lt;T&gt;, ReceiptHashFor&lt;T&gt;&gt;,
         },
     }
 
@@ -2782,7 +2839,16 @@
                         .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
                         do_slash_operators::&lt;T, <span class="kw">_</span>&gt;(
-                            confirmed_block_info.invalid_bundle_authors.into_iter(),
+                            confirmed_block_info.invalid_bundle_authors.into_iter().map(
+                                |operator_id| {
+                                    (
+                                        operator_id,
+                                        SlashedReason::InvalidBundle(
+                                            confirmed_block_info.domain_block_number,
+                                        ),
+                                    )
+                                },
+                            ),
                         )
                         .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
@@ -2854,10 +2920,10 @@
             ensure_none(origin)<span class="question-mark">?</span>;
 
             <span class="macro">log::trace!</span>(target: <span class="string">&quot;runtime::domains&quot;</span>, <span class="string">&quot;Processing fraud proof: {fraud_proof:?}&quot;</span>);
-            <span class="kw">let </span><span class="kw-2">mut </span>operators_to_slash = BTreeSet::new();
             <span class="kw">let </span>domain_id = fraud_proof.domain_id();
 
             <span class="kw">if let </span><span class="prelude-val">Some</span>(bad_receipt_hash) = fraud_proof.targeted_bad_receipt_hash() {
+                <span class="kw">let </span><span class="kw-2">mut </span>operators_to_slash = BTreeMap::new();
                 <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;T&gt;::get(domain_id);
                 <span class="kw">let </span>bad_receipt_number = BlockTreeNodes::&lt;T&gt;::get(bad_receipt_hash)
                     .ok_or::&lt;Error&lt;T&gt;&gt;(FraudProofError::BadReceiptNotFound.into())<span class="question-mark">?
@@ -2890,9 +2956,12 @@
                         execution_receipt.domain_block_hash,
                     ));
 
-                    <span class="comment">// NOTE: the operator id will be deduplicated since we are using `BTreeSet`
+                    <span class="comment">// NOTE: the operator id will be deduplicated since we are using `BTreeMap`
+                    // and slashed reason will hold earliest bad execution receipt hash which this
+                    // operator submitted.
                     </span>operator_ids.into_iter().for_each(|id| {
-                        operators_to_slash.insert(id);
+                        operators_to_slash
+                            .insert(id, SlashedReason::BadExecutionReceipt(receipt_hash));
                     });
 
                     to_prune -= One::one();
@@ -2906,16 +2975,27 @@
                     domain_id,
                     new_head_receipt_number: <span class="prelude-val">Some</span>(new_head_receipt_number),
                 });
-            } <span class="kw">else if let </span><span class="prelude-val">Some</span>(targeted_bad_operator) = fraud_proof.targeted_bad_operator() {
-                operators_to_slash.insert(targeted_bad_operator);
+
+                <span class="comment">// Slash bad operators
+                </span>do_slash_operators::&lt;T, <span class="kw">_</span>&gt;(operators_to_slash.into_iter())
+                    .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+            } <span class="kw">else if let </span><span class="prelude-val">Some</span>((targeted_bad_operator, slot)) =
+                fraud_proof.targeted_bad_operator_and_slot_for_bundle_equivocation()
+            {
                 <span class="self">Self</span>::deposit_event(Event::FraudProofProcessed {
                     domain_id,
                     new_head_receipt_number: <span class="prelude-val">None</span>,
                 });
-            }
 
-            <span class="comment">// Slash bad operators
-            </span>do_slash_operators::&lt;T, <span class="kw">_</span>&gt;(operators_to_slash.into_iter()).map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+                do_slash_operators::&lt;T, <span class="kw">_</span>&gt;(
+                    <span class="macro">vec!</span>[(
+                        targeted_bad_operator,
+                        SlashedReason::BundleEquivocation(slot),
+                    )]
+                    .into_iter(),
+                )
+                .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+            }
 
             SuccessfulFraudProofs::&lt;T&gt;::append(domain_id, fraud_proof.hash());
 
@@ -3610,7 +3690,9 @@
                 })<span class="question-mark">?</span>,
                 <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(FraudProofError::UnexpectedFraudProof),
             }
-        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(bad_operator_id) = fraud_proof.targeted_bad_operator() {
+        } <span class="kw">else if let </span><span class="prelude-val">Some</span>((bad_operator_id, <span class="kw">_</span>)) =
+            fraud_proof.targeted_bad_operator_and_slot_for_bundle_equivocation()
+        {
             <span class="kw">let </span>operator =
                 Operators::&lt;T&gt;::get(bad_operator_id).ok_or(FraudProofError::MissingOperator)<span class="question-mark">?</span>;
             <span class="kw">match </span>fraud_proof {
