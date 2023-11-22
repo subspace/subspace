@@ -197,11 +197,18 @@
 <a href="#197" id="197">197</a>
 <a href="#198" id="198">198</a>
 <a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="kw">use </span>sc_client_api::AuxStore;
 <span class="kw">use </span>sc_consensus_subspace::archiver::SegmentHeadersStore;
 <span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::fs;
+<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{SegmentHeader, SegmentIndex};
@@ -210,9 +217,10 @@
 <span class="kw">use </span>subspace_networking::libp2p::{identity, Multiaddr};
 <span class="kw">use </span>subspace_networking::utils::strip_peer_id;
 <span class="kw">use </span>subspace_networking::{
-    CreationError, KademliaMode, NetworkParametersPersistenceError, NetworkingParametersManager,
-    Node, NodeRunner, PeerInfoProvider, PieceByIndexRequestHandler,
-    SegmentHeaderBySegmentIndexesRequestHandler, SegmentHeaderRequest, SegmentHeaderResponse,
+    CreationError, KademliaMode, KnownPeersManager, KnownPeersManagerConfig,
+    KnownPeersManagerPersistenceError, Node, NodeRunner, PeerInfoProvider,
+    PieceByIndexRequestHandler, SegmentHeaderBySegmentIndexesRequestHandler, SegmentHeaderRequest,
+    SegmentHeaderResponse,
 };
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::{debug, error, trace};
@@ -220,6 +228,9 @@
 <span class="kw">const </span>SEGMENT_HEADERS_NUMBER_LIMIT: u64 = <span class="number">1000</span>;
 <span class="doccomment">/// Should be sufficient number of target connections for everyone, limits are higher
 </span><span class="kw">const </span>TARGET_CONNECTIONS: u32 = <span class="number">15</span>;
+
+<span class="doccomment">/// Size of the LRU cache for peers.
+</span><span class="kw">pub const </span>KNOWN_PEERS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(<span class="number">100</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
 <span class="doccomment">/// Errors that might happen during DSN configuration.
 </span><span class="attr">#[derive(Debug, Error)]
@@ -229,7 +240,7 @@
     </span>CreationError(<span class="attr">#[from] </span>CreationError),
     <span class="doccomment">/// Network parameter manager error.
     </span><span class="attr">#[error(<span class="string">&quot;Network parameter manager error: {0}&quot;</span>)]
-    </span>NetworkParameterManagerError(<span class="attr">#[from] </span>NetworkParametersPersistenceError),
+    </span>NetworkParameterManagerError(<span class="attr">#[from] </span>KnownPeersManagerPersistenceError),
 }
 
 <span class="doccomment">/// DSN configuration parameters.
@@ -251,7 +262,7 @@
     </span><span class="kw">pub </span>allow_non_global_addresses_in_dht: bool,
 
     <span class="doccomment">/// System base path.
-    </span><span class="kw">pub </span>base_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
+    </span><span class="kw">pub </span>base_path: PathBuf,
 
     <span class="doccomment">/// Defines max established incoming swarm connection limit.
     </span><span class="kw">pub </span>max_in_connections: u32,
@@ -286,25 +297,26 @@
     <span class="kw">let </span><span class="kw-2">mut </span>metric_registry = Registry::default();
     <span class="kw">let </span>metrics = enable_metrics.then(|| Metrics::new(<span class="kw-2">&amp;mut </span>metric_registry));
 
-    <span class="kw">let </span>networking_parameters_registry = dsn_config
-        .base_path
-        .map(|path| {
-            <span class="comment">// TODO: Remove this in the future after enough upgrade time that this no longer exist
-            </span><span class="kw">if </span>path.join(<span class="string">&quot;known_addresses_db&quot;</span>).is_dir() {
-                <span class="kw">let _ </span>= fs::remove_file(path.join(<span class="string">&quot;known_addresses_db&quot;</span>));
-            }
-            <span class="kw">let </span>file_path = path.join(<span class="string">&quot;known_addresses.bin&quot;</span>);
+    <span class="kw">let </span>networking_parameters_registry = {
+        <span class="kw">let </span>path = dsn_config.base_path;
 
-            NetworkingParametersManager::new(
-                <span class="kw-2">&amp;</span>file_path,
-                strip_peer_id(dsn_config.bootstrap_nodes.clone())
-                    .into_iter()
-                    .map(|(peer_id, <span class="kw">_</span>)| peer_id)
-                    .collect::&lt;HashSet&lt;<span class="kw">_</span>&gt;&gt;(),
-            )
-            .map(NetworkingParametersManager::boxed)
+        <span class="comment">// TODO: Remove this in the future after enough upgrade time that this no longer exist
+        </span><span class="kw">if </span>path.join(<span class="string">&quot;known_addresses_db&quot;</span>).is_dir() {
+            <span class="kw">let _ </span>= fs::remove_file(path.join(<span class="string">&quot;known_addresses_db&quot;</span>));
+        }
+        <span class="kw">let </span>file_path = path.join(<span class="string">&quot;known_addresses.bin&quot;</span>);
+
+        KnownPeersManager::new(KnownPeersManagerConfig {
+            path: <span class="prelude-val">Some</span>(file_path.into_boxed_path()),
+            ignore_peer_list: strip_peer_id(dsn_config.bootstrap_nodes.clone())
+                .into_iter()
+                .map(|(peer_id, <span class="kw">_</span>)| peer_id)
+                .collect::&lt;HashSet&lt;<span class="kw">_</span>&gt;&gt;(),
+            cache_size: KNOWN_PEERS_CACHE_SIZE,
+            ..Default::default()
         })
-        .transpose()<span class="question-mark">?</span>;
+        .map(KnownPeersManager::boxed)<span class="question-mark">?
+    </span>};
 
     <span class="kw">let </span>keypair = dsn_config.keypair.clone();
     <span class="kw">let </span>default_networking_config = subspace_networking::Config::new(
