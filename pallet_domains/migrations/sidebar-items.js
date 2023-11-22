@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["migrate_domain_object"]};

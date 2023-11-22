@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"pallet_domains":[["impl&lt;T: <a class=\"trait\" href=\"pallet_domains/trait.Config.html\" title=\"trait pallet_domains::Config\">Config</a>&gt; StorageInstance for <a class=\"struct\" href=\"pallet_domains/migrations/migrate_domain_object/struct.DomainRegistry_Storage_Instance.html\" title=\"struct pallet_domains::migrations::migrate_domain_object::DomainRegistry_Storage_Instance\">DomainRegistry_Storage_Instance</a>&lt;T&gt;"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
