@@ -250,7 +250,7 @@
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_core::traits::{CodeExecutor, SpawnEssentialNamed};
 <span class="kw">use </span>sp_core::H256;
-<span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainsApi};
+<span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainsApi, OperatorId};
 <span class="kw">use </span>sp_domains_fraud_proof::FraudProofApi;
 <span class="kw">use </span>sp_messenger::MessengerApi;
 <span class="kw">use </span>sp_runtime::traits::NumberFor;
@@ -276,7 +276,7 @@
     spawn_essential: Box&lt;<span class="kw">dyn </span>SpawnEssentialNamed&gt;,
     consensus_client: Arc&lt;CClient&gt;,
     consensus_offchain_tx_pool_factory: OffchainTransactionPoolFactory&lt;CBlock&gt;,
-    is_authority: bool,
+    maybe_operator_id: <span class="prelude-ty">Option</span>&lt;OperatorId&gt;,
     bundle_producer: DomainBundleProducer&lt;Block, CBlock, Client, CClient, TransactionPool&gt;,
     bundle_processor: BundleProcessor&lt;Block, CBlock, Client, CClient, Backend, E&gt;,
     operator_streams: OperatorStreams&lt;CBlock, IBNS, CIBNS, NSNS, ASS&gt;,
@@ -337,27 +337,8 @@
             consensus_block_import_throttling_buffer_size,
         );
 
-    <span class="kw">if </span>!is_authority {
-        <span class="macro">info!</span>(<span class="string">&quot;🧑‍ Running as Full node...&quot;</span>);
-        drop(new_slot_notification_stream);
-        drop(acknowledgement_sender_stream);
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_block_info) = throttled_block_import_notification_stream.next().<span class="kw">await </span>{
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(block_info) = maybe_block_info {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = bundle_processor
-                    .clone()
-                    .process_bundles((block_info.hash, block_info.number, block_info.is_new_best))
-                    .instrument(span.clone())
-                    .<span class="kw">await
-                </span>{
-                    <span class="macro">tracing::error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to process consensus block&quot;</span>);
-                    <span class="comment">// Bring down the service as bundles processor is an essential task.
-                    // TODO: more graceful shutdown.
-                    </span><span class="kw">break</span>;
-                }
-            }
-        }
-    } <span class="kw">else </span>{
-        <span class="macro">info!</span>(<span class="string">&quot;🧑‍🌾 Running as Operator...&quot;</span>);
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(operator_id) = maybe_operator_id {
+        <span class="macro">info!</span>(<span class="string">&quot;👷 Running as Operator[{operator_id}]...&quot;</span>);
         <span class="kw">let </span>bundler_fn = {
             <span class="kw">let </span>span = span.clone();
             <span class="kw">move </span>|consensus_block_info: sp_blockchain::HashAndNumber&lt;CBlock&gt;, slot_info| {
@@ -431,6 +412,25 @@
                             <span class="string">&quot;Failed to send acknowledgement&quot;
                         </span>);
                     }
+                }
+            }
+        }
+    } <span class="kw">else </span>{
+        <span class="macro">info!</span>(<span class="string">&quot;🧑‍ Running as Full node...&quot;</span>);
+        drop(new_slot_notification_stream);
+        drop(acknowledgement_sender_stream);
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_block_info) = throttled_block_import_notification_stream.next().<span class="kw">await </span>{
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(block_info) = maybe_block_info {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = bundle_processor
+                    .clone()
+                    .process_bundles((block_info.hash, block_info.number, block_info.is_new_best))
+                    .instrument(span.clone())
+                    .<span class="kw">await
+                </span>{
+                    <span class="macro">tracing::error!</span>(<span class="question-mark">?</span>error, <span class="string">&quot;Failed to process consensus block&quot;</span>);
+                    <span class="comment">// Bring down the service as bundles processor is an essential task.
+                    // TODO: more graceful shutdown.
+                    </span><span class="kw">break</span>;
                 }
             }
         }

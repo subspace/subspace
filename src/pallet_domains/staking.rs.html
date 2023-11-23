@@ -1748,11 +1748,32 @@
 <a href="#1748" id="1748">1748</a>
 <a href="#1749" id="1749">1749</a>
 <a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
+<a href="#1752" id="1752">1752</a>
+<a href="#1753" id="1753">1753</a>
+<a href="#1754" id="1754">1754</a>
+<a href="#1755" id="1755">1755</a>
+<a href="#1756" id="1756">1756</a>
+<a href="#1757" id="1757">1757</a>
+<a href="#1758" id="1758">1758</a>
+<a href="#1759" id="1759">1759</a>
+<a href="#1760" id="1760">1760</a>
+<a href="#1761" id="1761">1761</a>
+<a href="#1762" id="1762">1762</a>
+<a href="#1763" id="1763">1763</a>
+<a href="#1764" id="1764">1764</a>
+<a href="#1765" id="1765">1765</a>
+<a href="#1766" id="1766">1766</a>
+<a href="#1767" id="1767">1767</a>
+<a href="#1768" id="1768">1768</a>
+<a href="#1769" id="1769">1769</a>
+<a href="#1770" id="1770">1770</a>
+<a href="#1771" id="1771">1771</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking for domains
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::{
     DomainRegistry, DomainStakingSummary, NextOperatorId, NominatorCount, Nominators,
-    OperatorIdOwner, Operators, PendingDeposits, PendingNominatorUnlocks,
+    OperatorIdOwner, OperatorSigningKey, Operators, PendingDeposits, PendingNominatorUnlocks,
     PendingOperatorDeregistrations, PendingOperatorSwitches, PendingOperatorUnlocks,
     PendingSlashes, PendingStakingOperationCount, PendingWithdrawals,
 };
@@ -1863,6 +1884,7 @@
     OperatorNotAllowed,
     InvalidOperatorSigningKey,
     MaximumNominators,
+    DuplicateOperatorSigningKey,
 }
 
 <span class="comment">// Increase `PendingStakingOperationCount` by one and check if the `MaxPendingStakingOperation`
@@ -1892,6 +1914,11 @@
         <span class="macro">ensure!</span>(
             config.signing_key != OperatorPublicKey::from(ZERO_OPERATOR_SIGNING_KEY),
             Error::InvalidOperatorSigningKey
+        );
+
+        <span class="macro">ensure!</span>(
+            !OperatorSigningKey::&lt;T&gt;::contains_key(config.signing_key.clone()),
+            Error::DuplicateOperatorSigningKey
         );
 
         <span class="kw">let </span>domain_obj = DomainRegistry::&lt;T&gt;::get(domain_id).ok_or(Error::DomainNotInitialized)<span class="question-mark">?</span>;
@@ -1928,7 +1955,7 @@
         } = config;
 
         <span class="kw">let </span>operator = Operator {
-            signing_key,
+            signing_key: signing_key.clone(),
             current_domain_id: domain_id,
             next_domain_id: domain_id,
             minimum_nominator_stake,
@@ -1939,6 +1966,7 @@
             status: OperatorStatus::Registered,
         };
         Operators::&lt;T&gt;::insert(operator_id, operator);
+        OperatorSigningKey::&lt;T&gt;::append(signing_key, operator_id);
         <span class="comment">// update stake summary to include new operator for next epoch
         </span>domain_stake_summary.next_operators.insert(operator_id);
         <span class="comment">// update pending transfers
@@ -2524,7 +2552,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
-            <span class="kw">let </span>(operator_id, operator_config) = register_operator(
+            <span class="kw">let </span>(operator_id, <span class="kw-2">mut </span>operator_config) = register_operator(
                 domain_id,
                 operator_account,
                 operator_free_balance,
@@ -2563,8 +2591,22 @@
                 operator_free_balance - operator_stake - ExistentialDeposit::get()
             );
 
-            <span class="comment">// cannot use the locked funds to register a new operator
+            <span class="comment">// cannot register with same operator key
             </span><span class="kw">let </span>res = Domains::register_operator(
+                RuntimeOrigin::signed(operator_account),
+                domain_id,
+                operator_stake,
+                operator_config.clone(),
+            );
+            <span class="macro">assert_err!</span>(
+                res,
+                Error::&lt;Test&gt;::Staking(<span class="kw">crate</span>::staking::Error::DuplicateOperatorSigningKey)
+            );
+
+            <span class="comment">// cannot use the locked funds to register a new operator
+            </span><span class="kw">let </span>new_pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">1u32</span>).into());
+            operator_config.signing_key = new_pair.public();
+            <span class="kw">let </span>res = Domains::register_operator(
                 RuntimeOrigin::signed(operator_account),
                 domain_id,
                 operator_stake,

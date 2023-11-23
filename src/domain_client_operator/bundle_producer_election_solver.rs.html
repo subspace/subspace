@@ -105,12 +105,33 @@
 <a href="#105" id="105">105</a>
 <a href="#106" id="106">106</a>
 <a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_consensus_slots::Slot;
+<span class="kw">use </span>sp_core::bytes::to_hex;
+<span class="kw">use </span>sp_core::ByteArray;
 <span class="kw">use </span>sp_domains::bundle_producer_election::{
     calculate_threshold, is_below_threshold, make_transcript, BundleProducerElectionParams,
 };
-<span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainId, OperatorPublicKey, ProofOfElection};
+<span class="kw">use </span>sp_domains::{
+    BundleProducerElectionApi, DomainId, OperatorId, OperatorPublicKey, ProofOfElection,
+};
 <span class="kw">use </span>sp_keystore::{Keystore, KeystorePtr};
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
 <span class="kw">use </span>sp_runtime::RuntimeAppPublic;
@@ -118,6 +139,7 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::Randomness;
 <span class="kw">use </span>subspace_runtime_primitives::Balance;
+<span class="kw">use </span>tracing::log;
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>BundleProducerElectionSolver&lt;Block, CBlock, CClient&gt; {
     keystore: KeystorePtr,
@@ -155,57 +177,69 @@
         slot: Slot,
         consensus_block_hash: CBlock::Hash,
         domain_id: DomainId,
+        maybe_operator_id: <span class="prelude-ty">Option</span>&lt;OperatorId&gt;,
         global_randomness: Randomness,
     ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;(ProofOfElection&lt;CBlock::Hash&gt;, OperatorPublicKey)&gt;&gt; {
-        <span class="kw">let </span>BundleProducerElectionParams {
-            current_operators,
-            total_domain_stake,
-            bundle_slot_probability,
-        } = <span class="kw">match </span><span class="self">self
-            </span>.consensus_client
-            .runtime_api()
-            .bundle_producer_election_params(consensus_block_hash, domain_id)<span class="question-mark">?
-        </span>{
-            <span class="prelude-val">Some</span>(params) =&gt; params,
-            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
-        };
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(operator_id) = maybe_operator_id {
+            <span class="kw">let </span>BundleProducerElectionParams {
+                total_domain_stake,
+                bundle_slot_probability,
+                ..
+            } = <span class="kw">match </span><span class="self">self
+                </span>.consensus_client
+                .runtime_api()
+                .bundle_producer_election_params(consensus_block_hash, domain_id)<span class="question-mark">?
+            </span>{
+                <span class="prelude-val">Some</span>(params) =&gt; params,
+                <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+            };
 
-        <span class="kw">let </span>global_challenge = global_randomness.derive_global_challenge(slot.into());
-        <span class="kw">let </span>vrf_sign_data = make_transcript(domain_id, <span class="kw-2">&amp;</span>global_challenge).into_sign_data();
+            <span class="kw">let </span>global_challenge = global_randomness.derive_global_challenge(slot.into());
+            <span class="kw">let </span>vrf_sign_data = make_transcript(domain_id, <span class="kw-2">&amp;</span>global_challenge).into_sign_data();
 
-        <span class="comment">// TODO: The runtime API may take 10~20 microseonds each time, looping the operator set
-        // could take too long for the bundle production, track a mapping of signing_key to
-        // operator_id in the runtime and then we can update it to loop the keys in the keystore.
-        </span><span class="kw">for </span>operator_id <span class="kw">in </span>current_operators {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>((operator_signing_key, operator_stake)) = <span class="self">self
+            <span class="comment">// Ideally, we can already cache operator signing key since we do not allow changing such key
+            // in the protocol right now. Leaving this as is since we anyway need to need to fetch operator&#39;s
+            // latest stake and this also returns the signing key with it.
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>((operator_signing_key, operator_stake)) = <span class="self">self
                 </span>.consensus_client
                 .runtime_api()
                 .operator(consensus_block_hash, operator_id)<span class="question-mark">?
             </span>{
-                <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(vrf_signature)) = Keystore::sr25519_vrf_sign(
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(maybe_vrf_signature) = Keystore::sr25519_vrf_sign(
                     <span class="kw-2">&amp;*</span><span class="self">self</span>.keystore,
                     OperatorPublicKey::ID,
                     <span class="kw-2">&amp;</span>operator_signing_key.clone().into(),
                     <span class="kw-2">&amp;</span>vrf_sign_data,
                 ) {
-                    <span class="kw">let </span>threshold = calculate_threshold(
-                        operator_stake,
-                        total_domain_stake,
-                        bundle_slot_probability,
-                    );
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(vrf_signature) = maybe_vrf_signature {
+                        <span class="kw">let </span>threshold = calculate_threshold(
+                            operator_stake,
+                            total_domain_stake,
+                            bundle_slot_probability,
+                        );
 
-                    <span class="kw">if </span>is_below_threshold(<span class="kw-2">&amp;</span>vrf_signature.output, threshold) {
-                        <span class="kw">let </span>proof_of_election = ProofOfElection {
-                            domain_id,
-                            slot_number: slot.into(),
-                            global_randomness,
-                            vrf_signature,
-                            operator_id,
-                            consensus_block_hash,
-                        };
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((proof_of_election, operator_signing_key)));
+                        <span class="kw">if </span>is_below_threshold(<span class="kw-2">&amp;</span>vrf_signature.output, threshold) {
+                            <span class="kw">let </span>proof_of_election = ProofOfElection {
+                                domain_id,
+                                slot_number: slot.into(),
+                                global_randomness,
+                                vrf_signature,
+                                operator_id,
+                                consensus_block_hash,
+                            };
+                            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((proof_of_election, operator_signing_key)));
+                        }
+                    } <span class="kw">else </span>{
+                        <span class="macro">log::warn!</span>(
+                            <span class="string">&quot;Operator[{operator_id}]&#39;s Signing key[{}] pair is not available in keystore.&quot;</span>,
+                            to_hex(operator_signing_key.as_slice(), <span class="bool-val">false</span>)
+                        );
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
                     }
                 }
+            } <span class="kw">else </span>{
+                <span class="macro">log::warn!</span>(<span class="string">&quot;Operator[{operator_id}] is not registered on the Runtime&quot;</span>,);
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
             }
         }
 
