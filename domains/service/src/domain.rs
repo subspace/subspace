@@ -378,7 +378,9 @@ where
             pool: transaction_pool.clone(),
             graph: transaction_pool.pool().clone(),
             chain_spec: domain_config.chain_spec.cloned_box(),
+            // TODO: this should come from the config
             deny_unsafe: DenyUnsafe::Yes,
+            keystore: params.keystore_container.keystore(),
             network: network_service.clone(),
             sync: sync_service.clone(),
             is_authority,

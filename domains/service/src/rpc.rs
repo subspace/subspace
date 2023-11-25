@@ -5,6 +5,8 @@
 
 #![warn(missing_docs)]
 
+use domain_rpc::operator::Operator;
+use domain_rpc_api::operator::OperatorApiServer;
 use domain_runtime_primitives::{Balance, Nonce};
 use jsonrpsee::RpcModule;
 use pallet_transaction_payment_rpc::{TransactionPayment, TransactionPaymentApiServer};
@@ -21,6 +23,7 @@ use sp_api::ProvideRuntimeApi;
 use sp_block_builder::BlockBuilder;
 use sp_blockchain::{Error as BlockChainError, HeaderBackend, HeaderMetadata};
 use sp_core::{Decode, Encode};
+use sp_keystore::KeystorePtr;
 use sp_runtime::traits::Block as BlockT;
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
@@ -41,6 +44,8 @@ pub struct FullDeps<Block: BlockT, Client, TP, CA: ChainApi, BE, CIDP> {
     pub chain_spec: Box<dyn sc_chain_spec::ChainSpec>,
     /// Whether to deny unsafe calls
     pub deny_unsafe: DenyUnsafe,
+    /// A shared keystore.
+    pub keystore: KeystorePtr,
     /// Network service
     pub network: Arc<NetworkService<Block, Block::Hash>>,
     /// Chain syncing service
@@ -68,6 +73,7 @@ impl<Block: BlockT, Client, TP, CA: ChainApi, BE, CIDP: Clone> Clone
             graph: self.graph.clone(),
             chain_spec: self.chain_spec.cloned_box(),
             deny_unsafe: self.deny_unsafe,
+            keystore: self.keystore.clone(),
             network: self.network.clone(),
             sync: self.sync.clone(),
             is_authority: self.is_authority,
@@ -106,6 +112,7 @@ where
         pool,
         chain_spec,
         deny_unsafe,
+        keystore,
         ..
     } = deps;
 
@@ -113,7 +120,7 @@ where
     let genesis_hash = client.info().genesis_hash;
     let properties = chain_spec.properties();
     module.merge(ChainSpec::new(chain_name, genesis_hash, properties).into_rpc())?;
-
+    module.merge(Operator::new(keystore, deny_unsafe).into_rpc())?;
     module.merge(System::new(client.clone(), pool, deny_unsafe).into_rpc())?;
     module.merge(TransactionPayment::new(client).into_rpc())?;
 
