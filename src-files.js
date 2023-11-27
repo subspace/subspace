@@ -28,7 +28,7 @@ var srcIndex = JSON.parse('{\
 "pallet_subspace":["",[],["equivocation.rs","lib.rs","weights.rs"]],\
 "pallet_transaction_fees":["",[],["default_weights.rs","lib.rs"]],\
 "pallet_transporter":["",[],["lib.rs","weights.rs"]],\
-"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","lib.rs","notification.rs","slot_worker.rs","verifier.rs"]],\
+"sc_consensus_subspace":["",[],["archiver.rs","aux_schema.rs","block_import.rs","lib.rs","notification.rs","slot_worker.rs","verifier.rs"]],\
 "sc_consensus_subspace_rpc":["",[],["lib.rs"]],\
 "sc_proof_of_time":["",[["source",[],["gossip.rs","state.rs","timekeeper.rs"]]],["lib.rs","slots.rs","source.rs","verifier.rs"]],\
 "sc_subspace_block_relay":["",[["consensus",[],["relay.rs","types.rs"]],["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","types.rs","utils.rs"]],\

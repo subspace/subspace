@@ -599,19 +599,9 @@
 <a href="#599" id="599">599</a>
 <a href="#600" id="600">600</a>
 <a href="#601" id="601">601</a>
-<a href="#602" id="602">602</a>
-<a href="#603" id="603">603</a>
-<a href="#604" id="604">604</a>
-<a href="#605" id="605">605</a>
-<a href="#606" id="606">606</a>
-<a href="#607" id="607">607</a>
-<a href="#608" id="608">608</a>
-<a href="#609" id="609">609</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Subspace block import implementation
 
-</span><span class="kw">use </span><span class="kw">crate</span>::Error;
-<span class="kw">use </span>futures::lock::Mutex;
-<span class="kw">use </span>log::{debug, info, trace, warn};
+</span><span class="kw">use </span>futures::lock::Mutex;
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
@@ -647,6 +637,7 @@
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_verification::{check_reward_signature, verify_solution, VerifySolutionParams};
 <span class="kw">use </span>tokio::sync::Semaphore;
+<span class="kw">use </span>tracing::{debug, info, trace, warn};
 
 <span class="doccomment">/// This corresponds to default value of `--max-runtime-instances` in Substrate
 </span><span class="kw">const </span>BLOCKS_LIST_CHECK_CONCURRENCY: usize = <span class="number">8</span>;
@@ -711,6 +702,8 @@
 {
     <span class="doccomment">/// Substrate client
     </span><span class="kw">pub </span>client: Arc&lt;Client&gt;,
+    <span class="doccomment">/// Subspace chain constants
+    </span><span class="kw">pub </span>chain_constants: ChainConstants,
     <span class="doccomment">/// Kzg instance
     </span><span class="kw">pub </span>kzg: Kzg,
     <span class="doccomment">/// Chain selection rule
@@ -762,11 +755,10 @@
     SelectChain: sp_consensus::SelectChain&lt;Block&gt;,
 {
     <span class="doccomment">/// Create new instance
-    </span><span class="kw">pub fn </span>new(
-        options: SubspaceVerifierOptions&lt;Block, Client, SelectChain&gt;,
-    ) -&gt; sp_blockchain::Result&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>new(options: SubspaceVerifierOptions&lt;Block, Client, SelectChain&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>SubspaceVerifierOptions {
             client,
+            chain_constants,
             kzg,
             select_chain,
             telemetry,
@@ -777,11 +769,7 @@
             pot_verifier,
         } = options;
 
-        <span class="kw">let </span>chain_constants = client
-            .runtime_api()
-            .chain_constants(client.info().best_hash)<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+        <span class="self">Self </span>{
             client,
             kzg,
             select_chain,
@@ -796,7 +784,7 @@
             block_list_verification_semaphore: Semaphore::new(BLOCKS_LIST_CHECK_CONCURRENCY),
             _pos_table: Default::default(),
             _block: Default::default(),
-        })
+        }
     }
 
     <span class="doccomment">/// Determine if full proof of time verification is needed for this block number
@@ -999,7 +987,7 @@
         header: <span class="kw-2">&amp;</span>Block::Header,
         author: <span class="kw-2">&amp;</span>FarmerPublicKey,
         origin: <span class="kw-2">&amp;</span>BlockOrigin,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;Block::Header&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
         <span class="comment">// don&#39;t report any equivocations during initial sync
         // as they are most likely stale.
         </span><span class="kw">if </span><span class="kw-2">*</span>origin == BlockOrigin::NetworkInitialSync {
@@ -1013,7 +1001,7 @@
         <span class="comment">// check if authorship of this header is an equivocation and return a proof if so.
         </span><span class="kw">let </span>equivocation_proof =
             <span class="kw">match </span>check_equivocation(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, slot_now, slot, header, author)
-                .map_err(Error::Client)<span class="question-mark">?
+                .map_err(|error| error.to_string())<span class="question-mark">?
             </span>{
                 <span class="prelude-val">Some</span>(proof) =&gt; proof,
                 <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
@@ -1034,7 +1022,7 @@
                 .best_chain()
                 .<span class="kw">await
                 </span>.map(|h| h.hash())
-                .map_err(|e| Error::Client(e.into()))<span class="question-mark">?</span>;
+                .map_err(|error| error.to_string())<span class="question-mark">?</span>;
 
             <span class="comment">// submit equivocation report at best block.
             </span><span class="kw">let </span><span class="kw-2">mut </span>runtime_api = <span class="self">self</span>.client.runtime_api();
@@ -1045,14 +1033,11 @@
             );
             runtime_api
                 .submit_report_equivocation_extrinsic(best_hash, equivocation_proof)
-                .map_err(Error::RuntimeApi)<span class="question-mark">?</span>;
+                .map_err(|error| error.to_string())<span class="question-mark">?</span>;
 
-            <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Submitted equivocation report for author {:?}&quot;</span>, author);
+            <span class="macro">info!</span>(%author, <span class="string">&quot;Submitted equivocation report for author&quot;</span>);
         } <span class="kw">else </span>{
-            <span class="macro">info!</span>(
-                target: <span class="string">&quot;subspace&quot;</span>,
-                <span class="string">&quot;Not submitting equivocation report because node is not authoring blocks&quot;
-            </span>);
+            <span class="macro">info!</span>(<span class="string">&quot;Not submitting equivocation report because node is not authoring blocks&quot;</span>);
         }
 
         <span class="prelude-val">Ok</span>(())
@@ -1079,25 +1064,26 @@
         <span class="kw-2">mut </span>block: BlockImportParams&lt;Block&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;BlockImportParams&lt;Block&gt;, String&gt; {
         <span class="macro">trace!</span>(
-            target: <span class="string">&quot;subspace&quot;</span>,
-            <span class="string">&quot;Verifying origin: {:?} header: {:?} justification(s): {:?} body: {:?}&quot;</span>,
-            block.origin,
-            block.header,
-            block.justifications,
-            block.body,
+            origin = <span class="question-mark">?</span>block.origin,
+            header = <span class="question-mark">?</span>block.header,
+            justifications = <span class="question-mark">?</span>block.justifications,
+            body = <span class="question-mark">?</span>block.body,
+            <span class="string">&quot;Verifying&quot;</span>,
         );
 
         <span class="kw">let </span>hash = block.header.hash();
 
-        <span class="macro">debug!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;We have {:?} logs in this header&quot;</span>, block.header.digest().logs().len());
+        <span class="macro">debug!</span>(
+            <span class="string">&quot;We have {:?} logs in this header&quot;</span>,
+            block.header.digest().logs().len()
+        );
 
         <span class="kw">let </span>subspace_digest_items = extract_subspace_digest_items::&lt;
             Block::Header,
             FarmerPublicKey,
             FarmerPublicKey,
             FarmerSignature,
-        &gt;(<span class="kw-2">&amp;</span>block.header)
-        .map_err(Error::&lt;Block::Header&gt;::from)<span class="question-mark">?</span>;
+        &gt;(<span class="kw-2">&amp;</span>block.header)<span class="question-mark">?</span>;
 
         <span class="comment">// Check if farmer&#39;s plot is burned, ignore runtime API errors since this check will happen
         // during block import anyway
@@ -1118,19 +1104,18 @@
                 .unwrap_or_default()
             {
                 <span class="macro">warn!</span>(
-                    target: <span class="string">&quot;subspace&quot;</span>,
-                    <span class="string">&quot;Verifying block with solution provided by farmer in block list: {}&quot;</span>,
-                    subspace_digest_items.pre_digest.solution().public_key
-                );
+                    public_key = %subspace_digest_items.pre_digest.solution().public_key,
+                    <span class="string">&quot;Verifying block with solution provided by farmer in block list&quot;
+                </span>);
 
-                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;Block::Header&gt;::FarmerInBlockList(
+                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+                    <span class="string">&quot;Farmer {} is in block list&quot;</span>,
                     subspace_digest_items
                         .pre_digest
                         .solution()
                         .public_key
                         .clone(),
-                )
-                .into());
+                ));
             }
         }
 
@@ -1158,7 +1143,7 @@
                 <span class="kw-2">&amp;</span>block.justifications,
             )
             .<span class="kw">await
-            </span>.map_err(Error::&lt;Block::Header&gt;::from)<span class="question-mark">?</span>;
+            </span>.map_err(|error| error.to_string())<span class="question-mark">?</span>;
 
         <span class="kw">let </span>CheckedHeader {
             pre_header,
@@ -1184,7 +1169,7 @@
         <span class="comment">// the header is valid but let&#39;s check if there was something else already proposed at the
         // same slot by the given author. if there was, we will report the equivocation to the
         // runtime.
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self
             </span>.check_and_report_equivocation(
                 slot_now,
                 slot,
@@ -1195,13 +1180,12 @@
             .<span class="kw">await
         </span>{
             <span class="macro">warn!</span>(
-                target: <span class="string">&quot;subspace&quot;</span>,
-                <span class="string">&quot;Error checking/reporting Subspace equivocation: {}&quot;</span>,
-                err
-            );
+                %error,
+                <span class="string">&quot;Error checking/reporting Subspace equivocation&quot;
+            </span>);
         }
 
-        <span class="macro">trace!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Checked {:?}; importing.&quot;</span>, pre_header);
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>pre_header, <span class="string">&quot;Checked header; importing&quot;</span>);
         <span class="macro">telemetry!</span>(
             <span class="self">self</span>.telemetry;
             CONSENSUS_TRACE;

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"fn":["block_import","slot_duration","start_subspace"],"mod":["archiver","aux_schema","notification","verifier"],"struct":["ArchivedSegmentNotification","BlockImportingNotification","NewSlotInfo","NewSlotNotification","RewardSigningNotification","SubspaceBlockImport","SubspaceLink","SubspaceParams","SubspaceSyncOracle","SubspaceWorker"]};
+window.SIDEBAR_ITEMS = {"mod":["archiver","aux_schema","block_import","notification","slot_worker","verifier"],"struct":["SubspaceLink"]};

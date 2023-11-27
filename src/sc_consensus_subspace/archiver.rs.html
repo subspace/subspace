@@ -842,6 +842,9 @@
 <a href="#842" id="842">842</a>
 <a href="#843" id="843">843</a>
 <a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -863,13 +866,11 @@
 //! Contains implementation of archiving process in Subspace blockchain that converts blockchain
 //! history (blocks) into archived history (pieces).
 
-</span><span class="kw">use crate</span>::{
-    ArchivedSegmentNotification, BlockImportingNotification, SubspaceLink,
-    SubspaceNotificationSender, SubspaceSyncOracle,
-};
+</span><span class="kw">use </span><span class="kw">crate</span>::block_import::BlockImportingNotification;
+<span class="kw">use </span><span class="kw">crate</span>::slot_worker::SubspaceSyncOracle;
+<span class="kw">use crate</span>::{SubspaceLink, SubspaceNotificationSender};
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>futures::StreamExt;
-<span class="kw">use </span>log::{debug, info, warn};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rand_chacha::ChaCha8Rng;
@@ -877,7 +878,7 @@
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
 <span class="kw">use </span>sc_client_api::{AuxStore, Backend <span class="kw">as </span>BackendT, BlockBackend, Finalizer, LockImportRun};
 <span class="kw">use </span>sc_telemetry::{telemetry, TelemetryHandle, CONSENSUS_INFO};
-<span class="kw">use </span>sc_utils::mpsc::tracing_unbounded;
+<span class="kw">use </span>sc_utils::mpsc::{tracing_unbounded, TracingUnboundedSender};
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus::SyncOracle;
@@ -888,6 +889,7 @@
 <span class="kw">use </span>sp_runtime::{Justifications, Saturating};
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::Future;
+<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::slice;
 <span class="kw">use </span>std::sync::atomic::{AtomicU16, Ordering};
 <span class="kw">use </span>std::sync::Arc;
@@ -895,9 +897,21 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
 <span class="kw">use </span>subspace_core_primitives::{BlockNumber, RecordedHistorySegment, SegmentHeader, SegmentIndex};
+<span class="kw">use </span>tracing::{debug, info, warn};
 
 <span class="doccomment">/// This corresponds to default value of `--max-runtime-instances` in Substrate
 </span><span class="kw">const </span>BLOCKS_TO_ARCHIVE_CONCURRENCY: usize = <span class="number">8</span>;
+
+<span class="doccomment">/// How deep (in segments) should block be in order to be finalized.
+///
+/// This is required for full nodes to not prune recent history such that keep-up sync in Substrate
+/// works even without archival nodes (initial sync will be done from DSN).
+///
+/// Ideally, we&#39;d decouple pruning from finalization, but it may require invasive changes in
+/// Substrate and is not worth it right now.
+/// https://github.com/paritytech/substrate/discussions/14359
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>FINALIZATION_DEPTH_IN_SEGMENTS: NonZeroUsize =
+    NonZeroUsize::new(<span class="number">5</span>).expect(<span class="string">&quot;Not zero; qed&quot;</span>);
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>SegmentHeadersStoreInner&lt;AS&gt; {
@@ -933,10 +947,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>cache = Vec::with_capacity(<span class="self">Self</span>::INITIAL_CACHE_CAPACITY);
         <span class="kw">let </span><span class="kw-2">mut </span>next_key_index = <span class="number">0</span>;
 
-        <span class="macro">debug!</span>(
-            target: <span class="string">&quot;subspace&quot;</span>,
-            <span class="string">&quot;Started loading segment headers into cache&quot;
-        </span>);
+        <span class="macro">debug!</span>(<span class="string">&quot;Started loading segment headers into cache&quot;</span>);
         <span class="kw">while let </span><span class="prelude-val">Some</span>(segment_headers) =
             aux_store
                 .get_aux(<span class="kw-2">&amp;</span><span class="self">Self</span>::key(next_key_index))<span class="question-mark">?
@@ -948,10 +959,7 @@
             cache.extend(segment_headers);
             next_key_index += <span class="number">1</span>;
         }
-        <span class="macro">debug!</span>(
-            target: <span class="string">&quot;subspace&quot;</span>,
-            <span class="string">&quot;Finished loading segment headers into cache&quot;
-        </span>);
+        <span class="macro">debug!</span>(<span class="string">&quot;Finished loading segment headers into cache&quot;</span>);
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             inner: Arc::new(SegmentHeadersStoreInner {
@@ -1042,15 +1050,16 @@
     }
 }
 
-<span class="doccomment">/// How deep (in segments) should block be in order to be finalized.
-///
-/// This is required for full nodes to not prune recent history such that keep-up sync in Substrate
-/// works even without archival nodes (initial sync will be done from DSN).
-///
-/// Ideally, we&#39;d decouple pruning from finalization, but it may require invasive changes in
-/// Substrate and is not worth it right now.
-/// https://github.com/paritytech/substrate/discussions/14359
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>FINALIZATION_DEPTH_IN_SEGMENTS: usize = <span class="number">5</span>;
+<span class="doccomment">/// Notification with block header hash that needs to be signed and sender for signature.
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>ArchivedSegmentNotification {
+    <span class="doccomment">/// Archived segment.
+    </span><span class="kw">pub </span>archived_segment: Arc&lt;NewArchivedSegment&gt;,
+    <span class="doccomment">/// Sender that signified the fact of receiving archived segment by farmer.
+    ///
+    /// This must be used to send a message or else block import pipeline will get stuck.
+    </span><span class="kw">pub </span>acknowledgement_sender: TracingUnboundedSender&lt;()&gt;,
+}
 
 <span class="kw">fn </span>find_last_archived_block&lt;Block, Client, AS&gt;(
     client: <span class="kw-2">&amp;</span>Client,
@@ -1267,9 +1276,8 @@
             <span class="comment">// Continuing from existing initial state
             </span><span class="kw">let </span>last_archived_block_number = last_segment_header.last_archived_block().number;
             <span class="macro">info!</span>(
-                target: <span class="string">&quot;subspace&quot;</span>,
-                <span class="string">&quot;Last archived block {}&quot;</span>,
-                last_archived_block_number,
+                %last_archived_block_number,
+                <span class="string">&quot;Resuming archiver from last archived block&quot;</span>,
             );
 
             <span class="comment">// Set initial value, this is needed in case only genesis block was archived and there
@@ -1308,7 +1316,7 @@
 
             archiver
         } <span class="kw">else </span>{
-            <span class="macro">info!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Starting archiving from genesis&quot;</span>);
+            <span class="macro">info!</span>(<span class="string">&quot;Starting archiving from genesis&quot;</span>);
 
             Archiver::new(subspace_link.kzg().clone()).expect(<span class="string">&quot;Incorrect parameters for archiver&quot;</span>)
         };
@@ -1341,10 +1349,8 @@
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(blocks_to_archive_to) = blocks_to_archive_to {
             <span class="macro">info!</span>(
-                target: <span class="string">&quot;subspace&quot;</span>,
                 <span class="string">&quot;Archiving already produced blocks {}..={}&quot;</span>,
-                blocks_to_archive_from,
-                blocks_to_archive_to,
+                blocks_to_archive_from, blocks_to_archive_to,
             );
 
             <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
@@ -1400,7 +1406,6 @@
                 <span class="kw">let </span>encoded_block = encode_block(block);
 
                 <span class="macro">debug!</span>(
-                    target: <span class="string">&quot;subspace&quot;</span>,
                     <span class="string">&quot;Encoded block {} has size of {:.2} kiB&quot;</span>,
                     block_number_to_archive,
                     encoded_block.len() <span class="kw">as </span>f32 / <span class="number">1024.0
@@ -1465,11 +1470,15 @@
         </span>client
             .apply_finality(import_op, hash, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)
             .map_err(|error| {
-                <span class="macro">warn!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Error applying finality to block {:?}: {}&quot;</span>, (hash, number), error);
+                <span class="macro">warn!</span>(
+                    <span class="string">&quot;Error applying finality to block {:?}: {}&quot;</span>,
+                    (hash, number),
+                    error
+                );
                 error
             })<span class="question-mark">?</span>;
 
-        <span class="macro">debug!</span>(target: <span class="string">&quot;subspace&quot;</span>, <span class="string">&quot;Finalizing blocks up to ({:?}, {})&quot;</span>, number, hash);
+        <span class="macro">debug!</span>(<span class="string">&quot;Finalizing blocks up to ({:?}, {})&quot;</span>, number, hash);
 
         <span class="macro">telemetry!</span>(
             telemetry;
@@ -1569,10 +1578,8 @@
             <span class="kw">let </span>block_hash_to_archive = block.block.hash();
 
             <span class="macro">debug!</span>(
-                target: <span class="string">&quot;subspace&quot;</span>,
                 <span class="string">&quot;Archiving block {:?} ({})&quot;</span>,
-                block_number_to_archive,
-                block_hash_to_archive
+                block_number_to_archive, block_hash_to_archive
             );
 
             <span class="kw">if </span>parent_block_hash != best_archived_block_hash {
@@ -1606,7 +1613,6 @@
 
             <span class="kw">let </span>encoded_block = encode_block(block);
             <span class="macro">debug!</span>(
-                target: <span class="string">&quot;subspace&quot;</span>,
                 <span class="string">&quot;Encoded block {} has size of {:.2} kiB&quot;</span>,
                 block_number_to_archive,
                 encoded_block.len() <span class="kw">as </span>f32 / <span class="number">1024.0
@@ -1640,7 +1646,7 @@
                     </span>segment_headers
                         .iter()
                         .flat_map(|(_k, v)| v.iter().rev())
-                        .nth(FINALIZATION_DEPTH_IN_SEGMENTS)
+                        .nth(FINALIZATION_DEPTH_IN_SEGMENTS.get())
                         .map(|segment_header| segment_header.last_archived_block().number)
                 };
 
