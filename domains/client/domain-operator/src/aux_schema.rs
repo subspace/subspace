@@ -192,7 +192,7 @@ where
     )
 }
 
-pub(super) fn best_domain_hash_for<Backend, Hash, CHash>(
+pub fn best_domain_hash_for<Backend, Hash, CHash>(
     backend: &Backend,
     consensus_hash: &CHash,
 ) -> ClientResult<Option<Hash>>

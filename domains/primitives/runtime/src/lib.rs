@@ -20,9 +20,7 @@
 use parity_scale_codec::{Decode, Encode};
 use scale_info::TypeInfo;
 use sp_runtime::generic::{Era, UncheckedExtrinsic};
-use sp_runtime::traits::{
-    Block as BlockT, Convert, IdentifyAccount, LookupError, NumberFor, Verify,
-};
+use sp_runtime::traits::{Block as BlockT, Convert, IdentifyAccount, NumberFor, Verify};
 use sp_runtime::transaction_validity::TransactionValidityError;
 use sp_runtime::{Digest, MultiAddress, MultiSignature};
 use sp_std::vec::Vec;

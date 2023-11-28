@@ -16,6 +16,9 @@
 
 use crate::domain::evm_chain_spec::{self, SpecId};
 use clap::Parser;
+use domain_block_builder::{BlockBuilder, BuiltBlock, RecordProof};
+use domain_block_preprocessor::inherents::get_inherent_data;
+use domain_block_preprocessor::{DomainBlockPreprocessor, PreprocessResult};
 use domain_runtime_primitives::opaque::{Block as DomainBlock, Header as DomainHeader};
 use domain_runtime_primitives::DomainCoreApi;
 use parity_scale_codec::{Decode, Encode};
@@ -34,14 +37,16 @@ use sp_blockchain::HeaderBackend;
 use sp_domain_digests::AsPredigest;
 use sp_domains::storage::RawGenesis;
 use sp_domains::{DomainId, DomainsApi, OperatorId};
+use sp_messenger::MessengerApi;
 use sp_runtime::generic::BlockId;
-use sp_runtime::traits::{Block as BlockT, Header};
-use sp_runtime::{BuildStorage, DigestItem};
+use sp_runtime::traits::{Block as BlockT, Header, NumberFor};
+use sp_runtime::{BuildStorage, Digest, DigestItem};
 use sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::num::ParseIntError;
 use std::path::PathBuf;
+use std::sync::Arc;
 use subspace_core_primitives::U256;
 use subspace_runtime_primitives::opaque::Block as CBlock;
 
@@ -68,6 +73,10 @@ pub enum Subcommand {
     /// The `re-validate-bundle` command used to re-validate bundle at the given
     /// consensus block against the domain chain state at a given domain block
     ReValidateBundle(ReValidateBundleCmd),
+
+    /// The `re-execute-domain-block` command used to re-execute domain block at the given
+    /// consensus block
+    ReExecuteDomainBlock(ReExecuteDomainBlockCmd),
 }
 
 fn parse_domain_id(s: &str) -> std::result::Result<DomainId, ParseIntError> {
@@ -640,6 +649,176 @@ impl ReValidateBundleCmd {
                 if ext_index == extrinsic_count - 1 {
                     println!("Valid bundle index {bundle_index}");
                 }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// This `re-execute-domain-block` command used to re-execute domain block at the given consensus block
+/// against the domain chain state at a given domain block
+#[derive(Debug, Clone, Parser)]
+#[group(skip)]
+pub struct ReExecuteDomainBlockCmd {
+    /// Get the consensus block by block number or hash
+    #[arg(long)]
+    pub consensus_block: Option<BlockNumberOrHash>,
+
+    /// The base struct of the re-execute-domain-block command.
+    #[clap(flatten)]
+    pub shared_params: SharedParams,
+
+    /// Domain arguments
+    ///
+    /// The command-line arguments provided first will be passed to the embedded consensus node,
+    /// while the arguments provided after `--` will be passed to the domain node.
+    ///
+    /// subspace-node purge-chain [consensus-chain-args] -- [domain-args]
+    #[arg(raw = true)]
+    pub domain_args: Vec<String>,
+}
+
+impl CliConfiguration for ReExecuteDomainBlockCmd {
+    fn shared_params(&self) -> &SharedParams {
+        &self.shared_params
+    }
+}
+
+impl ReExecuteDomainBlockCmd {
+    /// Run the `re-execute-domain-block` command
+    pub fn run<Client, CClient, Backend>(
+        &self,
+        domain_id: DomainId,
+        domain_client: Arc<Client>,
+        domain_backend: Arc<Backend>,
+        consensus_client: Arc<CClient>,
+    ) -> sp_blockchain::Result<()>
+    where
+        Client: HeaderBackend<DomainBlock>
+            + BlockBackend<DomainBlock>
+            + ProvideRuntimeApi<DomainBlock>
+            + 'static,
+        Client::Api: DomainCoreApi<DomainBlock>
+            + sp_block_builder::BlockBuilder<DomainBlock>
+            + sp_api::ApiExt<DomainBlock>
+            + TaggedTransactionQueue<DomainBlock>
+            + MessengerApi<DomainBlock, NumberFor<DomainBlock>>,
+        CClient: HeaderBackend<CBlock> + BlockBackend<CBlock> + ProvideRuntimeApi<CBlock> + 'static,
+        CClient::Api: DomainsApi<CBlock, DomainHeader> + MessengerApi<CBlock, NumberFor<CBlock>>,
+        Backend: sc_client_api::Backend<DomainBlock> + AuxStore,
+    {
+        let (consensus_block_number, consensus_block_hash) = match &self.consensus_block {
+            None => (
+                consensus_client.info().best_number,
+                consensus_client.info().best_hash,
+            ),
+            Some(raw_consensus_block) => match raw_consensus_block.parse::<CBlock>() {
+                Ok(BlockId::Hash(h)) => {
+                    let number = consensus_client.number(h)?.ok_or_else(|| {
+                        sp_blockchain::Error::Backend(format!(
+                            "Consensus block number for #{h:?} not found",
+                        ))
+                    })?;
+                    (number, h)
+                }
+                Ok(BlockId::Number(number)) => {
+                    let hash = consensus_client.hash(number)?.ok_or_else(|| {
+                        sp_blockchain::Error::Backend(format!(
+                            "Consensus block hash for #{number:?} not found",
+                        ))
+                    })?;
+                    (number, hash)
+                }
+                Err(e) => {
+                    return Err(sp_blockchain::Error::Application(
+                        format!("Failed to parse consensus block, err {e:?}",).into(),
+                    ))
+                }
+            },
+        };
+
+        let (parent_domain_block_hash, parent_domain_block_number) = {
+            let parent_consensus_block_hash = *consensus_client
+                .header(consensus_block_hash)?
+                .ok_or_else(|| {
+                    sp_blockchain::Error::Backend(format!(
+                        "Consensus block header for #{consensus_block_hash:?} not found",
+                    ))
+                })?
+                .parent_hash();
+            let domain_block_hash = domain_client_operator::best_domain_hash_for::<Backend, <DomainBlock as BlockT>::Hash, <CBlock as BlockT>::Hash>(
+                    &domain_backend,
+                    &parent_consensus_block_hash,
+                )?
+                .ok_or_else(
+                    || {
+                        sp_blockchain::Error::Backend(format!(
+                            "Hash of domain block derived from consensus block #{parent_consensus_block_hash} not found"
+                        ))
+                    },
+                )?;
+            let parent_header = domain_client.header(domain_block_hash)?.ok_or_else(|| {
+                sp_blockchain::Error::Backend(format!(
+                    "Domain block header for #{domain_block_hash:?} not found",
+                ))
+            })?;
+            (parent_header.hash(), *parent_header.number())
+        };
+        let domain_block_preprocessor = DomainBlockPreprocessor::new(
+            domain_id,
+            domain_client.clone(),
+            consensus_client.clone(),
+            domain_client_operator::ReceiptValidator::new(domain_backend.clone()),
+        );
+        match domain_block_preprocessor
+            .preprocess_consensus_block(consensus_block_hash, parent_domain_block_hash)?
+        {
+            None => {
+                println!("No successful bundle contains in consensus block {consensus_block_number}#{consensus_block_hash}");
+            }
+            Some(PreprocessResult { extrinsics, .. }) => {
+                let inherent_digests = Digest {
+                    logs: vec![DigestItem::consensus_block_info(consensus_block_hash)],
+                };
+                let inherent_data =
+                    futures::executor::block_on(get_inherent_data::<_, _, DomainBlock>(
+                        consensus_client.clone(),
+                        consensus_block_hash,
+                        parent_domain_block_hash,
+                        domain_id,
+                    ))?;
+
+                println!(
+                    "Start build domain block, consensus block: {consensus_block_number}#{consensus_block_hash}, \
+                    parent block: {parent_domain_block_number}#{parent_domain_block_hash}"
+                );
+
+                let block_builder = BlockBuilder::new(
+                    domain_client.as_ref(),
+                    parent_domain_block_hash,
+                    parent_domain_block_number,
+                    RecordProof::No,
+                    inherent_digests,
+                    domain_backend.as_ref(),
+                    extrinsics,
+                    Some(inherent_data),
+                )?;
+
+                let BuiltBlock { block, .. } = block_builder.build()?;
+
+                let (header, _) = block.deconstruct();
+                let state_root = *header.state_root();
+                let extrinsics_root = *header.extrinsics_root();
+                let header_hash = header.hash();
+                let header_number = *header.number();
+
+                println!(
+                    "New domain block derive from: consensus block {consensus_block_number}#{consensus_block_hash}, \
+                    parent domain block {parent_domain_block_number}#{parent_domain_block_hash}, \
+                    header_number {header_number:?}, header_hash {header_hash:?}, extrinsics_root {extrinsics_root:?}, \
+                    state_root {state_root:?}"
+                );
             }
         }
 

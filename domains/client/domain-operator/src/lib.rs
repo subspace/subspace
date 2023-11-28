@@ -76,8 +76,9 @@ mod operator;
 mod tests;
 mod utils;
 
-pub use self::aux_schema::load_execution_receipt;
+pub use self::aux_schema::{best_domain_hash_for, load_execution_receipt};
 pub use self::bootstrapper::{BootstrapResult, Bootstrapper};
+pub use self::bundle_processor::ReceiptValidator;
 pub use self::operator::Operator;
 pub use self::utils::{DomainBlockImportNotification, DomainImportNotifications};
 use futures::channel::mpsc;

@@ -74,7 +74,7 @@ where
     }
 }
 
-struct ReceiptValidator<Client> {
+pub struct ReceiptValidator<Client> {
     client: Arc<Client>,
 }
 

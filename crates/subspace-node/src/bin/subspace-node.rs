@@ -37,6 +37,7 @@ use sp_core::traits::SpawnEssentialNamed;
 use sp_io::SubstrateHostFunctions;
 use sp_messenger::messages::ChainId;
 use sp_wasm_interface::ExtendedHostFunctions;
+use std::sync::Arc;
 use subspace_node::domain::{
     DomainCli, DomainInstanceStarter, DomainSubcommand, EVMDomainExecutorDispatch,
 };
@@ -462,6 +463,50 @@ fn main() -> Result<(), Error> {
                     )?;
 
                     cmd.run(domain_cli.domain_id, &domain_client, client.as_ref())?;
+
+                    Ok::<(), sc_cli::Error>(())
+                })?;
+            }
+            DomainSubcommand::ReExecuteDomainBlock(cmd) => {
+                let runner = cli.create_runner(cmd)?;
+                runner.sync_run(|consensus_chain_config| {
+                    let PartialComponents { client, .. } =
+                        subspace_service::new_partial::<PosTable, RuntimeApi, ExecutorDispatch>(
+                            &consensus_chain_config,
+                            &pot_external_entropy(&consensus_chain_config, &cli)?,
+                        )?;
+
+                    let domain_cli = DomainCli::new(
+                        cli.run
+                            .base_path()?
+                            .map(|base_path| base_path.path().to_path_buf()),
+                        cmd.domain_args.clone().into_iter(),
+                    );
+                    let domain_config = domain_cli
+                        .create_domain_configuration(consensus_chain_config.tokio_handle)
+                        .map_err(|error| {
+                            sc_service::Error::Other(format!(
+                                "Failed to create domain configuration: {error:?}"
+                            ))
+                        })?;
+
+                    let executor: sc_executor::NativeElseWasmExecutor<EVMDomainExecutorDispatch> =
+                        sc_service::new_native_or_wasm_executor(&domain_config);
+
+                    let (domain_client, domain_backend, _, _) = sc_service::new_full_parts::<
+                        DomainBlock,
+                        evm_domain_runtime::RuntimeApi,
+                        _,
+                    >(
+                        &domain_config, None, executor
+                    )?;
+
+                    cmd.run(
+                        domain_cli.domain_id,
+                        Arc::new(domain_client),
+                        domain_backend,
+                        client,
+                    )?;
 
                     Ok::<(), sc_cli::Error>(())
                 })?;
