@@ -231,10 +231,46 @@
 <a href="#231" id="231">231</a>
 <a href="#232" id="232">232</a>
 <a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{BlockT, Error, GossipMessageSink, HeaderBackend, HeaderT, Relayer, LOG_TARGET};
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::FullCodec;
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockchainEvents, ProofProvider};
+<span class="kw">use </span>sc_state_db::PruningMode;
 <span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_domains::DomainsApi;
@@ -248,6 +284,7 @@
 /// If the node is in major sync, worker waits waits until the sync is finished.
 </span><span class="kw">pub async fn </span>relay_consensus_chain_messages&lt;Client, Block, SO&gt;(
     consensus_chain_client: Arc&lt;Client&gt;,
+    state_pruning_mode: PruningMode,
     sync_oracle: SO,
     gossip_message_sink: GossipMessageSink,
 ) <span class="kw">where
@@ -264,16 +301,17 @@
     // since all the relayers will haven embed client to known the canonical chain.
     </span><span class="kw">let </span>result = start_relaying_messages(
         NumberFor::&lt;Block&gt;::zero(),
-        consensus_chain_client,
+        consensus_chain_client.clone(),
         |client, block_hash| {
             Relayer::submit_messages_from_consensus_chain(client, block_hash, <span class="kw-2">&amp;</span>gossip_message_sink)
         },
         sync_oracle,
-        |<span class="kw">_</span>, <span class="kw">_</span>| -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt; {
-            <span class="comment">// since we just need to provide a storage proof with the state root of Consensus chain
-            // proof can always be generated for any consensus chain block.
-            // So we can always relay messages.
-            </span><span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+        |<span class="kw">_</span>, relay_number| -&gt; <span class="prelude-ty">Result</span>&lt;bool, ApiError&gt; {
+            <span class="prelude-val">Ok</span>(is_state_available(
+                <span class="kw-2">&amp;</span>state_pruning_mode,
+                <span class="kw-2">&amp;</span>consensus_chain_client,
+                relay_number,
+            ))
         },
     )
     .<span class="kw">await</span>;
@@ -292,6 +330,7 @@
 </span><span class="kw">pub async fn </span>relay_domain_messages&lt;CCC, DC, CCBlock, Block, SO&gt;(
     consensus_chain_client: Arc&lt;CCC&gt;,
     domain_client: Arc&lt;DC&gt;,
+    domain_state_pruning: PruningMode,
     sync_oracle: SO,
     gossip_message_sink: GossipMessageSink,
 ) <span class="kw">where
@@ -321,7 +360,7 @@
 
     <span class="kw">let </span>result = start_relaying_messages(
         relay_confirmation_depth,
-        domain_client,
+        domain_client.clone(),
         |client, block_hash| {
             Relayer::submit_messages_from_domain(
                 client,
@@ -339,6 +378,11 @@
                 )));
             };
 
+            <span class="comment">// short circuit if the domain state is unavailable to relay messages.
+            </span><span class="kw">if </span>!is_state_available(<span class="kw-2">&amp;</span>domain_state_pruning, <span class="kw-2">&amp;</span>domain_client, block_number) {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
+            }
+
             <span class="kw">let </span>api = consensus_chain_client.runtime_api();
             <span class="kw">let </span>at = consensus_chain_client.info().best_hash;
             <span class="kw">let </span>oldest_tracked_number = api.oldest_receipt_number(at, domain_id)<span class="question-mark">?</span>;
@@ -353,6 +397,32 @@
             <span class="question-mark">?</span>err,
             <span class="string">&quot;Failed to start relayer for domain&quot;
         </span>)
+    }
+}
+
+<span class="kw">fn </span>is_state_available&lt;Client, Block&gt;(
+    state_pruning_mode: <span class="kw-2">&amp;</span>PruningMode,
+    client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
+    relay_number: NumberFor&lt;Block&gt;,
+) -&gt; bool
+<span class="kw">where
+    </span>Block: BlockT,
+    Client: HeaderBackend&lt;Block&gt;,
+{
+    <span class="kw">match </span>state_pruning_mode {
+        <span class="comment">// all the state is available for archive and archive canonical.
+        // we can relay any message from any block
+        </span>PruningMode::ArchiveAll | PruningMode::ArchiveCanonical =&gt; <span class="bool-val">true</span>,
+        <span class="comment">// If the pruning mode is constrained, then check if the state is available for the `relay_number`
+        </span>PruningMode::Constrained(constraints) =&gt; {
+            <span class="kw">let </span>max_blocks = NumberFor::&lt;Block&gt;::from(constraints.max_blocks.unwrap_or(<span class="number">0</span>));
+            <span class="kw">let </span>current_best_block = client.info().best_number;
+            <span class="kw">match </span>current_best_block.checked_sub(<span class="kw-2">&amp;</span>max_blocks) {
+                <span class="comment">// we still have the state available as there was no pruning yet.
+                </span><span class="prelude-val">None </span>=&gt; <span class="bool-val">true</span>,
+                <span class="prelude-val">Some</span>(available_block_state) =&gt; relay_number &gt;= available_block_state,
+            }
+        }
     }
 }
 
