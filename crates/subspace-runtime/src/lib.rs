@@ -604,7 +604,7 @@ parameter_types! {
     pub TreasuryAccount: AccountId = PalletId(*b"treasury").into_account_truncating();
     pub const MaxPendingStakingOperation: u32 = 100;
     // TODO: reset `MaxNominators` back to `100` once the gemini-3g chain spec is created
-    pub const MaxNominators: u32 = 0;
+    pub const MaxNominators: u32 = 256;
     pub SudoId: AccountId = Sudo::key().expect("Sudo account must exist");
 }
 
