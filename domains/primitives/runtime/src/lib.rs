@@ -151,9 +151,13 @@ pub enum CheckTxValidityError {
     },
 }
 
-impl From<LookupError> for CheckTxValidityError {
-    fn from(_lookup_error: LookupError) -> Self {
-        Self::Lookup
+impl CheckTxValidityError {
+    pub fn into_error(self) -> TransactionValidityError {
+        match self {
+            CheckTxValidityError::UnableToExtractSigner { error } => error,
+            CheckTxValidityError::InvalidTransaction { error, .. } => error,
+            _ => unreachable!(),
+        }
     }
 }
 

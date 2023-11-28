@@ -16,28 +16,34 @@
 
 use crate::domain::evm_chain_spec::{self, SpecId};
 use clap::Parser;
-use domain_runtime_primitives::opaque::Block as DomainBlock;
-use parity_scale_codec::Encode;
+use domain_runtime_primitives::opaque::{Block as DomainBlock, Header as DomainHeader};
+use domain_runtime_primitives::DomainCoreApi;
+use parity_scale_codec::{Decode, Encode};
 use sc_cli::{
     BlockNumberOrHash, ChainSpec, CliConfiguration, DefaultConfigurationValues, ImportParams,
     KeystoreParams, NetworkParams, Result, Role, RunCmd as SubstrateRunCmd, SharedParams,
     SubstrateCli,
 };
 use sc_client_api::backend::AuxStore;
+use sc_client_api::BlockBackend;
 use sc_service::config::PrometheusConfig;
 use sc_service::{BasePath, Configuration};
+use sc_transaction_pool_api::TransactionSource;
+use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_domain_digests::AsPredigest;
 use sp_domains::storage::RawGenesis;
-use sp_domains::{DomainId, OperatorId};
+use sp_domains::{DomainId, DomainsApi, OperatorId};
 use sp_runtime::generic::BlockId;
-use sp_runtime::traits::Header;
+use sp_runtime::traits::{Block as BlockT, Header};
 use sp_runtime::{BuildStorage, DigestItem};
+use sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::num::ParseIntError;
 use std::path::PathBuf;
-use subspace_runtime::Block;
+use subspace_core_primitives::U256;
+use subspace_runtime_primitives::opaque::Block as CBlock;
 
 /// Sub-commands supported by the executor.
 #[derive(Debug, clap::Subcommand)]
@@ -58,6 +64,10 @@ pub enum Subcommand {
 
     /// The `export-execution-receipt` command used to get the ER from the auxiliary storage of the operator client
     ExportExecutionReceipt(ExportExecutionReceiptCmd),
+
+    /// The `re-validate-bundle` command used to re-validate bundle at the given
+    /// consensus block against the domain chain state at a given domain block
+    ReValidateBundle(ReValidateBundleCmd),
 }
 
 fn parse_domain_id(s: &str) -> std::result::Result<DomainId, ParseIntError> {
@@ -377,7 +387,7 @@ impl ExportExecutionReceiptCmd {
         let consensus_block_hash = match (&self.consensus_block_hash, &self.domain_block) {
             // Get ER by consensus block hash
             (Some(raw_consensus_block_hash), None) => {
-                match raw_consensus_block_hash.parse::<Block>()? {
+                match raw_consensus_block_hash.parse::<CBlock>()? {
                     BlockId::Hash(h) => h,
                     BlockId::Number(_) => {
                         eprintln!(
@@ -418,7 +428,7 @@ impl ExportExecutionReceiptCmd {
             }
         };
 
-        match domain_client_operator::load_execution_receipt::<Backend, DomainBlock, Block>(
+        match domain_client_operator::load_execution_receipt::<Backend, DomainBlock, CBlock>(
             domain_backend,
             consensus_block_hash,
         )? {
@@ -429,6 +439,210 @@ impl ExportExecutionReceiptCmd {
                 println!("ExecutionReceipt of consensus block {consensus_block_hash:?} not found",);
             }
         }
+        Ok(())
+    }
+}
+
+/// This `re-validate-bundle` command used to re-validate bundle at the given consensus block
+/// against the domain chain state at a given domain block
+#[derive(Debug, Clone, Parser)]
+#[group(skip)]
+pub struct ReValidateBundleCmd {
+    /// Get the domain block by block number or hash
+    #[arg(long)]
+    pub domain_block: Option<BlockNumberOrHash>,
+
+    /// Get the consensus block by block number or hash
+    #[arg(long)]
+    pub consensus_block: Option<BlockNumberOrHash>,
+
+    /// The base struct of the re-validate-bundle command.
+    #[clap(flatten)]
+    pub shared_params: SharedParams,
+
+    /// Domain arguments
+    ///
+    /// The command-line arguments provided first will be passed to the embedded consensus node,
+    /// while the arguments provided after `--` will be passed to the domain node.
+    ///
+    /// subspace-node purge-chain [consensus-chain-args] -- [domain-args]
+    #[arg(raw = true)]
+    pub domain_args: Vec<String>,
+}
+
+impl CliConfiguration for ReValidateBundleCmd {
+    fn shared_params(&self) -> &SharedParams {
+        &self.shared_params
+    }
+}
+
+impl ReValidateBundleCmd {
+    /// Run the `re-validate-bundle` command
+    pub fn run<Client, CClient>(
+        &self,
+        domain_id: DomainId,
+        domain_client: &Client,
+        consensus_client: &CClient,
+    ) -> sp_blockchain::Result<()>
+    where
+        Client:
+            HeaderBackend<DomainBlock> + BlockBackend<DomainBlock> + ProvideRuntimeApi<DomainBlock>,
+        Client::Api: DomainCoreApi<DomainBlock> + TaggedTransactionQueue<DomainBlock>,
+        CClient: HeaderBackend<CBlock> + BlockBackend<CBlock> + ProvideRuntimeApi<CBlock>,
+        CClient::Api: DomainsApi<CBlock, DomainHeader>,
+    {
+        let (consensus_block_number, consensus_block_hash) = match &self.consensus_block {
+            None => (
+                consensus_client.info().best_number,
+                consensus_client.info().best_hash,
+            ),
+            Some(raw_consensus_block) => match raw_consensus_block.parse::<CBlock>() {
+                Ok(BlockId::Hash(h)) => {
+                    let number = consensus_client.number(h)?.ok_or_else(|| {
+                        sp_blockchain::Error::Backend(format!(
+                            "Consensus block number for #{h:?} not found",
+                        ))
+                    })?;
+                    (number, h)
+                }
+                Ok(BlockId::Number(number)) => {
+                    let hash = consensus_client.hash(number)?.ok_or_else(|| {
+                        sp_blockchain::Error::Backend(format!(
+                            "Consensus block hash for #{number:?} not found",
+                        ))
+                    })?;
+                    (number, hash)
+                }
+                Err(e) => {
+                    return Err(sp_blockchain::Error::Application(
+                        format!("Failed to parse consensus block, err {e:?}",).into(),
+                    ))
+                }
+            },
+        };
+        let (domain_block_number, domain_block_hash) = match &self.domain_block {
+            None => (
+                domain_client.info().best_number,
+                domain_client.info().best_hash,
+            ),
+            Some(raw_domain_block) => match raw_domain_block.parse::<DomainBlock>() {
+                Ok(BlockId::Hash(h)) => {
+                    let number = domain_client.number(h)?.ok_or_else(|| {
+                        sp_blockchain::Error::Backend(format!(
+                            "Domain block number for #{h:?} not found",
+                        ))
+                    })?;
+                    (number, h)
+                }
+                Ok(BlockId::Number(number)) => {
+                    let hash = domain_client.hash(number)?.ok_or_else(|| {
+                        sp_blockchain::Error::Backend(format!(
+                            "Domain block hash for #{number:?} not found",
+                        ))
+                    })?;
+                    (number, hash)
+                }
+                Err(e) => {
+                    return Err(sp_blockchain::Error::Application(
+                        format!("Failed to parse domain block, err {e:?}",).into(),
+                    ))
+                }
+            },
+        };
+
+        // get bundle from consensus block
+        let extrinsics = consensus_client
+            .block_body(consensus_block_hash)?
+            .ok_or_else(|| {
+                sp_blockchain::Error::Backend(format!(
+                    "Consensus block body of {consensus_block_hash:?} unavailable"
+                ))
+            })?;
+
+        let bundles = consensus_client.runtime_api().extract_successful_bundles(
+            consensus_block_hash,
+            domain_id,
+            extrinsics,
+        )?;
+
+        let tx_range = consensus_client
+            .runtime_api()
+            .domain_tx_range(consensus_block_hash, domain_id)?;
+
+        println!(
+            "Start re-validate {} bundles, consensus block {consensus_block_hash}#{consensus_block_number}, \
+             domain block {domain_block_hash}#{domain_block_number}",
+             bundles.len()
+        );
+
+        // Check validity of bundle
+        let runtime_api = domain_client.runtime_api();
+        let at = domain_block_hash;
+        for (bundle_index, bundle) in bundles.into_iter().enumerate() {
+            let bundle_vrf_hash =
+                U256::from_be_bytes(bundle.sealed_header.header.proof_of_election.vrf_hash());
+            let extrinsic_count = bundle.extrinsics.len();
+
+            if extrinsic_count == 0 {
+                println!("Empty bundle index {bundle_index}");
+                continue;
+            }
+
+            for (ext_index, opaque_extrinsic) in bundle.extrinsics.iter().enumerate() {
+                let Ok(extrinsic) = <<DomainBlock as BlockT>::Extrinsic>::decode(
+                    &mut opaque_extrinsic.encode().as_slice(),
+                ) else {
+                    eprintln!(
+                        "Invalid bundle index {bundle_index}, UndecodableTx index {ext_index}"
+                    );
+                    break;
+                };
+
+                let is_within_tx_range =
+                    runtime_api.is_within_tx_range(at, &extrinsic, &bundle_vrf_hash, &tx_range)?;
+                if !is_within_tx_range {
+                    eprintln!(
+                        "Invalid bundle index {bundle_index}, OutOfRangeTx index {ext_index}"
+                    );
+                    break;
+                }
+
+                let tx_validity = runtime_api.check_transaction_validity(
+                    at,
+                    &extrinsic,
+                    domain_block_number,
+                    at,
+                )?;
+                if let Err(validate_err) = tx_validity {
+                    let validate_res = runtime_api.validate_transaction(
+                        at,
+                        TransactionSource::External,
+                        extrinsic,
+                        at,
+                    )?;
+                    let extrinsic_root = bundle.extrinsics_root();
+                    eprintln!(
+                        "Invalid bundle index {bundle_index}, IllegalTx index {ext_index}, extrinsic_root {extrinsic_root}, \
+                         check tx validity error {:?}, bundle proposer validate result {validate_res:?}",
+                         validate_err
+                    );
+                    break;
+                }
+
+                // Check if this extrinsic is an inherent extrinsic.
+                if runtime_api.is_inherent_extrinsic(at, &extrinsic)? {
+                    eprintln!(
+                        "Invalid bundle index {bundle_index}, InherentExtrinsic index {ext_index}"
+                    );
+                    break;
+                }
+
+                if ext_index == extrinsic_count - 1 {
+                    println!("Valid bundle index {bundle_index}");
+                }
+            }
+        }
+
         Ok(())
     }
 }
