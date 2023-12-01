@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["SerializableChainSpec"],"type":["ConsensusChainSpec","ExecutionChainSpec"]};
+window.SIDEBAR_ITEMS = {"constant":["DEVNET_CHAIN_SPEC","GEMINI_3G_CHAIN_SPEC"],"struct":["SerializableChainSpec"],"type":["ConsensusChainSpec","ExecutionChainSpec"]};
