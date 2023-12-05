@@ -242,11 +242,49 @@
 <a href="#242" id="242">242</a>
 <a href="#243" id="243">243</a>
 <a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
 <span class="kw">use </span>sc_network::config::NonDefaultSetConfig;
-<span class="kw">use </span>sc_network::PeerId;
+<span class="kw">use </span>sc_network::{NetworkPeers, PeerId};
 <span class="kw">use </span>sc_network_gossip::{
     GossipEngine, MessageIntent, Syncing <span class="kw">as </span>GossipSyncing, ValidationResult, Validator,
     ValidatorContext,
@@ -261,8 +299,14 @@
 <span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span>str = <span class="string">&quot;cross_chain_gossip_worker&quot;</span>;
 <span class="kw">const </span>PROTOCOL_NAME: <span class="kw-2">&amp;</span>str = <span class="string">&quot;/subspace/cross-chain-messages&quot;</span>;
 
+<span class="doccomment">/// Encoded message with sender info if available.
+</span><span class="kw">pub struct </span>ChainTxPoolMsg {
+    <span class="kw">pub </span>encoded_data: Vec&lt;u8&gt;,
+    <span class="kw">pub </span>maybe_peer: <span class="prelude-ty">Option</span>&lt;PeerId&gt;,
+}
+
 <span class="doccomment">/// Unbounded sender to send encoded ext to listeners.
-</span><span class="kw">pub type </span>ChainTxPoolSink = TracingUnboundedSender&lt;Vec&lt;u8&gt;&gt;;
+</span><span class="kw">pub type </span>ChainTxPoolSink = TracingUnboundedSender&lt;ChainTxPoolMsg&gt;;
 <span class="kw">type </span>MessageHash = [u8; <span class="number">32</span>];
 
 <span class="doccomment">/// A cross chain message with encoded data.
@@ -307,7 +351,7 @@
         <span class="self">self</span>,
         network: Network,
         sync: Arc&lt;GossipSync&gt;,
-    ) -&gt; GossipWorker&lt;Block&gt;
+    ) -&gt; GossipWorker&lt;Block, Network&gt;
     <span class="kw">where
         </span>Block: BlockT,
         Network: sc_network_gossip::Network&lt;Block&gt; + Send + Sync + Clone + <span class="lifetime">&#39;static</span>,
@@ -319,7 +363,7 @@
             ..
         } = <span class="self">self</span>;
 
-        <span class="kw">let </span>gossip_validator = Arc::new(GossipValidator::default());
+        <span class="kw">let </span>gossip_validator = Arc::new(GossipValidator::new(network.clone()));
         <span class="kw">let </span>gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
             network,
             sync,
@@ -339,9 +383,9 @@
 
 <span class="doccomment">/// Gossip worker to gossip incoming and outgoing messages to other peers.
 /// Also, streams the decoded extrinsics to destination chain tx pool if available.
-</span><span class="kw">pub struct </span>GossipWorker&lt;Block: BlockT&gt; {
+</span><span class="kw">pub struct </span>GossipWorker&lt;Block: BlockT, Network&gt; {
     gossip_engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
-    gossip_validator: Arc&lt;GossipValidator&gt;,
+    gossip_validator: Arc&lt;GossipValidator&lt;Network&gt;&gt;,
     gossip_msg_stream: TracingUnboundedReceiver&lt;Message&gt;,
     chain_tx_pool_sinks: BTreeMap&lt;ChainId, ChainTxPoolSink&gt;,
 }
@@ -358,7 +402,7 @@
     &lt;&lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing <span class="kw">as </span>HashT&gt;::hash(<span class="string">b&quot;cross-chain-messages&quot;</span>)
 }
 
-<span class="kw">impl</span>&lt;Block: BlockT&gt; GossipWorker&lt;Block&gt; {
+<span class="kw">impl</span>&lt;Block: BlockT, Network&gt; GossipWorker&lt;Block, Network&gt; {
     <span class="doccomment">/// Starts the Gossip message worker.
     </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
         <span class="kw">let </span><span class="kw-2">mut </span>incoming_cross_chain_messages = Box::pin(
@@ -366,7 +410,9 @@
                 .lock()
                 .messages_for(topic::&lt;Block&gt;())
                 .filter_map(|notification| <span class="kw">async move </span>{
-                    Message::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..]).ok()
+                    Message::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..])
+                        .ok()
+                        .map(|msg| (notification.sender, msg))
                 }),
         );
 
@@ -376,16 +422,16 @@
 
             <span class="macro">futures::select! </span>{
                 cross_chain_message = incoming_cross_chain_messages.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_chain_message {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>((maybe_peer, msg)) = cross_chain_message {
                         <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain from Network: {:?}&quot;</span>, msg.chain_id);
-                        <span class="self">self</span>.handle_cross_chain_message(msg);
+                        <span class="self">self</span>.handle_cross_chain_message(msg, maybe_peer);
                     }
                 },
 
                 cross_chain_message = <span class="self">self</span>.gossip_msg_stream.next().fuse() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_chain_message {
                         <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain from Relayer: {:?}&quot;</span>, msg.chain_id);
-                        <span class="self">self</span>.handle_cross_chain_message(msg);
+                        <span class="self">self</span>.handle_cross_chain_message(msg, <span class="prelude-val">None</span>);
                     }
                 }
 
@@ -397,7 +443,7 @@
         }
     }
 
-    <span class="kw">fn </span>handle_cross_chain_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message) {
+    <span class="kw">fn </span>handle_cross_chain_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message, maybe_peer: <span class="prelude-ty">Option</span>&lt;PeerId&gt;) {
         <span class="comment">// mark and rebroadcast message
         </span><span class="kw">let </span>encoded_msg = msg.encode();
         <span class="self">self</span>.gossip_validator.note_broadcast(<span class="kw-2">&amp;</span>encoded_msg);
@@ -415,7 +461,14 @@
         };
 
         <span class="comment">// send the message to the open and ready channel
-        </span><span class="kw">if </span>!sink.is_closed() &amp;&amp; sink.unbounded_send(encoded_data).is_ok() {
+        </span><span class="kw">if </span>!sink.is_closed()
+            &amp;&amp; sink
+                .unbounded_send(ChainTxPoolMsg {
+                    encoded_data,
+                    maybe_peer,
+                })
+                .is_ok()
+        {
             <span class="kw">return</span>;
         }
 
@@ -431,12 +484,20 @@
 }
 
 <span class="doccomment">/// Gossip validator to retain or clean up Gossiped messages.
-</span><span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>GossipValidator {
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>GossipValidator&lt;Network&gt; {
+    network: Network,
     should_broadcast: RwLock&lt;HashSet&lt;MessageHash&gt;&gt;,
 }
 
-<span class="kw">impl </span>GossipValidator {
+<span class="kw">impl</span>&lt;Network&gt; GossipValidator&lt;Network&gt; {
+    <span class="kw">fn </span>new(network: Network) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            network,
+            should_broadcast: Default::default(),
+        }
+    }
+
     <span class="kw">fn </span>note_broadcast(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: <span class="kw-2">&amp;</span>[u8]) {
         <span class="kw">let </span>msg_hash = twox_256(msg);
         <span class="kw">let </span><span class="kw-2">mut </span>msg_set = <span class="self">self</span>.should_broadcast.write();
@@ -456,16 +517,23 @@
     }
 }
 
-<span class="kw">impl</span>&lt;Block: BlockT&gt; Validator&lt;Block&gt; <span class="kw">for </span>GossipValidator {
+<span class="kw">impl</span>&lt;Block, Network&gt; Validator&lt;Block&gt; <span class="kw">for </span>GossipValidator&lt;Network&gt;
+<span class="kw">where
+    </span>Block: BlockT,
+    Network: NetworkPeers + Send + Sync + <span class="lifetime">&#39;static</span>,
+{
     <span class="kw">fn </span>validate(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _context: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>ValidatorContext&lt;Block&gt;,
-        _sender: <span class="kw-2">&amp;</span>PeerId,
+        sender: <span class="kw-2">&amp;</span>PeerId,
         <span class="kw-2">mut </span>data: <span class="kw-2">&amp;</span>[u8],
     ) -&gt; ValidationResult&lt;Block::Hash&gt; {
         <span class="kw">match </span>Message::decode(<span class="kw-2">&amp;mut </span>data) {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; ValidationResult::ProcessAndKeep(topic::&lt;Block&gt;()),
-            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; ValidationResult::Discard,
+            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                <span class="self">self</span>.network.report_peer(<span class="kw-2">*</span>sender, rep::GOSSIP_NOT_DECODABLE);
+                ValidationResult::Discard
+            }
         }
     }
 
@@ -485,5 +553,13 @@
             should_broadcast
         })
     }
+}
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>rep {
+    <span class="kw">use </span>sc_network::ReputationChange;
+
+    <span class="doccomment">/// Reputation change when a peer sends us a gossip message that can&#39;t be decoded.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>GOSSIP_NOT_DECODABLE: ReputationChange =
+        ReputationChange::new_fatal(<span class="string">&quot;Cross chain message: not decodable&quot;</span>);
 }
 </code></pre></div></section></main></body></html>
