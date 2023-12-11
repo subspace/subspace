@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":["NodeClient"],"type":["Error"]};
+window.SIDEBAR_ITEMS = {"trait":["NodeClient","NodeClientExt"],"type":["Error"]};
