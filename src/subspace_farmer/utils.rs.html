@@ -156,6 +156,9 @@
 <a href="#156" id="156">156</a>
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farmer_piece_getter;
 <span class="kw">pub mod </span>piece_validator;
 <span class="kw">pub mod </span>readers_and_pieces;
@@ -169,7 +172,7 @@
 <span class="kw">use </span>rayon::ThreadBuilder;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::ops::Deref;
-<span class="kw">use </span>std::pin::Pin;
+<span class="kw">use </span>std::pin::{pin, Pin};
 <span class="kw">use </span>std::task::{Context, Poll};
 <span class="kw">use </span>std::{io, thread};
 <span class="kw">use </span>tokio::runtime::Handle;
@@ -252,12 +255,13 @@
 
 <span class="doccomment">/// Runs future on a dedicated thread with the specified name, will block on drop until background
 /// thread with future is stopped too, ensuring nothing is left in memory
-</span><span class="kw">pub fn </span>run_future_in_dedicated_thread&lt;Fut, T&gt;(
-    future: Fut,
+</span><span class="kw">pub fn </span>run_future_in_dedicated_thread&lt;CreateFut, Fut, T&gt;(
+    create_future: CreateFut,
     thread_name: String,
 ) -&gt; io::Result&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, Canceled&gt;&gt; + Send&gt;
 <span class="kw">where
-    </span>Fut: Future&lt;Output = T&gt; + Unpin + Send + <span class="lifetime">&#39;static</span>,
+    </span>CreateFut: (FnOnce() -&gt; Fut) + Send + <span class="lifetime">&#39;static</span>,
+    Fut: Future&lt;Output = T&gt; + <span class="lifetime">&#39;static</span>,
     T: Send + <span class="lifetime">&#39;static</span>,
 {
     <span class="kw">let </span>(drop_tx, drop_rx) = oneshot::channel::&lt;()&gt;();
@@ -265,6 +269,8 @@
     <span class="kw">let </span>handle = Handle::current();
     <span class="kw">let </span>join_handle = thread::Builder::new().name(thread_name).spawn(<span class="kw">move </span>|| {
         <span class="kw">let </span>_tokio_handle_guard = handle.enter();
+
+        <span class="kw">let </span>future = <span class="macro">pin!</span>(create_future());
 
         <span class="kw">let </span>result = <span class="kw">match </span>handle.block_on(futures::future::select(future, drop_rx)) {
             Either::Left((result, <span class="kw">_</span>)) =&gt; result,
