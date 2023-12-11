@@ -632,8 +632,6 @@
 <a href="#632" id="632">632</a>
 <a href="#633" id="633">633</a>
 <a href="#634" id="634">634</a>
-<a href="#635" id="635">635</a>
-<a href="#636" id="636">636</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! PoT gossip functionality.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::source::state::PotState;
@@ -658,6 +656,7 @@
 <span class="kw">use </span>std::future::poll_fn;
 <span class="kw">use </span>std::hash::{Hash, Hasher};
 <span class="kw">use </span>std::num::{NonZeroU32, NonZeroUsize};
+<span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::{atomic, Arc};
 <span class="kw">use </span>subspace_core_primitives::{PotCheckpoints, PotSeed, SlotNumber};
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
@@ -803,31 +802,28 @@
     /// should be running on a dedicated thread.
     </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
         <span class="kw">let </span>message_receiver = <span class="self">self</span>.engine.lock().messages_for(<span class="self">self</span>.topic);
-        <span class="kw">let </span><span class="kw-2">mut </span>incoming_unverified_messages = Box::pin(
-            message_receiver
-                .filter_map(|notification| <span class="kw">async move </span>{
-                    notification.sender.map(|sender| {
-                        <span class="kw">let </span>proof = GossipProof::decode(<span class="kw-2">&amp;mut </span>notification.message.as_ref())
-                            .expect(<span class="string">&quot;Only valid messages get here; qed&quot;</span>);
+        <span class="kw">let </span>incoming_unverified_messages =
+            <span class="macro">pin!</span>(message_receiver.filter_map(|notification| <span class="kw">async move </span>{
+                notification.sender.map(|sender| {
+                    <span class="kw">let </span>proof = GossipProof::decode(<span class="kw-2">&amp;mut </span>notification.message.as_ref())
+                        .expect(<span class="string">&quot;Only valid messages get here; qed&quot;</span>);
 
-                        (sender, proof)
-                    })
+                    (sender, proof)
                 })
-                .fuse(),
-        );
+            }));
+        <span class="kw">let </span><span class="kw-2">mut </span>incoming_unverified_messages = incoming_unverified_messages.fuse();
 
         <span class="kw">loop </span>{
-            <span class="kw">let </span>gossip_engine_poll = poll_fn(|cx| <span class="self">self</span>.engine.lock().poll_unpin(cx));
+            <span class="kw">let </span><span class="kw-2">mut </span>gossip_engine_poll = poll_fn(|cx| <span class="self">self</span>.engine.lock().poll_unpin(cx)).fuse();
+
             <span class="macro">futures::select! </span>{
-                message = incoming_unverified_messages.next() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>((sender, proof)) = message {
-                        <span class="self">self</span>.handle_proof_candidate(sender, proof).<span class="kw">await</span>;
-                    }
+                (sender, proof) = incoming_unverified_messages.select_next_some() =&gt; {
+                    <span class="self">self</span>.handle_proof_candidate(sender, proof).<span class="kw">await</span>;
                 },
                 message = <span class="self">self</span>.to_gossip_receiver.select_next_some() =&gt; {
                     <span class="self">self</span>.handle_to_gossip_messages(message).<span class="kw">await
                 </span>},
-                 <span class="kw">_ </span>= gossip_engine_poll.fuse() =&gt; {
+                 <span class="kw">_ </span>= gossip_engine_poll =&gt; {
                     <span class="macro">error!</span>(<span class="string">&quot;Gossip engine has terminated&quot;</span>);
                     <span class="kw">return</span>;
                 }

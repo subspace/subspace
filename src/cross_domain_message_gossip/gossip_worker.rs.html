@@ -294,6 +294,8 @@
 <span class="kw">use </span>sp_messenger::messages::ChainId;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>std::collections::{BTreeMap, HashSet};
+<span class="kw">use </span>std::future::poll_fn;
+<span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span>str = <span class="string">&quot;cross_chain_gossip_worker&quot;</span>;
@@ -405,37 +407,35 @@
 <span class="kw">impl</span>&lt;Block: BlockT, Network&gt; GossipWorker&lt;Block, Network&gt; {
     <span class="doccomment">/// Starts the Gossip message worker.
     </span><span class="kw">pub async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>incoming_cross_chain_messages = Box::pin(
-            <span class="self">self</span>.gossip_engine
-                .lock()
-                .messages_for(topic::&lt;Block&gt;())
-                .filter_map(|notification| <span class="kw">async move </span>{
-                    Message::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..])
-                        .ok()
-                        .map(|msg| (notification.sender, msg))
-                }),
-        );
+        <span class="kw">let </span>incoming_cross_chain_messages = <span class="macro">pin!</span>(<span class="self">self
+            </span>.gossip_engine
+            .lock()
+            .messages_for(topic::&lt;Block&gt;())
+            .filter_map(|notification| <span class="kw">async move </span>{
+                Message::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..])
+                    .ok()
+                    .map(|msg| (notification.sender, msg))
+            }));
+        <span class="kw">let </span><span class="kw-2">mut </span>incoming_cross_chain_messages = incoming_cross_chain_messages.fuse();
 
         <span class="kw">loop </span>{
             <span class="kw">let </span>engine = <span class="self">self</span>.gossip_engine.clone();
-            <span class="kw">let </span>gossip_engine = futures::future::poll_fn(|cx| engine.lock().poll_unpin(cx));
+            <span class="kw">let </span><span class="kw-2">mut </span>gossip_engine = poll_fn(|cx| engine.lock().poll_unpin(cx)).fuse();
 
             <span class="macro">futures::select! </span>{
-                cross_chain_message = incoming_cross_chain_messages.next().fuse() =&gt; {
+                cross_chain_message = incoming_cross_chain_messages.next() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>((maybe_peer, msg)) = cross_chain_message {
                         <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain from Network: {:?}&quot;</span>, msg.chain_id);
                         <span class="self">self</span>.handle_cross_chain_message(msg, maybe_peer);
                     }
                 },
 
-                cross_chain_message = <span class="self">self</span>.gossip_msg_stream.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = cross_chain_message {
-                        <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain from Relayer: {:?}&quot;</span>, msg.chain_id);
-                        <span class="self">self</span>.handle_cross_chain_message(msg, <span class="prelude-val">None</span>);
-                    }
+                msg = <span class="self">self</span>.gossip_msg_stream.select_next_some() =&gt; {
+                    <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="string">&quot;Incoming cross chain message for chain from Relayer: {:?}&quot;</span>, msg.chain_id);
+                    <span class="self">self</span>.handle_cross_chain_message(msg, <span class="prelude-val">None</span>);
                 }
 
-                <span class="kw">_ </span>= gossip_engine.fuse() =&gt; {
+                <span class="kw">_ </span>= gossip_engine =&gt; {
                     <span class="macro">tracing::error!</span>(target: LOG_TARGET, <span class="string">&quot;Gossip engine has terminated.&quot;</span>);
                     <span class="kw">return</span>;
                 }

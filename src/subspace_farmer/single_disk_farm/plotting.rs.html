@@ -812,6 +812,9 @@
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
 <a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, SectorPlottingDetails,
     RESERVED_PLOT_METADATA,
@@ -830,6 +833,7 @@
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::num::{NonZeroU16, NonZeroUsize};
 <span class="kw">use </span>std::ops::Range;
+<span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::atomic::Ordering;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
@@ -1103,29 +1107,31 @@
                     <span class="kw">let </span><span class="kw-2">mut </span>sector = Vec::new();
                     <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata = Vec::new();
 
-                    <span class="kw">let </span>plot_sector_fut = encode_sector::&lt;PosTable&gt;(
-                        downloaded_sector,
-                        EncodeSectorOptions {
-                            sector_index,
-                            erasure_coding,
-                            pieces_in_sector,
-                            sector_output: <span class="kw-2">&amp;mut </span>sector,
-                            sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
-                            encoding_semaphore: <span class="prelude-val">Some</span>(encoding_semaphore),
-                            table_generator: <span class="kw-2">&amp;mut </span>table_generator,
-                        },
-                    );
+                    <span class="kw">let </span>plotted_sector = {
+                        <span class="kw">let </span>plot_sector_fut = <span class="macro">pin!</span>(encode_sector::&lt;PosTable&gt;(
+                            downloaded_sector,
+                            EncodeSectorOptions {
+                                sector_index,
+                                erasure_coding,
+                                pieces_in_sector,
+                                sector_output: <span class="kw-2">&amp;mut </span>sector,
+                                sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
+                                encoding_semaphore: <span class="prelude-val">Some</span>(encoding_semaphore),
+                                table_generator: <span class="kw-2">&amp;mut </span>table_generator,
+                            },
+                        ));
 
-                    <span class="kw">let </span>plotted_sector = Handle::current().block_on(<span class="kw">async </span>{
-                        <span class="macro">select! </span>{
-                            plotting_result = Box::pin(plot_sector_fut).fuse() =&gt; {
-                                plotting_result.map_err(PlottingError::from)
+                        Handle::current().block_on(<span class="kw">async </span>{
+                            <span class="macro">select! </span>{
+                                plotting_result = plot_sector_fut.fuse() =&gt; {
+                                    plotting_result.map_err(PlottingError::from)
+                                }
+                                <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                                    <span class="prelude-val">Err</span>(PlottingError::FarmIsShuttingDown)
+                                }
                             }
-                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
-                                <span class="prelude-val">Err</span>(PlottingError::FarmIsShuttingDown)
-                            }
-                        }
-                    })<span class="question-mark">?</span>;
+                        })<span class="question-mark">?
+                    </span>};
 
                     <span class="prelude-val">Ok</span>((sector, sector_metadata, table_generator, plotted_sector))
                 })

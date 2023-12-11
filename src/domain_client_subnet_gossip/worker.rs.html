@@ -90,11 +90,13 @@
     topic, BundleFor, BundleReceiver, GossipMessage, GossipMessageHandler, GossipValidator,
     LOG_TARGET,
 };
-<span class="kw">use </span>futures::{future, FutureExt, StreamExt};
+<span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>sc_network_gossip::GossipEngine;
 <span class="kw">use </span>sp_runtime::traits::Block <span class="kw">as </span>BlockT;
+<span class="kw">use </span>std::future::poll_fn;
+<span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::Arc;
 
 <span class="doccomment">/// A worker plays the executor gossip protocol.
@@ -137,21 +139,21 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>incoming = Box::pin(
-            <span class="self">self</span>.gossip_engine
-                .lock()
-                .messages_for(topic::&lt;Block&gt;())
-                .filter_map(|notification| <span class="kw">async move </span>{
-                    GossipMessage::&lt;CBlock, Block&gt;::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..]).ok()
-                }),
-        );
+        <span class="kw">let </span>incoming = <span class="macro">pin!</span>(<span class="self">self
+            </span>.gossip_engine
+            .lock()
+            .messages_for(topic::&lt;Block&gt;())
+            .filter_map(|notification| <span class="kw">async move </span>{
+                GossipMessage::&lt;CBlock, Block&gt;::decode(<span class="kw-2">&amp;mut &amp;</span>notification.message[..]).ok()
+            }));
+        <span class="kw">let </span><span class="kw-2">mut </span>incoming = incoming.fuse();
 
         <span class="kw">loop </span>{
             <span class="kw">let </span>engine = <span class="self">self</span>.gossip_engine.clone();
-            <span class="kw">let </span>gossip_engine = future::poll_fn(|cx| engine.lock().poll_unpin(cx));
+            <span class="kw">let </span><span class="kw-2">mut </span>gossip_engine = poll_fn(|cx| engine.lock().poll_unpin(cx)).fuse();
 
             <span class="macro">futures::select! </span>{
-                gossip_message = incoming.next().fuse() =&gt; {
+                gossip_message = incoming.next() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(message) = gossip_message {
                         <span class="macro">tracing::debug!</span>(target: LOG_TARGET, <span class="question-mark">?</span>message, <span class="string">&quot;Rebroadcasting an executor gossip message&quot;</span>);
                         <span class="kw">match </span>message {
@@ -161,12 +163,10 @@
                         <span class="kw">return
                     </span>}
                 }
-                bundle = <span class="self">self</span>.bundle_receiver.next().fuse() =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(bundle) = bundle {
-                        <span class="self">self</span>.gossip_bundle(bundle);
-                    }
+                bundle = <span class="self">self</span>.bundle_receiver.select_next_some() =&gt; {
+                    <span class="self">self</span>.gossip_bundle(bundle);
                 }
-                <span class="kw">_ </span>= gossip_engine.fuse() =&gt; {
+                <span class="kw">_ </span>= gossip_engine =&gt; {
                     <span class="macro">tracing::error!</span>(target: LOG_TARGET, <span class="string">&quot;Gossip engine has terminated.&quot;</span>);
                     <span class="kw">return</span>;
                 }
