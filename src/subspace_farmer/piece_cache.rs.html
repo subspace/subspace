@@ -778,7 +778,23 @@
 <a href="#778" id="778">778</a>
 <a href="#779" id="779">779</a>
 <a href="#780" id="780">780</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+</pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests;
+
+<span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, Offset};
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
@@ -791,7 +807,7 @@
 <span class="kw">use </span>std::num::NonZeroU16;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::{fmt, mem};
-<span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, SegmentIndex};
+<span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, SegmentHeader, SegmentIndex};
 <span class="kw">use </span>subspace_farmer_components::plotting::{PieceGetter, PieceGetterRetryPolicy};
 <span class="kw">use </span>subspace_networking::libp2p::kad::{ProviderRecord, RecordKey};
 <span class="kw">use </span>subspace_networking::libp2p::PeerId;
@@ -888,6 +904,21 @@
             </span><span class="kw">return</span>;
         }
 
+        <span class="kw">let </span><span class="kw-2">mut </span>segment_headers_notifications =
+            <span class="kw">match </span><span class="self">self</span>.node_client.subscribe_archived_segment_headers().<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(segment_headers_notifications) =&gt; segment_headers_notifications,
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to subscribe to archived segments notifications&quot;</span>);
+                    <span class="kw">return</span>;
+                }
+            };
+
+        <span class="comment">// Keep up with segment indices that were potentially created since reinitialization,
+        // depending on the size of the diff this may pause block production for a while (due to
+        // subscription we have created above)
+        </span><span class="self">self</span>.keep_up_after_initial_sync(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state)
+            .<span class="kw">await</span>;
+
         <span class="kw">loop </span>{
             <span class="macro">select! </span>{
                 maybe_command = worker_receiver.recv().fuse() =&gt; {
@@ -898,10 +929,14 @@
 
                     <span class="self">self</span>.handle_command(command, <span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state).<span class="kw">await</span>;
                 }
-                <span class="kw">_ </span>= <span class="self">self</span>.keep_up_sync(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state).fuse() =&gt; {
-                    <span class="comment">// Keep-up sync only ends with subscription, which lasts for duration of an
-                    // instance
-                    </span><span class="kw">return</span>;
+                maybe_segment_header = segment_headers_notifications.next().fuse() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(segment_header) = maybe_segment_header {
+                        <span class="self">self</span>.process_segment_header(segment_header, <span class="kw-2">&amp;mut </span>worker_state).<span class="kw">await</span>;
+                    } <span class="kw">else </span>{
+                        <span class="comment">// Keep-up sync only ends with subscription, which lasts for duration of an
+                        // instance
+                        </span><span class="kw">return</span>;
+                    }
                 }
             }
         }
@@ -938,15 +973,24 @@
                     <span class="comment">// Making offset as unoccupied and remove corresponding key from heap
                     </span>cache.free_offsets.push(offset);
                     <span class="kw">match </span>cache.backend.read_piece_index(offset) {
-                        <span class="prelude-val">Some</span>(piece_index) =&gt; {
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece_index)) =&gt; {
                             worker_state.heap.remove(KeyWrapper(piece_index));
                         }
-                        <span class="prelude-val">None </span>=&gt; {
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                             <span class="macro">warn!</span>(
                                 %disk_farm_index,
                                 %offset,
                                 <span class="string">&quot;Piece index out of range, this is likely an implementation bug, \
                                 not freeing heap element&quot;
+                            </span>);
+                        }
+                        <span class="prelude-val">Err</span>(error) =&gt; {
+                            <span class="macro">error!</span>(
+                                %error,
+                                %disk_farm_index,
+                                <span class="question-mark">?</span>key,
+                                %offset,
+                                <span class="string">&quot;Error while reading piece from cache, might be a disk corruption&quot;
                             </span>);
                         }
                     }
@@ -1172,33 +1216,15 @@
         <span class="macro">info!</span>(<span class="string">&quot;Finished piece cache synchronization&quot;</span>);
     }
 
-    <span class="kw">async fn </span>keep_up_sync&lt;PG&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_getter: <span class="kw-2">&amp;</span>PG, worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState)
-    <span class="kw">where
-        </span>PG: PieceGetter,
-    {
-        <span class="kw">let </span><span class="kw-2">mut </span>segment_headers_notifications =
-            <span class="kw">match </span><span class="self">self</span>.node_client.subscribe_archived_segment_headers().<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(segment_headers_notifications) =&gt; segment_headers_notifications,
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="macro">error!</span>(%error, <span class="string">&quot;Failed to subscribe to archived segments notifications&quot;</span>);
-                    <span class="kw">return</span>;
-                }
-            };
+    <span class="kw">async fn </span>process_segment_header(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        segment_header: SegmentHeader,
+        worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState,
+    ) {
+        <span class="kw">let </span>segment_index = segment_header.segment_index();
+        <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Starting to process newly archived segment&quot;</span>);
 
-        <span class="comment">// Keep up with segment indices that were potentially created since reinitialization,
-        // depending on the size of the diff this may pause block production for a while (due to
-        // subscription we have created above)
-        </span><span class="self">self</span>.keep_up_after_initial_sync(piece_getter, worker_state)
-            .<span class="kw">await</span>;
-
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(segment_header) = segment_headers_notifications.next().<span class="kw">await </span>{
-            <span class="kw">let </span>segment_index = segment_header.segment_index();
-            <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Starting to process newly archived segment&quot;</span>);
-
-            <span class="kw">if </span>worker_state.last_segment_index &gt;= segment_index {
-                <span class="kw">continue</span>;
-            }
-
+        <span class="kw">if </span>worker_state.last_segment_index &lt; segment_index {
             <span class="comment">// TODO: Can probably do concurrency here
             </span><span class="kw">for </span>piece_index <span class="kw">in </span>segment_index.segment_piece_indexes() {
                 <span class="kw">if </span>!worker_state
@@ -1240,22 +1266,22 @@
             }
 
             worker_state.last_segment_index = segment_index;
-
-            <span class="kw">match </span><span class="self">self
-                </span>.node_client
-                .acknowledge_archived_segment_header(segment_index)
-                .<span class="kw">await
-            </span>{
-                <span class="prelude-val">Ok</span>(()) =&gt; {
-                    <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Acknowledged archived segment&quot;</span>);
-                }
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="macro">error!</span>(%segment_index, <span class="question-mark">?</span>error, <span class="string">&quot;Failed to acknowledge archived segment&quot;</span>);
-                }
-            };
-
-            <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Finished processing newly archived segment&quot;</span>);
         }
+
+        <span class="kw">match </span><span class="self">self
+            </span>.node_client
+            .acknowledge_archived_segment_header(segment_index)
+            .<span class="kw">await
+        </span>{
+            <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Acknowledged archived segment&quot;</span>);
+            }
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="macro">error!</span>(%segment_index, <span class="question-mark">?</span>error, <span class="string">&quot;Failed to acknowledge archived segment&quot;</span>);
+            }
+        };
+
+        <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Finished processing newly archived segment&quot;</span>);
     }
 
     <span class="kw">async fn </span>keep_up_after_initial_sync&lt;PG&gt;(
@@ -1294,12 +1320,12 @@
         </span><span class="kw">for </span>piece_index <span class="kw">in </span>piece_indices {
             <span class="kw">let </span>key = KeyWrapper(piece_index);
             <span class="kw">if </span>!worker_state.heap.should_include_key(key) {
-                <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #1&quot;</span>);
+                <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #2&quot;</span>);
 
                 <span class="kw">continue</span>;
             }
 
-            <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece needs to be cached #1&quot;</span>);
+            <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece needs to be cached #2&quot;</span>);
 
             <span class="kw">let </span>result = piece_getter
                 .get_piece(
