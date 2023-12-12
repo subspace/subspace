@@ -378,29 +378,6 @@
 <a href="#378" id="378">378</a>
 <a href="#379" id="379">379</a>
 <a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
-<a href="#383" id="383">383</a>
-<a href="#384" id="384">384</a>
-<a href="#385" id="385">385</a>
-<a href="#386" id="386">386</a>
-<a href="#387" id="387">387</a>
-<a href="#388" id="388">388</a>
-<a href="#389" id="389">389</a>
-<a href="#390" id="390">390</a>
-<a href="#391" id="391">391</a>
-<a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::domain_block_processor::{
     DomainBlockProcessor, PendingConsensusBlocks, ReceiptsChecker,
 };
@@ -409,7 +386,7 @@
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, Finalizer, ProofProvider};
 <span class="kw">use </span>sc_consensus::{BlockImportParams, ForkChoiceStrategy, StateAction};
-<span class="kw">use </span>sp_api::{ApiExt, NumberFor, ProvideRuntimeApi};
+<span class="kw">use </span>sp_api::{NumberFor, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::{HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_consensus::BlockOrigin;
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
@@ -657,14 +634,6 @@
     ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;(Block::Hash, NumberFor&lt;Block&gt;)&gt;&gt; {
         <span class="kw">let </span>(consensus_block_hash, consensus_block_number) = consensus_block_info;
         <span class="kw">let </span>(parent_hash, parent_number) = parent_info;
-        <span class="comment">// TODO: this is used to keep compatible with the gemini-3g network, because some necessary
-        // runtime API are introduced in `#[api_version(2)]`, remove this before the next network
-        </span><span class="kw">let </span>domains_api_version = <span class="self">self
-            </span>.consensus_client
-            .runtime_api()
-            .api_version::&lt;<span class="kw">dyn </span>DomainsApi&lt;CBlock, Block::Header&gt;&gt;(consensus_block_hash)<span class="question-mark">?
-            </span><span class="comment">// safe to return default version as 1 since there will always be version 1.
-            </span>.unwrap_or(<span class="number">1</span>);
         <span class="kw">let </span>start = Instant::now();
 
         <span class="macro">tracing::debug!</span>(
@@ -701,18 +670,16 @@
             )<span class="question-mark">?</span>;
 
             <span class="comment">// Check the consensus runtime version before submitting fraud proof.
-            </span><span class="kw">if </span>domains_api_version &gt;= <span class="number">2 </span>{
-                <span class="comment">// Even the consensus block doesn&#39;t contains bundle it may still contains
-                // fraud proof, thus we need to call `check_state_transition` to remove the
-                // bad ER info that targetted by the potential fraud proof
-                </span><span class="self">self</span>.domain_receipts_checker
-                    .check_state_transition(consensus_block_hash)<span class="question-mark">?</span>;
+            // Even the consensus block doesn&#39;t contains bundle it may still contains
+            // fraud proof, thus we need to call `check_state_transition` to remove the
+            // bad ER info that targetted by the potential fraud proof
+            </span><span class="self">self</span>.domain_receipts_checker
+                .check_state_transition(consensus_block_hash)<span class="question-mark">?</span>;
 
-                <span class="comment">// Try submit fraud proof for the previous detected bad ER
-                </span><span class="self">self</span>.domain_receipts_checker
-                    .submit_fraud_proof(consensus_block_hash)
-                    .<span class="kw">await</span><span class="question-mark">?</span>;
-            }
+            <span class="comment">// Try submit fraud proof for the previous detected bad ER
+            </span><span class="self">self</span>.domain_receipts_checker
+                .submit_fraud_proof(consensus_block_hash)
+                .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         };
@@ -743,24 +710,13 @@
         );
 
         <span class="kw">let </span>block_execution_took = start.elapsed().as_millis().saturating_sub(preprocess_took);
-        <span class="kw">let </span>domain_core_api_version = <span class="self">self
+
+        <span class="kw">let </span>reference_block_execution_duration_ms = <span class="self">self
             </span>.client
             .runtime_api()
-            .api_version::&lt;<span class="kw">dyn </span>DomainCoreApi&lt;Block&gt;&gt;(domain_block_result.header_hash)<span class="question-mark">?
-            </span><span class="comment">// safe to return default version as 1 since there will always be version 1.
-            </span>.unwrap_or(<span class="number">1</span>);
-        <span class="kw">let </span>reference_block_execution_duration_ms = <span class="kw">if </span>domain_core_api_version &gt;= <span class="number">2 </span>{
-            <span class="self">self</span>.client
-                .runtime_api()
-                .block_weight(domain_block_result.header_hash)<span class="question-mark">?
-                </span>.ref_time()
-                / WEIGHT_REF_TIME_PER_MILLIS
-        } <span class="kw">else </span>{
-            <span class="comment">// TODO: this is used to keep compatible with the gemini-3g network, remove this
-            // before the next network
-            // 2000ms is the maximum compute time set in the max domain block weight
-            </span><span class="number">2000
-        </span>};
+            .block_weight(domain_block_result.header_hash)<span class="question-mark">?
+            </span>.ref_time()
+            / WEIGHT_REF_TIME_PER_MILLIS;
         <span class="kw">if </span>block_execution_took
             &gt;= slow_domain_block_execution_threshold(reference_block_execution_duration_ms).into()
         {
@@ -779,15 +735,13 @@
         )<span class="question-mark">?</span>;
 
         <span class="comment">// Check the consensus runtime version before checking bad ER and submit fraud proof.
-        </span><span class="kw">if </span>domains_api_version &gt;= <span class="number">2 </span>{
-            <span class="comment">// TODO: Remove as ReceiptsChecker has been superseded by ReceiptValidator in block-preprocessor.
-            </span><span class="self">self</span>.domain_receipts_checker
-                .check_state_transition(consensus_block_hash)<span class="question-mark">?</span>;
+        // TODO: Remove as ReceiptsChecker has been superseded by ReceiptValidator in block-preprocessor.
+        </span><span class="self">self</span>.domain_receipts_checker
+            .check_state_transition(consensus_block_hash)<span class="question-mark">?</span>;
 
-            <span class="self">self</span>.domain_receipts_checker
-                .submit_fraud_proof(consensus_block_hash)
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-        }
+        <span class="self">self</span>.domain_receipts_checker
+            .submit_fraud_proof(consensus_block_hash)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>post_block_execution_took = start
             .elapsed()
