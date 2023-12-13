@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SpecId"],"fn":["create_domain_spec","development_config","devnet_config","gemini_3g_config","get_testnet_genesis_by_spec_id","load_chain_spec","local_testnet_config"],"type":["ChainSpec"]};
