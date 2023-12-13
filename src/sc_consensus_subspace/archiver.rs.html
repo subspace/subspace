@@ -845,6 +845,14 @@
 <a href="#845" id="845">845</a>
 <a href="#846" id="846">846</a>
 <a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -945,9 +953,12 @@
     <span class="doccomment">/// Create new instance
     </span><span class="kw">pub fn </span>new(aux_store: Arc&lt;AS&gt;) -&gt; sp_blockchain::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>cache = Vec::with_capacity(<span class="self">Self</span>::INITIAL_CACHE_CAPACITY);
-        <span class="kw">let </span><span class="kw-2">mut </span>next_key_index = <span class="number">0</span>;
 
         <span class="macro">debug!</span>(<span class="string">&quot;Started loading segment headers into cache&quot;</span>);
+        <span class="comment">// Segment headers are stored in batches (which is more efficient to store and retrieve), this is why code deals
+        // with key indices here rather that segment indices. Essentially this iterates over keys from 0 until missing
+        // entry is hit, which becomes the next key index where additional segment headers will be stored.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>next_key_index = <span class="number">0</span>;
         <span class="kw">while let </span><span class="prelude-val">Some</span>(segment_headers) =
             aux_store
                 .get_aux(<span class="kw-2">&amp;</span><span class="self">Self</span>::key(next_key_index))<span class="question-mark">?
@@ -976,14 +987,18 @@
         <span class="prelude-val">Some</span>(SegmentIndex::from(segment_index))
     }
 
-    <span class="doccomment">/// Add segment headers
+    <span class="doccomment">/// Add segment headers.
+    ///
+    /// Multiple can be inserted for efficiency purposes.
     </span><span class="kw">pub fn </span>add_segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_headers: <span class="kw-2">&amp;</span>[SegmentHeader],
     ) -&gt; sp_blockchain::Result&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>maybe_last_segment_index = <span class="self">self</span>.max_segment_index();
         <span class="kw">let </span><span class="kw-2">mut </span>segment_headers_to_store = Vec::with_capacity(segment_headers.len());
-        <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
+        <span class="comment">// Check all input segment headers to see which ones are not stored yet and verifying that segment indices are
+        // monotonically increasing
+        </span><span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
             <span class="kw">let </span>segment_index = segment_header.segment_index();
             <span class="kw">match </span>maybe_last_segment_index {
                 <span class="prelude-val">Some</span>(last_segment_index) =&gt; {
@@ -1021,7 +1036,8 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
-        <span class="comment">// TODO: Do compaction when we have too many keys: combine multiple segment headers into a
+        <span class="comment">// Insert all new segment headers into vacant key index for efficiency purposes
+        // TODO: Do compaction when we have too many keys: combine multiple segment headers into a
         //  single entry for faster retrievals and more compact storage
         </span>{
             <span class="kw">let </span>key_index = <span class="self">self</span>.inner.next_key_index.fetch_add(<span class="number">1</span>, Ordering::SeqCst);
@@ -1137,7 +1153,7 @@
     Client::Api: ObjectsApi&lt;Block&gt;,
 {
     <span class="kw">let </span>genesis_hash = client.info().genesis_hash;
-    <span class="kw">let </span><span class="prelude-val">Some</span>(block) = client.block(genesis_hash)<span class="question-mark">? </span><span class="kw">else </span>{
+    <span class="kw">let </span><span class="prelude-val">Some</span>(signed_block) = client.block(genesis_hash)<span class="question-mark">? </span><span class="kw">else </span>{
         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
     };
 
@@ -1146,14 +1162,14 @@
         .validated_object_call_hashes(genesis_hash)
         .and_then(|calls| {
             client.runtime_api().extract_block_object_mapping(
-                <span class="kw-2">*</span>block.block.header().parent_hash(),
-                block.block.clone(),
+                <span class="kw-2">*</span>signed_block.block.header().parent_hash(),
+                signed_block.block.clone(),
                 calls,
             )
         })
         .unwrap_or_default();
 
-    <span class="kw">let </span>encoded_block = encode_block(block);
+    <span class="kw">let </span>encoded_block = encode_block(signed_block);
 
     <span class="kw">let </span>new_archived_segment = Archiver::new(kzg)<span class="question-mark">?
         </span>.add_block(encoded_block, block_object_mappings, <span class="bool-val">false</span>)
@@ -1175,12 +1191,12 @@
 }
 
 <span class="doccomment">/// Encode block for archiving purposes
-</span><span class="kw">pub fn </span>encode_block&lt;Block&gt;(<span class="kw-2">mut </span>block: SignedBlock&lt;Block&gt;) -&gt; Vec&lt;u8&gt;
+</span><span class="kw">pub fn </span>encode_block&lt;Block&gt;(<span class="kw-2">mut </span>signed_block: SignedBlock&lt;Block&gt;) -&gt; Vec&lt;u8&gt;
 <span class="kw">where
     </span>Block: BlockT,
 {
-    <span class="kw">if </span>block.block.header().number().is_zero() {
-        <span class="kw">let </span><span class="kw-2">mut </span>encoded_block = block.encode();
+    <span class="kw">if </span>signed_block.block.header().number().is_zero() {
+        <span class="kw">let </span><span class="kw-2">mut </span>encoded_block = signed_block.encode();
 
         <span class="kw">let </span>encoded_block_length = encoded_block.len();
 
@@ -1192,7 +1208,7 @@
         // in encoded form.
         </span>encoded_block.resize(RecordedHistorySegment::SIZE, <span class="number">0</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>rng = ChaCha8Rng::from_seed(
-            block
+            signed_block
                 .block
                 .header()
                 .state_root()
@@ -1205,7 +1221,7 @@
         encoded_block
     } <span class="kw">else </span>{
         <span class="comment">// Filter out non-canonical justifications
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(justifications) = block.justifications.take() {
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(justifications) = signed_block.justifications.take() {
             <span class="kw">let </span><span class="kw-2">mut </span>filtered_justifications = justifications.into_iter().filter(|justification| {
                 <span class="comment">// Only Subspace justifications are to be archived
                 </span><span class="kw">let </span><span class="prelude-val">Some</span>(subspace_justification) =
@@ -1225,11 +1241,11 @@
                     justifications.append(justification);
                 }
 
-                block.justifications = <span class="prelude-val">Some</span>(justifications);
+                signed_block.justifications = <span class="prelude-val">Some</span>(justifications);
             }
         }
 
-        block.encode()
+        signed_block.encode()
     }
 }
 
@@ -1400,10 +1416,10 @@
                         (block.block.hash(), <span class="kw-2">*</span>block.block.header().number())
                     });
 
-            <span class="kw">for </span>(block, block_object_mappings) <span class="kw">in </span>blocks_to_archive {
-                <span class="kw">let </span>block_number_to_archive = <span class="kw-2">*</span>block.block.header().number();
+            <span class="kw">for </span>(signed_block, block_object_mappings) <span class="kw">in </span>blocks_to_archive {
+                <span class="kw">let </span>block_number_to_archive = <span class="kw-2">*</span>signed_block.block.header().number();
 
-                <span class="kw">let </span>encoded_block = encode_block(block);
+                <span class="kw">let </span>encoded_block = encode_block(signed_block);
 
                 <span class="macro">debug!</span>(
                     <span class="string">&quot;Encoded block {} has size of {:.2} kiB&quot;</span>,
