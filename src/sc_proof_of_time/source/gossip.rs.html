@@ -632,6 +632,31 @@
 <a href="#632" id="632">632</a>
 <a href="#633" id="633">633</a>
 <a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! PoT gossip functionality.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::source::state::PotState;
@@ -748,6 +773,7 @@
     </span>Block: BlockT,
 {
     engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
+    network: Arc&lt;<span class="kw">dyn </span>NetworkPeers + Send + Sync&gt;,
     topic: Block::Hash,
     state: Arc&lt;PotState&gt;,
     pot_verifier: PotVerifier,
@@ -783,10 +809,11 @@
             sync_oracle,
             network.clone(),
         ));
-        <span class="kw">let </span>engine = GossipEngine::new(network, sync, GOSSIP_PROTOCOL, validator, <span class="prelude-val">None</span>);
+        <span class="kw">let </span>engine = GossipEngine::new(network.clone(), sync, GOSSIP_PROTOCOL, validator, <span class="prelude-val">None</span>);
 
         <span class="self">Self </span>{
             engine: Arc::new(Mutex::new(engine)),
+            network: Arc::new(network),
             topic,
             state,
             pot_verifier,
@@ -1018,6 +1045,7 @@
         <span class="comment">// Avoid blocking gossip for too long
         </span>rayon::spawn({
             <span class="kw">let </span>engine = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.engine);
+            <span class="kw">let </span>network = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.network);
             <span class="kw">let </span>pot_verifier = <span class="self">self</span>.pot_verifier.clone();
             <span class="kw">let </span>from_gossip_sender = <span class="self">self</span>.from_gossip_sender.clone();
             <span class="kw">let </span>topic = <span class="self">self</span>.topic;
@@ -1027,6 +1055,7 @@
                     next_slot_input,
                     potentially_matching_proofs,
                     engine,
+                    network.as_ref(),
                     <span class="kw-2">&amp;</span>pot_verifier,
                     from_gossip_sender,
                     topic,
@@ -1037,8 +1066,9 @@
 
     <span class="kw">fn </span>handle_potentially_matching_proofs(
         next_slot_input: PotNextSlotInput,
-        potentially_matching_proofs: Vec&lt;(GossipProof, Vec&lt;PeerId&gt;)&gt;,
+        <span class="kw-2">mut </span>potentially_matching_proofs: Vec&lt;(GossipProof, Vec&lt;PeerId&gt;)&gt;,
         engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
+        network: <span class="kw-2">&amp;</span><span class="kw">dyn </span>NetworkPeers,
         pot_verifier: <span class="kw-2">&amp;</span>PotVerifier,
         <span class="kw-2">mut </span>from_gossip_sender: mpsc::Sender&lt;(PeerId, GossipProof)&gt;,
         topic: Block::Hash,
@@ -1067,23 +1097,43 @@
 
             correct_proof
         } <span class="kw">else </span>{
-            <span class="kw">match </span>subspace_proof_of_time::prove(
-                next_slot_input.seed,
-                next_slot_input.slot_iterations,
+            <span class="comment">// This sorts from lowest reputation to highest
+            </span>potentially_matching_proofs.sort_by_cached_key(|(_proof, peer_ids)| {
+                peer_ids
+                    .iter()
+                    .map(|peer_id| network.peer_reputation(peer_id))
+                    .max()
+            });
+            <span class="comment">// Last proof includes peer with the highest reputation
+            </span><span class="kw">let </span>(proof, _senders) = potentially_matching_proofs
+                .last()
+                .expect(<span class="string">&quot;Guaranteed to be non-empty; qed&quot;</span>);
+
+            <span class="kw">if </span>pot_verifier.verify_checkpoints(
+                proof.seed,
+                proof.slot_iterations,
+                <span class="kw-2">&amp;</span>proof.checkpoints,
             ) {
-                <span class="prelude-val">Ok</span>(checkpoints) =&gt; <span class="prelude-val">Some</span>(GossipProof {
-                    slot: next_slot_input.slot,
-                    seed: next_slot_input.seed,
-                    slot_iterations: next_slot_input.slot_iterations,
-                    checkpoints,
-                }),
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="macro">error!</span>(
-                        %error,
-                        slot = %next_slot_input.slot,
-                        <span class="string">&quot;Failed to run proof of time, this is an implementation bug&quot;</span>,
-                    );
-                    <span class="kw">return</span>;
+                <span class="prelude-val">Some</span>(<span class="kw-2">*</span>proof)
+            } <span class="kw">else </span>{
+                <span class="kw">match </span>subspace_proof_of_time::prove(
+                    next_slot_input.seed,
+                    next_slot_input.slot_iterations,
+                ) {
+                    <span class="prelude-val">Ok</span>(checkpoints) =&gt; <span class="prelude-val">Some</span>(GossipProof {
+                        slot: next_slot_input.slot,
+                        seed: next_slot_input.seed,
+                        slot_iterations: next_slot_input.slot_iterations,
+                        checkpoints,
+                    }),
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="macro">error!</span>(
+                            %error,
+                            slot = %next_slot_input.slot,
+                            <span class="string">&quot;Failed to run proof of time, this is an implementation bug&quot;</span>,
+                        );
+                        <span class="kw">return</span>;
+                    }
                 }
             }
         };
