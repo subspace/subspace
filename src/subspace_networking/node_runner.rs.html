@@ -1675,6 +1675,19 @@
 <a href="#1675" id="1675">1675</a>
 <a href="#1676" id="1676">1676</a>
 <a href="#1677" id="1677">1677</a>
+<a href="#1678" id="1678">1678</a>
+<a href="#1679" id="1679">1679</a>
+<a href="#1680" id="1680">1680</a>
+<a href="#1681" id="1681">1681</a>
+<a href="#1682" id="1682">1682</a>
+<a href="#1683" id="1683">1683</a>
+<a href="#1684" id="1684">1684</a>
+<a href="#1685" id="1685">1685</a>
+<a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
+<a href="#1689" id="1689">1689</a>
+<a href="#1690" id="1690">1690</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::{
     append_p2p_suffix, remove_p2p_suffix, KnownPeersRegistry, PeerAddressRemovedEvent,
     PEERS_ADDRESSES_BATCH_SIZE,
@@ -1689,7 +1702,7 @@
 };
 <span class="kw">use </span><span class="kw">crate</span>::shared::{Command, CreatedSubscription, NewPeerInfo, PeerDiscovered, Shared};
 <span class="kw">use </span><span class="kw">crate</span>::utils::rate_limiter::RateLimiterPermit;
-<span class="kw">use </span><span class="kw">crate</span>::utils::{is_global_address_or_dns, strip_peer_id, PeerAddress};
+<span class="kw">use </span><span class="kw">crate</span>::utils::{is_global_address_or_dns, strip_peer_id, PeerAddress, SubspaceMetrics};
 <span class="kw">use </span>async_mutex::Mutex <span class="kw">as </span>AsyncMutex;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>event_listener_primitives::HandlerId;
@@ -1800,8 +1813,10 @@
     </span>reserved_peers: HashMap&lt;PeerId, Multiaddr&gt;,
     <span class="doccomment">/// Temporarily banned peers.
     </span>temporary_bans: Arc&lt;Mutex&lt;TemporaryBans&gt;&gt;,
-    <span class="doccomment">/// Prometheus metrics.
-    </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// Libp2p Prometheus metrics.
+    </span>libp2p_metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// Subspace Prometheus metrics.
+    </span>metrics: <span class="prelude-ty">Option</span>&lt;SubspaceMetrics&gt;,
     <span class="doccomment">/// Mapping from specific peer to ip addresses
     </span>peer_ip_addresses: HashMap&lt;PeerId, HashSet&lt;IpAddr&gt;&gt;,
     <span class="doccomment">/// Defines protocol version for the network peers. Affects network partition.
@@ -1855,7 +1870,8 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) networking_parameters_registry: Box&lt;<span class="kw">dyn </span>KnownPeersRegistry&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) reserved_peers: HashMap&lt;PeerId, Multiaddr&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) temporary_bans: Arc&lt;Mutex&lt;TemporaryBans&gt;&gt;,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) libp2p_metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: <span class="prelude-ty">Option</span>&lt;SubspaceMetrics&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) protocol_version: String,
     <span class="kw">pub</span>(<span class="kw">crate</span>) general_connection_decision_handler: <span class="prelude-ty">Option</span>&lt;ConnectedPeersHandler&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) special_connection_decision_handler: <span class="prelude-ty">Option</span>&lt;ConnectedPeersHandler&gt;,
@@ -1878,6 +1894,7 @@
             <span class="kw-2">mut </span>networking_parameters_registry,
             reserved_peers,
             temporary_bans,
+            libp2p_metrics,
             metrics,
             protocol_version,
             general_connection_decision_handler,
@@ -1916,6 +1933,7 @@
             networking_parameters_registry,
             reserved_peers,
             temporary_bans,
+            libp2p_metrics,
             metrics,
             peer_ip_addresses: HashMap::new(),
             protocol_version,
@@ -2225,6 +2243,10 @@
                 </span><span class="kw">if </span>num_established.get() == <span class="number">1 </span>{
                     shared.handlers.connected_peer.call_simple(<span class="kw-2">&amp;</span>peer_id);
                 }
+
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="self">self</span>.metrics.as_mut() {
+                    metrics.inc_established_connections()
+                }
             }
             SwarmEvent::ConnectionClosed {
                 peer_id,
@@ -2269,6 +2291,10 @@
                 </span><span class="kw">if </span>num_established == <span class="number">0 </span>{
                     shared.handlers.disconnected_peer.call_simple(<span class="kw-2">&amp;</span>peer_id);
                 }
+
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="self">self</span>.metrics.as_mut() {
+                    metrics.dec_established_connections()
+                };
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(peer_id) = <span class="kw-2">&amp;</span>peer_id {
@@ -3233,7 +3259,7 @@
     }
 
     <span class="kw">fn </span>register_event_metrics(<span class="kw-2">&amp;mut </span><span class="self">self</span>, swarm_event: <span class="kw-2">&amp;</span>SwarmEvent&lt;Event&gt;) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>metrics) = <span class="self">self</span>.metrics {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>metrics) = <span class="self">self</span>.libp2p_metrics {
             <span class="kw">match </span>swarm_event {
                 SwarmEvent::Behaviour(Event::Ping(ping_event)) =&gt; {
                     metrics.record(ping_event);

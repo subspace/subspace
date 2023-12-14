@@ -649,6 +649,23 @@
 <a href="#649" id="649">649</a>
 <a href="#650" id="650">650</a>
 <a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>temporary_bans;
 <span class="kw">mod </span>transport;
 
@@ -665,7 +682,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::protocols::reserved_peers::Config <span class="kw">as </span>ReservedPeersConfig;
 <span class="kw">use </span><span class="kw">crate</span>::shared::Shared;
 <span class="kw">use </span><span class="kw">crate</span>::utils::rate_limiter::RateLimiter;
-<span class="kw">use </span><span class="kw">crate</span>::utils::strip_peer_id;
+<span class="kw">use </span><span class="kw">crate</span>::utils::{strip_peer_id, SubspaceMetrics};
 <span class="kw">use crate</span>::{PeerInfo, PeerInfoConfig};
 <span class="kw">use </span>backoff::{ExponentialBackoff, SystemClock};
 <span class="kw">use </span>futures::channel::mpsc;
@@ -686,6 +703,7 @@
 <span class="kw">use </span>libp2p::yamux::Config <span class="kw">as </span>YamuxConfig;
 <span class="kw">use </span>libp2p::{identity, Multiaddr, PeerId, StreamProtocol, SwarmBuilder, TransportError};
 <span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="kw">use </span>std::borrow::Cow;
 <span class="kw">use </span>std::iter::Empty;
 <span class="kw">use </span>std::num::NonZeroUsize;
@@ -889,8 +907,10 @@
     </span><span class="kw">pub </span>temporary_bans_cache_size: NonZeroUsize,
     <span class="doccomment">/// Backoff policy for temporary banning of unreachable peers.
     </span><span class="kw">pub </span>temporary_ban_backoff: ExponentialBackoff,
-    <span class="doccomment">/// Optional external prometheus metrics. None will disable metrics gathering.
-    </span><span class="kw">pub </span>metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// Optional libp2p prometheus metrics. None will disable metrics gathering.
+    </span><span class="kw">pub </span>libp2p_metrics: <span class="prelude-ty">Option</span>&lt;Metrics&gt;,
+    <span class="doccomment">/// Internal prometheus metrics. None will disable metrics gathering.
+    </span><span class="kw">pub </span>metrics: <span class="prelude-ty">Option</span>&lt;SubspaceMetrics&gt;,
     <span class="doccomment">/// Defines protocol version for the network peers. Affects network partition.
     </span><span class="kw">pub </span>protocol_version: String,
     <span class="doccomment">/// Specifies a source for peer information. None disables the protocol.
@@ -943,6 +963,7 @@
             keypair,
             (),
             <span class="prelude-val">Some</span>(PeerInfoProvider::new_client()),
+            <span class="prelude-val">None</span>,
         )
     }
 }
@@ -957,7 +978,17 @@
         keypair: identity::Keypair,
         local_records_provider: LocalRecordProvider,
         peer_info_provider: <span class="prelude-ty">Option</span>&lt;PeerInfoProvider&gt;,
+        prometheus_registry: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>Registry&gt;,
     ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>(libp2p_metrics, metrics) = prometheus_registry
+            .map(|registry| {
+                (
+                    <span class="prelude-val">Some</span>(Metrics::new(registry)),
+                    <span class="prelude-val">Some</span>(SubspaceMetrics::new(registry)),
+                )
+            })
+            .unwrap_or((<span class="prelude-val">None</span>, <span class="prelude-val">None</span>));
+
         <span class="kw">let </span><span class="kw-2">mut </span>kademlia = KademliaConfig::default();
         kademlia
             .set_query_timeout(KADEMLIA_QUERY_TIMEOUT)
@@ -1030,7 +1061,8 @@
             max_pending_outgoing_connections: SWARM_MAX_PENDING_OUTGOING_CONNECTIONS,
             temporary_bans_cache_size: TEMPORARY_BANS_CACHE_SIZE,
             temporary_ban_backoff,
-            metrics: <span class="prelude-val">None</span>,
+            libp2p_metrics,
+            metrics,
             protocol_version,
             peer_info_provider,
             <span class="comment">// Don&#39;t need to keep additional connections by default
@@ -1101,6 +1133,7 @@
         max_pending_outgoing_connections,
         temporary_bans_cache_size,
         temporary_ban_backoff,
+        libp2p_metrics,
         metrics,
         protocol_version,
         peer_info_provider,
@@ -1290,6 +1323,7 @@
         networking_parameters_registry,
         reserved_peers: strip_peer_id(reserved_peers).into_iter().collect(),
         temporary_bans,
+        libp2p_metrics,
         metrics,
         protocol_version,
         general_connection_decision_handler,
