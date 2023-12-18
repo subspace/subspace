@@ -1981,6 +1981,35 @@
 <a href="#1981" id="1981">1981</a>
 <a href="#1982" id="1982">1982</a>
 <a href="#1983" id="1983">1983</a>
+<a href="#1984" id="1984">1984</a>
+<a href="#1985" id="1985">1985</a>
+<a href="#1986" id="1986">1986</a>
+<a href="#1987" id="1987">1987</a>
+<a href="#1988" id="1988">1988</a>
+<a href="#1989" id="1989">1989</a>
+<a href="#1990" id="1990">1990</a>
+<a href="#1991" id="1991">1991</a>
+<a href="#1992" id="1992">1992</a>
+<a href="#1993" id="1993">1993</a>
+<a href="#1994" id="1994">1994</a>
+<a href="#1995" id="1995">1995</a>
+<a href="#1996" id="1996">1996</a>
+<a href="#1997" id="1997">1997</a>
+<a href="#1998" id="1998">1998</a>
+<a href="#1999" id="1999">1999</a>
+<a href="#2000" id="2000">2000</a>
+<a href="#2001" id="2001">2001</a>
+<a href="#2002" id="2002">2002</a>
+<a href="#2003" id="2003">2003</a>
+<a href="#2004" id="2004">2004</a>
+<a href="#2005" id="2005">2005</a>
+<a href="#2006" id="2006">2006</a>
+<a href="#2007" id="2007">2007</a>
+<a href="#2008" id="2008">2008</a>
+<a href="#2009" id="2009">2009</a>
+<a href="#2010" id="2010">2010</a>
+<a href="#2011" id="2011">2011</a>
+<a href="#2012" id="2012">2012</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -2071,6 +2100,12 @@
     }
 }
 
+<span class="doccomment">/// Exclusive lock for single disk farm info file, ensuring no concurrent edits by cooperating processes is done
+</span><span class="attr">#[must_use = <span class="string">&quot;Lock file must be kept around or as long as farm is used&quot;</span>]
+</span><span class="kw">pub struct </span>SingleDiskFarmInfoLock {
+    _file: File,
+}
+
 <span class="doccomment">/// Important information about the contents of the `SingleDiskFarm`
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = <span class="string">&quot;camelCase&quot;</span>)]
@@ -2143,6 +2178,15 @@
             directory.join(<span class="self">Self</span>::FILE_NAME),
             serde_json::to_vec(<span class="self">self</span>).expect(<span class="string">&quot;Info serialization never fails; qed&quot;</span>),
         )
+    }
+
+    <span class="doccomment">/// Try to acquire exclusive lock on the single disk farm info file, ensuring no concurrent edits by cooperating
+    /// processes is done
+    </span><span class="kw">pub fn </span>try_lock(directory: <span class="kw-2">&amp;</span>Path) -&gt; io::Result&lt;SingleDiskFarmInfoLock&gt; {
+        <span class="kw">let </span>file = File::open(directory.join(<span class="self">Self</span>::FILE_NAME))<span class="question-mark">?</span>;
+        fs4::FileExt::try_lock_exclusive(<span class="kw-2">&amp;</span>file)<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(SingleDiskFarmInfoLock { _file: file })
     }
 
     <span class="comment">// ID of the farm
@@ -2270,6 +2314,9 @@
     <span class="doccomment">/// Failed to open or create identity
     </span><span class="attr">#[error(<span class="string">&quot;Failed to open or create identity: {0}&quot;</span>)]
     </span>FailedToOpenIdentity(<span class="attr">#[from] </span>IdentityError),
+    <span class="doccomment">/// Farm is likely already in use, make sure no other farmer is using it
+    </span><span class="attr">#[error(<span class="string">&quot;Farm is likely already in use, make sure no other farmer is using it: {0}&quot;</span>)]
+    </span>LikelyAlreadyInUse(io::Error),
     <span class="comment">// TODO: Make more variants out of this generic one
     </span><span class="doccomment">/// I/O error occurred
     </span><span class="attr">#[error(<span class="string">&quot;I/O error: {0}&quot;</span>)]
@@ -2361,6 +2408,9 @@
 <span class="doccomment">/// Errors happening during scrubbing
 </span><span class="attr">#[derive(Debug, Error)]
 </span><span class="kw">pub enum </span>SingleDiskFarmScrubError {
+    <span class="doccomment">/// Farm is likely already in use, make sure no other farmer is using it
+    </span><span class="attr">#[error(<span class="string">&quot;Farm is likely already in use, make sure no other farmer is using it: {0}&quot;</span>)]
+    </span>LikelyAlreadyInUse(io::Error),
     <span class="doccomment">/// Failed to determine file size
     </span><span class="attr">#[error(<span class="string">&quot;Failed to file size of {file}: {error}&quot;</span>)]
     </span>FailedToDetermineFileSize {
@@ -2542,6 +2592,7 @@
     </span>start_sender: <span class="prelude-ty">Option</span>&lt;broadcast::Sender&lt;()&gt;&gt;,
     <span class="doccomment">/// Sender that will be used to signal to background threads that they must stop
     </span>stop_sender: <span class="prelude-ty">Option</span>&lt;broadcast::Sender&lt;()&gt;&gt;,
+    _single_disk_farm_info_lock: SingleDiskFarmInfoLock,
 }
 
 <span class="kw">impl </span>Drop <span class="kw">for </span>SingleDiskFarm {
@@ -2667,6 +2718,9 @@
             }
         };
 
+        <span class="kw">let </span>single_disk_farm_info_lock = SingleDiskFarmInfo::try_lock(<span class="kw-2">&amp;</span>directory)
+            .map_err(SingleDiskFarmError::LikelyAlreadyInUse)<span class="question-mark">?</span>;
+
         <span class="kw">let </span>pieces_in_sector = single_disk_farm_info.pieces_in_sector();
         <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
         <span class="kw">let </span>sector_metadata_size = SectorMetadataChecksummed::encoded_size();
@@ -2728,8 +2782,7 @@
             }
         };
 
-        <span class="comment">// TODO: Consider file locking to prevent other apps from modifying it
-        </span><span class="kw">let </span><span class="kw-2">mut </span>metadata_file = OpenOptions::new()
+        <span class="kw">let </span><span class="kw-2">mut </span>metadata_file = OpenOptions::new()
             .read(<span class="bool-val">true</span>)
             .write(<span class="bool-val">true</span>)
             .create(<span class="bool-val">true</span>)
@@ -3178,6 +3231,7 @@
             piece_reader,
             start_sender: <span class="prelude-val">Some</span>(start_sender),
             stop_sender: <span class="prelude-val">Some</span>(stop_sender),
+            _single_disk_farm_info_lock: single_disk_farm_info_lock,
         };
 
         <span class="prelude-val">Ok</span>(farm)
@@ -3429,6 +3483,10 @@
                 }
             }
         };
+
+        <span class="kw">let </span>_single_disk_farm_info_lock = SingleDiskFarmInfo::try_lock(directory)
+            .map_err(SingleDiskFarmScrubError::LikelyAlreadyInUse)<span class="question-mark">?</span>;
+
         <span class="kw">let </span>identity = {
             <span class="kw">let </span>file = directory.join(Identity::FILE_NAME);
             <span class="macro">info!</span>(path = %file.display(), <span class="string">&quot;Checking identity file&quot;</span>);
