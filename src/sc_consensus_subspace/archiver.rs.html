@@ -860,6 +860,63 @@
 <a href="#860" id="860">860</a>
 <a href="#861" id="861">861</a>
 <a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -876,10 +933,37 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.
 
-</span><span class="doccomment">//! Consensus archiver module.
+</span><span class="doccomment">//! Consensus archiver responsible for archival of blockchain history, it is driven by block import
+//! pipeline.
 //!
-//! Contains implementation of archiving process in Subspace blockchain that converts blockchain
-//! history (blocks) into archived history (pieces).
+//! Implements archiving process in Subspace blockchain that converts blockchain history (blocks)
+//! into archived history (pieces).
+//!
+//! The main entry point here is [`create_subspace_archiver`] that will create a task, which while
+//! driven will perform the archiving itself.
+//!
+//! Archiving is triggered by block importing notification ([`SubspaceLink::block_importing_notification_stream`])
+//! and tries to archive the block at [`ChainConstants::confirmation_depth_k`](sp_consensus_subspace::ChainConstants::confirmation_depth_k)
+//! depth from the block being imported. Block import will then wait for archiver to acknowledge
+//! processing, which is necessary for ensuring that when the next block is imported, inherents will
+//! contain segment header of newly archived block (must happen exactly in the next block).
+//!
+//! Archiving itself will also wait for acknowledgement by various subscribers before proceeding,
+//! which includes farmer subscription, in case of reference implementation via RPC
+//! (`sc-consensus-subspace-rpc`), but could also be in other ways.
+//!
+//! [`SegmentHeadersStore`] is maintained as a data structure containing all known (including future
+//! in case of syncing) segment headers. This data structure contents is then made available to
+//! other parts of the protocol that need to know what correct archival history of the blockchain
+//! looks like. For example, it is used during node sync and farmer plotting in order to verify
+//! pieces of archival history received from other network participants.
+//!
+//! [`recreate_genesis_segment`] is a bit of a hack and is useful for deriving of the genesis
+//! segment that is special case since we don&#39;t have enough data in the blockchain history itself
+//! during genesis in order to do the archiving.
+//!
+//! [`encode_block`] and [`decode_block`] are symmetric encoding/decoding functions turning
+//! [`SignedBlock`]s into bytes and back.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::block_import::BlockImportingNotification;
 <span class="kw">use </span><span class="kw">crate</span>::slot_worker::SubspaceSyncOracle;
@@ -936,7 +1020,16 @@
     </span>cache: Mutex&lt;Vec&lt;SegmentHeader&gt;&gt;,
 }
 
-<span class="doccomment">/// Persistent storage of segment headers
+<span class="doccomment">/// Persistent storage of segment headers.
+///
+/// It maintains all known segment headers. During sync from DSN it is possible that this data structure contains
+/// segment headers that from the point of view of the tip of the current chain are &quot;in the future&quot;. This is expected
+/// and must be accounted for in the archiver and other places.
+///
+/// Segment headers are stored in batches (which is more efficient to store and retrieve). Each next batch contains
+/// distinct segment headers with monotonically increasing segment indices. During instantiation all previously stored
+/// batches will be read and in-memory representation of the whole contents will be created such that queries to this
+/// data structure are quick and not involving any disk I/O.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SegmentHeadersStore&lt;AS&gt; {
     inner: Arc&lt;SegmentHeadersStoreInner&lt;AS&gt;&gt;,
@@ -1197,7 +1290,10 @@
     best_archived_block: (Block::Hash, NumberFor&lt;Block&gt;),
 }
 
-<span class="doccomment">/// Encode block for archiving purposes
+<span class="doccomment">/// Encode block for archiving purposes.
+///
+/// Only specific Subspace justifications are included in the encoding, determined by result of
+/// [`SubspaceJustification::must_be_archived`], other justifications are filtered-out.
 </span><span class="kw">pub fn </span>encode_block&lt;Block&gt;(<span class="kw-2">mut </span>signed_block: SignedBlock&lt;Block&gt;) -&gt; Vec&lt;u8&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -1526,6 +1622,24 @@
 /// `store_segment_header` extrinsic).
 ///
 /// NOTE: Archiver is doing blocking operations and must run in a dedicated task.
+///
+/// Archiver is only able to move forward and doesn&#39;t support reorgs. Upon restart it will check
+/// [`SegmentHeadersStore`] and chain history to reconstruct &quot;current&quot; state it was in before last
+/// shutdown and continue incrementally archiving blockchain history from there.
+///
+/// Archiving is triggered by block importing notification ([`SubspaceLink::block_importing_notification_stream`])
+/// and tries to archive the block at [`ChainConstants::confirmation_depth_k`](sp_consensus_subspace::ChainConstants::confirmation_depth_k)
+/// depth from the block being imported. Block import will then wait for archiver to acknowledge
+/// processing, which is necessary for ensuring that when the next block is imported, inherents will
+/// contain segment header of newly archived block (must happen exactly in the next block).
+///
+/// Once segment header is archived, notification ([`SubspaceLink::archived_segment_notification_stream`])
+/// will be sent and archiver will be paused until all receivers have provided an acknowledgement
+/// for it.
+///
+/// Archiving will be incremental during normal operation to decrease impact on block import and
+/// non-incremental heavily parallel during sync process since parallel implementation is more
+/// efficient overall and during sync only total sync time matters.
 </span><span class="kw">pub fn </span>create_subspace_archiver&lt;Block, Backend, Client, AS, SO&gt;(
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     subspace_link: <span class="kw-2">&amp;</span>SubspaceLink&lt;Block&gt;,
