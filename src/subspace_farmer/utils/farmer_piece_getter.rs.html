@@ -129,39 +129,23 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
-<a href="#132" id="132">132</a>
-<a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
 <span class="kw">use </span><span class="kw">crate</span>::utils::readers_and_pieces::ReadersAndPieces;
 <span class="kw">use </span><span class="kw">crate</span>::NodeClient;
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>parking_lot::Mutex;
-<span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
 <span class="kw">use </span>subspace_farmer_components::plotting::{PieceGetter, PieceGetterRetryPolicy};
 <span class="kw">use </span>subspace_networking::libp2p::kad::RecordKey;
-<span class="kw">use </span>subspace_networking::libp2p::PeerId;
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
 <span class="kw">use </span>subspace_networking::utils::piece_provider::{PieceProvider, PieceValidator, RetryPolicy};
-<span class="kw">use </span>subspace_networking::Node;
 <span class="kw">use </span>tracing::{debug, error, trace};
 
+<span class="kw">const </span>MAX_RANDOM_WALK_ROUNDS: usize = <span class="number">35</span>;
+
 <span class="kw">pub struct </span>FarmerPieceGetter&lt;PV, NC&gt; {
-    node: Node,
     piece_provider: PieceProvider&lt;PV&gt;,
     piece_cache: PieceCache,
     node_client: NC,
@@ -170,14 +154,12 @@
 
 <span class="kw">impl</span>&lt;PV, NC&gt; FarmerPieceGetter&lt;PV, NC&gt; {
     <span class="kw">pub fn </span>new(
-        node: Node,
         piece_provider: PieceProvider&lt;PV&gt;,
         piece_cache: PieceCache,
         node_client: NC,
         readers_and_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;ReadersAndPieces&gt;&gt;&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            node,
             piece_provider,
             piece_cache,
             node_client,
@@ -216,7 +198,7 @@
         </span><span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Getting piece from DSN L2 cache&quot;</span>);
         <span class="kw">let </span>maybe_piece = <span class="self">self
             </span>.piece_provider
-            .get_piece(piece_index, <span class="self">Self</span>::convert_retry_policy(retry_policy))
+            .get_piece_from_dsn_cache(piece_index, <span class="self">Self</span>::convert_retry_policy(retry_policy))
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">if </span>maybe_piece.is_some() {
@@ -258,31 +240,21 @@
         }
 
         <span class="comment">// L1 piece acquisition
-        // TODO: consider using retry policy for L1 lookups as well.
-        </span><span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Getting piece from DSN L1&quot;</span>);
-        <span class="kw">let </span>connected_peers = HashSet::&lt;PeerId&gt;::from_iter(<span class="self">self</span>.node.connected_peers().<span class="kw">await</span><span class="question-mark">?</span>);
-        <span class="kw">if </span>connected_peers.is_empty() {
-            <span class="macro">debug!</span>(%piece_index, <span class="string">&quot;Cannot acquire piece from DSN L1: no connected peers&quot;</span>);
+        </span><span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Getting piece from DSN L1.&quot;</span>);
 
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-        }
+        <span class="kw">let </span>archival_storage_search_result = <span class="self">self
+            </span>.piece_provider
+            .get_piece_from_archival_storage(piece_index, MAX_RANDOM_WALK_ROUNDS)
+            .<span class="kw">await</span>;
 
-        <span class="kw">for </span>peer_id <span class="kw">in </span>connected_peers.iter() {
-            <span class="kw">let </span>maybe_piece = <span class="self">self
-                </span>.piece_provider
-                .get_piece_from_peer(<span class="kw-2">*</span>peer_id, piece_index)
-                .<span class="kw">await</span>;
+        <span class="kw">if </span>archival_storage_search_result.is_some() {
+            <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;DSN L1 lookup succeeded&quot;</span>);
 
-            <span class="kw">if </span>maybe_piece.is_some() {
-                <span class="macro">trace!</span>(%piece_index, %peer_id, <span class="string">&quot;DSN L1 lookup succeeded&quot;</span>);
-
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(maybe_piece);
-            }
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(archival_storage_search_result);
         }
 
         <span class="macro">debug!</span>(
             %piece_index,
-            connected_peers=%connected_peers.len(),
             <span class="string">&quot;Cannot acquire piece: all methods yielded empty result&quot;
         </span>);
         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
