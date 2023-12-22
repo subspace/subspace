@@ -317,11 +317,33 @@
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>rayon_files;
 
 <span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
-<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::Handlers;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{Handlers, SingleDiskFarmId};
 <span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::StreamExt;
@@ -341,6 +363,16 @@
 <span class="kw">use </span>subspace_rpc_primitives::{SlotInfo, SolutionResponse};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
+
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>AuditEvent {
+    <span class="doccomment">/// Defines how much time took the audit in secs
+    </span><span class="kw">pub </span>duration: f64,
+    <span class="doccomment">/// ID of the farm
+    </span><span class="kw">pub </span>farm_id: SingleDiskFarmId,
+    <span class="doccomment">/// Number of sectors for this audit
+    </span><span class="kw">pub </span>sectors_number: usize,
+}
 
 <span class="doccomment">/// Errors that happen during farming
 </span><span class="attr">#[derive(Debug, Error)]
@@ -523,6 +555,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) farm_id: SingleDiskFarmId,
 }
 
 <span class="doccomment">/// Starts farming process.
@@ -548,6 +581,7 @@
         handlers,
         modifying_sector_index,
         <span class="kw-2">mut </span>slot_info_notifications,
+        farm_id,
     } = farming_options;
 
     <span class="kw">let </span>farmer_app_info = node_client
@@ -571,7 +605,9 @@
             <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read().<span class="kw">await</span>;
             <span class="kw">let </span>maybe_sector_being_modified = modifying_sector_guard.as_ref().copied();
 
-            plot_audit.audit(PlotAuditOptions::&lt;PosTable&gt; {
+            <span class="kw">let </span>start = Instant::now();
+
+            <span class="kw">let </span>sectors_solutions = plot_audit.audit(PlotAuditOptions::&lt;PosTable&gt; {
                 public_key: <span class="kw-2">&amp;</span>public_key,
                 reward_address: <span class="kw-2">&amp;</span>reward_address,
                 slot_info,
@@ -580,7 +616,15 @@
                 erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
                 maybe_sector_being_modified,
                 table_generator: <span class="kw-2">&amp;</span>table_generator,
-            })
+            });
+
+            handlers.plot_audited.call_simple(<span class="kw-2">&amp;</span>AuditEvent {
+                duration: start.elapsed().as_secs_f64(),
+                farm_id,
+                sectors_number: sectors_metadata.len(),
+            });
+
+            sectors_solutions
         };
 
         sectors_solutions.sort_by(|a, b| {
