@@ -1199,6 +1199,23 @@
 <a href="#1199" id="1199">1199</a>
 <a href="#1200" id="1200">1200</a>
 <a href="#1201" id="1201">1201</a>
+<a href="#1202" id="1202">1202</a>
+<a href="#1203" id="1203">1203</a>
+<a href="#1204" id="1204">1204</a>
+<a href="#1205" id="1205">1205</a>
+<a href="#1206" id="1206">1206</a>
+<a href="#1207" id="1207">1207</a>
+<a href="#1208" id="1208">1208</a>
+<a href="#1209" id="1209">1209</a>
+<a href="#1210" id="1210">1210</a>
+<a href="#1211" id="1211">1211</a>
+<a href="#1212" id="1212">1212</a>
+<a href="#1213" id="1213">1213</a>
+<a href="#1214" id="1214">1214</a>
+<a href="#1215" id="1215">1215</a>
+<a href="#1216" id="1216">1216</a>
+<a href="#1217" id="1217">1217</a>
+<a href="#1218" id="1218">1218</a>
 </pre></div><pre class="rust"><code><span class="attr">#![cfg_attr(not(feature = <span class="string">&quot;std&quot;</span>), no_std)]
 </span><span class="comment">// `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 </span><span class="attr">#![recursion_limit = <span class="string">&quot;256&quot;</span>]
@@ -1211,7 +1228,9 @@
 
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">pub use </span>domain_runtime_primitives::opaque::Header;
-<span class="kw">pub use </span>domain_runtime_primitives::{opaque, Balance, BlockNumber, Hash, Nonce};
+<span class="kw">pub use </span>domain_runtime_primitives::{
+    opaque, Balance, BlockNumber, CheckExtrinsicsValidityError, Hash, Nonce,
+};
 <span class="kw">use </span>domain_runtime_primitives::{MultiAccountId, TryConvertBack, SLOT_DURATION};
 <span class="kw">use </span>fp_account::EthereumSignature;
 <span class="kw">use </span>fp_self_contained::{CheckedSignature, SelfContainedCall};
@@ -1926,6 +1945,42 @@
         .map(|(<span class="kw">_</span>, <span class="kw">_</span>, extra)| extra.<span class="number">4 </span>.<span class="number">0</span>)
 }
 
+<span class="kw">fn </span>check_transaction_and_do_pre_dispatch_inner(
+    uxt: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
+    <span class="kw">let </span>lookup = frame_system::ChainContext::&lt;Runtime&gt;::default();
+
+    <span class="kw">let </span>xt = uxt.clone().check(<span class="kw-2">&amp;</span>lookup)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>dispatch_info = xt.get_dispatch_info();
+
+    <span class="kw">if </span>dispatch_info.class == DispatchClass::Mandatory {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::MandatoryValidation.into());
+    }
+
+    <span class="kw">let </span>encoded_len = uxt.encoded_size();
+
+    <span class="comment">// We invoke `pre_dispatch` in addition to `validate_transaction`(even though the validation is almost same)
+    // as that will add the side effect of SignedExtension in the storage buffer
+    // which would help to maintain context across multiple transaction validity check against same
+    // runtime instance.
+    </span><span class="kw">match </span>xt.signed {
+        CheckedSignature::Signed(account_id, extra) =&gt; extra
+            .pre_dispatch(<span class="kw-2">&amp;</span>account_id, <span class="kw-2">&amp;</span>xt.function, <span class="kw-2">&amp;</span>dispatch_info, encoded_len)
+            .map(|<span class="kw">_</span>| ()),
+        CheckedSignature::Unsigned =&gt; {
+            Runtime::pre_dispatch(<span class="kw-2">&amp;</span>xt.function).map(|<span class="kw">_</span>| ())<span class="question-mark">?</span>;
+            SignedExtra::pre_dispatch_unsigned(<span class="kw-2">&amp;</span>xt.function, <span class="kw-2">&amp;</span>dispatch_info, encoded_len)
+                .map(|<span class="kw">_</span>| ())
+        }
+        CheckedSignature::SelfContained(self_contained_signing_info) =&gt; xt
+            .function
+            .pre_dispatch_self_contained(<span class="kw-2">&amp;</span>self_contained_signing_info, <span class="kw-2">&amp;</span>dispatch_info, encoded_len)
+            .ok_or(TransactionValidityError::Invalid(InvalidTransaction::Call))
+            .map(|<span class="kw">_</span>| ()),
+    }
+}
+
 <span class="macro">impl_runtime_apis! </span>{
     <span class="kw">impl </span>sp_api::Core&lt;Block&gt; <span class="kw">for </span>Runtime {
         <span class="kw">fn </span>version() -&gt; RuntimeVersion {
@@ -2094,13 +2149,10 @@
             }
         }
 
-        <span class="kw">fn </span>check_transaction_and_do_pre_dispatch(
-            uxt: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic,
+        <span class="kw">fn </span>check_extrinsics_and_do_pre_dispatch(
+            uxts: Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
             block_number: BlockNumber,
-            block_hash: &lt;Block <span class="kw">as </span>BlockT&gt;::Hash
-        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransactionValidityError&gt; {
-            <span class="kw">let </span>lookup = frame_system::ChainContext::&lt;Runtime&gt;::default();
-
+            block_hash: &lt;Block <span class="kw">as </span>BlockT&gt;::Hash) -&gt; <span class="prelude-ty">Result</span>&lt;(), CheckExtrinsicsValidityError&gt; {
             <span class="comment">// Initializing block related storage required for validation
             </span>System::initialize(
                 <span class="kw-2">&amp;</span>(block_number + BlockNumber::one()),
@@ -2108,34 +2160,16 @@
                 <span class="kw-2">&amp;</span>Default::default(),
             );
 
-            <span class="kw">let </span>xt = uxt.clone().check(<span class="kw-2">&amp;</span>lookup)<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>dispatch_info = xt.get_dispatch_info();
-
-            <span class="kw">if </span>dispatch_info.class == DispatchClass::Mandatory {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::MandatoryValidation.into());
+            <span class="kw">for </span>(extrinsic_index, uxt) <span class="kw">in </span>uxts.iter().enumerate() {
+                check_transaction_and_do_pre_dispatch_inner(uxt).map_err(|e| {
+                    CheckExtrinsicsValidityError {
+                        extrinsic_index: extrinsic_index <span class="kw">as </span>u32,
+                        transaction_validity_error: e
+                    }
+                })<span class="question-mark">?</span>;
             }
 
-            <span class="kw">let </span>encoded_len = uxt.encoded_size();
-
-            <span class="comment">// We invoke `pre_dispatch` in addition to `validate_transaction`(even though the validation is almost same)
-            // as that will add the side effect of SignedExtension in the storage buffer
-            // which would help to maintain context across multiple transaction validity check against same
-            // runtime instance.
-            </span><span class="kw">match </span>xt.signed {
-                    CheckedSignature::Signed(account_id, extra) =&gt; {
-                        extra.pre_dispatch(<span class="kw-2">&amp;</span>account_id, <span class="kw-2">&amp;</span>xt.function, <span class="kw-2">&amp;</span>dispatch_info, encoded_len).map(|<span class="kw">_</span>| ())
-                    },
-                    CheckedSignature::Unsigned =&gt; {
-                        Runtime::pre_dispatch(<span class="kw-2">&amp;</span>xt.function).map(|<span class="kw">_</span>| ())<span class="question-mark">?</span>;
-                        SignedExtra::pre_dispatch_unsigned(<span class="kw-2">&amp;</span>xt.function, <span class="kw-2">&amp;</span>dispatch_info, encoded_len).map(|<span class="kw">_</span>| ())
-                    },
-                    CheckedSignature::SelfContained(self_contained_signing_info) =&gt; {
-                        xt.function.pre_dispatch_self_contained(<span class="kw-2">&amp;</span>self_contained_signing_info, <span class="kw-2">&amp;</span>dispatch_info, encoded_len).ok_or(TransactionValidityError::Invalid(
-                            InvalidTransaction::Call,
-                        )).map(|<span class="kw">_</span>| ())
-                    }
-                }
+            <span class="prelude-val">Ok</span>(())
         }
 
         <span class="kw">fn </span>extrinsic_era(
