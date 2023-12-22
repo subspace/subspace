@@ -815,6 +815,16 @@
 <a href="#815" id="815">815</a>
 <a href="#816" id="816">816</a>
 <a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, SectorPlottingDetails,
     RESERVED_PLOT_METADATA,
@@ -1230,6 +1240,9 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) initial_plotting_finished: <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt;,
+    <span class="comment">// Delay between segment header being acknowledged by farmer and potentially triggering
+    // replotting
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) new_segment_processing_delay: Duration,
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>plotting_scheduler&lt;NC&gt;(
@@ -1248,6 +1261,7 @@
         sectors_metadata,
         sectors_to_plot_sender,
         initial_plotting_finished,
+        new_segment_processing_delay,
     } = plotting_scheduler_options;
 
     <span class="comment">// Create a proxy channel with atomically updatable last archived segment that
@@ -1274,6 +1288,7 @@
         <span class="kw-2">&amp;</span>node_client,
         <span class="kw-2">&amp;</span>last_archived_segment,
         archived_segments_sender,
+        new_segment_processing_delay,
     );
 
     <span class="kw">let </span>(sectors_to_plot_proxy_sender, sectors_to_plot_proxy_receiver) = mpsc::channel(<span class="number">0</span>);
@@ -1314,6 +1329,7 @@
     node_client: <span class="kw-2">&amp;</span>NC,
     last_archived_segment: <span class="kw-2">&amp;</span>Atomic&lt;SegmentHeader&gt;,
     <span class="kw-2">mut </span>archived_segments_sender: mpsc::Sender&lt;()&gt;,
+    new_segment_processing_delay: Duration,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;
 <span class="kw">where
     </span>NC: NodeClient,
@@ -1333,6 +1349,10 @@
         </span>{
             <span class="macro">debug!</span>(%error, <span class="string">&quot;Failed to acknowledge segment header&quot;</span>);
         }
+
+        <span class="comment">// There is no urgent need to rush replotting sectors immediately and this delay allows for
+        // newly archived pieces to be both cached locally and on other farmers on the network
+        </span>tokio::time::sleep(new_segment_processing_delay).<span class="kw">await</span>;
 
         last_archived_segment.store(segment_header, Ordering::SeqCst);
         <span class="comment">// Just a notification such that receiving side can read updated

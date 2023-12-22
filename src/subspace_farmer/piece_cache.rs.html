@@ -791,6 +791,45 @@
 <a href="#791" id="791">791</a>
 <a href="#792" id="792">792</a>
 <a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -1225,49 +1264,90 @@
         <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Starting to process newly archived segment&quot;</span>);
 
         <span class="kw">if </span>worker_state.last_segment_index &lt; segment_index {
-            <span class="comment">// TODO: Can probably do concurrency here
-            </span><span class="kw">for </span>piece_index <span class="kw">in </span>segment_index.segment_piece_indexes() {
+            <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Downloading potentially useful pieces&quot;</span>);
+
+            <span class="comment">// We do not insert pieces into cache/heap yet, so we don&#39;t know if all of these pieces
+            // will be included, but there is a good chance they will be and we want to acknowledge
+            // new segment header as soon as possible
+            </span><span class="kw">let </span>pieces_to_maybe_include = segment_index
+                .segment_piece_indexes()
+                .into_iter()
+                .filter(|<span class="kw-2">&amp;</span>piece_index| {
+                    <span class="kw">let </span>maybe_include = worker_state
+                        .heap
+                        .should_include_key(KeyWrapper(piece_index));
+                    <span class="kw">if </span>!maybe_include {
+                        <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #1&quot;</span>);
+                    }
+
+                    maybe_include
+                })
+                .map(|piece_index| <span class="kw">async move </span>{
+                    <span class="kw">let </span>maybe_piece = <span class="kw">match </span><span class="self">self</span>.node_client.piece(piece_index).<span class="kw">await </span>{
+                        <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
+                        <span class="prelude-val">Err</span>(error) =&gt; {
+                            <span class="macro">error!</span>(
+                                %error,
+                                %segment_index,
+                                %piece_index,
+                                <span class="string">&quot;Failed to retrieve piece from node right after archiving, this \
+                                should never happen and is an implementation bug&quot;
+                            </span>);
+
+                            <span class="kw">return </span><span class="prelude-val">None</span>;
+                        }
+                    };
+
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(piece) = maybe_piece <span class="kw">else </span>{
+                        <span class="macro">error!</span>(
+                            %segment_index,
+                            %piece_index,
+                            <span class="string">&quot;Failed to retrieve piece from node right after archiving, this should \
+                            never happen and is an implementation bug&quot;
+                        </span>);
+
+                        <span class="kw">return </span><span class="prelude-val">None</span>;
+                    };
+
+                    <span class="prelude-val">Some</span>((piece_index, piece))
+                })
+                .collect::&lt;FuturesUnordered&lt;<span class="kw">_</span>&gt;&gt;()
+                .filter_map(|maybe_piece| <span class="kw">async move </span>{ maybe_piece })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+                .<span class="kw">await</span>;
+
+            <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Downloaded potentially useful pieces&quot;</span>);
+
+            <span class="self">self</span>.acknowledge_archived_segment_processing(segment_index)
+                .<span class="kw">await</span>;
+
+            <span class="comment">// Go through potentially matching pieces again now that segment was acknowledged and
+            // try to persist them if necessary
+            </span><span class="kw">for </span>(piece_index, piece) <span class="kw">in </span>pieces_to_maybe_include {
                 <span class="kw">if </span>!worker_state
                     .heap
                     .should_include_key(KeyWrapper(piece_index))
                 {
-                    <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #1&quot;</span>);
+                    <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #2&quot;</span>);
 
                     <span class="kw">continue</span>;
                 }
 
                 <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece needs to be cached #1&quot;</span>);
 
-                <span class="kw">let </span>maybe_piece = <span class="kw">match </span><span class="self">self</span>.node_client.piece(piece_index).<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
-                    <span class="prelude-val">Err</span>(error) =&gt; {
-                        <span class="macro">error!</span>(
-                            %error,
-                            %segment_index,
-                            %piece_index,
-                            <span class="string">&quot;Failed to retrieve piece from node right after archiving, this \
-                            should never happen and is an implementation bug&quot;
-                        </span>);
-                        <span class="kw">continue</span>;
-                    }
-                };
-
-                <span class="kw">let </span><span class="prelude-val">Some</span>(piece) = maybe_piece <span class="kw">else </span>{
-                    <span class="macro">error!</span>(
-                        %segment_index,
-                        %piece_index,
-                        <span class="string">&quot;Failed to retrieve piece from node right after archiving, this should \
-                        never happen and is an implementation bug&quot;
-                    </span>);
-                    <span class="kw">continue</span>;
-                };
-
                 <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state);
             }
 
             worker_state.last_segment_index = segment_index;
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.acknowledge_archived_segment_processing(segment_index)
+                .<span class="kw">await</span>;
         }
 
+        <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Finished processing newly archived segment&quot;</span>);
+    }
+
+    <span class="kw">async fn </span>acknowledge_archived_segment_processing(<span class="kw-2">&amp;</span><span class="self">self</span>, segment_index: SegmentIndex) {
         <span class="kw">match </span><span class="self">self
             </span>.node_client
             .acknowledge_archived_segment_header(segment_index)
@@ -1280,8 +1360,6 @@
                 <span class="macro">error!</span>(%segment_index, <span class="question-mark">?</span>error, <span class="string">&quot;Failed to acknowledge archived segment&quot;</span>);
             }
         };
-
-        <span class="macro">debug!</span>(%segment_index, <span class="string">&quot;Finished processing newly archived segment&quot;</span>);
     }
 
     <span class="kw">async fn </span>keep_up_after_initial_sync&lt;PG&gt;(
@@ -1320,7 +1398,7 @@
         </span><span class="kw">for </span>piece_index <span class="kw">in </span>piece_indices {
             <span class="kw">let </span>key = KeyWrapper(piece_index);
             <span class="kw">if </span>!worker_state.heap.should_include_key(key) {
-                <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #2&quot;</span>);
+                <span class="macro">trace!</span>(%piece_index, <span class="string">&quot;Piece doesn&#39;t need to be cached #3&quot;</span>);
 
                 <span class="kw">continue</span>;
             }
