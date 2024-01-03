@@ -432,6 +432,11 @@
 <a href="#432" id="432">432</a>
 <a href="#433" id="433">433</a>
 <a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -448,18 +453,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see &lt;https://www.gnu.org/licenses/&gt;.
 
-</span><span class="kw">use </span><span class="kw">crate</span>::domain::evm_chain_spec::{<span class="self">self</span>, SpecId};
+</span><span class="kw">use </span><span class="kw">crate</span>::domain::evm_chain_spec;
+<span class="kw">use </span><span class="kw">crate</span>::domain::evm_chain_spec::SpecId;
 <span class="kw">use </span>clap::Parser;
 <span class="kw">use </span>domain_runtime_primitives::opaque::Block <span class="kw">as </span>DomainBlock;
 <span class="kw">use </span>parity_scale_codec::Encode;
 <span class="kw">use </span>sc_cli::{
     BlockNumberOrHash, ChainSpec, CliConfiguration, DefaultConfigurationValues, ImportParams,
-    KeystoreParams, NetworkParams, <span class="prelude-ty">Result</span>, Role, RunCmd <span class="kw">as </span>SubstrateRunCmd, SharedParams,
-    SubstrateCli,
+    KeystoreParams, NetworkParams, Role, RunCmd <span class="kw">as </span>SubstrateRunCmd, SharedParams, SubstrateCli,
 };
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
-<span class="kw">use </span>sc_service::config::PrometheusConfig;
-<span class="kw">use </span>sc_service::{BasePath, Configuration};
+<span class="kw">use </span>sc_service::config::{KeystoreConfig, PrometheusConfig};
+<span class="kw">use </span>sc_service::{BasePath, Configuration, DatabaseSource};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_domain_digests::AsPredigest;
 <span class="kw">use </span>sp_domains::storage::RawGenesis;
@@ -470,7 +475,7 @@
 <span class="kw">use </span>std::io::Write;
 <span class="kw">use </span>std::net::SocketAddr;
 <span class="kw">use </span>std::num::ParseIntError;
-<span class="kw">use </span>std::path::PathBuf;
+<span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>subspace_runtime::Block;
 
 <span class="doccomment">/// Sub-commands supported by the executor.
@@ -494,11 +499,11 @@
     </span>ExportExecutionReceipt(ExportExecutionReceiptCmd),
 }
 
-<span class="kw">fn </span>parse_domain_id(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;DomainId, ParseIntError&gt; {
+<span class="kw">fn </span>parse_domain_id(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;DomainId, ParseIntError&gt; {
     s.parse::&lt;u32&gt;().map(Into::into)
 }
 
-<span class="kw">fn </span>parse_operator_id(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;OperatorId, ParseIntError&gt; {
+<span class="kw">fn </span>parse_operator_id(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;OperatorId, ParseIntError&gt; {
     s.parse::&lt;u64&gt;().map(OperatorId::from)
 }
 
@@ -522,26 +527,8 @@
 
 <span class="kw">impl </span>DomainCli {
     <span class="doccomment">/// Constructs a new instance of [`DomainCli`].
-    </span><span class="kw">pub fn </span>new(
-        consensus_base_path: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
-        domain_args: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
-    ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>cli =
-            DomainCli::parse_from([<span class="self">Self</span>::executable_name()].into_iter().chain(domain_args));
-
-        <span class="comment">// Use `consensus_base_path/domain-{domain_id}` as the domain base path if it&#39;s not
-        // specified explicitly but there is an explicit consensus base path.
-        </span><span class="kw">match </span>consensus_base_path {
-            <span class="prelude-val">Some</span>(c_path) <span class="kw">if </span>cli.run.shared_params.base_path.is_none() =&gt; {
-                cli.run
-                    .shared_params
-                    .base_path
-                    .replace(c_path.join(<span class="macro">format!</span>(<span class="string">&quot;domain-{}&quot;</span>, u32::from(cli.domain_id))));
-            }
-            <span class="kw">_ </span>=&gt; {}
-        }
-
-        cli
+    </span><span class="kw">pub fn </span>new(domain_args: <span class="kw">impl </span>Iterator&lt;Item = String&gt;) -&gt; <span class="self">Self </span>{
+        DomainCli::parse_from([<span class="self">Self</span>::executable_name()].into_iter().chain(domain_args))
     }
 
     <span class="kw">pub fn </span>additional_args(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = String&gt; {
@@ -553,10 +540,30 @@
     <span class="doccomment">/// Creates domain configuration from domain cli.
     </span><span class="kw">pub fn </span>create_domain_configuration(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        base_path: <span class="kw-2">&amp;</span>Path,
         tokio_handle: tokio::runtime::Handle,
     ) -&gt; sc_cli::Result&lt;Configuration&gt; {
-        <span class="kw">let </span>service_config = SubstrateCli::create_configuration(<span class="self">self</span>, <span class="self">self</span>, tokio_handle)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(service_config)
+        <span class="kw">let </span><span class="kw-2">mut </span>domain_config = SubstrateCli::create_configuration(<span class="self">self</span>, <span class="self">self</span>, tokio_handle)<span class="question-mark">?</span>;
+
+        <span class="comment">// Change default paths to Subspace structure
+        </span>{
+            <span class="kw">let </span>domain_base_path = base_path.join(<span class="self">self</span>.domain_id.to_string());
+            domain_config.database = DatabaseSource::ParityDb {
+                path: domain_base_path.join(<span class="string">&quot;db&quot;</span>),
+            };
+            domain_config.keystore = KeystoreConfig::Path {
+                path: domain_base_path.join(<span class="string">&quot;keystore&quot;</span>),
+                password: <span class="kw">match </span>domain_config.keystore {
+                    KeystoreConfig::Path { password, .. } =&gt; password,
+                    KeystoreConfig::InMemory =&gt; <span class="prelude-val">None</span>,
+                },
+            };
+            <span class="comment">// Network directory is shared with consensus chain
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(net_config_path) = <span class="kw-2">&amp;mut </span>domain_config.network.net_config_path {
+                <span class="kw-2">*</span>net_config_path = base_path.join(<span class="string">&quot;network&quot;</span>);
+            }
+        }
+        <span class="prelude-val">Ok</span>(domain_config)
     }
 }
 
@@ -591,7 +598,7 @@
         <span class="number">2022
     </span>}
 
-    <span class="kw">fn </span>load_spec(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;Box&lt;<span class="kw">dyn </span>ChainSpec&gt;, String&gt; {
+    <span class="kw">fn </span>load_spec(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>ChainSpec&gt;, String&gt; {
         <span class="comment">// TODO: Fetch the runtime name of `self.domain_id` properly.
         </span><span class="kw">let </span>runtime_name = <span class="string">&quot;evm&quot;</span>;
         <span class="kw">match </span>runtime_name {
@@ -632,11 +639,11 @@
         <span class="self">self</span>.run.keystore_params()
     }
 
-    <span class="kw">fn </span>base_path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;BasePath&gt;&gt; {
+    <span class="kw">fn </span>base_path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;BasePath&gt;&gt; {
         <span class="self">self</span>.shared_params().base_path()
     }
 
-    <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, default_listen_port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt; {
+    <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, default_listen_port: u16) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt; {
         <span class="self">self</span>.run.rpc_addr(default_listen_port)
     }
 
@@ -644,15 +651,15 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         default_listen_port: u16,
         chain_spec: <span class="kw-2">&amp;</span>Box&lt;<span class="kw">dyn </span>ChainSpec&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PrometheusConfig&gt;&gt; {
+    ) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;PrometheusConfig&gt;&gt; {
         <span class="self">self</span>.run.prometheus_config(default_listen_port, chain_spec)
     }
 
-    <span class="kw">fn </span>chain_id(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
+    <span class="kw">fn </span>chain_id(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; sc_cli::Result&lt;String&gt; {
         <span class="self">self</span>.run.chain_id(is_dev)
     }
 
-    <span class="kw">fn </span>role(<span class="kw-2">&amp;</span><span class="self">self</span>, _is_dev: bool) -&gt; <span class="prelude-ty">Result</span>&lt;sc_service::Role&gt; {
+    <span class="kw">fn </span>role(<span class="kw-2">&amp;</span><span class="self">self</span>, _is_dev: bool) -&gt; sc_cli::Result&lt;sc_service::Role&gt; {
         <span class="kw">if </span><span class="self">self</span>.run.validator {
             <span class="kw">return </span><span class="prelude-val">Err</span>(sc_cli::Error::Input(
                 <span class="string">&quot;use `--operator-id` argument to run as operator&quot;</span>.to_string(),
@@ -669,54 +676,57 @@
         })
     }
 
-    <span class="kw">fn </span>transaction_pool(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; <span class="prelude-ty">Result</span>&lt;sc_service::config::TransactionPoolOptions&gt; {
+    <span class="kw">fn </span>transaction_pool(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        is_dev: bool,
+    ) -&gt; sc_cli::Result&lt;sc_service::config::TransactionPoolOptions&gt; {
         <span class="self">self</span>.run.transaction_pool(is_dev)
     }
 
-    <span class="kw">fn </span>trie_cache_maximum_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt; {
+    <span class="kw">fn </span>trie_cache_maximum_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt; {
         <span class="self">self</span>.run.trie_cache_maximum_size()
     }
 
-    <span class="kw">fn </span>rpc_methods(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;sc_service::config::RpcMethods&gt; {
+    <span class="kw">fn </span>rpc_methods(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;sc_service::config::RpcMethods&gt; {
         <span class="self">self</span>.run.rpc_methods()
     }
 
-    <span class="kw">fn </span>rpc_max_connections(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u32&gt; {
+    <span class="kw">fn </span>rpc_max_connections(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;u32&gt; {
         <span class="self">self</span>.run.rpc_max_connections()
     }
 
-    <span class="kw">fn </span>rpc_cors(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;String&gt;&gt;&gt; {
+    <span class="kw">fn </span>rpc_cors(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;String&gt;&gt;&gt; {
         <span class="self">self</span>.run.rpc_cors(is_dev)
     }
 
-    <span class="kw">fn </span>default_heap_pages(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;u64&gt;&gt; {
+    <span class="kw">fn </span>default_heap_pages(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;u64&gt;&gt; {
         <span class="self">self</span>.run.default_heap_pages()
     }
 
-    <span class="kw">fn </span>force_authoring(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+    <span class="kw">fn </span>force_authoring(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;bool&gt; {
         <span class="self">self</span>.run.force_authoring()
     }
 
-    <span class="kw">fn </span>disable_grandpa(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+    <span class="kw">fn </span>disable_grandpa(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;bool&gt; {
         <span class="self">self</span>.run.disable_grandpa()
     }
 
-    <span class="kw">fn </span>max_runtime_instances(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt; {
+    <span class="kw">fn </span>max_runtime_instances(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;&gt; {
         <span class="self">self</span>.run.max_runtime_instances()
     }
 
-    <span class="kw">fn </span>announce_block(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+    <span class="kw">fn </span>announce_block(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; sc_cli::Result&lt;bool&gt; {
         <span class="self">self</span>.run.announce_block()
     }
 
-    <span class="kw">fn </span>dev_key_seed(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;String&gt;&gt; {
+    <span class="kw">fn </span>dev_key_seed(<span class="kw-2">&amp;</span><span class="self">self</span>, is_dev: bool) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;String&gt;&gt; {
         <span class="self">self</span>.run.dev_key_seed(is_dev)
     }
 
     <span class="kw">fn </span>telemetry_endpoints(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         chain_spec: <span class="kw-2">&amp;</span>Box&lt;<span class="kw">dyn </span>ChainSpec&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;sc_telemetry::TelemetryEndpoints&gt;&gt; {
+    ) -&gt; sc_cli::Result&lt;<span class="prelude-ty">Option</span>&lt;sc_telemetry::TelemetryEndpoints&gt;&gt; {
         <span class="self">self</span>.run.telemetry_endpoints(chain_spec)
     }
 }

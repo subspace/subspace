@@ -195,6 +195,31 @@
 <a href="#195" id="195">195</a>
 <a href="#196" id="196">196</a>
 <a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::malicious_bundle_producer::MaliciousBundleProducer;
 <span class="kw">use </span>cross_domain_message_gossip::{ChainTxPoolMsg, Message};
 <span class="kw">use </span>domain_client_operator::{BootstrapResult, OperatorStreams};
@@ -209,12 +234,14 @@
 <span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
 <span class="kw">use </span>sc_consensus_subspace::slot_worker::NewSlotNotification;
 <span class="kw">use </span>sc_network::NetworkPeers;
-<span class="kw">use </span>sc_service::BasePath;
+<span class="kw">use </span>sc_service::config::KeystoreConfig;
+<span class="kw">use </span>sc_service::{BasePath, DatabaseSource};
 <span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
 <span class="kw">use </span>sc_utils::mpsc::{TracingUnboundedReceiver, TracingUnboundedSender};
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_domains::{DomainInstanceData, RuntimeType};
 <span class="kw">use </span>sp_keystore::KeystorePtr;
+<span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_node::domain::{create_configuration, evm_chain_spec, AccountId20, DomainCli};
 <span class="kw">use </span>subspace_runtime::{ExecutorDispatch <span class="kw">as </span>CExecutorDispatch, RuntimeApi <span class="kw">as </span>CRuntimeApi};
@@ -225,6 +252,7 @@
 /// bootstrap result
 </span><span class="kw">pub struct </span>DomainInstanceStarter&lt;CNetwork&gt; {
     <span class="kw">pub </span>domain_cli: DomainCli,
+    <span class="kw">pub </span>base_path: PathBuf,
     <span class="kw">pub </span>tokio_handle: tokio::runtime::Handle,
     <span class="kw">pub </span>consensus_client: Arc&lt;CFullClient&lt;CRuntimeApi, CExecutorDispatch&gt;&gt;,
     <span class="kw">pub </span>consensus_keystore: KeystorePtr,
@@ -259,6 +287,7 @@
 
         <span class="kw">let </span>DomainInstanceStarter {
             domain_cli,
+            base_path,
             tokio_handle,
             consensus_client,
             consensus_keystore,
@@ -272,13 +301,34 @@
         } = <span class="self">self</span>;
 
         <span class="kw">let </span>domain_id = domain_cli.domain_id;
-        <span class="kw">let </span>domain_config = {
+        <span class="kw">let </span><span class="kw-2">mut </span>domain_config = {
             <span class="kw">let </span>chain_id = domain_cli.chain_id(domain_cli.is_dev()<span class="question-mark">?</span>)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>domain_spec = evm_chain_spec::create_domain_spec(chain_id.as_str(), raw_genesis)<span class="question-mark">?</span>;
 
             create_configuration::&lt;<span class="kw">_</span>, DomainCli, DomainCli&gt;(<span class="kw-2">&amp;</span>domain_cli, domain_spec, tokio_handle)<span class="question-mark">?
         </span>};
+
+        <span class="comment">// Change default paths to Subspace structure
+        // TODO: Similar copy-paste exists in `DomainCli::create_domain_configuration()` as well as
+        //  `subspace-node`&#39;s `DomainInstanceStarter` and should be de-duplicated
+        </span>{
+            <span class="kw">let </span>domain_base_path = base_path.join(<span class="string">&quot;domains&quot;</span>).join(domain_id.to_string());
+            domain_config.database = DatabaseSource::ParityDb {
+                path: domain_base_path.join(<span class="string">&quot;db&quot;</span>),
+            };
+            domain_config.keystore = KeystoreConfig::Path {
+                path: domain_base_path.join(<span class="string">&quot;keystore&quot;</span>),
+                password: <span class="kw">match </span>domain_config.keystore {
+                    KeystoreConfig::Path { password, .. } =&gt; password,
+                    KeystoreConfig::InMemory =&gt; <span class="prelude-val">None</span>,
+                },
+            };
+            <span class="comment">// Network directory is shared with consensus chain
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(net_config_path) = <span class="kw-2">&amp;mut </span>domain_config.network.net_config_path {
+                <span class="kw-2">*</span>net_config_path = base_path.join(<span class="string">&quot;network&quot;</span>);
+            }
+        }
 
         <span class="kw">let </span>block_importing_notification_stream = || {
             block_importing_notification_stream.subscribe().then(

@@ -265,6 +265,31 @@
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
 </pre></div><pre class="rust"><code><span class="kw">use super</span>::{evm_chain_spec, DomainCli};
 <span class="kw">use </span><span class="kw">crate</span>::domain::AccountId20;
 <span class="kw">use </span>cross_domain_message_gossip::{ChainTxPoolMsg, Message};
@@ -281,10 +306,12 @@
 <span class="kw">use </span>sc_consensus_subspace::notification::SubspaceNotificationStream;
 <span class="kw">use </span>sc_consensus_subspace::slot_worker::NewSlotNotification;
 <span class="kw">use </span>sc_network::NetworkPeers;
-<span class="kw">use </span>sc_service::{BasePath, Configuration};
+<span class="kw">use </span>sc_service::config::KeystoreConfig;
+<span class="kw">use </span>sc_service::{BasePath, Configuration, DatabaseSource};
 <span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
 <span class="kw">use </span>sc_utils::mpsc::{TracingUnboundedReceiver, TracingUnboundedSender};
 <span class="kw">use </span>sp_domains::{DomainInstanceData, RuntimeType};
+<span class="kw">use </span>std::path::PathBuf;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_runtime::{ExecutorDispatch <span class="kw">as </span>CExecutorDispatch, RuntimeApi <span class="kw">as </span>CRuntimeApi};
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block <span class="kw">as </span>CBlock;
@@ -294,6 +321,7 @@
 /// bootstrap result
 </span><span class="kw">pub struct </span>DomainInstanceStarter&lt;CNetwork&gt; {
     <span class="kw">pub </span>domain_cli: DomainCli,
+    <span class="kw">pub </span>base_path: PathBuf,
     <span class="kw">pub </span>tokio_handle: tokio::runtime::Handle,
     <span class="kw">pub </span>consensus_client: Arc&lt;CFullClient&lt;CRuntimeApi, CExecutorDispatch&gt;&gt;,
     <span class="kw">pub </span>consensus_offchain_tx_pool_factory: OffchainTransactionPoolFactory&lt;CBlock&gt;,
@@ -313,7 +341,7 @@
     <span class="kw">pub async fn </span>start(
         <span class="self">self</span>,
         bootstrap_result: BootstrapResult&lt;CBlock&gt;,
-    ) -&gt; std::result::Result&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="kw">let </span>BootstrapResult {
             domain_instance_data,
             domain_created_at,
@@ -327,6 +355,7 @@
 
         <span class="kw">let </span>DomainInstanceStarter {
             domain_cli,
+            base_path,
             tokio_handle,
             consensus_client,
             consensus_offchain_tx_pool_factory,
@@ -339,13 +368,34 @@
         } = <span class="self">self</span>;
 
         <span class="kw">let </span>domain_id = domain_cli.domain_id;
-        <span class="kw">let </span>domain_config = {
+        <span class="kw">let </span><span class="kw-2">mut </span>domain_config = {
             <span class="kw">let </span>chain_id = domain_cli.chain_id(domain_cli.is_dev()<span class="question-mark">?</span>)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>domain_spec = evm_chain_spec::create_domain_spec(chain_id.as_str(), raw_genesis)<span class="question-mark">?</span>;
 
             create_configuration::&lt;<span class="kw">_</span>, DomainCli, DomainCli&gt;(<span class="kw-2">&amp;</span>domain_cli, domain_spec, tokio_handle)<span class="question-mark">?
         </span>};
+
+        <span class="comment">// Change default paths to Subspace structure
+        // TODO: Similar copy-paste exists in `DomainCli::create_domain_configuration()` and should
+        //  be de-duplicated
+        </span>{
+            <span class="kw">let </span>domain_base_path = base_path.join(<span class="string">&quot;domains&quot;</span>).join(domain_id.to_string());
+            domain_config.database = DatabaseSource::ParityDb {
+                path: domain_base_path.join(<span class="string">&quot;db&quot;</span>),
+            };
+            domain_config.keystore = KeystoreConfig::Path {
+                path: domain_base_path.join(<span class="string">&quot;keystore&quot;</span>),
+                password: <span class="kw">match </span>domain_config.keystore {
+                    KeystoreConfig::Path { password, .. } =&gt; password,
+                    KeystoreConfig::InMemory =&gt; <span class="prelude-val">None</span>,
+                },
+            };
+            <span class="comment">// Network directory is shared with consensus chain
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(net_config_path) = <span class="kw-2">&amp;mut </span>domain_config.network.net_config_path {
+                <span class="kw-2">*</span>net_config_path = base_path.join(<span class="string">&quot;network&quot;</span>);
+            }
+        }
 
         <span class="kw">let </span>block_importing_notification_stream = || {
             block_importing_notification_stream.subscribe().then(
