@@ -825,10 +825,20 @@
 <a href="#825" id="825">825</a>
 <a href="#826" id="826">826</a>
 <a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, SectorPlottingDetails,
     RESERVED_PLOT_METADATA,
 };
+<span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::ThreadPoolManager;
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use crate</span>::{node_client, NodeClient};
 <span class="kw">use </span>async_lock::RwLock;
@@ -837,7 +847,6 @@
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parity_scale_codec::Encode;
-<span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuildError};
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::fs::File;
 <span class="kw">use </span>std::io;
@@ -863,7 +872,8 @@
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::runtime::Handle;
-<span class="kw">use </span>tokio::sync::{broadcast, Semaphore};
+<span class="kw">use </span>tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
+<span class="kw">use </span>tokio::task::yield_now;
 <span class="kw">use </span>tracing::{debug, info, trace, warn, Instrument};
 
 <span class="kw">const </span>FARMER_APP_INFO_RETRY_INTERVAL: Duration = Duration::from_millis(<span class="number">500</span>);
@@ -918,9 +928,6 @@
     <span class="doccomment">/// I/O error occurred
     </span><span class="attr">#[error(<span class="string">&quot;I/O error: {0}&quot;</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
-    <span class="doccomment">/// Failed to create thread pool
-    </span><span class="attr">#[error(<span class="string">&quot;Failed to create thread pool: {0}&quot;</span>)]
-    </span>FailedToCreateThreadPool(<span class="attr">#[from] </span>ThreadPoolBuildError),
     <span class="doccomment">/// Background downloading panicked
     </span><span class="attr">#[error(<span class="string">&quot;Background downloading panicked&quot;</span>)]
     </span>BackgroundDownloadingPanicked,
@@ -945,11 +952,8 @@
     <span class="doccomment">/// Semaphore for part of the plotting when farmer downloads new sector, allows to limit memory
     /// usage of the plotting process, permit will be held until the end of the plotting process
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) downloading_semaphore: Arc&lt;Semaphore&gt;,
-    <span class="doccomment">/// Semaphore for part of the plotting when farmer encodes downloaded sector, should typically
-    /// allow one permit at a time for efficient CPU utilization
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) encoding_semaphore: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>Semaphore,
-    <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool: ThreadPool,
-    <span class="kw">pub</span>(<span class="kw">super</span>) replotting_thread_pool: ThreadPool,
+    <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool_manager: ThreadPoolManager,
+    <span class="kw">pub</span>(<span class="kw">super</span>) replotting_thread_pool_manager: ThreadPoolManager,
     <span class="kw">pub</span>(<span class="kw">super</span>) stop_receiver: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="kw-2">mut </span>broadcast::Receiver&lt;()&gt;,
 }
 
@@ -982,16 +986,16 @@
         modifying_sector_index,
         <span class="kw-2">mut </span>sectors_to_plot_receiver,
         downloading_semaphore,
-        encoding_semaphore,
-        plotting_thread_pool,
-        replotting_thread_pool,
+        plotting_thread_pool_manager,
+        replotting_thread_pool_manager,
         stop_receiver,
     } = plotting_options;
 
     <span class="kw">let </span><span class="kw-2">mut </span>table_generator = PosTable::generator();
 
-    <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_downloaded_sector_fut =
-        <span class="prelude-val">None</span>::&lt;AsyncJoinOnDrop&lt;<span class="prelude-ty">Result</span>&lt;DownloadedSector, plotting::PlottingError&gt;&gt;&gt;;
+    <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_downloaded_sector_fut = <span class="prelude-val">None</span>::&lt;
+        AsyncJoinOnDrop&lt;<span class="prelude-ty">Result</span>&lt;(OwnedSemaphorePermit, DownloadedSector), plotting::PlottingError&gt;&gt;,
+    &gt;;
     <span class="kw">while let </span><span class="prelude-val">Some</span>(sector_to_plot) = sectors_to_plot_receiver.next().<span class="kw">await </span>{
         <span class="kw">let </span>SectorToPlot {
             sector_index,
@@ -1054,12 +1058,17 @@
             <span class="kw">break </span>farmer_app_info;
         };
 
-        <span class="kw">let </span>downloaded_sector =
+        <span class="kw">let </span>(_downloading_permit, downloaded_sector) =
             <span class="kw">if let </span><span class="prelude-val">Some</span>(downloaded_sector_fut) = maybe_next_downloaded_sector_fut.take() {
                 downloaded_sector_fut
                     .<span class="kw">await
                     </span>.map_err(|_error| PlottingError::BackgroundDownloadingPanicked)<span class="question-mark">??
             </span>} <span class="kw">else </span>{
+                <span class="kw">let </span>downloading_permit = Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore)
+                    .acquire_owned()
+                    .<span class="kw">await
+                    </span>.map_err(plotting::PlottingError::from)<span class="question-mark">?</span>;
+
                 <span class="kw">let </span>downloaded_sector_fut = download_sector(DownloadSectorOptions {
                     public_key: <span class="kw-2">&amp;</span>public_key,
                     sector_index,
@@ -1070,20 +1079,25 @@
                     farmer_protocol_info: farmer_app_info.protocol_info,
                     kzg,
                     pieces_in_sector,
-                    downloading_semaphore: <span class="prelude-val">Some</span>(Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore)),
                 });
-                downloaded_sector_fut.<span class="kw">await</span><span class="question-mark">?
-            </span>};
+
+                (downloading_permit, downloaded_sector_fut.<span class="kw">await</span><span class="question-mark">?</span>)
+            };
 
         <span class="comment">// Initiate downloading of pieces for the next segment index if already known
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(sector_index) = next_segment_index_hint {
             <span class="kw">let </span>piece_getter = piece_getter.clone();
-            <span class="kw">let </span>downloading_semaphore = <span class="prelude-val">Some</span>(Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore));
+            <span class="kw">let </span>downloading_semaphore = Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore);
             <span class="kw">let </span>kzg = kzg.clone();
 
             maybe_next_downloaded_sector_fut.replace(AsyncJoinOnDrop::new(
                 tokio::spawn(
                     <span class="kw">async move </span>{
+                        <span class="kw">let </span>downloading_permit = downloading_semaphore
+                            .acquire_owned()
+                            .<span class="kw">await
+                            </span>.map_err(plotting::PlottingError::from)<span class="question-mark">?</span>;
+
                         <span class="kw">let </span>downloaded_sector_fut = download_sector(DownloadSectorOptions {
                             public_key: <span class="kw-2">&amp;</span>public_key,
                             sector_index,
@@ -1094,10 +1108,10 @@
                             farmer_protocol_info: farmer_app_info.protocol_info,
                             kzg: <span class="kw-2">&amp;</span>kzg,
                             pieces_in_sector,
-                            downloading_semaphore,
                         });
-                        downloaded_sector_fut.<span class="kw">await
-                    </span>}
+
+                        <span class="prelude-val">Ok</span>((downloading_permit, downloaded_sector_fut.<span class="kw">await</span><span class="question-mark">?</span>))
+                    }
                     .in_current_span(),
                 ),
                 <span class="bool-val">true</span>,
@@ -1126,7 +1140,6 @@
                                 pieces_in_sector,
                                 sector_output: <span class="kw-2">&amp;mut </span>sector,
                                 sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
-                                encoding_semaphore: <span class="prelude-val">Some</span>(encoding_semaphore),
                                 table_generator: <span class="kw-2">&amp;mut </span>table_generator,
                             },
                         ));
@@ -1147,11 +1160,16 @@
                 })
             };
 
-            <span class="kw">let </span>plotting_result = <span class="kw">if </span>replotting {
-                replotting_thread_pool.install(plotting_fn)
+            <span class="kw">let </span>thread_pool = <span class="kw">if </span>replotting {
+                replotting_thread_pool_manager.get_thread_pool()
             } <span class="kw">else </span>{
-                plotting_thread_pool.install(plotting_fn)
+                plotting_thread_pool_manager.get_thread_pool()
             };
+
+            <span class="comment">// Give a chance to interrupt plotting if necessary
+            </span>yield_now().<span class="kw">await</span>;
+
+            <span class="kw">let </span>plotting_result = thread_pool.install(plotting_fn);
 
             <span class="kw">if </span><span class="macro">matches!</span>(plotting_result, <span class="prelude-val">Err</span>(PlottingError::FarmIsShuttingDown)) {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
