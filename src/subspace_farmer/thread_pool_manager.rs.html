@@ -95,41 +95,60 @@
 <a href="#95" id="95">95</a>
 <a href="#96" id="96">96</a>
 <a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>parking_lot::{Condvar, Mutex};
 <span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuildError};
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::ops::Deref;
 <span class="kw">use </span>std::sync::Arc;
 
+<span class="doccomment">/// A wrapper around thread pool pair for plotting purposes
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>PlottingThreadPoolPair {
+    <span class="kw">pub </span>plotting: ThreadPool,
+    <span class="kw">pub </span>replotting: ThreadPool,
+}
+
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Inner {
-    thread_pools: Vec&lt;ThreadPool&gt;,
+    thread_pool_pairs: Vec&lt;PlottingThreadPoolPair&gt;,
 }
 
-<span class="doccomment">/// Wrapper around [`ThreadPool`] that on `Drop` will return thread pool back into corresponding
-/// [`ThreadPoolManager`].
+<span class="doccomment">/// Wrapper around [`PlottingThreadPoolPair`] that on `Drop` will return thread pool back into corresponding
+/// [`PlottingThreadPoolManager`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ThreadPoolGuard {
+</span><span class="kw">pub struct </span>PlottingThreadPoolsGuard {
     inner: Arc&lt;(Mutex&lt;Inner&gt;, Condvar)&gt;,
-    thread_pool: <span class="prelude-ty">Option</span>&lt;ThreadPool&gt;,
+    thread_pool_pair: <span class="prelude-ty">Option</span>&lt;PlottingThreadPoolPair&gt;,
 }
 
-<span class="kw">impl </span>Deref <span class="kw">for </span>ThreadPoolGuard {
-    <span class="kw">type </span>Target = ThreadPool;
+<span class="kw">impl </span>Deref <span class="kw">for </span>PlottingThreadPoolsGuard {
+    <span class="kw">type </span>Target = PlottingThreadPoolPair;
 
     <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
-        <span class="self">self</span>.thread_pool
+        <span class="self">self</span>.thread_pool_pair
             .as_ref()
             .expect(<span class="string">&quot;Value exists until `Drop`; qed&quot;</span>)
     }
 }
 
-<span class="kw">impl </span>Drop <span class="kw">for </span>ThreadPoolGuard {
+<span class="kw">impl </span>Drop <span class="kw">for </span>PlottingThreadPoolsGuard {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">let </span>(mutex, cvar) = <span class="kw-2">&amp;*</span><span class="self">self</span>.inner;
         <span class="kw">let </span><span class="kw-2">mut </span>inner = mutex.lock();
-        inner.thread_pools.push(
-            <span class="self">self</span>.thread_pool
+        inner.thread_pool_pairs.push(
+            <span class="self">self</span>.thread_pool_pair
                 .take()
                 .expect(<span class="string">&quot;Happens only once in `Drop`; qed&quot;</span>),
         );
@@ -137,33 +156,38 @@
     }
 }
 
-<span class="doccomment">/// Thread pool manager.
+<span class="doccomment">/// Plotting thread pool manager.
 ///
-/// This abstraction wraps a set of thread pools and allows to use them one at a time.
+/// This abstraction wraps a set of thread pool pairs and allows to use them one at a time.
+///
+/// Each pair contains one thread pool for plotting purposes and one for replotting, this is because
+/// they&#39;ll share the same set of CPU cores in most cases and wit would be inefficient to use them
+/// concurrently.
 ///
 /// For example on machine with 64 logical cores and 4 NUMA nodes it would be recommended to create
-/// 4 thread pools with 16 threads each, which would mean work done within thread pool is tied to
-/// that thread pool.
+/// 4 thread pools with 16 threads each plotting thread pool and 8 threads in each replotting thread
+/// pool, which would mean work done within thread pool is tied to CPU cores dedicated for that
+/// thread pool.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>ThreadPoolManager {
+</span><span class="kw">pub struct </span>PlottingThreadPoolManager {
     inner: Arc&lt;(Mutex&lt;Inner&gt;, Condvar)&gt;,
 }
 
-<span class="kw">impl </span>ThreadPoolManager {
+<span class="kw">impl </span>PlottingThreadPoolManager {
     <span class="doccomment">/// Create new thread pool manager by instantiating `thread_pools` thread pools using
     /// `create_thread_pool`.
     ///
     /// `create_thread_pool` takes one argument `thread_pool_index`.
     </span><span class="kw">pub fn </span>new&lt;C&gt;(
-        create_thread_pool: C,
-        thread_pools: NonZeroUsize,
+        create_thread_pools: C,
+        thread_pool_pairs: NonZeroUsize,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ThreadPoolBuildError&gt;
     <span class="kw">where
-        </span>C: FnMut(usize) -&gt; <span class="prelude-ty">Result</span>&lt;ThreadPool, ThreadPoolBuildError&gt;,
+        </span>C: FnMut(usize) -&gt; <span class="prelude-ty">Result</span>&lt;PlottingThreadPoolPair, ThreadPoolBuildError&gt;,
     {
         <span class="kw">let </span>inner = Inner {
-            thread_pools: (<span class="number">0</span>..thread_pools.get())
-                .map(create_thread_pool)
+            thread_pool_pairs: (<span class="number">0</span>..thread_pool_pairs.get())
+                .map(create_thread_pools)
                 .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
         };
 
@@ -172,23 +196,23 @@
         })
     }
 
-    <span class="doccomment">/// Get one of inner thread pools, will block until one is available if needed
+    <span class="doccomment">/// Get one of inner thread pool pairs, will block until one is available if needed
     </span><span class="attr">#[must_use]
-    </span><span class="kw">pub fn </span>get_thread_pool(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ThreadPoolGuard {
+    </span><span class="kw">pub fn </span>get_thread_pools(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlottingThreadPoolsGuard {
         <span class="kw">let </span>(mutex, cvar) = <span class="kw-2">&amp;*</span><span class="self">self</span>.inner;
         <span class="kw">let </span><span class="kw-2">mut </span>inner = mutex.lock();
 
-        <span class="kw">let </span>thread_pool = inner.thread_pools.pop().unwrap_or_else(|| {
+        <span class="kw">let </span>thread_pool_pair = inner.thread_pool_pairs.pop().unwrap_or_else(|| {
             cvar.wait(<span class="kw-2">&amp;mut </span>inner);
 
-            inner.thread_pools.pop().expect(
+            inner.thread_pool_pairs.pop().expect(
                 <span class="string">&quot;Guaranteed by parking_lot&#39;s API to happen when thread pool is inserted; qed&quot;</span>,
             )
         });
 
-        ThreadPoolGuard {
+        PlottingThreadPoolsGuard {
             inner: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
-            thread_pool: <span class="prelude-val">Some</span>(thread_pool),
+            thread_pool_pair: <span class="prelude-val">Some</span>(thread_pool_pair),
         }
     }
 }

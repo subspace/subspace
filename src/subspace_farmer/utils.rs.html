@@ -382,6 +382,32 @@
 <a href="#382" id="382">382</a>
 <a href="#383" id="383">383</a>
 <a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farmer_piece_getter;
 <span class="kw">pub mod </span>piece_validator;
 <span class="kw">pub mod </span>readers_and_pieces;
@@ -389,11 +415,11 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
-<span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::ThreadPoolManager;
+<span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::{PlottingThreadPoolManager, PlottingThreadPoolPair};
 <span class="kw">use </span>futures::channel::oneshot;
 <span class="kw">use </span>futures::channel::oneshot::Canceled;
 <span class="kw">use </span>futures::future::Either;
-<span class="kw">use </span>rayon::{ThreadBuilder, ThreadPoolBuildError, ThreadPoolBuilder};
+<span class="kw">use </span>rayon::{ThreadBuilder, ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::ops::Deref;
@@ -624,15 +650,16 @@
     <span class="kw">if let </span><span class="prelude-val">Some</span>(thread_pools) = thread_pools {
         <span class="kw">let </span><span class="kw-2">mut </span>thread_pool_core_indices = Vec::&lt;CpuCoreSet&gt;::with_capacity(thread_pools.get());
 
+        <span class="kw">let </span>total_cpu_cores = all_numa_nodes
+            .iter()
+            .flat_map(|set| set.cpu_cores())
+            .count();
+
         <span class="kw">if let </span><span class="prelude-val">Some</span>(thread_pool_size) = thread_pool_size {
             <span class="comment">// If thread pool size is fixed, loop over all CPU cores as many times as necessary and
             // assign contiguous ranges of CPU cores to corresponding thread pools
 
-            </span><span class="kw">let </span>total_cpu_cores = all_numa_nodes
-                .iter()
-                .flat_map(|set| set.cpu_cores())
-                .count();
-            <span class="kw">for _ in </span><span class="number">0</span>..thread_pools.get() {
+            </span><span class="kw">for _ in </span><span class="number">0</span>..thread_pools.get() {
                 <span class="kw">let </span>cpu_cores_range = <span class="kw">if let </span><span class="prelude-val">Some</span>(last_cpu_index) = thread_pool_core_indices
                     .last()
                     .and_then(|thread_indices| thread_indices.cpu_cores().last())
@@ -657,18 +684,22 @@
                 });
             }
         } <span class="kw">else </span>{
-            <span class="comment">// If thread pool size is not fixed, we iterate over all NUMA nodes as many times as
-            // necessary
+            <span class="comment">// If thread pool size is not fixed, create threads pools with `total_cpu_cores/thread_pools` threads
 
-            </span><span class="kw">for </span>thread_pool_index <span class="kw">in </span><span class="number">0</span>..thread_pools.get() {
-                thread_pool_core_indices.push(CpuCoreSet {
-                    cores: all_numa_nodes[thread_pool_index % all_numa_nodes.len()]
-                        .cores
-                        .clone(),
+            </span><span class="kw">let </span>all_cpu_cores = all_numa_nodes
+                .iter()
+                .flat_map(|cpu_core_set| cpu_core_set.cores.iter())
+                .copied()
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+
+            thread_pool_core_indices = all_cpu_cores
+                .chunks_exact(total_cpu_cores / thread_pools)
+                .map(|cpu_cores| CpuCoreSet {
+                    cores: cpu_cores.to_vec(),
                     <span class="attr">#[cfg(feature = <span class="string">&quot;numa&quot;</span>)]
                     </span>topology: topology.clone(),
-                });
-            }
+                })
+                .collect();
         }
         thread_pool_core_indices
     } <span class="kw">else </span>{
@@ -677,47 +708,68 @@
     }
 }
 
-<span class="doccomment">/// Creates thread pools for each of CPU core set with number of threads corresponding to number of cores in
-/// each set and pins threads to all of those CPU cores (all at once, not thread per core). Each thread will
-/// also have Tokio context available.
+<span class="kw">fn </span>create_plotting_thread_pool_manager_thread_pool_pair(
+    thread_prefix: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str,
+    thread_pool_index: usize,
+    cpu_core_set: CpuCoreSet,
+) -&gt; <span class="prelude-ty">Result</span>&lt;ThreadPool, ThreadPoolBuildError&gt; {
+    ThreadPoolBuilder::new()
+        .thread_name(<span class="kw">move </span>|thread_index| {
+            <span class="macro">format!</span>(<span class="string">&quot;{thread_prefix}-{thread_pool_index}.{thread_index}&quot;</span>)
+        })
+        .num_threads(cpu_core_set.cpu_cores().len())
+        .spawn_handler({
+            <span class="kw">let </span>handle = Handle::current();
+
+            rayon_custom_spawn_handler(<span class="kw">move </span>|thread| {
+                <span class="kw">let </span>cpu_core_set = cpu_core_set.clone();
+                <span class="kw">let </span>handle = handle.clone();
+
+                <span class="kw">move </span>|| {
+                    cpu_core_set.pin_current_thread();
+                    drop(cpu_core_set);
+
+                    <span class="kw">let </span>_guard = handle.enter();
+
+                    task::block_in_place(|| thread.run())
+                }
+            })
+        })
+        .build()
+}
+
+<span class="doccomment">/// Creates thread pool pairs for each of CPU core set pair with number of plotting and replotting threads corresponding
+/// to number of cores in each set and pins threads to all of those CPU cores (each thread to all cors in a set, not
+/// thread per core). Each thread will also have Tokio context available.
 ///
 /// The easiest way to obtain CPUs is using [`all_cpu_cores`], but [`thread_pool_core_indices`] in case
-/// support for user customizations is desired.
-</span><span class="kw">pub fn </span>create_tokio_thread_pool_manager_for_pinned_nodes(
-    thread_prefix: <span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str,
-    <span class="kw-2">mut </span>cpu_core_sets: Vec&lt;CpuCoreSet&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ThreadPoolManager, ThreadPoolBuildError&gt; {
+/// support for user customizations is desired. They will then have to be composed into pairs for this function.
+</span><span class="kw">pub fn </span>create_plotting_thread_pool_manager&lt;I&gt;(
+    <span class="kw-2">mut </span>cpu_core_sets: I,
+) -&gt; <span class="prelude-ty">Result</span>&lt;PlottingThreadPoolManager, ThreadPoolBuildError&gt;
+<span class="kw">where
+    </span>I: ExactSizeIterator&lt;Item = (CpuCoreSet, CpuCoreSet)&gt;,
+{
     <span class="kw">let </span>total_thread_pools = cpu_core_sets.len();
 
-    ThreadPoolManager::new(
+    PlottingThreadPoolManager::new(
         |thread_pool_index| {
-            <span class="kw">let </span>cpu_core_set = cpu_core_sets
-                .pop()
+            <span class="kw">let </span>(plotting_cpu_core_set, replotting_cpu_core_set) = cpu_core_sets
+                .next()
                 .expect(<span class="string">&quot;Number of thread pools is the same as cpu core sets; qed&quot;</span>);
 
-            ThreadPoolBuilder::new()
-                .thread_name(<span class="kw">move </span>|thread_index| {
-                    <span class="macro">format!</span>(<span class="string">&quot;{thread_prefix}-{thread_pool_index}.{thread_index}&quot;</span>)
-                })
-                .num_threads(cpu_core_set.cpu_cores().len())
-                .spawn_handler({
-                    <span class="kw">let </span>handle = Handle::current();
-
-                    rayon_custom_spawn_handler(<span class="kw">move </span>|thread| {
-                        <span class="kw">let </span>cpu_core_set = cpu_core_set.clone();
-                        <span class="kw">let </span>handle = handle.clone();
-
-                        <span class="kw">move </span>|| {
-                            cpu_core_set.pin_current_thread();
-                            drop(cpu_core_set);
-
-                            <span class="kw">let </span>_guard = handle.enter();
-
-                            task::block_in_place(|| thread.run())
-                        }
-                    })
-                })
-                .build()
+            <span class="prelude-val">Ok</span>(PlottingThreadPoolPair {
+                plotting: create_plotting_thread_pool_manager_thread_pool_pair(
+                    <span class="string">&quot;plotting&quot;</span>,
+                    thread_pool_index,
+                    plotting_cpu_core_set,
+                )<span class="question-mark">?</span>,
+                replotting: create_plotting_thread_pool_manager_thread_pool_pair(
+                    <span class="string">&quot;replotting&quot;</span>,
+                    thread_pool_index,
+                    replotting_cpu_core_set,
+                )<span class="question-mark">?</span>,
+            })
         },
         NonZeroUsize::new(total_thread_pools)
             .expect(<span class="string">&quot;Thread pool is guaranteed to be non-empty; qed&quot;</span>),

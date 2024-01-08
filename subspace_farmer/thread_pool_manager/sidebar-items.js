@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ThreadPoolGuard","ThreadPoolManager"]};
+window.SIDEBAR_ITEMS = {"struct":["PlottingThreadPoolManager","PlottingThreadPoolPair","PlottingThreadPoolsGuard"]};
