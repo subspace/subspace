@@ -17,11 +17,14 @@ use frame_support::{ensure, PalletError};
 use scale_info::TypeInfo;
 use sp_core::Get;
 use sp_domains::{DomainId, EpochIndex, OperatorId, OperatorPublicKey, ZERO_OPERATOR_SIGNING_KEY};
-use sp_runtime::traits::{CheckedAdd, CheckedSub, One, Zero};
+#[cfg(any(not(feature = "runtime-benchmarks"), test))]
+use sp_runtime::traits::One;
+use sp_runtime::traits::{CheckedAdd, CheckedSub, Zero};
 use sp_runtime::{Perbill, Percent, Saturating};
 use sp_std::collections::btree_map::BTreeMap;
 use sp_std::collections::btree_set::BTreeSet;
 use sp_std::iter::Iterator;
+#[cfg(any(not(feature = "runtime-benchmarks"), test))]
 use sp_std::vec::IntoIter;
 
 /// A nominators deposit.
@@ -924,6 +927,7 @@ pub(crate) fn do_unlock_operator<T: Config>(operator_id: OperatorId) -> Result<(
 }
 
 /// Distribute the reward to the operators equally and drop any dust to treasury.
+#[cfg(any(not(feature = "runtime-benchmarks"), test))]
 pub(crate) fn do_reward_operators<T: Config>(
     domain_id: DomainId,
     operators: IntoIter<OperatorId>,

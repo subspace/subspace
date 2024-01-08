@@ -3,7 +3,7 @@
 use super::*;
 use crate::alloc::borrow::ToOwned;
 use crate::domain_registry::DomainConfig;
-use crate::staking::{do_reward_operators, OperatorConfig, OperatorStatus};
+use crate::staking::{OperatorConfig, OperatorStatus};
 use crate::staking_epoch::{do_finalize_domain_current_epoch, do_finalize_domain_epoch_staking};
 use crate::Pallet as Domains;
 use frame_benchmarking::v2::*;
@@ -13,6 +13,7 @@ use frame_support::traits::Hooks;
 use frame_support::weights::Weight;
 use frame_system::{Pallet as System, RawOrigin};
 use sp_core::crypto::UncheckedFrom;
+use sp_domains::storage::RawGenesis;
 use sp_domains::{
     dummy_opaque_bundle, DomainId, ExecutionReceipt, OperatorAllowList, OperatorId,
     OperatorPublicKey, RuntimeType,
@@ -33,8 +34,11 @@ mod benchmarks {
     fn submit_bundle() {
         let block_tree_pruning_depth = T::BlockTreePruningDepth::get().saturated_into::<u32>();
         let domain_id = register_domain::<T>();
-        let (_, operator_id) =
-            register_helper_operator::<T>(domain_id, T::Currency::minimum_balance());
+        let (_, operator_id) = register_helper_operator::<T>(
+            domain_id,
+            T::MinNominatorStake::get(),
+            "operator_submit_bundle",
+        );
 
         let mut receipt =
             BlockTree::<T>::get::<_, DomainBlockNumberFor<T>>(domain_id, Zero::zero())
@@ -91,60 +95,53 @@ mod benchmarks {
 
     /// Benchmark pending staking operation with the worst possible conditions:
     /// - There are `MaxPendingStakingOperation` number of pending staking operation
-    /// - All pending staking operation are withdrawal that withdraw partial stake
+    /// - All pending staking operation are operator domain switches that does both operator
+    /// epoch finalization and domain switching.
     #[benchmark]
     fn pending_staking_operation() {
         let max_pending_staking_op = T::MaxPendingStakingOperation::get();
         let epoch_duration = T::StakeEpochDuration::get();
-        let minimum_nominator_stake = T::Currency::minimum_balance();
-        let withdraw_amount = T::MinOperatorStake::get();
-        let operator_rewards =
-            T::Currency::minimum_balance().saturating_mul(BalanceOf::<T>::from(100u32));
 
-        let domain_id = register_domain::<T>();
-        let (_, operator_id) = register_helper_operator::<T>(domain_id, minimum_nominator_stake);
-        do_finalize_domain_current_epoch::<T>(domain_id, 0u32.into())
+        let domain_1_id = register_domain::<T>();
+        let domain_2_id = register_domain::<T>();
+        let operators: Vec<(T::AccountId, OperatorId)> = (1..=max_pending_staking_op)
+            .map(|i| {
+                register_helper_operator_with_index::<T>(
+                    domain_1_id,
+                    T::MinNominatorStake::get(),
+                    "operator_pending_staking",
+                    i,
+                )
+            })
+            .collect();
+
+        // finalize the domain 1 epoch so that operators are registered.
+        do_finalize_domain_current_epoch::<T>(domain_1_id, epoch_duration)
             .expect("finalize domain staking should success");
+        assert_eq!(PendingStakingOperationCount::<T>::get(domain_1_id), 0);
 
-        for i in 0..max_pending_staking_op {
-            let nominator = account("nominator", i, SEED);
-            T::Currency::set_balance(
-                &nominator,
-                withdraw_amount * 2u32.into() + T::Currency::minimum_balance(),
-            );
-            assert_ok!(Domains::<T>::nominate_operator(
-                RawOrigin::Signed(nominator).into(),
-                operator_id,
-                withdraw_amount * 2u32.into(),
-            ));
-        }
-        do_finalize_domain_current_epoch::<T>(domain_id, epoch_duration)
-            .expect("finalize domain staking should success");
-        assert_eq!(PendingStakingOperationCount::<T>::get(domain_id), 0);
+        operators
+            .into_iter()
+            .for_each(|(operator_owner, operator_id)| {
+                assert_ok!(Domains::<T>::switch_domain(
+                    RawOrigin::Signed(operator_owner).into(),
+                    operator_id,
+                    domain_2_id
+                ));
+            });
 
-        for i in 0..max_pending_staking_op {
-            let nominator = account("nominator", i, SEED);
-            assert_ok!(Domains::<T>::withdraw_stake(
-                RawOrigin::Signed(nominator).into(),
-                operator_id,
-                withdraw_amount.into(),
-            ));
-        }
         assert_eq!(
-            PendingStakingOperationCount::<T>::get(domain_id) as u32,
+            PendingStakingOperationCount::<T>::get(domain_1_id) as u32,
             max_pending_staking_op
         );
 
         #[block]
         {
-            do_reward_operators::<T>(domain_id, vec![operator_id].into_iter(), operator_rewards)
-                .expect("reward operator should success");
-
-            do_finalize_domain_current_epoch::<T>(domain_id, epoch_duration * 2u32.into())
+            do_finalize_domain_current_epoch::<T>(domain_1_id, epoch_duration * 2u32.into())
                 .expect("finalize domain staking should success");
         }
 
-        assert_eq!(PendingStakingOperationCount::<T>::get(domain_id), 0);
+        assert_eq!(PendingStakingOperationCount::<T>::get(domain_1_id), 0);
     }
 
     #[benchmark]
@@ -153,13 +150,14 @@ mod benchmarks {
             include_bytes!("../res/evm_domain_test_runtime.compact.compressed.wasm").to_vec();
         let runtime_id = NextRuntimeId::<T>::get();
         let runtime_hash = T::Hashing::hash(&runtime_blob);
+        let raw_genesis = RawGenesis::dummy(runtime_blob);
 
         #[extrinsic_call]
         _(
             RawOrigin::Root,
             "evm-domain".to_owned(),
             RuntimeType::Evm,
-            runtime_blob,
+            raw_genesis.encode(),
         );
 
         let runtime_obj = RuntimeRegistry::<T>::get(runtime_id).expect("runtime object must exist");
@@ -174,6 +172,7 @@ mod benchmarks {
         let runtime_blob =
             include_bytes!("../res/evm_domain_test_runtime.compact.compressed.wasm").to_vec();
         let runtime_id = NextRuntimeId::<T>::get();
+        let raw_genesis = RawGenesis::dummy(runtime_blob.clone());
 
         // The `runtime_blob` have `spec_version = 1` thus we need to modify the runtime object
         // version to 0 to bypass the `can_upgrade_code` check when calling `upgrade_domain_runtime`
@@ -181,7 +180,7 @@ mod benchmarks {
             RawOrigin::Root.into(),
             "evm-domain".to_owned(),
             RuntimeType::Evm,
-            runtime_blob.clone()
+            raw_genesis.encode()
         ));
         RuntimeRegistry::<T>::mutate(runtime_id, |maybe_runtime_object| {
             let runtime_obj = maybe_runtime_object
@@ -191,7 +190,7 @@ mod benchmarks {
         });
 
         #[extrinsic_call]
-        _(RawOrigin::Root, runtime_id, runtime_blob.clone());
+        _(RawOrigin::Root, runtime_id, raw_genesis.encode());
 
         let scheduled_at = frame_system::Pallet::<T>::current_block_number()
             .checked_add(&T::DomainRuntimeUpgradeDelay::get())
@@ -226,11 +225,11 @@ mod benchmarks {
         };
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(creator.clone()), domain_config.clone());
+        _(RawOrigin::Root, domain_config.clone());
 
         let domain_obj = DomainRegistry::<T>::get(domain_id).expect("domain object must exist");
         assert_eq!(domain_obj.domain_config, domain_config);
-        assert_eq!(domain_obj.owner_account_id, creator);
+        assert_eq!(domain_obj.owner_account_id, T::SudoId::get());
         assert!(DomainStakingSummary::<T>::get(domain_id).is_some());
         assert!(
             BlockTree::<T>::get::<_, DomainBlockNumberFor<T>>(domain_id, Zero::zero()).is_some(),
@@ -250,7 +249,7 @@ mod benchmarks {
         let operator_id = NextOperatorId::<T>::get();
         let operator_config = OperatorConfig {
             signing_key: OperatorPublicKey::unchecked_from([1u8; 32]),
-            minimum_nominator_stake: T::Currency::minimum_balance(),
+            minimum_nominator_stake: T::MinNominatorStake::get(),
             nomination_tax: Default::default(),
         };
 
@@ -281,14 +280,18 @@ mod benchmarks {
     #[benchmark]
     fn nominate_operator() {
         let nominator = account("nominator", 1, SEED);
-        let minimum_nominator_stake = T::Currency::minimum_balance();
+        let minimum_nominator_stake = T::MinNominatorStake::get();
         T::Currency::set_balance(
             &nominator,
             minimum_nominator_stake * 2u32.into() + T::Currency::minimum_balance(),
         );
 
         let domain_id = register_domain::<T>();
-        let (_, operator_id) = register_helper_operator::<T>(domain_id, minimum_nominator_stake);
+        let (_, operator_id) = register_helper_operator::<T>(
+            domain_id,
+            minimum_nominator_stake,
+            "operator_nominate_operator",
+        );
 
         // Add one more pending deposit
         assert_ok!(Domains::<T>::nominate_operator(
@@ -310,8 +313,11 @@ mod benchmarks {
         let domain1_id = register_domain::<T>();
         let domain2_id = register_domain::<T>();
 
-        let (operator_owner, operator_id) =
-            register_helper_operator::<T>(domain1_id, T::Currency::minimum_balance());
+        let (operator_owner, operator_id) = register_helper_operator::<T>(
+            domain1_id,
+            T::MinNominatorStake::get(),
+            "operator_switch_domain",
+        );
 
         #[extrinsic_call]
         _(
@@ -332,8 +338,11 @@ mod benchmarks {
     fn deregister_operator() {
         let domain_id = register_domain::<T>();
 
-        let (operator_owner, operator_id) =
-            register_helper_operator::<T>(domain_id, T::Currency::minimum_balance());
+        let (operator_owner, operator_id) = register_helper_operator::<T>(
+            domain_id,
+            T::MinNominatorStake::get(),
+            "operator_deregister_operator",
+        );
 
         #[extrinsic_call]
         _(RawOrigin::Signed(operator_owner.clone()), operator_id);
@@ -341,7 +350,7 @@ mod benchmarks {
         let operator = Operators::<T>::get(operator_id).expect("operator must exist");
         assert_eq!(
             operator.status,
-            OperatorStatus::Deregistered((domain_id, 0).into())
+            OperatorStatus::Deregistered((domain_id, 1).into())
         );
     }
 
@@ -352,7 +361,7 @@ mod benchmarks {
     #[benchmark]
     fn withdraw_stake() {
         let nominator = account("nominator", 1, SEED);
-        let minimum_nominator_stake = T::Currency::minimum_balance();
+        let minimum_nominator_stake = T::MinNominatorStake::get();
         let withdraw_amount = T::MinOperatorStake::get();
         T::Currency::set_balance(
             &nominator,
@@ -360,7 +369,11 @@ mod benchmarks {
         );
 
         let domain_id = register_domain::<T>();
-        let (_, operator_id) = register_helper_operator::<T>(domain_id, minimum_nominator_stake);
+        let (_, operator_id) = register_helper_operator::<T>(
+            domain_id,
+            minimum_nominator_stake,
+            "operator_withdraw_stake",
+        );
         assert_ok!(Domains::<T>::nominate_operator(
             RawOrigin::Signed(nominator.clone()).into(),
             operator_id,
@@ -400,12 +413,13 @@ mod benchmarks {
             include_bytes!("../res/evm_domain_test_runtime.compact.compressed.wasm").to_vec();
         let runtime_id = NextRuntimeId::<T>::get();
         let runtime_hash = T::Hashing::hash(&runtime_blob);
+        let raw_genesis = RawGenesis::dummy(runtime_blob);
 
         assert_ok!(Domains::<T>::register_domain_runtime(
             RawOrigin::Root.into(),
             "evm-domain".to_owned(),
             RuntimeType::Evm,
-            runtime_blob,
+            raw_genesis.encode(),
         ));
 
         let runtime_obj = RuntimeRegistry::<T>::get(runtime_id).expect("runtime object must exist");
@@ -416,7 +430,7 @@ mod benchmarks {
     }
 
     fn register_domain<T: Config>() -> DomainId {
-        let creator = account("creator", 1, SEED);
+        let creator = T::SudoId::get();
         T::Currency::set_balance(
             &creator,
             T::DomainInstantiationDeposit::get() + T::Currency::minimum_balance(),
@@ -435,7 +449,7 @@ mod benchmarks {
         };
 
         assert_ok!(Domains::<T>::instantiate_domain(
-            RawOrigin::Signed(creator.clone()).into(),
+            RawOrigin::Root.into(),
             domain_config.clone(),
         ));
 
@@ -446,19 +460,24 @@ mod benchmarks {
         domain_id
     }
 
-    fn register_helper_operator<T: Config>(
+    fn register_helper_operator_with_index<T: Config>(
         domain_id: DomainId,
         minimum_nominator_stake: BalanceOf<T>,
+        operator_account_name: &'static str,
+        operator_account_index: u32,
     ) -> (T::AccountId, OperatorId) {
-        let operator_account = account("operator", 1, SEED);
+        let operator_account = account(operator_account_name, operator_account_index, SEED);
         T::Currency::set_balance(
             &operator_account,
             T::MinOperatorStake::get() + T::Currency::minimum_balance(),
         );
 
         let operator_id = NextOperatorId::<T>::get();
+        // since we are running in single externalities, clean up signing key
+        let pub_key = OperatorPublicKey::unchecked_from([operator_account_index as u8; 32]);
+        OperatorSigningKey::<T>::remove(pub_key.clone());
         let operator_config = OperatorConfig {
-            signing_key: OperatorPublicKey::unchecked_from([1u8; 32]),
+            signing_key: pub_key,
             minimum_nominator_stake,
             nomination_tax: Default::default(),
         };
@@ -478,6 +497,19 @@ mod benchmarks {
         assert_eq!(operator.signing_key, operator_config.signing_key);
 
         (operator_account, operator_id)
+    }
+
+    fn register_helper_operator<T: Config>(
+        domain_id: DomainId,
+        minimum_nominator_stake: BalanceOf<T>,
+        operator_account_name: &'static str,
+    ) -> (T::AccountId, OperatorId) {
+        register_helper_operator_with_index::<T>(
+            domain_id,
+            minimum_nominator_stake,
+            operator_account_name,
+            1,
+        )
     }
 
     fn run_to_block<T: Config>(block_number: BlockNumberFor<T>, parent_hash: T::Hash) {
