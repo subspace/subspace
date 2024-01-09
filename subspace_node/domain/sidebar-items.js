@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["DomainSubcommand"],"fn":["create_configuration"],"mod":["evm_chain_spec"],"struct":["DomainCli","DomainInstanceStarter"],"type":["AccountId20"]};
