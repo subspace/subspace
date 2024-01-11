@@ -9,7 +9,7 @@ var srcIndex = JSON.parse('{\
 "domain_eth_service":["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]],\
 "domain_pallet_executive":["",[],["lib.rs","weights.rs"]],\
 "domain_runtime_primitives":["",[],["lib.rs"]],\
-"domain_service":["",[],["domain.rs","lib.rs","providers.rs","rpc.rs","transaction_pool.rs"]],\
+"domain_service":["",[],["config.rs","domain.rs","lib.rs","providers.rs","rpc.rs","transaction_pool.rs"]],\
 "domain_test_primitives":["",[],["lib.rs"]],\
 "domain_test_service":["",[],["chain_spec.rs","domain.rs","keyring.rs","lib.rs"]],\
 "evm_domain_runtime":["",[],["lib.rs","precompiles.rs"]],\
