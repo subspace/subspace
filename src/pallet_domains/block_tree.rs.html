@@ -956,6 +956,50 @@
 <a href="#956" id="956">956</a>
 <a href="#957" id="957">957</a>
 <a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::StateRoots;
@@ -989,6 +1033,7 @@
     MaxHeadDomainNumber,
     MissingDomainBlock,
     InvalidTraceRoot,
+    InvalidExecutionTrace,
     UnavailableConsensusBlockHash,
 }
 
@@ -1136,6 +1181,11 @@
             Error::BadGenesisReceipt
         );
         <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+    }
+
+    <span class="comment">// Check if the ER has at least 2 trace root (for Initialization and Finalization of block at least)
+    </span><span class="kw">if </span>execution_trace.len() &lt; <span class="number">2 </span>{
+        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidExecutionTrace);
     }
 
     <span class="comment">// Check if the ER is derived from the correct consensus block in the current chain
@@ -1770,11 +1820,32 @@
             );
 
             <span class="comment">// Receipt with unknown parent receipt
-            </span><span class="kw">let </span><span class="kw-2">mut </span>unknown_parent_receipt = next_receipt;
+            </span><span class="kw">let </span><span class="kw-2">mut </span>unknown_parent_receipt = next_receipt.clone();
             unknown_parent_receipt.parent_domain_block_receipt_hash = H256::random();
             <span class="macro">assert_err!</span>(
                 verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>unknown_parent_receipt),
                 Error::UnknownParentBlockReceipt
+            );
+
+            <span class="comment">// Receipt with execution_trace length less than two
+            </span><span class="kw">let </span><span class="kw-2">mut </span>invalid_execution_trace_receipt = next_receipt;
+
+            <span class="comment">// Receipt with only one element in execution trace vector
+            </span>invalid_execution_trace_receipt.execution_trace = <span class="macro">vec!</span>[invalid_execution_trace_receipt
+                .execution_trace
+                .first()
+                .cloned()
+                .expect(<span class="string">&quot;First element should be there; qed&quot;</span>)];
+            <span class="macro">assert_err!</span>(
+                verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>invalid_execution_trace_receipt),
+                Error::InvalidExecutionTrace
+            );
+
+            <span class="comment">// Receipt with zero element in execution trace vector
+            </span>invalid_execution_trace_receipt.execution_trace = <span class="macro">vec!</span>[];
+            <span class="macro">assert_err!</span>(
+                verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>invalid_execution_trace_receipt),
+                Error::InvalidExecutionTrace
             );
         });
     }
@@ -1787,7 +1858,24 @@
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
         ext.execute_with(|| {
             <span class="kw">let </span>domain_id = register_genesis_domain(creator, <span class="macro">vec!</span>[operator_id1, operator_id2]);
-            <span class="kw">let </span>next_receipt = extend_block_tree_from_zero(domain_id, operator_id1, <span class="number">3</span>);
+            <span class="kw">let </span><span class="kw-2">mut </span>next_receipt = extend_block_tree_from_zero(domain_id, operator_id1, <span class="number">3</span>);
+            next_receipt.execution_trace.push(H256::random());
+
+            <span class="kw">let </span><span class="kw-2">mut </span>trace = Vec::with_capacity(next_receipt.execution_trace.len());
+            <span class="kw">for </span>root <span class="kw">in </span><span class="kw-2">&amp;</span>next_receipt.execution_trace {
+                trace.push(
+                    root.encode()
+                        .try_into()
+                        .map_err(|<span class="kw">_</span>| Error::InvalidTraceRoot)
+                        .expect(<span class="string">&quot;H256 to Blake3Hash should be successful; qed&quot;</span>),
+                );
+            }
+            <span class="kw">let </span>new_execution_trace_root = MerkleTree::from_leaves(trace.as_slice())
+                .root()
+                .expect(<span class="string">&quot;Compute merkle root of trace should success&quot;</span>)
+                .into();
+            next_receipt.execution_trace_root = new_execution_trace_root;
+            <span class="macro">assert_ok!</span>(verify_execution_receipt::&lt;Test&gt;(domain_id, <span class="kw-2">&amp;</span>next_receipt));
 
             <span class="comment">// Receipt with wrong value of `execution_trace_root`
             </span><span class="kw">let </span><span class="kw-2">mut </span>invalid_receipt = next_receipt.clone();

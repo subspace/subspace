@@ -568,6 +568,22 @@
 <a href="#568" id="568">568</a>
 <a href="#569" id="569">569</a>
 <a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::aux_schema::BundleMismatchType;
 <span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::{Decode, Encode};
@@ -584,16 +600,23 @@
 <span class="kw">use </span>sp_domains::{DomainId, DomainsApi, ExtrinsicDigest, HeaderHashingFor, InvalidBundleType};
 <span class="kw">use </span>sp_domains_fraud_proof::execution_prover::ExecutionProver;
 <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::{
-    ExecutionPhase, FraudProof, InvalidBundlesFraudProof, InvalidDomainBlockHashProof,
-    InvalidExtrinsicsRootProof, InvalidStateTransitionProof, InvalidTotalRewardsProof,
-    ValidBundleDigest,
+    ApplyExtrinsicMismatch, ExecutionPhase, FinalizeBlockMismatch, FraudProof,
+    InvalidBundlesFraudProof, InvalidDomainBlockHashProof, InvalidExtrinsicsRootProof,
+    InvalidStateTransitionProof, InvalidTotalRewardsProof, ValidBundleDigest,
 };
 <span class="kw">use </span>sp_runtime::generic::BlockId;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, HashingFor, Header <span class="kw">as </span>HeaderT, NumberFor};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, NumberFor};
 <span class="kw">use </span>sp_runtime::{Digest, DigestItem};
-<span class="kw">use </span>sp_trie::{LayoutV1, StorageProof};
+<span class="kw">use </span>sp_trie::LayoutV1;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
+
+<span class="attr">#[derive(Copy, Clone, PartialEq, Debug)]
+</span><span class="kw">pub enum </span>TraceDiffType {
+    Shorter,
+    Longer,
+    Mismatch,
+}
 
 <span class="doccomment">/// Error type for fraud proof generation.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
@@ -945,8 +968,9 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>generate_invalid_state_transition_proof(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         domain_id: DomainId,
-        local_trace_index: u32,
+        execution_phase: ExecutionPhase,
         local_receipt: <span class="kw-2">&amp;</span>ExecutionReceiptFor&lt;Block, CBlock&gt;,
+        bad_receipt_trace_length: usize,
         bad_receipt_hash: Block::Hash,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;FraudProofFor&lt;CBlock, Block::Header&gt;, FraudProofError&gt; {
         <span class="kw">let </span>block_hash = local_receipt.domain_block_hash;
@@ -962,81 +986,78 @@
             )],
         };
 
-        <span class="kw">let </span>invalid_state_transition_proof = <span class="kw">if </span>local_trace_index == <span class="number">0 </span>{
-            <span class="comment">// `initialize_block` execution proof.
-            </span><span class="kw">let </span>new_header = Block::Header::new(
-                block_number,
-                Default::default(),
-                Default::default(),
-                parent_header.hash(),
-                inherent_digests,
-            );
-            <span class="kw">let </span>execution_phase = ExecutionPhase::InitializeBlock;
-            <span class="kw">let </span>initialize_block_call_data = new_header.encode();
+        <span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(block_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span>max_extrinsic_index = extrinsics.len() - <span class="number">1</span>;
+        <span class="kw">let </span>encoded_extrinsics: Vec&lt;<span class="kw">_</span>&gt; = extrinsics.iter().map(Encode::encode).collect();
 
-            <span class="kw">let </span>proof = prover.prove_execution::&lt;sp_trie::PrefixedMemoryDB&lt;HashingFor&lt;Block&gt;&gt;&gt;(
-                parent_header.hash(),
-                <span class="kw-2">&amp;</span>execution_phase,
-                <span class="kw-2">&amp;</span>initialize_block_call_data,
+        <span class="kw">let </span>block_builder = BlockBuilder::new(
+            <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
+            parent_header.hash(),
+            <span class="kw-2">*</span>parent_header.number(),
+            RecordProof::No,
+            inherent_digests.clone(),
+            <span class="kw-2">&amp;*</span><span class="self">self</span>.backend,
+            extrinsics.into(),
+            <span class="prelude-val">None</span>,
+        )<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>(storage_changes, call_data) = <span class="kw">match </span><span class="kw-2">&amp;</span>execution_phase {
+            ExecutionPhase::InitializeBlock =&gt; (
                 <span class="prelude-val">None</span>,
-            )<span class="question-mark">?</span>;
+                Block::Header::new(
+                    block_number,
+                    Default::default(),
+                    Default::default(),
+                    parent_header.hash(),
+                    inherent_digests,
+                )
+                .encode(),
+            ),
+            ExecutionPhase::ApplyExtrinsic { mismatch, .. } =&gt; {
+                <span class="kw">let </span>extrinsic_index = <span class="kw">match </span>mismatch {
+                    ApplyExtrinsicMismatch::StateRoot(trace_mismatch_index) =&gt; {
+                        (trace_mismatch_index - <span class="number">1</span>) <span class="kw">as </span>usize
+                    }
+                    ApplyExtrinsicMismatch::Shorter =&gt; (bad_receipt_trace_length - <span class="number">1</span>) - <span class="number">1</span>,
+                };
 
-            InvalidStateTransitionProof {
-                domain_id,
-                bad_receipt_hash,
-                proof,
-                execution_phase,
+                <span class="kw">let </span>target_extrinsic = encoded_extrinsics.get(extrinsic_index).ok_or(
+                    FraudProofError::OutOfBoundsExtrinsicIndex {
+                        index: extrinsic_index,
+                        max: max_extrinsic_index,
+                    },
+                )<span class="question-mark">?</span>;
+
+                (
+                    <span class="prelude-val">Some</span>(block_builder.prepare_storage_changes_before(extrinsic_index)<span class="question-mark">?</span>),
+                    target_extrinsic.clone(),
+                )
             }
-        } <span class="kw">else if </span>local_trace_index <span class="kw">as </span>usize == local_receipt.execution_trace.len() - <span class="number">1 </span>{
-            <span class="comment">// `finalize_block` execution proof.
-            </span><span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(block_hash)<span class="question-mark">?</span>;
-            <span class="kw">let </span>execution_phase = ExecutionPhase::FinalizeBlock;
-            <span class="kw">let </span>finalize_block_call_data = Vec::new();
-            <span class="kw">let </span>block_builder = BlockBuilder::new(
-                <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
-                parent_header.hash(),
-                <span class="kw-2">*</span>parent_header.number(),
-                RecordProof::No,
-                inherent_digests,
-                <span class="kw-2">&amp;*</span><span class="self">self</span>.backend,
-                extrinsics.into(),
-                <span class="prelude-val">None</span>,
-            )<span class="question-mark">?</span>;
-            <span class="kw">let </span>storage_changes = block_builder.prepare_storage_changes_before_finalize_block()<span class="question-mark">?</span>;
+            ExecutionPhase::FinalizeBlock { .. } =&gt; (
+                <span class="prelude-val">Some</span>(block_builder.prepare_storage_changes_before_finalize_block()<span class="question-mark">?</span>),
+                Vec::new(),
+            ),
+        };
 
-            <span class="kw">let </span>delta = storage_changes.transaction;
-            <span class="kw">let </span>post_delta_root = storage_changes.transaction_storage_root;
+        <span class="kw">let </span>delta_changes = storage_changes.map(|storage_changes| {
+            (
+                storage_changes.transaction,
+                storage_changes.transaction_storage_root,
+            )
+        });
 
-            <span class="kw">let </span>proof = prover.prove_execution(
-                parent_header.hash(),
-                <span class="kw-2">&amp;</span>execution_phase,
-                <span class="kw-2">&amp;</span>finalize_block_call_data,
-                <span class="prelude-val">Some</span>((delta, post_delta_root)),
-            )<span class="question-mark">?</span>;
+        <span class="kw">let </span>execution_proof = prover.prove_execution(
+            parent_header.hash(),
+            <span class="kw-2">&amp;</span>execution_phase,
+            call_data.as_slice(),
+            delta_changes,
+        )<span class="question-mark">?</span>;
 
-            InvalidStateTransitionProof {
-                domain_id,
-                bad_receipt_hash,
-                proof,
-                execution_phase,
-            }
-        } <span class="kw">else </span>{
-            <span class="comment">// Regular extrinsic execution proof.
-            </span><span class="kw">let </span>(proof, execution_phase) = <span class="self">self</span>.create_extrinsic_execution_proof(
-                local_trace_index,
-                <span class="kw-2">&amp;</span>parent_header,
-                block_hash,
-                <span class="kw-2">&amp;</span>prover,
-                inherent_digests,
-            )<span class="question-mark">?</span>;
-
-            <span class="comment">// TODO: proof should be a CompactProof.
-            </span>InvalidStateTransitionProof {
-                domain_id,
-                bad_receipt_hash,
-                proof,
-                execution_phase,
-            }
+        <span class="kw">let </span>invalid_state_transition_proof = InvalidStateTransitionProof {
+            domain_id,
+            bad_receipt_hash,
+            proof: execution_proof,
+            execution_phase,
         };
 
         <span class="prelude-val">Ok</span>(FraudProof::InvalidStateTransition(
@@ -1056,86 +1077,97 @@
         })
     }
 
-    <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="kw">fn </span>create_extrinsic_execution_proof(
+    <span class="kw">fn </span>generate_execution_phase(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        trace_mismatch_index: u32,
-        parent_header: <span class="kw-2">&amp;</span>Block::Header,
-        current_hash: Block::Hash,
-        prover: <span class="kw-2">&amp;</span>ExecutionProver&lt;Block, Backend, E&gt;,
-        digest: Digest,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(StorageProof, ExecutionPhase), FraudProofError&gt; {
-        <span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(current_hash)<span class="question-mark">?</span>;
+        local_receipt_domain_block_hash: &lt;Block <span class="kw">as </span>BlockT&gt;::Hash,
+        local_trace_length: usize,
+        mismatch: (TraceDiffType, u32),
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ExecutionPhase, FraudProofError&gt; {
+        <span class="kw">let </span>extrinsics = <span class="self">self</span>.block_body(local_receipt_domain_block_hash)<span class="question-mark">?</span>;
         <span class="kw">let </span>encoded_extrinsics: Vec&lt;<span class="kw">_</span>&gt; = extrinsics.iter().map(Encode::encode).collect();
 
-        <span class="comment">// There is a trace root of the `initialize_block` in the head of the trace so we
-        // need to minus one to get the correct `extrinsic_index`
-        </span><span class="kw">let </span>extrinsic_index = trace_mismatch_index <span class="kw">as </span>usize - <span class="number">1</span>;
-        <span class="kw">let </span>target_extrinsic = encoded_extrinsics.get(extrinsic_index).ok_or(
-            FraudProofError::OutOfBoundsExtrinsicIndex {
-                index: extrinsic_index,
-                max: extrinsics.len() - <span class="number">1</span>,
-            },
-        )<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>execution_phase = {
-            <span class="kw">let </span>proof_of_inclusion = StorageProofProvider::&lt;
-                LayoutV1&lt;&lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing&gt;,
-            &gt;::generate_enumerated_proof_of_inclusion(
-                encoded_extrinsics.as_slice(),
-                extrinsic_index <span class="kw">as </span>u32,
-            )
-            .ok_or(FraudProofError::FailToGenerateProofOfInclusion)<span class="question-mark">?</span>;
-            ExecutionPhase::ApplyExtrinsic {
-                extrinsic_proof: proof_of_inclusion,
-                mismatch_index: trace_mismatch_index,
+        <span class="kw">match </span>mismatch {
+            (<span class="kw">_</span>, <span class="number">0</span>) =&gt; <span class="prelude-val">Ok</span>(ExecutionPhase::InitializeBlock),
+            (TraceDiffType::Longer, mismatch_trace_index) =&gt; <span class="prelude-val">Ok</span>(ExecutionPhase::FinalizeBlock {
+                mismatch: FinalizeBlockMismatch::Longer(mismatch_trace_index),
+            }),
+            (TraceDiffType::Mismatch, mismatch_trace_index)
+                <span class="kw">if </span>mismatch_trace_index <span class="kw">as </span>usize == local_trace_length - <span class="number">1 </span>=&gt;
+            {
+                <span class="prelude-val">Ok</span>(ExecutionPhase::FinalizeBlock {
+                    mismatch: FinalizeBlockMismatch::StateRoot,
+                })
             }
+            (TraceDiffType::Mismatch, mismatch_trace_index)
+            | (TraceDiffType::Shorter, mismatch_trace_index) =&gt; {
+                <span class="comment">// There is a trace root of the `initialize_block` in the head of the trace so we
+                // need to minus one to get the correct `extrinsic_index`
+                </span><span class="kw">let </span>extrinsic_index = mismatch_trace_index <span class="kw">as </span>usize - <span class="number">1</span>;
+
+                <span class="kw">if </span>extrinsic_index &gt;= encoded_extrinsics.len() {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(FraudProofError::OutOfBoundsExtrinsicIndex {
+                        index: extrinsic_index,
+                        max: encoded_extrinsics.len(),
+                    });
+                }
+
+                <span class="kw">let </span>proof_of_inclusion = StorageProofProvider::&lt;
+                    LayoutV1&lt;&lt;Block::Header <span class="kw">as </span>HeaderT&gt;::Hashing&gt;,
+                &gt;::generate_enumerated_proof_of_inclusion(
+                    encoded_extrinsics.as_slice(),
+                    extrinsic_index <span class="kw">as </span>u32,
+                )
+                .ok_or(FraudProofError::FailToGenerateProofOfInclusion)<span class="question-mark">?</span>;
+
+                <span class="prelude-val">Ok</span>(ExecutionPhase::ApplyExtrinsic {
+                    extrinsic_proof: proof_of_inclusion,
+                    mismatch: <span class="kw">if </span>mismatch.<span class="number">0 </span>== TraceDiffType::Mismatch {
+                        ApplyExtrinsicMismatch::StateRoot(mismatch_trace_index)
+                    } <span class="kw">else </span>{
+                        ApplyExtrinsicMismatch::Shorter
+                    },
+                })
+            }
+        }
+    }
+
+    <span class="doccomment">/// Returns first mismatched ExecutionPhase between the receipts `local` and `other` if any.
+    /// If local trace length &gt; other trace length then we provide storage proof as usual but add a flag in fraud proof
+    /// indicating that this is length mismatch, so we create a storage proof with ApplyExtrinsic execution phase
+    /// and prove that this state transition is valid, that means execution should not stop here.
+    ///
+    /// if other trace length &gt; local trace length then we create a storage proof with FinalizeBlock execution phase
+    /// to prove that it is valid, so that means execution should stop here.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>find_mismatched_execution_phase(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        local_receipt_domain_block_hash: &lt;Block <span class="kw">as </span>BlockT&gt;::Hash,
+        local_trace: <span class="kw-2">&amp;</span>[&lt;Block <span class="kw">as </span>BlockT&gt;::Hash],
+        other_trace: <span class="kw-2">&amp;</span>[&lt;Block <span class="kw">as </span>BlockT&gt;::Hash],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;ExecutionPhase&gt;, FraudProofError&gt; {
+        <span class="kw">let </span>state_root_mismatch = local_trace
+            .iter()
+            .enumerate()
+            .zip(other_trace.iter().enumerate())
+            .find_map(|((local_index, local_root), (<span class="kw">_</span>, other_root))| {
+                <span class="kw">if </span>local_root != other_root {
+                    <span class="prelude-val">Some</span>((TraceDiffType::Mismatch, local_index <span class="kw">as </span>u32))
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">None
+                </span>}
+            });
+
+        <span class="kw">let </span>mismatch = <span class="kw">if let </span><span class="prelude-val">Some</span>(mismatch) = state_root_mismatch {
+            mismatch
+        } <span class="kw">else if </span>local_trace.len() &gt; other_trace.len() {
+            (TraceDiffType::Shorter, (other_trace.len() - <span class="number">1</span>) <span class="kw">as </span>u32)
+        } <span class="kw">else if </span>local_trace.len() &lt; other_trace.len() {
+            (TraceDiffType::Longer, (local_trace.len() - <span class="number">1</span>) <span class="kw">as </span>u32)
+        } <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         };
 
-        <span class="kw">let </span>block_builder = BlockBuilder::new(
-            <span class="kw-2">&amp;*</span><span class="self">self</span>.client,
-            parent_header.hash(),
-            <span class="kw-2">*</span>parent_header.number(),
-            RecordProof::No,
-            digest,
-            <span class="kw-2">&amp;*</span><span class="self">self</span>.backend,
-            extrinsics.into(),
-            <span class="prelude-val">None</span>,
-        )<span class="question-mark">?</span>;
-        <span class="kw">let </span>storage_changes = block_builder.prepare_storage_changes_before(extrinsic_index)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>delta = storage_changes.transaction;
-        <span class="kw">let </span>post_delta_root = storage_changes.transaction_storage_root;
-        <span class="kw">let </span>execution_proof = prover.prove_execution(
-            parent_header.hash(),
-            <span class="kw-2">&amp;</span>execution_phase,
-            target_extrinsic,
-            <span class="prelude-val">Some</span>((delta, post_delta_root)),
-        )<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>((execution_proof, execution_phase))
+        <span class="self">self</span>.generate_execution_phase(local_receipt_domain_block_hash, local_trace.len(), mismatch)
+            .map(<span class="prelude-val">Some</span>)
     }
-}
-
-<span class="doccomment">/// Returns the index of first mismatch between the receipts `local` and `other` if any.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>find_trace_mismatch&lt;Hash: Copy + Eq&gt;(
-    local_trace: <span class="kw-2">&amp;</span>[Hash],
-    other_trace: <span class="kw-2">&amp;</span>[Hash],
-) -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
-    local_trace
-        .iter()
-        .enumerate()
-        .zip(other_trace.iter().enumerate())
-        .find_map(|((local_index, local_root), (<span class="kw">_</span>, other_root))| {
-            <span class="kw">if </span>local_root != other_root {
-                <span class="prelude-val">Some</span>(
-                    local_index
-                        .try_into()
-                        .expect(<span class="string">&quot;Trace mismatch index must fit into u32; qed&quot;</span>),
-                )
-            } <span class="kw">else </span>{
-                <span class="prelude-val">None
-            </span>}
-        })
 }
 </code></pre></div></section></main></body></html>
