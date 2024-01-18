@@ -346,6 +346,16 @@
 <a href="#346" id="346">346</a>
 <a href="#347" id="347">347</a>
 <a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
 </span><span class="kw">pub mod </span>config;
@@ -359,7 +369,6 @@
 <span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend, ProofProvider};
 <span class="kw">use </span>sc_consensus::ImportQueue;
-<span class="kw">use </span>sc_executor::NativeElseWasmExecutor;
 <span class="kw">use </span>sc_network::config::Roles;
 <span class="kw">use </span>sc_network::peer_store::PeerStore;
 <span class="kw">use </span>sc_network::NetworkService;
@@ -379,12 +388,24 @@
 <span class="kw">use </span>sp_blockchain::HeaderMetadata;
 <span class="kw">use </span>sp_consensus::block_validation::{Chain, DefaultBlockAnnounceValidator};
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, BlockIdTo, Zero};
-<span class="kw">use </span>std::sync::atomic::Ordering;
 <span class="kw">use </span>std::sync::Arc;
 
+<span class="doccomment">/// Host functions required for Subspace domain
+</span><span class="attr">#[cfg(not(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>))]
+</span><span class="kw">pub type </span>HostFunctions = (sp_io::SubstrateHostFunctions,);
+
+<span class="doccomment">/// Host functions required for Subspace domain
+</span><span class="attr">#[cfg(feature = <span class="string">&quot;runtime-benchmarks&quot;</span>)]
+</span><span class="kw">pub type </span>HostFunctions = (
+    sp_io::SubstrateHostFunctions,
+    frame_benchmarking::benchmarking::HostFunctions,
+);
+
+<span class="doccomment">/// Runtime executor for Subspace domain
+</span><span class="kw">pub type </span>RuntimeExecutor = sc_executor::WasmExecutor&lt;HostFunctions&gt;;
+
 <span class="doccomment">/// Domain full client.
-</span><span class="kw">pub type </span>FullClient&lt;Block, RuntimeApi, ExecutorDispatch&gt; =
-    TFullClient&lt;Block, RuntimeApi, NativeElseWasmExecutor&lt;ExecutorDispatch&gt;&gt;;
+</span><span class="kw">pub type </span>FullClient&lt;Block, RuntimeApi&gt; = TFullClient&lt;Block, RuntimeApi, RuntimeExecutor&gt;;
 
 <span class="kw">pub type </span>FullBackend&lt;Block&gt; = sc_service::TFullBackend&lt;Block&gt;;
 
@@ -432,12 +453,12 @@
     } = params;
 
     <span class="kw">if </span>client.requires_full_sync() {
-        <span class="kw">match </span>config.network.sync_mode.load(Ordering::Acquire) {
+        <span class="kw">match </span>config.network.sync_mode {
             SyncMode::LightState { .. } =&gt; {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">&quot;Fast sync doesn&#39;t work for archive nodes&quot;</span>.into());
             }
             SyncMode::Warp =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">&quot;Warp sync doesn&#39;t work for archive nodes&quot;</span>.into()),
-            SyncMode::Full | SyncMode::Paused =&gt; {}
+            SyncMode::Full =&gt; {}
         }
     }
 
@@ -463,6 +484,18 @@
         block_server.run().<span class="kw">await</span>;
     });
 
+    <span class="comment">// Create `PeerStore` and initialize it with bootnode peer ids.
+    </span><span class="kw">let </span>peer_store = PeerStore::new(
+        net_config
+            .network_config
+            .boot_nodes
+            .iter()
+            .map(|bootnode| bootnode.peer_id)
+            .collect(),
+    );
+    <span class="kw">let </span>peer_store_handle = peer_store.handle();
+    spawn_handle.spawn(<span class="string">&quot;peer-store&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;networking&quot;</span>), peer_store.run());
+
     <span class="kw">let </span>state_request_protocol_config = {
         <span class="comment">// Allow both outgoing and incoming requests.
         </span><span class="kw">let </span>(handler, protocol_config) = StateRequestHandler::new(
@@ -475,7 +508,6 @@
         protocol_config
     };
 
-    <span class="kw">let </span>(tx, rx) = sc_utils::mpsc::tracing_unbounded(<span class="string">&quot;mpsc_syncing_engine_protocol&quot;</span>, <span class="number">100_000</span>);
     <span class="kw">let </span>(engine, sync_service, block_announce_config) = SyncingEngine::new(
         Roles::from(<span class="kw-2">&amp;</span>config.role),
         client.clone(),
@@ -494,7 +526,7 @@
         block_downloader,
         state_request_protocol_config.name.clone(),
         <span class="prelude-val">None</span>,
-        rx,
+        peer_store_handle.clone(),
         <span class="comment">// set to be force_synced always for domains since they relay on Consensus chain to derive and import domain blocks.
         // If not set, each domain node will wait to be fully synced and as a result will not propagate the transactions over network.
         // It would have been ideal to use `Consensus` chain sync service to respond to `is_major_sync` requests but this
@@ -513,28 +545,17 @@
         .expect(<span class="string">&quot;Genesis block exists; qed&quot;</span>);
 
     <span class="comment">// crate transactions protocol and add it to the list of supported protocols of `network_params`
-    </span><span class="kw">let </span>transactions_handler_proto = sc_network_transactions::TransactionsHandlerPrototype::new(
-        protocol_id.clone(),
-        client
-            .block_hash(<span class="number">0u32</span>.into())
-            .ok()
-            .flatten()
-            .expect(<span class="string">&quot;Genesis block exists; qed&quot;</span>),
-        config.chain_spec.fork_id(),
-    );
-    net_config.add_notification_protocol(transactions_handler_proto.set_config());
-
-    <span class="comment">// Create `PeerStore` and initialize it with bootnode peer ids.
-    </span><span class="kw">let </span>peer_store = PeerStore::new(
-        net_config
-            .network_config
-            .boot_nodes
-            .iter()
-            .map(|bootnode| bootnode.peer_id)
-            .collect(),
-    );
-    <span class="kw">let </span>peer_store_handle = peer_store.handle();
-    spawn_handle.spawn(<span class="string">&quot;peer-store&quot;</span>, <span class="prelude-val">Some</span>(<span class="string">&quot;networking&quot;</span>), peer_store.run());
+    </span><span class="kw">let </span>(transactions_handler_proto, transactions_config) =
+        sc_network_transactions::TransactionsHandlerPrototype::new(
+            protocol_id.clone(),
+            client
+                .block_hash(<span class="number">0u32</span>.into())
+                .ok()
+                .flatten()
+                .expect(<span class="string">&quot;Genesis block exists; qed&quot;</span>),
+            config.chain_spec.fork_id(),
+        );
+    net_config.add_notification_protocol(transactions_config);
 
     <span class="kw">let </span>network_params = sc_network::config::Params::&lt;TBl&gt; {
         role: config.role.clone(),
@@ -554,7 +575,6 @@
             .as_ref()
             .map(|config| config.registry.clone()),
         block_announce_config,
-        tx,
     };
 
     <span class="kw">let </span>has_bootnodes = !network_params

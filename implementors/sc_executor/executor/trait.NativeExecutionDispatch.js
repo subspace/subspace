@@ -1,6 +1,0 @@
-(function() {var implementors = {
-"domain_test_service":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"domain_test_service/domain/struct.EVMDomainExecutorDispatch.html\" title=\"struct domain_test_service::domain::EVMDomainExecutorDispatch\">EVMDomainExecutorDispatch</a>"]],
-"evm_domain_runtime":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"evm_domain_runtime/struct.ExecutorDispatch.html\" title=\"struct evm_domain_runtime::ExecutorDispatch\">ExecutorDispatch</a>"]],
-"subspace_runtime":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"subspace_runtime/struct.ExecutorDispatch.html\" title=\"struct subspace_runtime::ExecutorDispatch\">ExecutorDispatch</a>"]],
-"subspace_test_client":[["impl NativeExecutionDispatch for <a class=\"struct\" href=\"subspace_test_client/struct.TestExecutorDispatch.html\" title=\"struct subspace_test_client::TestExecutorDispatch\">TestExecutorDispatch</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

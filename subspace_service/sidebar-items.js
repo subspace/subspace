@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error"],"fn":["new_full","new_partial"],"mod":["config","dsn","rpc","transaction_pool"],"struct":["NewFull","OtherPartialComponents"],"type":["FullBackend","FullClient","FullSelectChain"]};
+window.SIDEBAR_ITEMS = {"enum":["Error"],"fn":["new_full","new_partial"],"mod":["config","dsn","rpc","transaction_pool"],"struct":["NewFull","OtherPartialComponents"],"type":["FullBackend","FullClient","FullSelectChain","HostFunctions","RuntimeExecutor"]};
