@@ -2349,10 +2349,6 @@
 <a href="#2349" id="2349">2349</a>
 <a href="#2350" id="2350">2350</a>
 <a href="#2351" id="2351">2351</a>
-<a href="#2352" id="2352">2352</a>
-<a href="#2353" id="2353">2353</a>
-<a href="#2354" id="2354">2354</a>
-<a href="#2355" id="2355">2355</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking for domains
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::{
@@ -2376,6 +2372,7 @@
 <span class="kw">use </span>sp_runtime::{Perbill, Percent, Saturating};
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
+<span class="kw">use </span>sp_std::collections::vec_deque::VecDeque;
 <span class="kw">use </span>sp_std::iter::Iterator;
 <span class="kw">use </span>sp_std::vec::IntoIter;
 
@@ -2403,17 +2400,20 @@
 
     <span class="doccomment">/// Converts stake to shares based on the share price
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>stake_to_shares&lt;T: Config&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, stake: BalanceOf&lt;T&gt;) -&gt; T::Share {
-        <span class="self">self</span>.<span class="number">0</span>.mul_floor(stake).into()
+        <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.is_one() {
+            stake.into()
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.<span class="number">0</span>.mul_floor(stake).into()
+        }
     }
 
     <span class="doccomment">/// Converts shares to stake based on the share price
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>shares_to_stake&lt;T: Config&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, shares: T::Share) -&gt; BalanceOf&lt;T&gt; {
-        <span class="self">self</span>.<span class="number">0</span>.saturating_reciprocal_mul_floor(shares.into())
-    }
-
-    <span class="doccomment">/// Returns true if the share price is one
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_one(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.<span class="number">0</span>.is_one()
+        <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.is_one() {
+            shares.into()
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.<span class="number">0</span>.saturating_reciprocal_mul_floor(shares.into())
+        }
     }
 }
 
@@ -2447,11 +2447,15 @@
 }
 
 <span class="doccomment">/// A nominator&#39;s withdrawal from a given operator pool.
-</span><span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Withdrawal&lt;Share, DomainBlockNumber&gt; {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) allowed_since_domain_epoch: DomainEpoch,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) unlock_at_confirmed_domain_block_number: DomainBlockNumber,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) shares: Share,
+</span><span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq, Default)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Withdrawal&lt;Balance, Share, DomainBlockNumber&gt; {
+    <span class="doccomment">/// Total withdrawal amount requested by the nominator that are in unlocking state excluding withdrawal in shares.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) total_withdrawal_amount: Balance,
+    <span class="doccomment">/// Individual withdrawal amounts with their unlocking block for a given domain
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) withdrawals: VecDeque&lt;(DomainId, DomainBlockNumber, Balance)&gt;,
+    <span class="doccomment">/// Withdrawal that was initiated by nominator and not converted to balance due to
+    /// unfinished domain epoch.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) withdrawal_in_shares: <span class="prelude-ty">Option</span>&lt;(DomainEpoch, DomainBlockNumber, Share)&gt;,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -2683,7 +2687,7 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;DepositInfo&lt;BalanceOf&lt;T&gt;&gt;, Error&gt; {
     Deposits::&lt;T&gt;::try_mutate(operator_id, nominator_id, |maybe_deposit| {
         <span class="kw">let </span><span class="kw-2">mut </span>deposit = maybe_deposit.take().unwrap_or_default();
-        do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, <span class="kw-2">&amp;mut </span>deposit, current_domain_epoch)<span class="question-mark">?</span>;
+        do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, <span class="kw-2">&amp;mut </span>deposit)<span class="question-mark">?</span>;
 
         <span class="comment">// add or create new pending deposit
         </span><span class="kw">let </span>(pending_deposit, deposit_info) = <span class="kw">match </span>deposit.pending {
@@ -2729,19 +2733,14 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_convert_previous_epoch_deposits&lt;T: Config&gt;(
     operator_id: OperatorId,
     deposit: <span class="kw-2">&amp;mut </span>Deposit&lt;T::Share, BalanceOf&lt;T&gt;&gt;,
-    current_domain_epoch: DomainEpoch,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
     <span class="kw">let </span>maybe_pending_deposit = deposit.pending.take();
     <span class="comment">// if it is one of the previous domain epoch, then calculate shares for the epoch and update known deposit
     </span>deposit.pending = <span class="kw">if let </span><span class="prelude-val">Some</span>(PendingDeposit {
                                                 effective_domain_epoch,
                                                 amount,
-                                            }) = maybe_pending_deposit &amp;&amp; effective_domain_epoch != current_domain_epoch
+                                            }) = maybe_pending_deposit &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(epoch_share_price) = OperatorEpochSharePrice::&lt;T&gt;::get(operator_id, effective_domain_epoch)
     {
-        <span class="kw">let </span>epoch_share_price =
-            OperatorEpochSharePrice::&lt;T&gt;::get(operator_id, effective_domain_epoch)
-                .ok_or(Error::MissingOperatorEpochSharePrice)<span class="question-mark">?</span>;
-
         <span class="kw">let </span>new_shares = epoch_share_price.stake_to_shares::&lt;T&gt;(amount);
         deposit.known.shares = deposit
             .known
@@ -2752,6 +2751,32 @@
     </span>} <span class="kw">else </span>{
         maybe_pending_deposit
     };
+
+    <span class="prelude-val">Ok</span>(())
+}
+
+<span class="doccomment">/// Converts any epoch withdrawals into balance using the operator epoch share price.
+/// If there is no share price available, this will be no-op
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_convert_previous_epoch_withdrawal&lt;T: Config&gt;(
+    operator_id: OperatorId,
+    withdrawal: <span class="kw-2">&amp;mut </span>Withdrawal&lt;BalanceOf&lt;T&gt;, T::Share, DomainBlockNumberFor&lt;T&gt;&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+    <span class="kw">let </span>withdrawal_in_shares = withdrawal.withdrawal_in_shares.take();
+    withdrawal.withdrawal_in_shares =
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_epoch, domain_block_number, shares)) = withdrawal_in_shares &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(epoch_share_price) = OperatorEpochSharePrice::&lt;T&gt;::get(operator_id, domain_epoch){
+            <span class="kw">let </span>withdrawal_amount = epoch_share_price.shares_to_stake::&lt;T&gt;(shares);
+            withdrawal.total_withdrawal_amount = withdrawal
+                .total_withdrawal_amount
+                .checked_add(<span class="kw-2">&amp;</span>withdrawal_amount)
+                .ok_or(Error::BalanceOverflow)<span class="question-mark">?</span>;
+            <span class="kw">let </span>(domain_id, <span class="kw">_</span>) = domain_epoch.deconstruct();
+            withdrawal
+                .withdrawals
+                .push_back((domain_id, domain_block_number, withdrawal_amount));
+            <span class="prelude-val">None
+        </span>} <span class="kw">else </span>{
+            withdrawal_in_shares
+        };
 
     <span class="prelude-val">Ok</span>(())
 }
@@ -2976,7 +3001,15 @@
 
         Deposits::&lt;T&gt;::try_mutate(operator_id, nominator_id.clone(), |maybe_deposit| {
             <span class="kw">let </span>deposit = maybe_deposit.as_mut().ok_or(Error::InsufficientShares)<span class="question-mark">?</span>;
-            do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, deposit, domain_current_epoch)<span class="question-mark">?</span>;
+            do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, deposit)<span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(())
+        })<span class="question-mark">?</span>;
+
+        Withdrawals::&lt;T&gt;::try_mutate(operator_id, nominator_id.clone(), |maybe_withdrawal| {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(withdrawal) = maybe_withdrawal {
+                do_convert_previous_epoch_withdrawal::&lt;T&gt;(operator_id, withdrawal)<span class="question-mark">?</span>;
+            }
+
             <span class="prelude-val">Ok</span>(())
         })<span class="question-mark">?</span>;
 
@@ -3065,21 +3098,31 @@
                 .checked_add(<span class="kw-2">&amp;</span>T::StakeWithdrawalLockingPeriod::get())
                 .ok_or(Error::BlockNumberOverflow)<span class="question-mark">?</span>;
 
-            Withdrawals::&lt;T&gt;::try_mutate(operator_id, nominator_id, |maybe_withdrawals| {
-                <span class="kw">let </span><span class="kw-2">mut </span>withdrawals = maybe_withdrawals.take().unwrap_or_default();
-                <span class="comment">// if there is an existing withdrawal within the same epoch, then update it instead
-                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(withdrawal) = withdrawals.back_mut() &amp;&amp; withdrawal.allowed_since_domain_epoch == domain_current_epoch {
-                    withdrawal.shares = withdrawal.shares.checked_add(<span class="kw-2">&amp;</span>shares_withdrew).ok_or(Error::ShareOverflow)<span class="question-mark">?</span>;
-                    withdrawal.unlock_at_confirmed_domain_block_number = unlock_at_confirmed_domain_block_number;
-                } <span class="kw">else </span>{
-                    withdrawals.push_back(Withdrawal {
-                        allowed_since_domain_epoch: domain_current_epoch,
-                        unlock_at_confirmed_domain_block_number,
-                        shares: shares_withdrew,
-                    });
-                }
+            Withdrawals::&lt;T&gt;::try_mutate(operator_id, nominator_id, |maybe_withdrawal| {
+                <span class="kw">let </span><span class="kw-2">mut </span>withdrawal = maybe_withdrawal.take().unwrap_or_default();
+                <span class="comment">// if this is some, then the withdrawal was initiated in this current epoch due to conversion
+                // of previous epoch withdrawals from shares to balances above. So just update it instead
+                </span><span class="kw">let </span>withdrawals_in_shares = withdrawal.withdrawal_in_shares.take();
+                withdrawal.withdrawal_in_shares = <span class="prelude-val">Some</span>(
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_epoch, <span class="kw">_</span>, shares)) = withdrawals_in_shares {
+                        <span class="kw">let </span>updated_shares = shares
+                            .checked_add(<span class="kw-2">&amp;</span>shares_withdrew)
+                            .ok_or(Error::ShareOverflow)<span class="question-mark">?</span>;
+                        (
+                            domain_epoch,
+                            unlock_at_confirmed_domain_block_number,
+                            updated_shares,
+                        )
+                    } <span class="kw">else </span>{
+                        (
+                            domain_current_epoch,
+                            unlock_at_confirmed_domain_block_number,
+                            shares_withdrew,
+                        )
+                    },
+                );
 
-                <span class="kw-2">*</span>maybe_withdrawals = <span class="prelude-val">Some</span>(withdrawals);
+                <span class="kw-2">*</span>maybe_withdrawal = <span class="prelude-val">Some</span>(withdrawal);
                 <span class="prelude-val">Ok</span>(())
             })
         })
@@ -3097,35 +3140,29 @@
         Error::OperatorNotRegistered
     );
 
-    Withdrawals::&lt;T&gt;::try_mutate_exists(operator_id, nominator_id.clone(), |maybe_withdrawals| {
-        <span class="kw">let </span>withdrawals = maybe_withdrawals.as_mut().ok_or(Error::MissingWithdrawal)<span class="question-mark">?</span>;
-        <span class="kw">let </span>Withdrawal {
-            allowed_since_domain_epoch,
-            unlock_at_confirmed_domain_block_number,
-            shares,
-        } = withdrawals.pop_front().ok_or(Error::MissingWithdrawal)<span class="question-mark">?</span>;
+    Withdrawals::&lt;T&gt;::try_mutate_exists(operator_id, nominator_id.clone(), |maybe_withdrawal| {
+        <span class="kw">let </span>withdrawal = maybe_withdrawal.as_mut().ok_or(Error::MissingWithdrawal)<span class="question-mark">?</span>;
+        do_convert_previous_epoch_withdrawal::&lt;T&gt;(operator_id, withdrawal)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(domain_id, unlock_at_confirmed_domain_block_number, amount_to_unlock) = withdrawal
+            .withdrawals
+            .pop_front()
+            .ok_or(Error::MissingWithdrawal)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(domain_id, <span class="kw">_</span>) = allowed_since_domain_epoch.deconstruct();
         <span class="kw">let </span>latest_confirmed_block_number = LatestConfirmedDomainBlockNumber::&lt;T&gt;::get(domain_id);
         <span class="macro">ensure!</span>(
             unlock_at_confirmed_domain_block_number &lt;= latest_confirmed_block_number,
             Error::UnlockPeriodNotComplete
         );
 
+        <span class="comment">// deduct the amount unlocked from total
+        </span>withdrawal.total_withdrawal_amount = withdrawal
+            .total_withdrawal_amount
+            .checked_sub(<span class="kw-2">&amp;</span>amount_to_unlock)
+            .ok_or(Error::BalanceUnderflow)<span class="question-mark">?</span>;
+
         <span class="kw">let </span>staked_hold_id = T::HoldIdentifier::staking_staked(operator_id);
         <span class="kw">let </span>locked_amount = T::Currency::balance_on_hold(<span class="kw-2">&amp;</span>staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
-        <span class="kw">let </span>amount_to_unlock: BalanceOf&lt;T&gt; = {
-            <span class="kw">let </span>epoch_share_price =
-                OperatorEpochSharePrice::&lt;T&gt;::get(operator_id, allowed_since_domain_epoch)
-                    .ok_or(Error::MissingOperatorEpochSharePrice)<span class="question-mark">?</span>;
-
-            <span class="comment">// if the share price is one, just convert shares to ssc
-            </span><span class="kw">let </span>amount_to_unlock = <span class="kw">if </span>epoch_share_price.is_one() {
-                shares.into()
-            } <span class="kw">else </span>{
-                epoch_share_price.shares_to_stake::&lt;T&gt;(shares)
-            };
-
+        <span class="kw">let </span>amount_to_release: BalanceOf&lt;T&gt; = {
             <span class="comment">// if the amount to release is more than currently locked,
             // mint the diff and release the rest
             </span><span class="kw">if let </span><span class="prelude-val">Some</span>(amount_to_mint) = amount_to_unlock.checked_sub(<span class="kw-2">&amp;</span>locked_amount) {
@@ -3140,14 +3177,14 @@
         T::Currency::release(
             <span class="kw-2">&amp;</span>staked_hold_id,
             <span class="kw-2">&amp;</span>nominator_id,
-            amount_to_unlock,
+            amount_to_release,
             Precision::Exact,
         )
         .map_err(|<span class="kw">_</span>| Error::RemoveLock)<span class="question-mark">?</span>;
 
         <span class="comment">// if there are no withdrawals, then delete the storage as well
-        </span><span class="kw">if </span>withdrawals.is_empty() {
-            <span class="kw-2">*</span>maybe_withdrawals = <span class="prelude-val">None</span>;
+        </span><span class="kw">if </span>withdrawal.withdrawals.is_empty() &amp;&amp; withdrawal.withdrawal_in_shares.is_none() {
+            <span class="kw-2">*</span>maybe_withdrawal = <span class="prelude-val">None</span>;
             <span class="comment">// if there is no deposit or pending deposits, then clean up the deposit state as well
             </span>Deposits::&lt;T&gt;::mutate_exists(operator_id, nominator_id, |maybe_deposit| {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(deposit) = maybe_deposit &amp;&amp; deposit.known.shares.is_zero() &amp;&amp; deposit.pending.is_none() {
@@ -3158,54 +3195,6 @@
 
         <span class="prelude-val">Ok</span>(amount_to_unlock)
     })
-}
-
-<span class="doccomment">/// Converts shares to ssc based on the OPerator epoch share price
-/// if the share price is not available, then return the shares as is
-</span><span class="kw">fn </span>convert_shares_to_ssc&lt;T: Config&gt;(
-    operator_id: OperatorId,
-    domain_epoch: DomainEpoch,
-    shares: T::Share,
-) -&gt; (BalanceOf&lt;T&gt;, T::Share) {
-    <span class="kw">match </span>OperatorEpochSharePrice::&lt;T&gt;::get(operator_id, domain_epoch) {
-        <span class="prelude-val">None </span>=&gt; (Zero::zero(), shares),
-        <span class="prelude-val">Some</span>(epoch_share_price) =&gt; {
-            <span class="comment">// if the share price is one, just convert shares to ssc
-            </span>(
-                <span class="kw">if </span>epoch_share_price.is_one() {
-                    shares.into()
-                } <span class="kw">else </span>{
-                    epoch_share_price.shares_to_stake::&lt;T&gt;(shares)
-                },
-                Zero::zero(),
-            )
-        }
-    }
-}
-<span class="comment">// If there are any withdrawals for previous epoch, then calculate the SSC for those shares
-// using the share price at which the withdraw was initiated.
-// If there are any withdrawals during the current epoch, it share price is not calculated yet
-// so just return the shares as is
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>calculate_withdraw_share_ssc&lt;T: Config&gt;(
-    operator_id: OperatorId,
-    nominator_id: NominatorId&lt;T&gt;,
-) -&gt; (BalanceOf&lt;T&gt;, T::Share) {
-    <span class="kw">let </span>withdrawals = Withdrawals::&lt;T&gt;::take(operator_id, nominator_id.clone()).unwrap_or_default();
-    withdrawals.into_iter().fold(
-        (BalanceOf::&lt;T&gt;::zero(), T::Share::zero()),
-        |(total_amount, total_shares), withdraw| {
-            <span class="kw">let </span>(amount, shares) = convert_shares_to_ssc::&lt;T&gt;(
-                operator_id,
-                withdraw.allowed_since_domain_epoch,
-                withdraw.shares,
-            );
-
-            (
-                amount.saturating_add(total_amount),
-                shares.saturating_add(total_shares),
-            )
-        },
-    )
 }
 
 <span class="doccomment">/// Unlocks an already de-registered operator given unlock wait period is complete.
@@ -3239,7 +3228,7 @@
         <span class="kw">let </span>staked_hold_id = T::HoldIdentifier::staking_staked(operator_id);
         Deposits::&lt;T&gt;::drain_prefix(operator_id).try_for_each(|(nominator_id, <span class="kw-2">mut </span>deposit)| {
             <span class="comment">// convert any deposits from the previous epoch to shares
-            </span>do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, <span class="kw-2">&amp;mut </span>deposit, domain_epoch)<span class="question-mark">?</span>;
+            </span>do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, <span class="kw-2">&amp;mut </span>deposit)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>current_locked_amount =
                 T::Currency::balance_on_hold(<span class="kw-2">&amp;</span>staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
@@ -3248,26 +3237,29 @@
             // if the withdrawals has share price noted, then convert them to SSC
             // if no share price, then it must be intitated in the epoch when operator was slashed,
             // so get the shares as is and include them in the total staked shares.
-            </span><span class="kw">let </span>(amount_ready_withdraw, shares_withdrew_in_current_epoch) =
-                calculate_withdraw_share_ssc::&lt;T&gt;(operator_id, nominator_id.clone());
+            </span><span class="kw">let </span>(amount_ready_to_withdraw, shares_withdrew_in_current_epoch) =
+                Withdrawals::&lt;T&gt;::take(operator_id, nominator_id.clone())
+                    .map(|<span class="kw-2">mut </span>withdrawal| {
+                        do_convert_previous_epoch_withdrawal::&lt;T&gt;(operator_id, <span class="kw-2">&amp;mut </span>withdrawal)<span class="question-mark">?</span>;
+                        <span class="prelude-val">Ok</span>((
+                            withdrawal.total_withdrawal_amount,
+                            withdrawal
+                                .withdrawal_in_shares
+                                .map(|(<span class="kw">_</span>, <span class="kw">_</span>, shares)| shares)
+                                .unwrap_or_default(),
+                        ))
+                    })
+                    .unwrap_or(<span class="prelude-val">Ok</span>((Zero::zero(), Zero::zero())))<span class="question-mark">?</span>;
 
             <span class="comment">// include all the known shares and shares that were withdrawn in the current epoch
-            </span><span class="kw">let </span>nominator_shares = <span class="kw">if </span>shares_withdrew_in_current_epoch.is_zero() {
-                deposit.known.shares
-            } <span class="kw">else </span>{
-                deposit
-                    .known
-                    .shares
-                    .checked_add(<span class="kw-2">&amp;</span>shares_withdrew_in_current_epoch)
-                    .ok_or(Error::ShareOverflow)<span class="question-mark">?
-            </span>};
+            </span><span class="kw">let </span>nominator_shares = deposit
+                .known
+                .shares
+                .checked_add(<span class="kw-2">&amp;</span>shares_withdrew_in_current_epoch)
+                .ok_or(Error::ShareOverflow)<span class="question-mark">?</span>;
 
             <span class="comment">// current staked amount
-            </span><span class="kw">let </span>nominator_staked_amount = <span class="kw">if </span>share_price.is_one() {
-                nominator_shares.into()
-            } <span class="kw">else </span>{
-                share_price.shares_to_stake::&lt;T&gt;(nominator_shares)
-            };
+            </span><span class="kw">let </span>nominator_staked_amount = share_price.shares_to_stake::&lt;T&gt;(nominator_shares);
 
             <span class="kw">let </span>amount_deposited_in_previous_epoch = deposit
                 .pending
@@ -3275,7 +3267,7 @@
                 .unwrap_or_default();
 
             <span class="kw">let </span>total_amount_to_unlock = nominator_staked_amount
-                .checked_add(<span class="kw-2">&amp;</span>amount_ready_withdraw)
+                .checked_add(<span class="kw-2">&amp;</span>amount_ready_to_withdraw)
                 .and_then(|amount| amount.checked_add(<span class="kw-2">&amp;</span>amount_deposited_in_previous_epoch))
                 .ok_or(Error::BalanceOverflow)<span class="question-mark">?</span>;
 

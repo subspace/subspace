@@ -812,10 +812,10 @@
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking epoch transition for domain
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::{
     Deposits, DomainStakingSummary, LastEpochStakingDistribution, OperatorIdOwner, Operators,
-    PendingOperatorSwitches, PendingSlashes, PendingStakingOperationCount,
+    PendingOperatorSwitches, PendingSlashes, PendingStakingOperationCount, Withdrawals,
 };
 <span class="kw">use </span><span class="kw">crate</span>::staking::{
-    calculate_withdraw_share_ssc, do_convert_previous_epoch_deposits, DomainEpoch,
+    do_convert_previous_epoch_deposits, do_convert_previous_epoch_withdrawal, DomainEpoch,
     Error <span class="kw">as </span>TransitionError, OperatorStatus, SharePrice,
 };
 <span class="kw">use crate</span>::{
@@ -1125,9 +1125,6 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_finalize_slashed_operators&lt;T: Config&gt;(
     domain_id: DomainId,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TransitionError&gt; {
-    <span class="kw">let </span>domain_staking_summary =
-        DomainStakingSummary::&lt;T&gt;::get(domain_id).ok_or(TransitionError::DomainNotInitialized)<span class="question-mark">?</span>;
-    <span class="kw">let </span>domain_epoch = (domain_id, domain_staking_summary.current_epoch_index).into();
     <span class="kw">for </span>operator_id <span class="kw">in </span>PendingSlashes::&lt;T&gt;::take(domain_id).unwrap_or_default() {
         Operators::&lt;T&gt;::try_mutate_exists(operator_id, |maybe_operator| {
             <span class="comment">// take the operator so this operator info is removed once we slash the operator.
@@ -1154,34 +1151,37 @@
                         T::Currency::balance_on_hold(<span class="kw-2">&amp;</span>staked_hold_id, <span class="kw-2">&amp;</span>nominator_id);
 
                     <span class="comment">// convert any previous epoch deposits
-                    </span>do_convert_previous_epoch_deposits::&lt;T&gt;(
-                        operator_id,
-                        <span class="kw-2">&amp;mut </span>deposit,
-                        domain_epoch,
-                    )<span class="question-mark">?</span>;
+                    </span>do_convert_previous_epoch_deposits::&lt;T&gt;(operator_id, <span class="kw-2">&amp;mut </span>deposit)<span class="question-mark">?</span>;
 
                     <span class="comment">// there maybe some withdrawals that are initiated in this epoch where operator was slashed
                     // then collect and include them to find the final stake amount
                     </span><span class="kw">let </span>(amount_ready_to_withdraw, shares_withdrew_in_current_epoch) =
-                        calculate_withdraw_share_ssc::&lt;T&gt;(operator_id, nominator_id.clone());
+                        Withdrawals::&lt;T&gt;::take(operator_id, nominator_id.clone())
+                            .map(|<span class="kw-2">mut </span>withdrawal| {
+                                do_convert_previous_epoch_withdrawal::&lt;T&gt;(
+                                    operator_id,
+                                    <span class="kw-2">&amp;mut </span>withdrawal,
+                                )<span class="question-mark">?</span>;
+                                <span class="prelude-val">Ok</span>((
+                                    withdrawal.total_withdrawal_amount,
+                                    withdrawal
+                                        .withdrawal_in_shares
+                                        .map(|(<span class="kw">_</span>, <span class="kw">_</span>, shares)| shares)
+                                        .unwrap_or_default(),
+                                ))
+                            })
+                            .unwrap_or(<span class="prelude-val">Ok</span>((Zero::zero(), Zero::zero())))<span class="question-mark">?</span>;
 
                     <span class="comment">// include all the known shares and shares that were withdrawn in the current epoch
-                    </span><span class="kw">let </span>nominator_shares = <span class="kw">if </span>shares_withdrew_in_current_epoch.is_zero() {
-                        deposit.known.shares
-                    } <span class="kw">else </span>{
-                        deposit
-                            .known
-                            .shares
-                            .checked_add(<span class="kw-2">&amp;</span>shares_withdrew_in_current_epoch)
-                            .ok_or(TransitionError::ShareOverflow)<span class="question-mark">?
-                    </span>};
+                    </span><span class="kw">let </span>nominator_shares = deposit
+                        .known
+                        .shares
+                        .checked_add(<span class="kw-2">&amp;</span>shares_withdrew_in_current_epoch)
+                        .ok_or(TransitionError::ShareOverflow)<span class="question-mark">?</span>;
 
                     <span class="comment">// current staked amount
-                    </span><span class="kw">let </span>nominator_staked_amount = <span class="kw">if </span>share_price.is_one() {
-                        nominator_shares.into()
-                    } <span class="kw">else </span>{
-                        share_price.shares_to_stake::&lt;T&gt;(nominator_shares)
-                    };
+                    </span><span class="kw">let </span>nominator_staked_amount =
+                        share_price.shares_to_stake::&lt;T&gt;(nominator_shares);
 
                     <span class="comment">// do not slash the deposit that is not staked yet
                     </span><span class="kw">let </span>amount_to_slash_in_holding = locked_amount
