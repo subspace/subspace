@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["cdm_gossip_peers_set_config","start_cross_chain_message_listener"],"struct":["ChainTxPoolMsg","GossipWorker","GossipWorkerBuilder","Message"],"type":["ChainTxPoolSink"]};
+window.SIDEBAR_ITEMS = {"fn":["start_cross_chain_message_listener","xdm_gossip_peers_set_config"],"struct":["ChainTxPoolMsg","GossipWorker","GossipWorkerBuilder","Message"],"type":["ChainTxPoolSink"]};
