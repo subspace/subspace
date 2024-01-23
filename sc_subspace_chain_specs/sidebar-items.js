@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEVNET_CHAIN_SPEC"],"struct":["SerializableChainSpec"],"type":["ConsensusChainSpec","ExecutionChainSpec"]};
+window.SIDEBAR_ITEMS = {"constant":["DEVNET_CHAIN_SPEC"]};

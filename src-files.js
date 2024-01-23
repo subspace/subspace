@@ -31,7 +31,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["sc_consensus_subspace_rpc",["",[],["lib.rs"]]],\
 ["sc_proof_of_time",["",[["source",[],["gossip.rs","state.rs","timekeeper.rs"]]],["lib.rs","slots.rs","source.rs","verifier.rs"]]],\
 ["sc_subspace_block_relay",["",[["consensus",[],["relay.rs","types.rs"]],["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","types.rs","utils.rs"]]],\
-["sc_subspace_chain_specs",["",[],["lib.rs","utils.rs"]]],\
+["sc_subspace_chain_specs",["",[],["lib.rs"]]],\
 ["sp_block_fees",["",[],["lib.rs"]]],\
 ["sp_consensus_subspace",["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]]],\
 ["sp_domain_digests",["",[],["lib.rs"]]],\
