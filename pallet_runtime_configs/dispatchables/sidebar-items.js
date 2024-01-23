@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["set_enable_balance_transfers","set_enable_domains"]};
+window.SIDEBAR_ITEMS = {"fn":["set_enable_balance_transfers","set_enable_domains","set_enable_dynamic_cost_of_storage","set_enable_non_root_calls"]};
