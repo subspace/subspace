@@ -832,18 +832,58 @@
 <a href="#830" id="830">830</a>
 <a href="#831" id="831">831</a>
 <a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, Offset};
-<span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
+<span class="kw">use </span><span class="kw">crate</span>::utils::{run_future_in_dedicated_thread, AsyncJoinOnDrop};
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
 <span class="kw">use </span>futures::channel::oneshot;
-<span class="kw">use </span>futures::stream::FuturesUnordered;
+<span class="kw">use </span>futures::stream::{FuturesOrdered, FuturesUnordered};
 <span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>parking_lot::RwLock;
-<span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::num::NonZeroU16;
 <span class="kw">use </span>std::sync::Arc;
@@ -855,6 +895,7 @@
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
 <span class="kw">use </span>subspace_networking::{KeyWrapper, LocalRecordProvider, UniqueRecordBinaryHeap};
 <span class="kw">use </span>tokio::sync::mpsc;
+<span class="kw">use </span>tokio::task::yield_now;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
 
 <span class="kw">const </span>WORKER_CHANNEL_CAPACITY: usize = <span class="number">100</span>;
@@ -1054,8 +1095,10 @@
         </span><span class="kw">let </span>cache_state = mem::take(<span class="kw-2">&amp;mut *</span><span class="self">self</span>.caches.write());
         <span class="kw">let </span><span class="kw-2">mut </span>stored_pieces = Vec::with_capacity(new_caches.len());
         <span class="kw">let </span><span class="kw-2">mut </span>free_offsets = Vec::with_capacity(new_caches.len());
-        <span class="kw">for </span>state <span class="kw">in </span>cache_state {
+        <span class="kw">for </span><span class="kw-2">mut </span>state <span class="kw">in </span>cache_state {
+            state.stored_pieces.clear();
             stored_pieces.push(state.stored_pieces);
+            state.free_offsets.clear();
             free_offsets.push(state.free_offsets);
         }
         stored_pieces.resize(new_caches.len(), HashMap::default());
@@ -1064,35 +1107,74 @@
         <span class="macro">debug!</span>(<span class="string">"Collecting pieces that were in the cache before"</span>);
 
         <span class="comment">// Build cache state of all backends
-        </span><span class="kw">let </span><span class="kw-2">mut </span>caches = stored_pieces
-            .into_par_iter()
+        </span><span class="kw">let </span>maybe_caches_futures = stored_pieces
+            .into_iter()
             .zip(free_offsets)
             .zip(new_caches)
-            .map(|((<span class="kw-2">mut </span>stored_pieces, <span class="kw-2">mut </span>free_offsets), new_cache)| {
-                <span class="kw">let </span>contents = new_cache.contents();
-                stored_pieces.clear();
-                stored_pieces.reserve(contents.len());
-                free_offsets.clear();
+            .enumerate()
+            .map(
+                |(index, ((<span class="kw-2">mut </span>stored_pieces, <span class="kw-2">mut </span>free_offsets), new_cache))| {
+                    run_future_in_dedicated_thread(
+                        <span class="kw">move </span>|| <span class="kw">async </span>{
+                            <span class="kw">let </span>contents = new_cache.contents();
+                            stored_pieces.reserve(contents.len());
 
-                <span class="kw">for </span>(offset, maybe_piece_index) <span class="kw">in </span>contents {
-                    <span class="kw">match </span>maybe_piece_index {
-                        <span class="prelude-val">Some</span>(piece_index) =&gt; {
-                            stored_pieces
-                                .insert(RecordKey::from(piece_index.to_multihash()), offset);
-                        }
-                        <span class="prelude-val">None </span>=&gt; {
-                            free_offsets.push(offset);
-                        }
-                    }
-                }
+                            <span class="kw">for </span>(offset, maybe_piece_index) <span class="kw">in </span>contents {
+                                <span class="kw">match </span>maybe_piece_index {
+                                    <span class="prelude-val">Some</span>(piece_index) =&gt; {
+                                        stored_pieces.insert(
+                                            RecordKey::from(piece_index.to_multihash()),
+                                            offset,
+                                        );
+                                    }
+                                    <span class="prelude-val">None </span>=&gt; {
+                                        free_offsets.push(offset);
+                                    }
+                                }
 
-                DiskPieceCacheState {
-                    stored_pieces,
-                    free_offsets,
-                    backend: new_cache,
+                                <span class="comment">// Allow for task to be aborted
+                                </span>yield_now().<span class="kw">await</span>;
+                            }
+
+                            DiskPieceCacheState {
+                                stored_pieces,
+                                free_offsets,
+                                backend: new_cache,
+                            }
+                        },
+                        <span class="macro">format!</span>(<span class="string">"piece-cache.{index}"</span>),
+                    )
+                },
+            )
+            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;();
+
+        <span class="kw">let </span>caches_futures = <span class="kw">match </span>maybe_caches_futures {
+            <span class="prelude-val">Ok</span>(caches_futures) =&gt; caches_futures,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="macro">error!</span>(
+                    %error,
+                    <span class="string">"Failed to spawn piece cache reading thread"
+                </span>);
+
+                <span class="kw">return</span>;
+            }
+        };
+
+        <span class="kw">let </span><span class="kw-2">mut </span>caches = Vec::with_capacity(caches_futures.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>caches_futures = caches_futures.into_iter().collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;();
+
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_cache) = caches_futures.next().<span class="kw">await </span>{
+            <span class="kw">match </span>maybe_cache {
+                <span class="prelude-val">Ok</span>(cache) =&gt; {
+                    caches.push(cache);
                 }
-            })
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+                <span class="prelude-val">Err</span>(_cancelled) =&gt; {
+                    <span class="macro">error!</span>(<span class="string">"Piece cache reading thread panicked"</span>);
+
+                    <span class="kw">return</span>;
+                }
+            };
+        }
 
         <span class="macro">info!</span>(<span class="string">"Synchronizing piece cache"</span>);
 
