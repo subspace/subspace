@@ -425,6 +425,61 @@
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
 <a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Schema for executor in the aux-db.
 
 </span><span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
@@ -432,7 +487,8 @@
 <span class="kw">use </span>sc_client_api::backend::AuxStore;
 <span class="kw">use </span>sp_blockchain::{Error <span class="kw">as </span>ClientError, <span class="prelude-ty">Result </span><span class="kw">as </span>ClientResult};
 <span class="kw">use </span>sp_domains::InvalidBundleType;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, NumberFor, One, SaturatedConversion};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, NumberFor, One, SaturatedConversion, Zero};
+<span class="kw">use </span>sp_runtime::Saturating;
 <span class="kw">use </span>subspace_core_primitives::BlockNumber;
 
 <span class="kw">const </span>EXECUTION_RECEIPT: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"execution_receipt"</span>;
@@ -462,6 +518,10 @@
 </span><span class="kw">const </span>BEST_DOMAIN_HASH: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"best_domain_hash"</span>;
 
 <span class="doccomment">/// Prune the execution receipts when they reach this number.
+///
+/// NOTE: `PRUNING_DEPTH` must larger than the consensus chain `ConfirmationDepthK` to avoid
+/// accidentally delete non-confirmed ER from consensus forks that can potentially become the
+/// best fork in the future
 </span><span class="kw">const </span>PRUNING_DEPTH: BlockNumber = <span class="number">1000</span>;
 
 <span class="kw">fn </span>execution_receipt_key(block_hash: <span class="kw">impl </span>Encode) -&gt; Vec&lt;u8&gt; {
@@ -486,7 +546,7 @@
 /// too old.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_execution_receipt&lt;Backend, Block, CBlock&gt;(
     backend: <span class="kw-2">&amp;</span>Backend,
-    head_receipt_number: NumberFor&lt;Block&gt;,
+    oldest_unconfirmed_receipt_number: <span class="prelude-ty">Option</span>&lt;NumberFor&lt;Block&gt;&gt;,
     execution_receipt: <span class="kw-2">&amp;</span>ExecutionReceiptFor&lt;Block, CBlock&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sp_blockchain::Error&gt;
 <span class="kw">where
@@ -505,15 +565,22 @@
 
     <span class="kw">let </span>first_saved_receipt =
         load_decode::&lt;<span class="kw">_</span>, NumberFor&lt;CBlock&gt;&gt;(backend, EXECUTION_RECEIPT_START)<span class="question-mark">?
-            </span>.unwrap_or(block_number);
+            </span>.unwrap_or(Zero::zero());
 
     <span class="kw">let </span><span class="kw-2">mut </span>new_first_saved_receipt = first_saved_receipt;
 
     <span class="kw">let </span><span class="kw-2">mut </span>keys_to_delete = <span class="macro">vec!</span>[];
 
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(delete_receipts_to) = head_receipt_number
-        .saturated_into::&lt;BlockNumber&gt;()
-        .checked_sub(PRUNING_DEPTH)
+    <span class="comment">// Delete ER that have comfirned long time ago, also see the comment of `PRUNING_DEPTH`
+    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(delete_receipts_to) = oldest_unconfirmed_receipt_number
+        .map(|oldest_unconfirmed_receipt_number| {
+            oldest_unconfirmed_receipt_number.saturating_sub(One::one())
+        })
+        .and_then(|latest_confirmed_receipt_number| {
+            latest_confirmed_receipt_number
+                .saturated_into::&lt;BlockNumber&gt;()
+                .checked_sub(PRUNING_DEPTH)
+        })
     {
         new_first_saved_receipt = Into::&lt;NumberFor&lt;CBlock&gt;&gt;::into(delete_receipts_to) + One::one();
         <span class="kw">for </span>receipt_to_delete <span class="kw">in </span>first_saved_receipt.saturated_into()..=delete_receipts_to {
@@ -632,15 +699,6 @@
     )
 }
 
-<span class="comment">// TODO: Unlock once domain test infra is workable again.
-</span><span class="attr">#[allow(dead_code)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>target_receipt_is_pruned(
-    head_receipt_number: BlockNumber,
-    target_block: BlockNumber,
-) -&gt; bool {
-    head_receipt_number.saturating_sub(target_block) &gt;= PRUNING_DEPTH
-}
-
 <span class="attr">#[derive(Encode, Decode, Debug, PartialEq)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>BundleMismatchType {
     <span class="comment">// The invalid bundle is mismatch
@@ -656,7 +714,9 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>domain_test_service::evm_domain_test_runtime::Block;
+    <span class="kw">use </span>parking_lot::Mutex;
     <span class="kw">use </span>sp_core::hash::H256;
+    <span class="kw">use </span>std::collections::HashMap;
     <span class="kw">use </span>subspace_runtime_primitives::{Balance, BlockNumber, Hash};
     <span class="kw">use </span>subspace_test_runtime::Block <span class="kw">as </span>CBlock;
 
@@ -679,12 +739,40 @@
         }
     }
 
-    <span class="comment">// TODO: Remove `substrate_test_runtime_client` dependency for faster build time
-    // TODO: Un-ignore once test client is fixed and working again on Windows
-    </span><span class="attr">#[test]
-    #[ignore]
+    <span class="attr">#[derive(Default)]
+    </span><span class="kw">struct </span>TestClient(Mutex&lt;HashMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;&gt;);
+
+    <span class="kw">impl </span>AuxStore <span class="kw">for </span>TestClient {
+        <span class="kw">fn </span>insert_aux&lt;
+            <span class="lifetime">'a</span>,
+            <span class="lifetime">'b</span>: <span class="lifetime">'a</span>,
+            <span class="lifetime">'c</span>: <span class="lifetime">'a</span>,
+            I: IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span>(<span class="kw-2">&amp;</span><span class="lifetime">'c </span>[u8], <span class="kw-2">&amp;</span><span class="lifetime">'c </span>[u8])&gt;,
+            D: IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">&amp;</span><span class="lifetime">'b </span>[u8]&gt;,
+        &gt;(
+            <span class="kw-2">&amp;</span><span class="self">self</span>,
+            insert: I,
+            delete: D,
+        ) -&gt; sp_blockchain::Result&lt;()&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.<span class="number">0</span>.lock();
+            <span class="kw">for </span>d <span class="kw">in </span>delete {
+                map.remove(<span class="kw-2">&amp;</span>d.to_vec());
+            }
+            <span class="kw">for </span>(k, v) <span class="kw">in </span>insert {
+                map.insert(k.to_vec(), v.to_vec());
+            }
+            <span class="prelude-val">Ok</span>(())
+        }
+
+        <span class="kw">fn </span>get_aux(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>[u8]) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+            <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="number">0</span>.lock().get(key).cloned())
+        }
+    }
+
+    <span class="attr">#[test]
     </span><span class="kw">fn </span>normal_prune_execution_receipt_works() {
-        <span class="kw">let </span>client = substrate_test_runtime_client::new();
+        <span class="kw">let </span>block_tree_pruning_depth = <span class="number">256</span>;
+        <span class="kw">let </span>client = TestClient::default();
 
         <span class="kw">let </span>receipt_start = || {
             load_decode::&lt;<span class="kw">_</span>, BlockNumber&gt;(<span class="kw-2">&amp;</span>client, EXECUTION_RECEIPT_START.to_vec().as_slice())
@@ -699,81 +787,92 @@
             .unwrap()
         };
 
+        <span class="kw">let </span>target_receipt_is_pruned = |number: BlockNumber| hashes_at(number).is_none();
+
         <span class="kw">let </span>receipt_at = |consensus_block_hash: Hash| {
             load_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(<span class="kw-2">&amp;</span>client, consensus_block_hash).unwrap()
         };
 
-        <span class="kw">let </span>write_receipt_at = |number: BlockNumber, receipt: <span class="kw-2">&amp;</span>ExecutionReceipt| {
+        <span class="kw">let </span>write_receipt_at = |oldest_unconfirmed_receipt_number: <span class="prelude-ty">Option</span>&lt;BlockNumber&gt;,
+                                receipt: <span class="kw-2">&amp;</span>ExecutionReceipt| {
             write_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(
                 <span class="kw-2">&amp;</span>client,
-                number - <span class="number">1</span>, <span class="comment">// Ideally, the receipt of previous block has been included when writing the receipt of current block.
-                </span>receipt,
+                oldest_unconfirmed_receipt_number,
+                receipt,
             )
             .unwrap()
         };
 
         <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">None</span>);
 
-        <span class="comment">// Create PRUNING_DEPTH receipts.
-        </span><span class="kw">let </span>block_hash_list = (<span class="number">1</span>..=PRUNING_DEPTH)
+        <span class="comment">// Create as many ER as before any ER being pruned yet
+        </span><span class="kw">let </span>receipt_count = PRUNING_DEPTH + block_tree_pruning_depth - <span class="number">1</span>;
+        <span class="kw">let </span>block_hash_list = (<span class="number">1</span>..=receipt_count)
             .map(|block_number| {
                 <span class="kw">let </span>receipt = create_execution_receipt(block_number);
                 <span class="kw">let </span>consensus_block_hash = receipt.consensus_block_hash;
-                write_receipt_at(block_number, <span class="kw-2">&amp;</span>receipt);
+                <span class="kw">let </span>oldest_unconfirmed_receipt_number = block_number
+                    .checked_sub(block_tree_pruning_depth)
+                    .map(|n| n + <span class="number">1</span>);
+                write_receipt_at(oldest_unconfirmed_receipt_number, <span class="kw-2">&amp;</span>receipt);
                 <span class="macro">assert_eq!</span>(receipt_at(consensus_block_hash), <span class="prelude-val">Some</span>(receipt));
                 <span class="macro">assert_eq!</span>(hashes_at(block_number), <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[consensus_block_hash]));
-                <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">1</span>));
+                <span class="comment">// No ER have been pruned yet
+                </span><span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">0</span>));
                 consensus_block_hash
             })
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-        <span class="macro">assert!</span>(!target_receipt_is_pruned(PRUNING_DEPTH, <span class="number">1</span>));
+        <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">0</span>));
+        <span class="macro">assert!</span>(!target_receipt_is_pruned(<span class="number">1</span>));
 
-        <span class="comment">// Create PRUNING_DEPTH + 1 receipt, head_receipt_number is PRUNING_DEPTH.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">1</span>);
+        <span class="comment">// Create `receipt_count + 1` receipt, `oldest_unconfirmed_receipt_number` is `PRUNING_DEPTH + 1`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">1</span>);
         <span class="macro">assert!</span>(receipt_at(receipt.consensus_block_hash).is_none());
-        write_receipt_at(PRUNING_DEPTH + <span class="number">1</span>, <span class="kw-2">&amp;</span>receipt);
+        write_receipt_at(<span class="prelude-val">Some</span>(PRUNING_DEPTH + <span class="number">1</span>), <span class="kw-2">&amp;</span>receipt);
+        <span class="macro">assert!</span>(receipt_at(receipt.consensus_block_hash).is_some());
+        <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">1</span>));
+
+        <span class="comment">// Create `receipt_count + 2` receipt, `oldest_unconfirmed_receipt_number` is `PRUNING_DEPTH + 2`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">2</span>);
+        write_receipt_at(<span class="prelude-val">Some</span>(PRUNING_DEPTH + <span class="number">2</span>), <span class="kw-2">&amp;</span>receipt);
         <span class="macro">assert!</span>(receipt_at(receipt.consensus_block_hash).is_some());
 
-        <span class="comment">// Create PRUNING_DEPTH + 2 receipt, head_receipt_number is PRUNING_DEPTH + 1.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">2</span>);
-        write_receipt_at(PRUNING_DEPTH + <span class="number">2</span>, <span class="kw-2">&amp;</span>receipt);
-        <span class="macro">assert!</span>(receipt_at(receipt.consensus_block_hash).is_some());
-
-        <span class="comment">// ER of block #1 should be pruned.
+        <span class="comment">// ER of block #1 should be pruned, its block number mapping should be pruned as well.
         </span><span class="macro">assert!</span>(receipt_at(block_hash_list[<span class="number">0</span>]).is_none());
-        <span class="comment">// block number mapping should be pruned as well.
-        </span><span class="macro">assert!</span>(hashes_at(<span class="number">1</span>).is_none());
-        <span class="macro">assert!</span>(target_receipt_is_pruned(PRUNING_DEPTH + <span class="number">1</span>, <span class="number">1</span>));
+        <span class="macro">assert!</span>(hashes_at(<span class="number">1</span>).is_none());
+        <span class="macro">assert!</span>(target_receipt_is_pruned(<span class="number">1</span>));
         <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">2</span>));
 
-        <span class="comment">// Create PRUNING_DEPTH + 3 receipt, head_receipt_number is PRUNING_DEPTH + 2.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">3</span>);
+        <span class="comment">// Create `receipt_count + 3` receipt, `oldest_unconfirmed_receipt_number` is `PRUNING_DEPTH + 3`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">3</span>);
         <span class="kw">let </span>consensus_block_hash1 = receipt.consensus_block_hash;
-        write_receipt_at(PRUNING_DEPTH + <span class="number">3</span>, <span class="kw-2">&amp;</span>receipt);
+        write_receipt_at(<span class="prelude-val">Some</span>(PRUNING_DEPTH + <span class="number">3</span>), <span class="kw-2">&amp;</span>receipt);
         <span class="macro">assert!</span>(receipt_at(consensus_block_hash1).is_some());
         <span class="comment">// ER of block #2 should be pruned.
         </span><span class="macro">assert!</span>(receipt_at(block_hash_list[<span class="number">1</span>]).is_none());
-        <span class="macro">assert!</span>(target_receipt_is_pruned(PRUNING_DEPTH + <span class="number">2</span>, <span class="number">2</span>));
-        <span class="macro">assert!</span>(!target_receipt_is_pruned(PRUNING_DEPTH + <span class="number">2</span>, <span class="number">3</span>));
+        <span class="macro">assert!</span>(target_receipt_is_pruned(<span class="number">2</span>));
+        <span class="macro">assert!</span>(!target_receipt_is_pruned(<span class="number">3</span>));
         <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">3</span>));
 
-        <span class="comment">// Multiple hashes attached to the block #(PRUNING_DEPTH + 3)
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">3</span>);
+        <span class="comment">// Multiple hashes attached to the block #`receipt_count + 3`
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">3</span>);
         <span class="kw">let </span>consensus_block_hash2 = receipt.consensus_block_hash;
-        write_receipt_at(PRUNING_DEPTH + <span class="number">3</span>, <span class="kw-2">&amp;</span>receipt);
+        write_receipt_at(<span class="prelude-val">Some</span>(PRUNING_DEPTH + <span class="number">3</span>), <span class="kw-2">&amp;</span>receipt);
         <span class="macro">assert!</span>(receipt_at(consensus_block_hash2).is_some());
         <span class="macro">assert_eq!</span>(
-            hashes_at(PRUNING_DEPTH + <span class="number">3</span>),
+            hashes_at(receipt_count + <span class="number">3</span>),
             <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[consensus_block_hash1, consensus_block_hash2])
         );
+        <span class="comment">// No ER pruned since the `oldest_unconfirmed_receipt_number` is the same
+        </span><span class="macro">assert!</span>(!target_receipt_is_pruned(<span class="number">3</span>));
+        <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">3</span>));
     }
 
-    <span class="comment">// TODO: Un-ignore once test client is fixed and working again on Windows
-    </span><span class="attr">#[test]
-    #[ignore]
-    </span><span class="kw">fn </span>execution_receipts_should_be_kept_against_head_receipt_number() {
-        <span class="kw">let </span>client = substrate_test_runtime_client::new();
+    <span class="attr">#[test]
+    </span><span class="kw">fn </span>execution_receipts_should_be_kept_against_oldest_unconfirmed_receipt_number() {
+        <span class="kw">let </span>block_tree_pruning_depth = <span class="number">256</span>;
+        <span class="kw">let </span>client = TestClient::default();
 
         <span class="kw">let </span>receipt_start = || {
             load_decode::&lt;<span class="kw">_</span>, BlockNumber&gt;(<span class="kw-2">&amp;</span>client, EXECUTION_RECEIPT_START.to_vec().as_slice())
@@ -792,60 +891,71 @@
             load_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(<span class="kw-2">&amp;</span>client, consensus_block_hash).unwrap()
         };
 
-        <span class="kw">let </span>write_receipt_at = |head_receipt_number: BlockNumber, receipt: <span class="kw-2">&amp;</span>ExecutionReceipt| {
-            write_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(<span class="kw-2">&amp;</span>client, head_receipt_number, receipt)
-                .unwrap()
+        <span class="kw">let </span>write_receipt_at = |oldest_unconfirmed_receipt_number: <span class="prelude-ty">Option</span>&lt;BlockNumber&gt;,
+                                receipt: <span class="kw-2">&amp;</span>ExecutionReceipt| {
+            write_execution_receipt::&lt;<span class="kw">_</span>, Block, CBlock&gt;(
+                <span class="kw-2">&amp;</span>client,
+                oldest_unconfirmed_receipt_number,
+                receipt,
+            )
+            .unwrap()
         };
+
+        <span class="kw">let </span>target_receipt_is_pruned = |number: BlockNumber| hashes_at(number).is_none();
 
         <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">None</span>);
 
-        <span class="comment">// Create PRUNING_DEPTH receipts, head_receipt_number is 0, i.e., no receipt
-        // has ever been included on consensus chain.
-        </span><span class="kw">let </span>block_hash_list = (<span class="number">1</span>..=PRUNING_DEPTH)
+        <span class="comment">// Create as many ER as before any ER being pruned yet, `oldest_unconfirmed_receipt_number` is `Some(1)`,
+        // i.e., no receipt has ever been confirmed/pruned on consensus chain.
+        </span><span class="kw">let </span>receipt_count = PRUNING_DEPTH + block_tree_pruning_depth - <span class="number">1</span>;
+
+        <span class="kw">let </span>block_hash_list = (<span class="number">1</span>..=receipt_count)
             .map(|block_number| {
                 <span class="kw">let </span>receipt = create_execution_receipt(block_number);
                 <span class="kw">let </span>consensus_block_hash = receipt.consensus_block_hash;
-                write_receipt_at(<span class="number">0</span>, <span class="kw-2">&amp;</span>receipt);
+                write_receipt_at(<span class="prelude-val">Some</span>(One::one()), <span class="kw-2">&amp;</span>receipt);
                 <span class="macro">assert_eq!</span>(receipt_at(consensus_block_hash), <span class="prelude-val">Some</span>(receipt));
                 <span class="macro">assert_eq!</span>(hashes_at(block_number), <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[consensus_block_hash]));
-                <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">1</span>));
+                <span class="comment">// No ER have been pruned yet
+                </span><span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">0</span>));
                 consensus_block_hash
             })
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-        <span class="macro">assert!</span>(!target_receipt_is_pruned(PRUNING_DEPTH, <span class="number">1</span>));
+        <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">0</span>));
+        <span class="macro">assert!</span>(!target_receipt_is_pruned(<span class="number">1</span>));
 
-        <span class="comment">// Create PRUNING_DEPTH + 1 receipt, head_receipt_number is 0.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">1</span>);
+        <span class="comment">// Create `receipt_count + 1` receipt, `oldest_unconfirmed_receipt_number` is `Some(1)`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">1</span>);
         <span class="macro">assert!</span>(receipt_at(receipt.consensus_block_hash).is_none());
-        write_receipt_at(<span class="number">0</span>, <span class="kw-2">&amp;</span>receipt);
+        write_receipt_at(<span class="prelude-val">Some</span>(One::one()), <span class="kw-2">&amp;</span>receipt);
 
-        <span class="comment">// Create PRUNING_DEPTH + 2 receipt, head_receipt_number is 0.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">2</span>);
-        write_receipt_at(<span class="number">0</span>, <span class="kw-2">&amp;</span>receipt);
+        <span class="comment">// Create `receipt_count + 2` receipt, `oldest_unconfirmed_receipt_number` is `Some(1)`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">2</span>);
+        write_receipt_at(<span class="prelude-val">Some</span>(One::one()), <span class="kw-2">&amp;</span>receipt);
 
-        <span class="comment">// ER of block #1 should not be pruned even the size of stored receipts exceeds the pruning depth.
+        <span class="comment">// ER of block #1 and its block number mapping should not be pruned even the size of stored
+        // receipts exceeds the pruning depth.
         </span><span class="macro">assert!</span>(receipt_at(block_hash_list[<span class="number">0</span>]).is_some());
-        <span class="comment">// block number mapping for #1 should not be pruned neither.
-        </span><span class="macro">assert!</span>(hashes_at(<span class="number">1</span>).is_some());
-        <span class="macro">assert!</span>(!target_receipt_is_pruned(<span class="number">0</span>, <span class="number">1</span>));
-        <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">1</span>));
+        <span class="macro">assert!</span>(hashes_at(<span class="number">1</span>).is_some());
+        <span class="macro">assert!</span>(!target_receipt_is_pruned(<span class="number">1</span>));
+        <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">0</span>));
 
-        <span class="comment">// Create PRUNING_DEPTH + 3 receipt, head_receipt_number is 0.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">3</span>);
-        write_receipt_at(<span class="number">0</span>, <span class="kw-2">&amp;</span>receipt);
+        <span class="comment">// Create `receipt_count + 3` receipt, `oldest_unconfirmed_receipt_number` is `Some(1)`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">3</span>);
+        write_receipt_at(<span class="prelude-val">Some</span>(One::one()), <span class="kw-2">&amp;</span>receipt);
 
-        <span class="comment">// Create PRUNING_DEPTH + 4 receipt, head_receipt_number is PRUNING_DEPTH + 3.
-        </span><span class="kw">let </span>receipt = create_execution_receipt(PRUNING_DEPTH + <span class="number">4</span>);
+        <span class="comment">// Create `receipt_count + 4` receipt, `oldest_unconfirmed_receipt_number` is `Some(PRUNING_DEPTH + 4)`.
+        </span><span class="kw">let </span>receipt = create_execution_receipt(receipt_count + <span class="number">4</span>);
         write_receipt_at(
-            PRUNING_DEPTH + <span class="number">3</span>, <span class="comment">// Now assuming all the missing receipts are included.
+            <span class="prelude-val">Some</span>(PRUNING_DEPTH + <span class="number">4</span>), <span class="comment">// Now assuming all the missing receipts are confirmed.
             </span><span class="kw-2">&amp;</span>receipt,
         );
         <span class="macro">assert!</span>(receipt_at(block_hash_list[<span class="number">0</span>]).is_none());
         <span class="comment">// receipt and block number mapping for [1, 2, 3] should be pruned.
         </span>(<span class="number">1</span>..=<span class="number">3</span>).for_each(|pruned| {
             <span class="macro">assert!</span>(hashes_at(pruned).is_none());
-            <span class="macro">assert!</span>(target_receipt_is_pruned(PRUNING_DEPTH + <span class="number">3</span>, pruned));
+            <span class="macro">assert!</span>(target_receipt_is_pruned(pruned));
         });
         <span class="macro">assert_eq!</span>(receipt_start(), <span class="prelude-val">Some</span>(<span class="number">4</span>));
     }

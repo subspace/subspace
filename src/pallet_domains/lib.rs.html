@@ -1993,6 +1993,13 @@
 <a href="#1991" id="1991">1991</a>
 <a href="#1992" id="1992">1992</a>
 <a href="#1993" id="1993">1993</a>
+<a href="#1994" id="1994">1994</a>
+<a href="#1995" id="1995">1995</a>
+<a href="#1996" id="1996">1996</a>
+<a href="#1997" id="1997">1997</a>
+<a href="#1998" id="1998">1998</a>
+<a href="#1999" id="1999">1999</a>
+<a href="#2000" id="2000">2000</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2054,7 +2061,7 @@
     verify_invalid_domain_extrinsics_root_fraud_proof, verify_invalid_state_transition_fraud_proof,
     verify_valid_bundle_fraud_proof,
 };
-<span class="kw">use </span>sp_runtime::traits::{CheckedSub, Hash, Header, One, Zero};
+<span class="kw">use </span>sp_runtime::traits::{Hash, Header, One, Zero};
 <span class="kw">use </span>sp_runtime::{RuntimeAppPublic, SaturatedConversion, Saturating};
 <span class="kw">use </span>sp_std::boxed::Box;
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
@@ -3855,16 +3862,23 @@
         HeadReceiptNumber::&lt;T&gt;::get(domain_id)
     }
 
-    <span class="doccomment">/// Returns the block number of oldest execution receipt.
-    </span><span class="comment">// FIXME: the `oldest_receipt_number` may not be correct if fraud proof is submitted
-    // and bad ER were pruned, see https://github.com/subspace/subspace/issues/2354
-    </span><span class="kw">pub fn </span>oldest_receipt_number(domain_id: DomainId) -&gt; DomainBlockNumberFor&lt;T&gt; {
-        <span class="self">Self</span>::head_receipt_number(domain_id).saturating_sub(<span class="self">Self</span>::block_tree_pruning_depth())
-    }
+    <span class="doccomment">/// Returns the block number of the oldest existing unconfirmed execution receipt, return `None`
+    /// means there is no unconfirmed ER exist or submitted yet.
+    </span><span class="kw">pub fn </span>oldest_unconfirmed_receipt_number(
+        domain_id: DomainId,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;DomainBlockNumberFor&lt;T&gt;&gt; {
+        <span class="kw">let </span>oldest_nonconfirmed_er_number =
+            LatestConfirmedDomainBlockNumber::&lt;T&gt;::get(domain_id).saturating_add(One::one());
 
-    <span class="doccomment">/// Returns the block tree pruning depth.
-    </span><span class="kw">pub fn </span>block_tree_pruning_depth() -&gt; DomainBlockNumberFor&lt;T&gt; {
-        T::BlockTreePruningDepth::get()
+        <span class="kw">if </span>BlockTree::&lt;T&gt;::get(domain_id, oldest_nonconfirmed_er_number).is_some() {
+            <span class="prelude-val">Some</span>(oldest_nonconfirmed_er_number)
+        } <span class="kw">else </span>{
+            <span class="comment">// The `oldest_nonconfirmed_er_number` ER may not exist if
+            // - The domain just started and no ER submitted yet
+            // - The oldest ER just pruned by fraud proof and no new ER submitted yet
+            // - When using consensus block to derive the challenge period forward (unimplemented yet)
+            </span><span class="prelude-val">None
+        </span>}
     }
 
     <span class="doccomment">/// Returns the domain block limit of the given domain.
@@ -3882,10 +3896,10 @@
             <span class="kw">return </span><span class="bool-val">true</span>;
         }
 
+        <span class="comment">// Start from the oldest non-confirmed ER to the head domain number
+        </span><span class="kw">let </span><span class="kw-2">mut </span>to_check =
+            LatestConfirmedDomainBlockNumber::&lt;T&gt;::get(domain_id).saturating_add(One::one());
         <span class="kw">let </span>head_number = HeadDomainNumber::&lt;T&gt;::get(domain_id);
-        <span class="kw">let </span><span class="kw-2">mut </span>to_check = head_number
-            .checked_sub(<span class="kw-2">&amp;</span>T::BlockTreePruningDepth::get())
-            .unwrap_or(Zero::zero());
 
         <span class="kw">while </span>to_check &lt;= head_number {
             <span class="kw">if </span>!ExecutionInbox::&lt;T&gt;::iter_prefix_values((domain_id, to_check)).all(|digests| {
