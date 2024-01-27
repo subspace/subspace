@@ -1,3 +1,3 @@
 (function() {var implementors = {
-"subspace_runtime":[["impl SignedExtension for <a class=\"struct\" href=\"subspace_runtime/struct.DisablePallets.html\" title=\"struct subspace_runtime::DisablePallets\">DisablePallets</a>"],["impl SignedExtension for <a class=\"struct\" href=\"subspace_runtime/struct.CheckStorageAccess.html\" title=\"struct subspace_runtime::CheckStorageAccess\">CheckStorageAccess</a>"]]
+"subspace_runtime":[["impl SignedExtension for <a class=\"struct\" href=\"subspace_runtime/struct.CheckStorageAccess.html\" title=\"struct subspace_runtime::CheckStorageAccess\">CheckStorageAccess</a>"],["impl SignedExtension for <a class=\"struct\" href=\"subspace_runtime/struct.DisablePallets.html\" title=\"struct subspace_runtime::DisablePallets\">DisablePallets</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

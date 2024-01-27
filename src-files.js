@@ -25,6 +25,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["pallet_rewards",["",[],["default_weights.rs","lib.rs"]]],\
 ["pallet_runtime_configs",["",[],["lib.rs","weights.rs"]]],\
 ["pallet_subspace",["",[],["equivocation.rs","lib.rs","weights.rs"]]],\
+["pallet_subspace_mmr",["",[],["lib.rs"]]],\
 ["pallet_transaction_fees",["",[],["default_weights.rs","lib.rs"]]],\
 ["pallet_transporter",["",[],["lib.rs","weights.rs"]]],\
 ["sc_consensus_subspace",["",[],["archiver.rs","aux_schema.rs","block_import.rs","lib.rs","notification.rs","slot_worker.rs","verifier.rs"]]],\
@@ -40,6 +41,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["sp_executive",["",[],["lib.rs"]]],\
 ["sp_messenger",["",[],["endpoint.rs","lib.rs","messages.rs"]]],\
 ["sp_objects",["",[],["lib.rs"]]],\
+["sp_subspace_mmr",["",[],["host_functions.rs","lib.rs","runtime_interface.rs"]]],\
 ["subspace_archiving",["",[["archiver",[],["incremental_record_commitments.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs"]]],\
 ["subspace_core_primitives",["",[["crypto",[],["kzg.rs"]],["pieces",[],["serde.rs"]]],["checksum.rs","crypto.rs","lib.rs","objects.rs","pieces.rs","segments.rs","serde.rs"]]],\
 ["subspace_erasure_coding",["",[],["lib.rs"]]],\

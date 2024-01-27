@@ -145,6 +145,23 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -169,6 +186,7 @@
 </span><span class="attr">#![warn(missing_docs)]
 
 </span><span class="kw">use </span>jsonrpsee::RpcModule;
+<span class="kw">use </span>mmr_rpc::{Mmr, MmrApiServer};
 <span class="kw">use </span>pallet_transaction_payment_rpc::{TransactionPayment, TransactionPaymentApiServer};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend};
 <span class="kw">use </span>sc_consensus_subspace::archiver::{ArchivedSegmentNotification, SegmentHeadersStore};
@@ -189,13 +207,14 @@
 <span class="kw">use </span>sp_objects::ObjectsApi;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
+<span class="kw">use </span>subspace_core_primitives::BlockNumber;
 <span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
 <span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Nonce};
 <span class="kw">use </span>substrate_frame_rpc_system::{System, SystemApiServer};
 
 <span class="doccomment">/// Full client dependencies.
-</span><span class="kw">pub struct </span>FullDeps&lt;C, P, SO, AS&gt;
+</span><span class="kw">pub struct </span>FullDeps&lt;C, P, SO, AS, B&gt;
 <span class="kw">where
     </span>SO: SyncOracle + Send + Sync + Clone,
 {
@@ -225,11 +244,13 @@
     </span><span class="kw">pub </span>sync_oracle: SubspaceSyncOracle&lt;SO&gt;,
     <span class="doccomment">/// Kzg instance.
     </span><span class="kw">pub </span>kzg: Kzg,
+    <span class="doccomment">/// Backend used by the node.
+    </span><span class="kw">pub </span>backend: Arc&lt;B&gt;,
 }
 
 <span class="doccomment">/// Instantiate all full RPC extensions.
-</span><span class="kw">pub fn </span>create_full&lt;C, P, SO, AS&gt;(
-    deps: FullDeps&lt;C, P, SO, AS&gt;,
+</span><span class="kw">pub fn </span>create_full&lt;C, P, SO, AS, B&gt;(
+    deps: FullDeps&lt;C, P, SO, AS, B&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RpcModule&lt;()&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync&gt;&gt;
 <span class="kw">where
     </span>C: ProvideRuntimeApi&lt;Block&gt;
@@ -243,10 +264,13 @@
         + pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + BlockBuilder&lt;Block&gt;
         + SubspaceApi&lt;Block, FarmerPublicKey&gt;
+        + mmr_rpc::MmrRuntimeApi&lt;Block, &lt;Block <span class="kw">as </span>sp_runtime::traits::Block&gt;::Hash, BlockNumber&gt;
         + ObjectsApi&lt;Block&gt;,
     P: TransactionPool + <span class="lifetime">'static</span>,
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">'static</span>,
     AS: AuxStore + Send + Sync + <span class="lifetime">'static</span>,
+    B: sc_client_api::Backend&lt;Block&gt; + Send + Sync + <span class="lifetime">'static</span>,
+    B::State: sc_client_api::StateBackend&lt;sp_runtime::traits::HashingFor&lt;Block&gt;&gt;,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>module = RpcModule::new(());
     <span class="kw">let </span>FullDeps {
@@ -262,6 +286,7 @@
         segment_headers_store,
         sync_oracle,
         kzg,
+        backend,
     } = deps;
 
     <span class="kw">let </span>chain_name = chain_spec.name().to_string();
@@ -274,7 +299,7 @@
 
     module.merge(
         SubspaceRpc::new(SubspaceRpcConfig {
-            client,
+            client: client.clone(),
             subscription_executor,
             new_slot_notification_stream,
             reward_signing_notification_stream,
@@ -286,6 +311,15 @@
             deny_unsafe,
         })<span class="question-mark">?
         </span>.into_rpc(),
+    )<span class="question-mark">?</span>;
+    module.merge(
+        Mmr::new(
+            client,
+            backend
+                .offchain_storage()
+                .ok_or(<span class="string">"Backend doesn't provide the required offchain storage"</span>)<span class="question-mark">?</span>,
+        )
+        .into_rpc(),
     )<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(module)

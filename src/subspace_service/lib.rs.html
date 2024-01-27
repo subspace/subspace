@@ -1082,6 +1082,31 @@
 <a href="#1080" id="1080">1080</a>
 <a href="#1081" id="1081">1081</a>
 <a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1173,10 +1198,12 @@
 <span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainsApi};
 <span class="kw">use </span>sp_domains_fraud_proof::{FraudProofApi, FraudProofExtension, FraudProofHostFunctionsImpl};
 <span class="kw">use </span>sp_externalities::Extensions;
+<span class="kw">use </span>sp_mmr_primitives::MmrApi;
 <span class="kw">use </span>sp_objects::ObjectsApi;
 <span class="kw">use </span>sp_offchain::OffchainWorkerApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, BlockIdTo, Header, NumberFor, Zero};
 <span class="kw">use </span>sp_session::SessionKeys;
+<span class="kw">use </span>sp_subspace_mmr::host_functions::{SubspaceMmrExtension, SubspaceMmrHostFunctionsImpl};
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>static_assertions::const_assert;
 <span class="kw">use </span>std::marker::PhantomData;
@@ -1184,12 +1211,12 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{embedded_kzg_settings, Kzg};
-<span class="kw">use </span>subspace_core_primitives::{PotSeed, REWARD_SIGNING_CONTEXT};
+<span class="kw">use </span>subspace_core_primitives::{BlockNumber, PotSeed, REWARD_SIGNING_CONTEXT};
 <span class="kw">use </span>subspace_metrics::{start_prometheus_metrics_server, RegistryAdapter};
 <span class="kw">use </span>subspace_networking::libp2p::multiaddr::Protocol;
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
-<span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Nonce};
+<span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Hash, Nonce};
 <span class="kw">use </span>tracing::{debug, error, info, Instrument};
 
 <span class="comment">// There are multiple places where it is assumed that node is running on 64-bit system, refuse to
@@ -1281,6 +1308,7 @@
     sp_io::SubstrateHostFunctions,
     sp_consensus_subspace::consensus::HostFunctions,
     sp_domains_fraud_proof::HostFunctions,
+    sp_subspace_mmr::HostFunctions,
 );
 
 <span class="doccomment">/// Host functions required for Subspace
@@ -1290,6 +1318,7 @@
     frame_benchmarking::benchmarking::HostFunctions,
     sp_consensus_subspace::consensus::HostFunctions,
     sp_domains_fraud_proof::HostFunctions,
+    sp_subspace_mmr::HostFunctions,
 );
 
 <span class="doccomment">/// Runtime executor for Subspace
@@ -1446,6 +1475,10 @@
                 <span class="self">self</span>.client.clone(),
                 <span class="self">self</span>.executor.clone(),
             ),
+        )));
+
+        exts.register(SubspaceMmrExtension::new(Arc::new(
+            SubspaceMmrHostFunctionsImpl::&lt;Block, <span class="kw">_</span>&gt;::new(<span class="self">self</span>.client.clone()),
         )));
 
         exts
@@ -1717,7 +1750,8 @@
         + SubspaceApi&lt;Block, FarmerPublicKey&gt;
         + DomainsApi&lt;Block, DomainHeader&gt;
         + FraudProofApi&lt;Block, DomainHeader&gt;
-        + ObjectsApi&lt;Block&gt;,
+        + ObjectsApi&lt;Block&gt;
+        + MmrApi&lt;Block, Hash, BlockNumber&gt;,
 {
     <span class="kw">let </span>PartialComponents {
         client,
@@ -1738,6 +1772,7 @@
         <span class="kw-2">mut </span>telemetry,
     } = other;
 
+    <span class="kw">let </span>offchain_indexing_enabled = config.offchain_worker.indexing_enabled;
     <span class="kw">let </span>(node, bootstrap_nodes, dsn_metrics_registry) = <span class="kw">match </span>config.subspace_networking {
         SubspaceNetworking::Reuse {
             node,
@@ -1982,6 +2017,19 @@
         );
     }
 
+    <span class="comment">// mmr offchain indexer
+    </span><span class="kw">if </span>offchain_indexing_enabled {
+        task_manager.spawn_essential_handle().spawn_blocking(
+            <span class="string">"mmr-gadget"</span>,
+            <span class="prelude-val">None</span>,
+            mmr_gadget::MmrGadget::start(
+                client.clone(),
+                backend.clone(),
+                sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
+            ),
+        );
+    }
+
     <span class="kw">let </span>backoff_authoring_blocks: <span class="prelude-ty">Option</span>&lt;()&gt; = <span class="prelude-val">None</span>;
 
     <span class="kw">let </span>new_slot_notification_stream = subspace_link.new_slot_notification_stream();
@@ -2116,6 +2164,7 @@
             <span class="kw">let </span>archived_segment_notification_stream = archived_segment_notification_stream.clone();
             <span class="kw">let </span>transaction_pool = transaction_pool.clone();
             <span class="kw">let </span>chain_spec = config.base.chain_spec.cloned_box();
+            <span class="kw">let </span>backend = backend.clone();
 
             Box::new(<span class="kw">move </span>|deny_unsafe, subscription_executor| {
                 <span class="kw">let </span>deps = rpc::FullDeps {
@@ -2132,6 +2181,7 @@
                     segment_headers_store: segment_headers_store.clone(),
                     sync_oracle: sync_oracle.clone(),
                     kzg: subspace_link.kzg().clone(),
+                    backend: backend.clone(),
                 };
 
                 rpc::create_full(deps).map_err(Into::into)
