@@ -1983,37 +1983,6 @@
 <a href="#1981" id="1981">1981</a>
 <a href="#1982" id="1982">1982</a>
 <a href="#1983" id="1983">1983</a>
-<a href="#1984" id="1984">1984</a>
-<a href="#1985" id="1985">1985</a>
-<a href="#1986" id="1986">1986</a>
-<a href="#1987" id="1987">1987</a>
-<a href="#1988" id="1988">1988</a>
-<a href="#1989" id="1989">1989</a>
-<a href="#1990" id="1990">1990</a>
-<a href="#1991" id="1991">1991</a>
-<a href="#1992" id="1992">1992</a>
-<a href="#1993" id="1993">1993</a>
-<a href="#1994" id="1994">1994</a>
-<a href="#1995" id="1995">1995</a>
-<a href="#1996" id="1996">1996</a>
-<a href="#1997" id="1997">1997</a>
-<a href="#1998" id="1998">1998</a>
-<a href="#1999" id="1999">1999</a>
-<a href="#2000" id="2000">2000</a>
-<a href="#2001" id="2001">2001</a>
-<a href="#2002" id="2002">2002</a>
-<a href="#2003" id="2003">2003</a>
-<a href="#2004" id="2004">2004</a>
-<a href="#2005" id="2005">2005</a>
-<a href="#2006" id="2006">2006</a>
-<a href="#2007" id="2007">2007</a>
-<a href="#2008" id="2008">2008</a>
-<a href="#2009" id="2009">2009</a>
-<a href="#2010" id="2010">2010</a>
-<a href="#2011" id="2011">2011</a>
-<a href="#2012" id="2012">2012</a>
-<a href="#2013" id="2013">2013</a>
-<a href="#2014" id="2014">2014</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -2025,13 +1994,15 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::rayon_files::RayonFiles;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::farming::FarmingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::{
-    farming, slot_notification_forwarder, AuditEvent, FarmingOptions, PlotAudit,
+    farming, slot_notification_forwarder, FarmingNotification, FarmingOptions, PlotAudit,
 };
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, DiskPieceCacheError};
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_reader::PieceReader;
-<span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::plotting::PlottingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions,
+};
+<span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
+    PlottingError, SectorExpirationDetails, SectorPlottingDetails,
 };
 <span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::PlottingThreadPoolManager;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{tokio_rayon_spawn_handler, AsyncJoinOnDrop};
@@ -2375,9 +2346,6 @@
     <span class="doccomment">/// Failed to decode metadata header
     </span><span class="attr">#[error(<span class="string">"Failed to decode metadata header: {0}"</span>)]
     </span>FailedToDecodeMetadataHeader(parity_scale_codec::Error),
-    <span class="doccomment">/// Failed to decode sector metadata
-    </span><span class="attr">#[error(<span class="string">"Failed to decode sector metadata: {0}"</span>)]
-    </span>FailedToDecodeSectorMetadata(parity_scale_codec::Error),
     <span class="doccomment">/// Unexpected metadata version
     </span><span class="attr">#[error(<span class="string">"Unexpected metadata version {0}"</span>)]
     </span>UnexpectedMetadataVersion(u8),
@@ -2554,59 +2522,10 @@
 <span class="kw">type </span>HandlerFn&lt;A&gt; = Arc&lt;<span class="kw">dyn </span>Fn(<span class="kw-2">&amp;</span>A) + Send + Sync + <span class="lifetime">'static</span>&gt;;
 <span class="kw">type </span>Handler&lt;A&gt; = Bag&lt;HandlerFn&lt;A&gt;, A&gt;;
 
-<span class="doccomment">/// Details about sector currently being plotted
-</span><span class="attr">#[derive(Debug, Clone, Encode, Decode)]
-</span><span class="kw">pub enum </span>SectorPlottingDetails {
-    <span class="doccomment">/// Starting plotting of a sector
-    </span>Starting {
-        <span class="doccomment">/// Progress so far in % (not including this sector)
-        </span>progress: f32,
-        <span class="doccomment">/// Whether sector is being replotted
-        </span>replotting: bool,
-        <span class="doccomment">/// Whether this is the last sector queued so far
-        </span>last_queued: bool,
-    },
-    <span class="doccomment">/// Downloading sector pieces
-    </span>Downloading,
-    <span class="doccomment">/// Downloaded sector pieces
-    </span>Downloaded(Duration),
-    <span class="doccomment">/// Encoding sector pieces
-    </span>Encoding,
-    <span class="doccomment">/// Encoded sector pieces
-    </span>Encoded(Duration),
-    <span class="doccomment">/// Writing sector
-    </span>Writing,
-    <span class="doccomment">/// Wrote sector
-    </span>Wrote(Duration),
-    <span class="doccomment">/// Finished plotting
-    </span>Finished {
-        <span class="doccomment">/// Information about plotted sector
-        </span>plotted_sector: PlottedSector,
-        <span class="doccomment">/// Information about old plotted sector that was replaced
-        </span>old_plotted_sector: <span class="prelude-ty">Option</span>&lt;PlottedSector&gt;,
-        <span class="doccomment">/// How much time it took to plot a sector
-        </span>time: Duration,
-    },
-}
-
-<span class="doccomment">/// Details about sector expiration
-</span><span class="attr">#[derive(Debug, Clone, Encode, Decode)]
-</span><span class="kw">pub enum </span>SectorExpirationDetails {
-    <span class="doccomment">/// Sector expiration became known
-    </span>Determined {
-        <span class="doccomment">/// Segment index at which sector expires
-        </span>expires_at: SegmentIndex,
-    },
-    <span class="doccomment">/// Sector will expire at the next segment index and should be replotted
-    </span>AboutToExpire,
-    <span class="doccomment">/// Sector already expired
-    </span>Expired,
-}
-
 <span class="doccomment">/// Various sector updates
 </span><span class="attr">#[derive(Debug, Clone, Encode, Decode)]
 </span><span class="kw">pub enum </span>SectorUpdate {
-    <span class="doccomment">/// Sector is is being plotted
+    <span class="doccomment">/// Sector is being plotted
     </span>Plotting(SectorPlottingDetails),
     <span class="doccomment">/// Sector expiration information updated
     </span>Expiration(SectorExpirationDetails),
@@ -2615,8 +2534,8 @@
 <span class="attr">#[derive(Default, Debug)]
 </span><span class="kw">struct </span>Handlers {
     sector_update: Handler&lt;(SectorIndex, SectorUpdate)&gt;,
+    farming_notification: Handler&lt;FarmingNotification&gt;,
     solution: Handler&lt;SolutionResponse&gt;,
-    plot_audited: Handler&lt;AuditEvent&gt;,
 }
 
 <span class="doccomment">/// Single disk farm abstraction is a container for everything necessary to plot/farm with a single
@@ -2763,7 +2682,6 @@
                 single_disk_farm_info
             }
         };
-        <span class="kw">let </span>farm_id = <span class="kw-2">*</span>single_disk_farm_info.id();
 
         <span class="kw">let </span>single_disk_farm_info_lock = SingleDiskFarmInfo::try_lock(<span class="kw-2">&amp;</span>directory)
             .map_err(SingleDiskFarmError::LikelyAlreadyInUse)<span class="question-mark">?</span>;
@@ -2829,12 +2747,13 @@
             }
         };
 
+        <span class="kw">let </span>metadata_file_path = directory.join(<span class="self">Self</span>::METADATA_FILE);
         <span class="kw">let </span><span class="kw-2">mut </span>metadata_file = OpenOptions::new()
             .read(<span class="bool-val">true</span>)
             .write(<span class="bool-val">true</span>)
             .create(<span class="bool-val">true</span>)
             .advise_random_access()
-            .open(directory.join(<span class="self">Self</span>::METADATA_FILE))<span class="question-mark">?</span>;
+            .open(<span class="kw-2">&amp;</span>metadata_file_path)<span class="question-mark">?</span>;
 
         metadata_file.advise_random_access()<span class="question-mark">?</span>;
 
@@ -2891,14 +2810,34 @@
 
             <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata_bytes = <span class="macro">vec!</span>[<span class="number">0</span>; sector_metadata_size];
             <span class="kw">for </span>sector_index <span class="kw">in </span><span class="number">0</span>..metadata_header.plotted_sector_count {
-                metadata_file.read_exact_at(
-                    <span class="kw-2">&amp;mut </span>sector_metadata_bytes,
-                    RESERVED_PLOT_METADATA + sector_metadata_size <span class="kw">as </span>u64 * u64::from(sector_index),
-                )<span class="question-mark">?</span>;
-                sectors_metadata.push(
-                    SectorMetadataChecksummed::decode(<span class="kw-2">&amp;mut </span>sector_metadata_bytes.as_ref())
-                        .map_err(SingleDiskFarmError::FailedToDecodeSectorMetadata)<span class="question-mark">?</span>,
-                );
+                <span class="kw">let </span>sector_offset =
+                    RESERVED_PLOT_METADATA + sector_metadata_size <span class="kw">as </span>u64 * u64::from(sector_index);
+                metadata_file.read_exact_at(<span class="kw-2">&amp;mut </span>sector_metadata_bytes, sector_offset)<span class="question-mark">?</span>;
+
+                <span class="kw">let </span>sector_metadata =
+                    <span class="kw">match </span>SectorMetadataChecksummed::decode(<span class="kw-2">&amp;mut </span>sector_metadata_bytes.as_ref()) {
+                        <span class="prelude-val">Ok</span>(sector_metadata) =&gt; sector_metadata,
+                        <span class="prelude-val">Err</span>(error) =&gt; {
+                            <span class="macro">warn!</span>(
+                                path = %metadata_file_path.display(),
+                                %error,
+                                %sector_index,
+                                <span class="string">"Failed to decode sector metadata, replacing with dummy expired \
+                                sector metadata"
+                            </span>);
+
+                            <span class="kw">let </span>dummy_sector = SectorMetadataChecksummed::from(SectorMetadata {
+                                sector_index,
+                                pieces_in_sector,
+                                s_bucket_sizes: Box::new([<span class="number">0</span>; Record::NUM_S_BUCKETS]),
+                                history_size: HistorySize::from(SegmentIndex::ZERO),
+                            });
+                            metadata_file.write_all_at(<span class="kw-2">&amp;</span>dummy_sector.encode(), sector_offset)<span class="question-mark">?</span>;
+
+                            dummy_sector
+                        }
+                    };
+                sectors_metadata.push(sector_metadata);
             }
 
             Arc::new(RwLock::new(sectors_metadata))
@@ -3132,7 +3071,6 @@
                             handlers,
                             modifying_sector_index,
                             slot_info_notifications: slot_info_forwarder_receiver,
-                            farm_id,
                         };
                         farming::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
                     </span>};
@@ -3383,9 +3321,9 @@
         <span class="self">self</span>.handlers.sector_update.add(callback)
     }
 
-    <span class="doccomment">/// Subscribe to notification about audited plots
-    </span><span class="kw">pub fn </span>on_plot_audited(<span class="kw-2">&amp;</span><span class="self">self</span>, callback: HandlerFn&lt;AuditEvent&gt;) -&gt; HandlerId {
-        <span class="self">self</span>.handlers.plot_audited.add(callback)
+    <span class="doccomment">/// Subscribe to farming notifications
+    </span><span class="kw">pub fn </span>on_farming_notification(<span class="kw-2">&amp;</span><span class="self">self</span>, callback: HandlerFn&lt;FarmingNotification&gt;) -&gt; HandlerId {
+        <span class="self">self</span>.handlers.farming_notification.add(callback)
     }
 
     <span class="doccomment">/// Subscribe to new solution notification
