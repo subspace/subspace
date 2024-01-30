@@ -928,6 +928,16 @@
 <a href="#926" id="926">926</a>
 <a href="#927" id="927">927</a>
 <a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -996,6 +1006,7 @@
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::pin::Pin;
+<span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{
     BlockNumber, PotCheckpoints, PotOutput, PublicKey, Randomness, RewardSignature, SectorId,
@@ -1012,13 +1023,16 @@
 
 <span class="doccomment">/// Subspace sync oracle that takes into account force authoring flag, allowing to bootstrap
 /// Subspace network from scratch due to our fork of Substrate where sync state of nodes depends on
-/// connected nodes (none of which will be synced initially).
+/// connected nodes (none of which will be synced initially). It also accounts for DSN sync, when
+/// normal Substrate sync is paused, which might happen before Substrate's internals decide there is
+/// a sync happening, but DSN sync is already in progress.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>SubspaceSyncOracle&lt;SO&gt;
 <span class="kw">where
     </span>SO: SyncOracle + Send + Sync,
 {
     force_authoring: bool,
+    pause_sync: Arc&lt;AtomicBool&gt;,
     inner: SO,
 }
 
@@ -1029,8 +1043,9 @@
     <span class="kw">fn </span>is_major_syncing(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="comment">// This allows slot worker to produce blocks even when it is offline, which according to
         // modified Substrate fork will happen when node is offline or connected to non-synced peers
-        // (default state)
-        </span>!<span class="self">self</span>.force_authoring &amp;&amp; <span class="self">self</span>.inner.is_major_syncing()
+        // (default state), it also accounts for DSN sync
+        </span>(!<span class="self">self</span>.force_authoring &amp;&amp; <span class="self">self</span>.inner.is_major_syncing())
+            || <span class="self">self</span>.pause_sync.load(Ordering::Acquire)
     }
 
     <span class="kw">fn </span>is_offline(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
@@ -1043,9 +1058,14 @@
     </span>SO: SyncOracle + Send + Sync,
 {
     <span class="doccomment">/// Create new instance
-    </span><span class="kw">pub fn </span>new(force_authoring: bool, substrate_sync_oracle: SO) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(
+        force_authoring: bool,
+        pause_sync: Arc&lt;AtomicBool&gt;,
+        substrate_sync_oracle: SO,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             force_authoring,
+            pause_sync,
             inner: substrate_sync_oracle,
         }
     }
