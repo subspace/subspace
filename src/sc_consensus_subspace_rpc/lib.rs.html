@@ -847,10 +847,6 @@
 <a href="#845" id="845">845</a>
 <a href="#846" id="846">846</a>
 <a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -911,7 +907,8 @@
 <span class="kw">use </span>subspace_archiving::archiver::NewArchivedSegment;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
-    PieceIndex, PublicKey, SegmentHeader, SegmentIndex, SlotNumber, Solution,
+    BlockHash, HistorySize, PieceIndex, PublicKey, SegmentHeader, SegmentIndex, SlotNumber,
+    Solution,
 };
 <span class="kw">use </span>subspace_farmer_components::FarmerProtocolInfo;
 <span class="kw">use </span>subspace_networking::libp2p::Multiaddr;
@@ -930,7 +927,7 @@
 <span class="doccomment">/// Provides rpc methods for interacting with Subspace.
 </span><span class="attr">#[rpc(client, server)]
 </span><span class="kw">pub trait </span>SubspaceRpcApi {
-    <span class="doccomment">/// Ger metadata necessary for farmer operation
+    <span class="doccomment">/// Get metadata necessary for farmer operation
     </span><span class="attr">#[method(name = <span class="string">"subspace_getFarmerAppInfo"</span>)]
     </span><span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt;;
 
@@ -1074,7 +1071,9 @@
         Arc&lt;Mutex&lt;ArchivedSegmentHeaderAcknowledgementSenders&gt;&gt;,
     next_subscription_id: AtomicU64,
     sync_oracle: SubspaceSyncOracle&lt;SO&gt;,
+    genesis_hash: BlockHash,
     chain_constants: ChainConstants,
+    max_pieces_in_sector: u16,
     kzg: Kzg,
     deny_unsafe: DenyUnsafe,
     _block: PhantomData&lt;Block&gt;,
@@ -1097,9 +1096,16 @@
 {
     <span class="doccomment">/// Creates a new instance of the `SubspaceRpc` handler.
     </span><span class="kw">pub fn </span>new(config: SubspaceRpcConfig&lt;Client, SO, AS&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ApiError&gt; {
-        <span class="kw">let </span>best_hash = config.client.info().best_hash;
+        <span class="kw">let </span>info = config.client.info();
+        <span class="kw">let </span>best_hash = info.best_hash;
+        <span class="kw">let </span>genesis_hash = BlockHash::try_from(info.genesis_hash.as_ref())
+            .expect(<span class="string">"Genesis hash must always be convertable into BlockHash; qed"</span>);
         <span class="kw">let </span>runtime_api = config.client.runtime_api();
         <span class="kw">let </span>chain_constants = runtime_api.chain_constants(best_hash)<span class="question-mark">?</span>;
+        <span class="comment">// While the number can technically change in runtime, farmer will not adjust to it on the
+        // fly and previous value will remain valid (number only expected to increase), so it is
+        // fine to query it only once
+        </span><span class="kw">let </span>max_pieces_in_sector = runtime_api.max_pieces_in_sector(best_hash)<span class="question-mark">?</span>;
         <span class="kw">let </span>block_authoring_delay = u64::from(chain_constants.block_authoring_delay());
         <span class="kw">let </span>block_authoring_delay = usize::try_from(block_authoring_delay)
             .expect(<span class="string">"Block authoring delay will never exceed usize on any platform; qed"</span>);
@@ -1122,7 +1128,9 @@
             archived_segment_acknowledgement_senders: Arc::default(),
             next_subscription_id: AtomicU64::default(),
             sync_oracle: config.sync_oracle,
+            genesis_hash,
             chain_constants,
+            max_pieces_in_sector,
             kzg: config.kzg,
             deny_unsafe: config.deny_unsafe,
             _block: PhantomData,
@@ -1140,37 +1148,28 @@
         + Send
         + Sync
         + <span class="lifetime">'static</span>,
-    Client::Api: SubspaceRuntimeApi&lt;Block, FarmerPublicKey&gt; + ObjectsApi&lt;Block&gt;,
+    Client::Api: ObjectsApi&lt;Block&gt;,
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">'static</span>,
     AS: AuxStore + Send + Sync + <span class="lifetime">'static</span>,
 {
     <span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt; {
-        <span class="kw">let </span>best_hash = <span class="self">self</span>.client.info().best_hash;
-        <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
-
-        <span class="kw">let </span>genesis_hash = <span class="self">self
-            </span>.client
-            .info()
-            .genesis_hash
-            .as_ref()
-            .try_into()
-            .map_err(|error| {
-                <span class="macro">error!</span>(<span class="string">"Failed to convert genesis hash: {error}"</span>);
-                JsonRpseeError::Custom(<span class="string">"Internal error"</span>.to_string())
-            })<span class="question-mark">?</span>;
+        <span class="kw">let </span>last_segment_index = <span class="self">self
+            </span>.segment_headers_store
+            .max_segment_index()
+            .unwrap_or(SegmentIndex::ZERO);
 
         <span class="kw">let </span>farmer_app_info: <span class="prelude-ty">Result</span>&lt;FarmerAppInfo, ApiError&gt; = <span class="kw">try </span>{
             <span class="kw">let </span>chain_constants = <span class="kw-2">&amp;</span><span class="self">self</span>.chain_constants;
             <span class="kw">let </span>protocol_info = FarmerProtocolInfo {
-                history_size: runtime_api.history_size(best_hash)<span class="question-mark">?</span>,
-                max_pieces_in_sector: runtime_api.max_pieces_in_sector(best_hash)<span class="question-mark">?</span>,
+                history_size: HistorySize::from(last_segment_index),
+                max_pieces_in_sector: <span class="self">self</span>.max_pieces_in_sector,
                 recent_segments: chain_constants.recent_segments(),
                 recent_history_fraction: chain_constants.recent_history_fraction(),
                 min_sector_lifetime: chain_constants.min_sector_lifetime(),
             };
 
             FarmerAppInfo {
-                genesis_hash,
+                genesis_hash: <span class="self">self</span>.genesis_hash,
                 dsn_bootstrap_nodes: <span class="self">self</span>.dsn_bootstrap_nodes.clone(),
                 farming_timeout: chain_constants
                     .slot_duration()
@@ -1681,17 +1680,10 @@
             )));
         };
 
-        <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
-        <span class="kw">let </span>best_hash = <span class="self">self</span>.client.info().best_hash;
-
-        <span class="kw">let </span>last_segment_index = <span class="kw">match </span>runtime_api.history_size(best_hash) {
-            <span class="prelude-val">Ok</span>(history_size) =&gt; history_size.segment_index(),
-            <span class="prelude-val">Err</span>(error) =&gt; {
-                <span class="macro">error!</span>(<span class="question-mark">?</span>best_hash, <span class="string">"Failed to get history size: {}"</span>, error);
-
-                SegmentIndex::ZERO
-            }
-        };
+        <span class="kw">let </span>last_segment_index = <span class="self">self
+            </span>.segment_headers_store
+            .max_segment_index()
+            .unwrap_or(SegmentIndex::ZERO);
 
         <span class="kw">let </span>last_segment_headers = (SegmentIndex::ZERO..=last_segment_index)
             .rev()
