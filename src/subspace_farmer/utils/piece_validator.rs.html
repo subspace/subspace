@@ -113,6 +113,13 @@
 <a href="#111" id="111">111</a>
 <a href="#112" id="112">112</a>
 <a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::NodeClient;
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>lru::LruCache;
@@ -161,56 +168,65 @@
         piece_index: PieceIndex,
         piece: Piece,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">if </span>source_peer_id != <span class="self">self</span>.dsn_node.id() {
-            <span class="kw">let </span>segment_index = piece_index.segment_index();
+        <span class="kw">if </span>source_peer_id == <span class="self">self</span>.dsn_node.id() {
+            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+        }
 
-            <span class="kw">let </span>maybe_segment_commitment = <span class="self">self
-                </span>.segment_commitment_cache
-                .lock()
-                .get(<span class="kw-2">&amp;</span>segment_index)
-                .copied();
-            <span class="kw">let </span>segment_commitment = <span class="kw">match </span>maybe_segment_commitment {
-                <span class="prelude-val">Some</span>(segment_commitment) =&gt; segment_commitment,
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="kw">let </span>segment_headers =
-                        <span class="kw">match </span><span class="self">self</span>.node_client.segment_headers(<span class="macro">vec!</span>[segment_index]).<span class="kw">await </span>{
-                            <span class="prelude-val">Ok</span>(segment_headers) =&gt; segment_headers,
-                            <span class="prelude-val">Err</span>(error) =&gt; {
-                                <span class="macro">error!</span>(
-                                    %piece_index,
-                                    <span class="question-mark">?</span>error,
-                                    <span class="string">"Failed tor retrieve segment headers from node"
-                                </span>);
-                                <span class="kw">return </span><span class="prelude-val">None</span>;
-                            }
-                        };
+        <span class="kw">let </span>segment_index = piece_index.segment_index();
 
-                    <span class="kw">let </span>segment_commitment = <span class="kw">match </span>segment_headers.into_iter().next().flatten() {
-                        <span class="prelude-val">Some</span>(segment_header) =&gt; segment_header.segment_commitment(),
-                        <span class="prelude-val">None </span>=&gt; {
+        <span class="kw">let </span>maybe_segment_commitment = <span class="self">self
+            </span>.segment_commitment_cache
+            .lock()
+            .get(<span class="kw-2">&amp;</span>segment_index)
+            .copied();
+        <span class="kw">let </span>segment_commitment = <span class="kw">match </span>maybe_segment_commitment {
+            <span class="prelude-val">Some</span>(segment_commitment) =&gt; segment_commitment,
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="kw">let </span>segment_headers =
+                    <span class="kw">match </span><span class="self">self</span>.node_client.segment_headers(<span class="macro">vec!</span>[segment_index]).<span class="kw">await </span>{
+                        <span class="prelude-val">Ok</span>(segment_headers) =&gt; segment_headers,
+                        <span class="prelude-val">Err</span>(error) =&gt; {
                             <span class="macro">error!</span>(
                                 %piece_index,
-                                %segment_index,
-                                <span class="string">"Segment commitment for segment index wasn't found on node"
+                                <span class="question-mark">?</span>error,
+                                <span class="string">"Failed tor retrieve segment headers from node"
                             </span>);
                             <span class="kw">return </span><span class="prelude-val">None</span>;
                         }
                     };
 
-                    <span class="self">self</span>.segment_commitment_cache
-                        .lock()
-                        .push(segment_index, segment_commitment);
+                <span class="kw">let </span>segment_commitment = <span class="kw">match </span>segment_headers.into_iter().next().flatten() {
+                    <span class="prelude-val">Some</span>(segment_header) =&gt; segment_header.segment_commitment(),
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">error!</span>(
+                            %piece_index,
+                            %segment_index,
+                            <span class="string">"Segment commitment for segment index wasn't found on node"
+                        </span>);
+                        <span class="kw">return </span><span class="prelude-val">None</span>;
+                    }
+                };
 
-                    segment_commitment
-                }
-            };
+                <span class="self">self</span>.segment_commitment_cache
+                    .lock()
+                    .push(segment_index, segment_commitment);
 
-            <span class="kw">if </span>!is_piece_valid(
-                <span class="kw-2">&amp;</span><span class="self">self</span>.kzg,
-                <span class="kw-2">&amp;</span>piece,
-                <span class="kw-2">&amp;</span>segment_commitment,
-                piece_index.position(),
-            ) {
+                segment_commitment
+            }
+        };
+
+        <span class="kw">let </span>is_valid_fut = tokio::task::spawn_blocking({
+            <span class="kw">let </span>kzg = <span class="self">self</span>.kzg.clone();
+
+            <span class="kw">move </span>|| {
+                is_piece_valid(<span class="kw-2">&amp;</span>kzg, <span class="kw-2">&amp;</span>piece, <span class="kw-2">&amp;</span>segment_commitment, piece_index.position())
+                    .then_some(piece)
+            }
+        });
+
+        <span class="kw">match </span>is_valid_fut.<span class="kw">await</span>.unwrap_or_default() {
+            <span class="prelude-val">Some</span>(piece) =&gt; <span class="prelude-val">Some</span>(piece),
+            <span class="prelude-val">None </span>=&gt; {
                 <span class="macro">warn!</span>(
                     %piece_index,
                     %source_peer_id,
@@ -219,11 +235,9 @@
 
                 <span class="comment">// We don't care about result here
                 </span><span class="kw">let _ </span>= <span class="self">self</span>.dsn_node.ban_peer(source_peer_id).<span class="kw">await</span>;
-                <span class="kw">return </span><span class="prelude-val">None</span>;
-            }
+                <span class="prelude-val">None
+            </span>}
         }
-
-        <span class="prelude-val">Some</span>(piece)
     }
 }
 </code></pre></div></section></main></body></html>

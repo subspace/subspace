@@ -80,6 +80,13 @@
 <a href="#78" id="78">78</a>
 <a href="#79" id="79">79</a>
 <a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>sc_client_api::AuxStore;
 <span class="kw">use </span>sc_consensus_subspace::archiver::SegmentHeadersStore;
@@ -126,25 +133,34 @@
         piece_index: PieceIndex,
         piece: Piece,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">if </span>source_peer_id != <span class="self">self</span>.dsn_node.id() {
-            <span class="kw">let </span>segment_index = piece_index.segment_index();
+        <span class="kw">if </span>source_peer_id == <span class="self">self</span>.dsn_node.id() {
+            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+        }
 
-            <span class="kw">let </span>maybe_segment_header = <span class="self">self</span>.segment_headers_store.get_segment_header(segment_index);
-            <span class="kw">let </span>segment_commitment = <span class="kw">match </span>maybe_segment_header {
-                <span class="prelude-val">Some</span>(segment_header) =&gt; segment_header.segment_commitment(),
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="macro">error!</span>(%segment_index, <span class="string">"No segment commitment in the cache."</span>);
+        <span class="kw">let </span>segment_index = piece_index.segment_index();
 
-                    <span class="kw">return </span><span class="prelude-val">None</span>;
-                }
-            };
+        <span class="kw">let </span>maybe_segment_header = <span class="self">self</span>.segment_headers_store.get_segment_header(segment_index);
+        <span class="kw">let </span>segment_commitment = <span class="kw">match </span>maybe_segment_header {
+            <span class="prelude-val">Some</span>(segment_header) =&gt; segment_header.segment_commitment(),
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">error!</span>(%segment_index, <span class="string">"No segment commitment in the cache."</span>);
 
-            <span class="kw">if </span>!is_piece_valid(
-                <span class="self">self</span>.kzg,
-                <span class="kw-2">&amp;</span>piece,
-                <span class="kw-2">&amp;</span>segment_commitment,
-                piece_index.position(),
-            ) {
+                <span class="kw">return </span><span class="prelude-val">None</span>;
+            }
+        };
+
+        <span class="kw">let </span>is_valid_fut = tokio::task::spawn_blocking({
+            <span class="kw">let </span>kzg = <span class="self">self</span>.kzg.clone();
+
+            <span class="kw">move </span>|| {
+                is_piece_valid(<span class="kw-2">&amp;</span>kzg, <span class="kw-2">&amp;</span>piece, <span class="kw-2">&amp;</span>segment_commitment, piece_index.position())
+                    .then_some(piece)
+            }
+        });
+
+        <span class="kw">match </span>is_valid_fut.<span class="kw">await</span>.unwrap_or_default() {
+            <span class="prelude-val">Some</span>(piece) =&gt; <span class="prelude-val">Some</span>(piece),
+            <span class="prelude-val">None </span>=&gt; {
                 <span class="macro">warn!</span>(
                     %piece_index,
                     %source_peer_id,
@@ -153,11 +169,9 @@
 
                 <span class="comment">// We don't care about result here
                 </span><span class="kw">let _ </span>= <span class="self">self</span>.dsn_node.ban_peer(source_peer_id).<span class="kw">await</span>;
-                <span class="kw">return </span><span class="prelude-val">None</span>;
-            }
+                <span class="prelude-val">None
+            </span>}
         }
-
-        <span class="prelude-val">Some</span>(piece)
     }
 }
 </code></pre></div></section></main></body></html>
