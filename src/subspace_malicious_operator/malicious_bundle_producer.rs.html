@@ -460,12 +460,6 @@
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
-<a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a>
-<a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-<a href="#465" id="465">465</a>
-<a href="#466" id="466">466</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::malicious_bundle_tamper::MaliciousBundleTamper;
 <span class="kw">use </span>domain_client_operator::domain_bundle_producer::DomainBundleProducer;
 <span class="kw">use </span>domain_client_operator::domain_bundle_proposer::DomainBundleProposer;
@@ -530,12 +524,12 @@
         <span class="kw-2">*</span><span class="self">self </span>= MaliciousOperatorStatus::NoStatus
     }
 
-    <span class="kw">fn </span>registered_operator(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(<span class="kw-2">&amp;</span>OperatorId, <span class="kw-2">&amp;</span>OperatorPublicKey)&gt; {
+    <span class="kw">fn </span>registered_operator(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(OperatorId, OperatorPublicKey)&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             MaliciousOperatorStatus::Registered {
                 operator_id,
                 signing_key,
-            } =&gt; <span class="prelude-val">Some</span>((operator_id, signing_key)),
+            } =&gt; <span class="prelude-val">Some</span>((<span class="kw-2">*</span>operator_id, signing_key.clone())),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         }
     }
@@ -574,7 +568,10 @@
     CClient::Api: DomainsApi&lt;CBlock, &lt;DomainBlock <span class="kw">as </span>BlockT&gt;::Header&gt;
         + BundleProducerElectionApi&lt;CBlock, Balance&gt;
         + AccountNonceApi&lt;CBlock, AccountId, Nonce&gt;,
-    TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = DomainBlock&gt; + <span class="lifetime">'static</span>,
+    TransactionPool: sc_transaction_pool_api::TransactionPool&lt;
+            Block = DomainBlock,
+            Hash = &lt;DomainBlock <span class="kw">as </span>BlockT&gt;::Hash,
+        &gt; + <span class="lifetime">'static</span>,
 {
     <span class="kw">pub fn </span>new(
         domain_id: DomainId,
@@ -629,24 +626,15 @@
     }
 
     <span class="kw">async fn </span>handle_new_slot(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         operator_id: OperatorId,
         new_slot_info: OperatorSlotInfo,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;OpaqueBundleFor&lt;DomainBlock, CBlock&gt;&gt; {
         <span class="kw">let </span>slot = new_slot_info.slot;
-        <span class="kw">let </span>consensus_block_info = {
-            <span class="kw">let </span>info = <span class="self">self</span>.consensus_client.info();
-            sp_blockchain::HashAndNumber {
-                number: info.best_number,
-                hash: info.best_hash,
-            }
-        };
         <span class="self">self</span>.bundle_producer
-            .clone()
-            .produce_bundle(operator_id, consensus_block_info.clone(), new_slot_info)
+            .produce_bundle(operator_id, new_slot_info)
             .unwrap_or_else(<span class="kw">move </span>|error| {
                 <span class="macro">tracing::error!</span>(
-                    <span class="question-mark">?</span>consensus_block_info,
                     <span class="question-mark">?</span>slot,
                     <span class="question-mark">?</span>operator_id,
                     <span class="question-mark">?</span>error,
@@ -668,7 +656,7 @@
             {
                 <span class="kw">let </span>maybe_opaque_bundle = <span class="self">self
                     </span>.handle_new_slot(
-                        <span class="kw-2">*</span>operator_id,
+                        operator_id,
                         OperatorSlotInfo {
                             slot,
                             global_randomness,
@@ -679,7 +667,7 @@
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>opaque_bundle) = maybe_opaque_bundle {
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self
                         </span>.malicious_bundle_tamper
-                        .maybe_tamper_bundle(<span class="kw-2">&amp;mut </span>opaque_bundle, signing_key)
+                        .maybe_tamper_bundle(<span class="kw-2">&amp;mut </span>opaque_bundle, <span class="kw-2">&amp;</span>signing_key)
                     {
                         <span class="macro">tracing::error!</span>(<span class="question-mark">?</span>err, <span class="string">"Got error when try to tamper bundle"</span>);
                     }
@@ -713,7 +701,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>((malicious_operator_id, <span class="kw">_</span>)) =
             <span class="self">self</span>.malicious_operator_status.registered_operator()
         {
-            <span class="kw">if </span>next_operators.contains(malicious_operator_id) {
+            <span class="kw">if </span>next_operators.contains(<span class="kw-2">&amp;</span>malicious_operator_id) {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
             } <span class="kw">else </span>{
                 <span class="macro">tracing::info!</span>(
@@ -723,7 +711,7 @@
                 <span class="comment">// Remove the current malicious operator to not account its stake toward
                 // `current_total_stake` otherwise the next malicious operator will stake
                 // more and more fund
-                </span>current_operators.remove(malicious_operator_id);
+                </span>current_operators.remove(<span class="kw-2">&amp;</span>malicious_operator_id);
                 <span class="self">self</span>.malicious_operator_status.no_status();
             }
         }

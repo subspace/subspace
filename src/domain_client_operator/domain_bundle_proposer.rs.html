@@ -261,6 +261,82 @@
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
@@ -274,23 +350,63 @@
     BundleHeader, DomainId, DomainsApi, ExecutionReceipt, HeaderHashingFor, ProofOfElection,
 };
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT, NumberFor, One, Zero};
+<span class="kw">use </span>sp_runtime::Percent;
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
 <span class="kw">use </span>sp_weights::Weight;
+<span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time;
 <span class="kw">use </span>subspace_core_primitives::U256;
 <span class="kw">use </span>subspace_runtime_primitives::Balance;
 
-<span class="kw">pub struct </span>DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt; {
+<span class="doccomment">/// If the bundle utilization is below `BUNDLE_UTILIZATION_THRESHOLD` we will attempt to push
+/// at most `MAX_SKIPPED_TRANSACTIONS` number of transactions before quitting for real.
+</span><span class="kw">const </span>MAX_SKIPPED_TRANSACTIONS: usize = <span class="number">8</span>;
+
+<span class="kw">const </span>BUNDLE_UTILIZATION_THRESHOLD: Percent = Percent::from_percent(<span class="number">95</span>);
+
+<span class="comment">// `PreviousBundledTx` used to keep track of tx that have included in previous bundle and avoid
+// to re-include the these tx in the following bundle to reduce deplicated tx.
+</span><span class="kw">struct </span>PreviousBundledTx&lt;Block: BlockT, CBlock: BlockT&gt; {
+    bundled_at: &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash,
+    tx_hashes: HashSet&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;,
+}
+
+<span class="kw">impl</span>&lt;Block: BlockT, CBlock: BlockT&gt; PreviousBundledTx&lt;Block, CBlock&gt; {
+    <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+        PreviousBundledTx {
+            bundled_at: Default::default(),
+            tx_hashes: HashSet::new(),
+        }
+    }
+
+    <span class="kw">fn </span>already_bundled(<span class="kw-2">&amp;</span><span class="self">self</span>, tx_hash: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Hash) -&gt; bool {
+        <span class="self">self</span>.tx_hashes.contains(tx_hash)
+    }
+
+    <span class="kw">fn </span>maybe_clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>, consensus_hash: &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash) {
+        <span class="kw">if </span><span class="self">self</span>.bundled_at != consensus_hash {
+            <span class="self">self</span>.bundled_at = consensus_hash;
+            <span class="self">self</span>.tx_hashes.clear();
+        }
+    }
+
+    <span class="kw">fn </span>add_bundled(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx_hash: &lt;Block <span class="kw">as </span>BlockT&gt;::Hash) {
+        <span class="self">self</span>.tx_hashes.insert(tx_hash);
+    }
+}
+
+<span class="kw">pub struct </span>DomainBundleProposer&lt;Block: BlockT, Client, CBlock: BlockT, CClient, TransactionPool&gt; {
     domain_id: DomainId,
     client: Arc&lt;Client&gt;,
     consensus_client: Arc&lt;CClient&gt;,
     transaction_pool: Arc&lt;TransactionPool&gt;,
+    previous_bundled_tx: PreviousBundledTx&lt;Block, CBlock&gt;,
     _phantom_data: PhantomData&lt;(Block, CBlock)&gt;,
 }
 
-<span class="kw">impl</span>&lt;Block, Client, CBlock, CClient, TransactionPool&gt; Clone
+<span class="kw">impl</span>&lt;Block: BlockT, Client, CBlock: BlockT, CClient, TransactionPool&gt; Clone
     <span class="kw">for </span>DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt;
 {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
@@ -299,6 +415,7 @@
             client: <span class="self">self</span>.client.clone(),
             consensus_client: <span class="self">self</span>.consensus_client.clone(),
             transaction_pool: <span class="self">self</span>.transaction_pool.clone(),
+            previous_bundled_tx: PreviousBundledTx::new(),
             _phantom_data: <span class="self">self</span>._phantom_data,
         }
     }
@@ -319,7 +436,8 @@
     Client::Api: BlockBuilder&lt;Block&gt; + DomainCoreApi&lt;Block&gt; + TaggedTransactionQueue&lt;Block&gt;,
     CClient: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt;,
     CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;,
-    TransactionPool: sc_transaction_pool_api::TransactionPool&lt;Block = Block&gt;,
+    TransactionPool:
+        sc_transaction_pool_api::TransactionPool&lt;Block = Block, Hash = &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;,
 {
     <span class="kw">pub fn </span>new(
         domain_id: DomainId,
@@ -332,12 +450,13 @@
             client,
             consensus_client,
             transaction_pool,
+            previous_bundled_tx: PreviousBundledTx::new(),
             _phantom_data: PhantomData,
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>propose_bundle_at(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         proof_of_election: ProofOfElection&lt;CBlock::Hash&gt;,
         tx_range: U256,
     ) -&gt; sp_blockchain::Result&lt;ProposeBundleOutput&lt;Block, CBlock&gt;&gt; {
@@ -359,6 +478,12 @@
             }
         };
 
+        <span class="comment">// Clear the previous bundled tx info whenever the consensus chain tip is changed,
+        // this allow the operator to retry for the previous bundled tx in case the previous
+        // bundle fail to submit to the consensus chain due to any reason.
+        </span><span class="self">self</span>.previous_bundled_tx
+            .maybe_clear(<span class="self">self</span>.consensus_client.info().best_hash);
+
         <span class="kw">let </span>bundle_vrf_hash = U256::from_be_bytes(proof_of_election.vrf_hash());
         <span class="kw">let </span>domain_block_limit = <span class="self">self
             </span>.consensus_client
@@ -372,6 +497,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>estimated_bundle_weight = Weight::default();
         <span class="kw">let </span><span class="kw-2">mut </span>bundle_size = <span class="number">0u32</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>skipped = <span class="number">0</span>;
 
         <span class="comment">// Seperate code block to make sure that runtime api instance is dropped after validation is done.
         </span>{
@@ -395,6 +521,14 @@
                     <span class="kw">continue</span>;
                 }
 
+                <span class="comment">// Skip the tx if is is already bundled by a recent bundle
+                </span><span class="kw">if </span><span class="self">self
+                    </span>.previous_bundled_tx
+                    .already_bundled(<span class="kw-2">&amp;</span><span class="self">self</span>.transaction_pool.hash_of(pending_tx_data))
+                {
+                    <span class="kw">continue</span>;
+                }
+
                 <span class="kw">let </span>tx_weight = runtime_api_instance
                     .extrinsic_weight(parent_hash, pending_tx_data)
                     .map_err(|error| {
@@ -405,16 +539,29 @@
                 <span class="kw">let </span>next_estimated_bundle_weight =
                     estimated_bundle_weight.saturating_add(tx_weight);
                 <span class="kw">if </span>next_estimated_bundle_weight.any_gt(domain_block_limit.max_block_weight) {
-                    <span class="kw">break</span>;
+                    <span class="kw">if </span>skipped &lt; MAX_SKIPPED_TRANSACTIONS
+                        &amp;&amp; Percent::from_rational(
+                            estimated_bundle_weight.ref_time(),
+                            domain_block_limit.max_block_weight.ref_time(),
+                        ) &lt; BUNDLE_UTILIZATION_THRESHOLD
+                    {
+                        skipped += <span class="number">1</span>;
+                    } <span class="kw">else </span>{
+                        <span class="kw">break</span>;
+                    }
                 }
 
                 <span class="kw">let </span>next_bundle_size = bundle_size + pending_tx_data.encoded_size() <span class="kw">as </span>u32;
                 <span class="kw">if </span>next_bundle_size &gt; domain_block_limit.max_block_size {
-                    <span class="kw">break</span>;
+                    <span class="kw">if </span>skipped &lt; MAX_SKIPPED_TRANSACTIONS
+                        &amp;&amp; Percent::from_rational(bundle_size, domain_block_limit.max_block_size)
+                            &lt; BUNDLE_UTILIZATION_THRESHOLD
+                    {
+                        skipped += <span class="number">1</span>;
+                    } <span class="kw">else </span>{
+                        <span class="kw">break</span>;
+                    }
                 }
-
-                estimated_bundle_weight = next_estimated_bundle_weight;
-                bundle_size = next_bundle_size;
 
                 <span class="comment">// Double check the transaction validity, because the tx pool are re-validate the transaction
                 // in pool asynchronously so there is race condition that the operator imported a domain block
@@ -444,7 +591,12 @@
                     <span class="kw">continue</span>;
                 }
 
+                estimated_bundle_weight = next_estimated_bundle_weight;
+                bundle_size = next_bundle_size;
                 extrinsics.push(pending_tx_data.clone());
+
+                <span class="self">self</span>.previous_bundled_tx
+                    .add_bundled(<span class="self">self</span>.transaction_pool.hash_of(pending_tx_data));
             }
         }
 

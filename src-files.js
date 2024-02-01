@@ -4,7 +4,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["domain_block_preprocessor",["",[],["inherents.rs","lib.rs","stateless_runtime.rs","xdm_verifier.rs"]]],\
 ["domain_client_consensus_relay_chain",["",[],["import_queue.rs","lib.rs"]]],\
 ["domain_client_message_relayer",["",[],["lib.rs","worker.rs"]]],\
-["domain_client_operator",["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","domain_worker_starter.rs","fetch_domain_bootstrap_info.rs","fraud_proof.rs","lib.rs","operator.rs","utils.rs"]]],\
+["domain_client_operator",["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fetch_domain_bootstrap_info.rs","fraud_proof.rs","lib.rs","operator.rs","utils.rs"]]],\
 ["domain_eth_service",["",[],["lib.rs","provider.rs","rpc.rs","service.rs"]]],\
 ["domain_pallet_executive",["",[],["lib.rs","weights.rs"]]],\
 ["domain_runtime_primitives",["",[],["lib.rs"]]],\
