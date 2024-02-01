@@ -1487,30 +1487,6 @@
 <a href="#1485" id="1485">1485</a>
 <a href="#1486" id="1486">1486</a>
 <a href="#1487" id="1487">1487</a>
-<a href="#1488" id="1488">1488</a>
-<a href="#1489" id="1489">1489</a>
-<a href="#1490" id="1490">1490</a>
-<a href="#1491" id="1491">1491</a>
-<a href="#1492" id="1492">1492</a>
-<a href="#1493" id="1493">1493</a>
-<a href="#1494" id="1494">1494</a>
-<a href="#1495" id="1495">1495</a>
-<a href="#1496" id="1496">1496</a>
-<a href="#1497" id="1497">1497</a>
-<a href="#1498" id="1498">1498</a>
-<a href="#1499" id="1499">1499</a>
-<a href="#1500" id="1500">1500</a>
-<a href="#1501" id="1501">1501</a>
-<a href="#1502" id="1502">1502</a>
-<a href="#1503" id="1503">1503</a>
-<a href="#1504" id="1504">1504</a>
-<a href="#1505" id="1505">1505</a>
-<a href="#1506" id="1506">1506</a>
-<a href="#1507" id="1507">1507</a>
-<a href="#1508" id="1508">1508</a>
-<a href="#1509" id="1509">1509</a>
-<a href="#1510" id="1510">1510</a>
-<a href="#1511" id="1511">1511</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::behavior::persistent_parameters::{
     append_p2p_suffix, remove_p2p_suffix, KnownPeersRegistry, PeerAddressRemovedEvent,
 };
@@ -1522,7 +1498,6 @@
     Event <span class="kw">as </span>RequestResponseEvent, IfDisconnected,
 };
 <span class="kw">use </span><span class="kw">crate</span>::shared::{Command, CreatedSubscription, PeerDiscovered, Shared};
-<span class="kw">use </span><span class="kw">crate</span>::utils::rate_limiter::RateLimiterPermit;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{is_global_address_or_dns, strip_peer_id, SubspaceMetrics};
 <span class="kw">use </span>async_mutex::Mutex <span class="kw">as </span>AsyncMutex;
 <span class="kw">use </span>bytes::Bytes;
@@ -1550,41 +1525,35 @@
 <span class="kw">use </span>std::fmt;
 <span class="kw">use </span>std::fmt::Debug;
 <span class="kw">use </span>std::net::IpAddr;
-<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::atomic::Ordering;
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>tokio::sync::OwnedSemaphorePermit;
 <span class="kw">use </span>tokio::task::yield_now;
 <span class="kw">use </span>tokio::time::Sleep;
 <span class="kw">use </span>tracing::{debug, error, trace, warn};
-
-<span class="doccomment">/// How many peers should node be connected to before boosting turns on.
-///
-/// 1 means boosting starts with second peer.
-</span><span class="kw">const </span>CONCURRENT_TASKS_BOOST_PEERS_THRESHOLD: NonZeroUsize =
-    NonZeroUsize::new(<span class="number">5</span>).expect(<span class="string">"Not zero; qed"</span>);
 
 <span class="kw">enum </span>QueryResultSender {
     Value {
         sender: mpsc::UnboundedSender&lt;PeerRecord&gt;,
         <span class="comment">// Just holding onto permit while data structure is not dropped
-        </span>_permit: RateLimiterPermit,
+        </span>_permit: OwnedSemaphorePermit,
     },
     ClosestPeers {
         sender: mpsc::UnboundedSender&lt;PeerId&gt;,
         <span class="comment">// Just holding onto permit while data structure is not dropped
-        </span>_permit: <span class="prelude-ty">Option</span>&lt;RateLimiterPermit&gt;,
+        </span>_permit: <span class="prelude-ty">Option</span>&lt;OwnedSemaphorePermit&gt;,
     },
     Providers {
         sender: mpsc::UnboundedSender&lt;PeerId&gt;,
         <span class="comment">// Just holding onto permit while data structure is not dropped
-        </span>_permit: <span class="prelude-ty">Option</span>&lt;RateLimiterPermit&gt;,
+        </span>_permit: <span class="prelude-ty">Option</span>&lt;OwnedSemaphorePermit&gt;,
     },
     PutValue {
         sender: mpsc::UnboundedSender&lt;()&gt;,
         <span class="comment">// Just holding onto permit while data structure is not dropped
-        </span>_permit: RateLimiterPermit,
+        </span>_permit: OwnedSemaphorePermit,
     },
     Bootstrap {
         sender: mpsc::UnboundedSender&lt;()&gt;,
@@ -2016,15 +1985,7 @@
                     .num_established_peer_connections
                     .fetch_add(<span class="number">1</span>, Ordering::SeqCst)
                     + <span class="number">1</span>;
-                <span class="kw">if </span>num_established_peer_connections &gt; CONCURRENT_TASKS_BOOST_PEERS_THRESHOLD.get() {
-                    <span class="comment">// The peer count exceeded the threshold, bump up the quota.
-                    </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = shared.rate_limiter.expand_kademlia_semaphore() {
-                        <span class="macro">warn!</span>(%error, <span class="string">"Failed to expand Kademlia concurrent tasks"</span>);
-                    }
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = shared.rate_limiter.expand_regular_semaphore() {
-                        <span class="macro">warn!</span>(%error, <span class="string">"Failed to expand regular concurrent tasks"</span>);
-                    }
-                }
+
                 shared
                     .handlers
                     .num_established_peer_connections_change
@@ -2063,16 +2024,7 @@
                     .num_established_peer_connections
                     .fetch_sub(<span class="number">1</span>, Ordering::SeqCst)
                     - <span class="number">1</span>;
-                <span class="kw">if </span>num_established_peer_connections == CONCURRENT_TASKS_BOOST_PEERS_THRESHOLD.get()
-                {
-                    <span class="comment">// The previous peer count was over the threshold, reclaim the quota.
-                    </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = shared.rate_limiter.shrink_kademlia_semaphore() {
-                        <span class="macro">warn!</span>(%error, <span class="string">"Failed to shrink Kademlia concurrent tasks"</span>);
-                    }
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = shared.rate_limiter.shrink_regular_semaphore() {
-                        <span class="macro">warn!</span>(%error, <span class="string">"Failed to shrink regular concurrent tasks"</span>);
-                    }
-                }
+
                 shared
                     .handlers
                     .num_established_peer_connections_change

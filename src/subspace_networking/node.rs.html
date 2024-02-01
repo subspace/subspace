@@ -630,7 +630,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::protocols::request_response::request_response_factory;
 <span class="kw">use </span><span class="kw">crate</span>::shared::{Command, CreatedSubscription, PeerDiscovered, Shared};
 <span class="kw">use </span><span class="kw">crate</span>::utils::multihash::Multihash;
-<span class="kw">use </span><span class="kw">crate</span>::utils::rate_limiter::RateLimiterPermit;
 <span class="kw">use </span><span class="kw">crate</span>::utils::HandlerFn;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>event_listener_primitives::HandlerId;
@@ -645,6 +644,7 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::task::{Context, Poll};
 <span class="kw">use </span>thiserror::Error;
+<span class="kw">use </span>tokio::sync::OwnedSemaphorePermit;
 <span class="kw">use </span>tracing::{debug, error, trace};
 
 <span class="doccomment">/// Topic subscription, will unsubscribe when last instance is dropped for a particular topic.
@@ -656,7 +656,7 @@
     command_sender: <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;Command&gt;&gt;,
     <span class="attr">#[pin]
     </span>receiver: mpsc::UnboundedReceiver&lt;Bytes&gt;,
-    _permit: RateLimiterPermit,
+    _permit: OwnedSemaphorePermit,
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>TopicSubscription {
@@ -893,7 +893,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         key: Multihash,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = PeerRecord&gt;, GetValueError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = mpsc::unbounded();
 
         <span class="self">self</span>.shared
@@ -916,7 +916,7 @@
         key: Multihash,
         value: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = ()&gt;, PutValueError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = mpsc::unbounded();
 
         <span class="self">self</span>.shared
@@ -936,7 +936,7 @@
 
     <span class="doccomment">/// Subcribe to some topic on the DSN.
     </span><span class="kw">pub async fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>, topic: Sha256Topic) -&gt; <span class="prelude-ty">Result</span>&lt;TopicSubscription, SubscribeError&gt; {
-        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_regular_permit().<span class="kw">await</span>;
+        <span class="kw">let </span>permit = <span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = oneshot::channel();
 
         <span class="self">self</span>.shared
@@ -964,7 +964,7 @@
 
     <span class="doccomment">/// Subcribe a messgo to some topic on the DSN.
     </span><span class="kw">pub async fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, topic: Sha256Topic, message: Vec&lt;u8&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), PublishError&gt; {
-        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.rate_limiter.acquire_regular_permit().<span class="kw">await</span>;
+        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>;
         <span class="kw">let </span>(result_sender, result_receiver) = oneshot::channel();
 
         <span class="self">self</span>.shared
@@ -990,7 +990,7 @@
         </span>Request: GenericRequest,
     {
         <span class="kw">let </span>_permit = <span class="kw">if </span>acquire_permit {
-            <span class="prelude-val">Some</span>(<span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>)
+            <span class="prelude-val">Some</span>(<span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>)
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>};
@@ -1038,7 +1038,7 @@
         acquire_permit: bool,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = PeerId&gt;, GetClosestPeersError&gt; {
         <span class="kw">let </span>permit = <span class="kw">if </span>acquire_permit {
-            <span class="prelude-val">Some</span>(<span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>)
+            <span class="prelude-val">Some</span>(<span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>)
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>};
@@ -1075,7 +1075,7 @@
         acquire_permit: bool,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = PeerId&gt;, GetProvidersError&gt; {
         <span class="kw">let </span>permit = <span class="kw">if </span>acquire_permit {
-            <span class="prelude-val">Some</span>(<span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>)
+            <span class="prelude-val">Some</span>(<span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>)
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>};
@@ -1204,7 +1204,7 @@
 
     <span class="doccomment">/// Returns the request batch handle with common "connection permit" slot from the shared pool.
     </span><span class="kw">pub async fn </span>get_requests_batch_handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeRequestsBatchHandle {
-        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.rate_limiter.acquire_kademlia_permit().<span class="kw">await</span>;
+        <span class="kw">let </span>_permit = <span class="self">self</span>.shared.rate_limiter.acquire_permit().<span class="kw">await</span>;
 
         NodeRequestsBatchHandle {
             _permit,
@@ -1219,7 +1219,7 @@
 /// we don't need to obtain separate semaphore permits for the operations.
 </span><span class="kw">pub struct </span>NodeRequestsBatchHandle {
     node: Node,
-    _permit: RateLimiterPermit,
+    _permit: OwnedSemaphorePermit,
 }
 
 <span class="kw">impl </span>NodeRequestsBatchHandle {
