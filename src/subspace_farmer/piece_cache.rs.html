@@ -877,6 +877,23 @@
 <a href="#875" id="875">875</a>
 <a href="#876" id="876">876</a>
 <a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -891,6 +908,7 @@
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::num::NonZeroU16;
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>std::{fmt, mem};
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, SegmentHeader, SegmentIndex};
 <span class="kw">use </span>subspace_farmer_components::plotting::{PieceGetter, PieceGetterRetryPolicy};
@@ -909,6 +927,7 @@
 </span><span class="kw">const </span>INTERMEDIATE_CACHE_UPDATE_INTERVAL: usize = <span class="number">100</span>;
 <span class="doccomment">/// Get piece retry attempts number.
 </span><span class="kw">const </span>PIECE_GETTER_RETRY_NUMBER: NonZeroU16 = NonZeroU16::new(<span class="number">4</span>).expect(<span class="string">"Not zero; qed"</span>);
+<span class="kw">const </span>INITIAL_SYNC_FARM_INFO_CHECK_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 
 <span class="kw">type </span>HandlerFn&lt;A&gt; = Arc&lt;<span class="kw">dyn </span>Fn(<span class="kw-2">&amp;</span>A) + Send + Sync + <span class="lifetime">'static</span>&gt;;
 <span class="kw">type </span>Handler&lt;A&gt; = Bag&lt;HandlerFn&lt;A&gt;, A&gt;;
@@ -1182,21 +1201,36 @@
 
         <span class="macro">info!</span>(<span class="string">"Synchronizing piece cache"</span>);
 
-        <span class="comment">// TODO: Query from the DSN too such that we don't build outdated cache at start if node is
-        //  not synced fully
-        </span><span class="kw">let </span>last_segment_index = <span class="kw">match </span><span class="self">self</span>.node_client.farmer_app_info().<span class="kw">await </span>{
-            <span class="prelude-val">Ok</span>(farmer_app_info) =&gt; farmer_app_info.protocol_info.history_size.segment_index(),
-            <span class="prelude-val">Err</span>(error) =&gt; {
-                <span class="macro">error!</span>(
-                    %error,
-                    <span class="string">"Failed to get farmer app info from node, keeping old cache state without \
-                    updates"
-                </span>);
+        <span class="kw">let </span>last_segment_index = <span class="kw">loop </span>{
+            <span class="kw">match </span><span class="self">self</span>.node_client.farmer_app_info().<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(farmer_app_info) =&gt; {
+                    <span class="kw">let </span>last_segment_index =
+                        farmer_app_info.protocol_info.history_size.segment_index();
+                    <span class="comment">// Wait for node to be either fully synced or to be aware of non-zero segment
+                    // index, which would indicate it has started DSN sync and knows about
+                    // up-to-date archived history.
+                    //
+                    // While this doesn't account for situations where node was offline for a long
+                    // time and is aware of old segment headers, this is good enough for piece cache
+                    // sync to proceed and should result in better user experience on average.
+                    </span><span class="kw">if </span>!farmer_app_info.syncing || last_segment_index &gt; SegmentIndex::ZERO {
+                        <span class="kw">break </span>last_segment_index;
+                    }
+                }
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">error!</span>(
+                        %error,
+                        <span class="string">"Failed to get farmer app info from node, keeping old cache state without \
+                        updates"
+                    </span>);
 
-                <span class="comment">// Not the latest, but at least something
-                </span><span class="kw-2">*</span><span class="self">self</span>.caches.write() = caches;
-                <span class="kw">return</span>;
+                    <span class="comment">// Not the latest, but at least something
+                    </span><span class="kw-2">*</span><span class="self">self</span>.caches.write() = caches;
+                    <span class="kw">return</span>;
+                }
             }
+
+            tokio::time::sleep(INITIAL_SYNC_FARM_INFO_CHECK_INTERVAL).<span class="kw">await</span>;
         };
 
         <span class="macro">debug!</span>(%last_segment_index, <span class="string">"Identified last segment index"</span>);
