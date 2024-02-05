@@ -310,20 +310,12 @@
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>import_blocks;
-<span class="kw">mod </span>piece_validator;
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">mod </span>piece_validator;
 <span class="kw">mod </span>segment_header_downloader;
 
 <span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::import_blocks::import_blocks_from_dsn;
-<span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::piece_validator::SegmentCommitmentPieceValidator;
+<span class="kw">pub use </span><span class="kw">crate</span>::sync_from_dsn::import_blocks::DsnSyncPieceGetter;
 <span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::segment_header_downloader::SegmentHeaderDownloader;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{select, FutureExt, StreamExt};
@@ -340,9 +332,7 @@
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
-<span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::SegmentIndex;
-<span class="kw">use </span>subspace_networking::utils::piece_provider::PieceProvider;
 <span class="kw">use </span>subspace_networking::Node;
 <span class="kw">use </span>tracing::{info, warn};
 
@@ -367,7 +357,7 @@
 <span class="doccomment">/// Create node observer that will track node state and send notifications to worker to start sync
 /// from DSN.
 </span><span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_observer_and_worker&lt;Block, AS, Client&gt;(
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_observer_and_worker&lt;Block, AS, Client, PG&gt;(
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     network_service: Arc&lt;NetworkService&lt;Block, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
     node: Node,
@@ -375,7 +365,7 @@
     <span class="kw-2">mut </span>import_queue_service: Box&lt;<span class="kw">dyn </span>ImportQueueService&lt;Block&gt;&gt;,
     sync_target_block_number: Arc&lt;AtomicU32&gt;,
     pause_sync: Arc&lt;AtomicBool&gt;,
-    kzg: Kzg,
+    piece_getter: PG,
 ) -&gt; (
     <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">'static</span>,
     <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), sc_service::Error&gt;&gt; + Send + <span class="lifetime">'static</span>,
@@ -391,6 +381,7 @@
         + Sync
         + <span class="lifetime">'static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
+    PG: DsnSyncPieceGetter + Send + Sync + <span class="lifetime">'static</span>,
 {
     <span class="kw">let </span>(tx, rx) = mpsc::channel(<span class="number">0</span>);
     <span class="kw">let </span>observer_fut = {
@@ -408,7 +399,7 @@
             sync_target_block_number,
             pause_sync,
             rx,
-            <span class="kw-2">&amp;</span>kzg,
+            <span class="kw-2">&amp;</span>piece_getter,
         )
         .<span class="kw">await
     </span>};
@@ -531,7 +522,7 @@
 }
 
 <span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">async fn </span>create_worker&lt;Block, AS, IQS, Client&gt;(
+</span><span class="kw">async fn </span>create_worker&lt;Block, AS, IQS, Client, PG&gt;(
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
     node: <span class="kw-2">&amp;</span>Node,
     client: <span class="kw-2">&amp;</span>Client,
@@ -539,7 +530,7 @@
     sync_target_block_number: Arc&lt;AtomicU32&gt;,
     pause_sync: Arc&lt;AtomicBool&gt;,
     <span class="kw-2">mut </span>notifications: mpsc::Receiver&lt;NotificationReason&gt;,
-    kzg: <span class="kw-2">&amp;</span>Kzg,
+    piece_getter: <span class="kw-2">&amp;</span>PG,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), sc_service::Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
@@ -552,6 +543,7 @@
         + <span class="lifetime">'static</span>,
     Client::Api: SubspaceApi&lt;Block, FarmerPublicKey&gt;,
     IQS: ImportQueueService&lt;Block&gt; + <span class="question-mark">?</span>Sized,
+    PG: DsnSyncPieceGetter,
 {
     <span class="kw">let </span>info = client.info();
     <span class="kw">let </span>chain_constants = client
@@ -568,14 +560,6 @@
         .best_number
         .saturating_sub(chain_constants.confirmation_depth_k().into());
     <span class="kw">let </span>segment_header_downloader = SegmentHeaderDownloader::new(node);
-    <span class="kw">let </span>piece_provider = PieceProvider::new(
-        node.clone(),
-        <span class="prelude-val">Some</span>(SegmentCommitmentPieceValidator::&lt;AS&gt;::new(
-            node,
-            kzg,
-            <span class="kw-2">&amp;</span>segment_headers_store,
-        )),
-    );
 
     <span class="comment">// Node starts as offline, we'll wait for it to go online shrtly after
     </span><span class="kw">let </span><span class="kw-2">mut </span>initial_pause_sync = <span class="prelude-val">Some</span>(pause_sync.swap(<span class="bool-val">true</span>, Ordering::AcqRel));
@@ -588,7 +572,7 @@
             <span class="kw-2">&amp;</span>segment_headers_store,
             <span class="kw-2">&amp;</span>segment_header_downloader,
             client,
-            <span class="kw-2">&amp;</span>piece_provider,
+            piece_getter,
             import_queue_service,
             <span class="kw-2">&amp;mut </span>last_processed_segment_index,
             <span class="kw-2">&amp;mut </span>last_processed_block_number,
