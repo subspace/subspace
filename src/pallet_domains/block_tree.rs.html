@@ -1016,6 +1016,18 @@
 <a href="#1014" id="1014">1014</a>
 <a href="#1015" id="1015">1015</a>
 <a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use </span><span class="kw">crate</span>::pallet::StateRoots;
@@ -1032,6 +1044,7 @@
 <span class="kw">use </span>sp_domains::{DomainId, ExecutionReceipt, OperatorId};
 <span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Saturating, Zero};
 <span class="kw">use </span>sp_std::cmp::Ordering;
+<span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::vec::Vec;
 
 <span class="doccomment">/// Block tree specific errors
@@ -1289,6 +1302,8 @@
     <span class="kw">pub </span>operator_ids: Vec&lt;OperatorId&gt;,
     <span class="kw">pub </span>rewards: Balance,
     <span class="kw">pub </span>invalid_bundle_authors: Vec&lt;OperatorId&gt;,
+    <span class="kw">pub </span>total_storage_fee: Balance,
+    <span class="kw">pub </span>paid_bundle_storage_fees: BTreeMap&lt;OperatorId, u32&gt;,
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>ProcessExecutionReceiptResult&lt;T&gt; =
@@ -1334,8 +1349,9 @@
                     execution_receipt.domain_block_hash,
                 ));
 
-                <span class="comment">// Collect the invalid bundle author
-                </span><span class="kw">let </span><span class="kw-2">mut </span>invalid_bundle_authors = Vec::new();
+                <span class="comment">// Collect the paid bundle storage fees and the invalid bundle author
+                </span><span class="kw">let </span><span class="kw-2">mut </span>paid_bundle_storage_fees = BTreeMap::new();
+                <span class="kw">let </span><span class="kw-2">mut </span>invalid_bundle_authors = Vec::new();
                 <span class="kw">let </span>bundle_digests = ExecutionInbox::&lt;T&gt;::get((
                     domain_id,
                     to_prune,
@@ -1347,6 +1363,11 @@
                         // the `ER::bundles` have the same length of `ExecutionInbox`
                         </span><span class="kw">if </span>execution_receipt.inboxed_bundles[index].is_invalid() {
                             invalid_bundle_authors.push(bundle_author);
+                        } <span class="kw">else </span>{
+                            paid_bundle_storage_fees
+                                .entry(bundle_author)
+                                .and_modify(|s| <span class="kw-2">*</span>s += bd.size)
+                                .or_insert(bd.size);
                         }
                     }
                 }
@@ -1363,9 +1384,10 @@
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(ConfirmedDomainBlockInfo {
                     domain_block_number: to_prune,
                     operator_ids,
-                    <span class="comment">// TODO: also distribute the `storage_fee`
-                    </span>rewards: execution_receipt.block_fees.domain_execution_fee,
+                    rewards: execution_receipt.block_fees.domain_execution_fee,
                     invalid_bundle_authors,
+                    total_storage_fee: execution_receipt.block_fees.consensus_storage_fee,
+                    paid_bundle_storage_fees,
                 }));
             }
         }
@@ -1450,7 +1472,7 @@
     </span><span class="kw">fn </span>test_genesis_receipt() {
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
         ext.execute_with(|| {
-            <span class="kw">let </span>domain_id = register_genesis_domain(<span class="number">0u64</span>, <span class="macro">vec!</span>[<span class="number">0u64</span>]);
+            <span class="kw">let </span>domain_id = register_genesis_domain(<span class="number">0u128</span>, <span class="macro">vec!</span>[<span class="number">0u64</span>]);
 
             <span class="comment">// The genesis receipt should be added to the block tree
             </span><span class="kw">let </span>block_tree_node_at_0 = BlockTree::&lt;Test&gt;::get(domain_id, <span class="number">0</span>).unwrap();
@@ -1481,7 +1503,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_new_head_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id = <span class="number">1u64</span>;
         <span class="kw">let </span>block_tree_pruning_depth = &lt;Test <span class="kw">as </span>Config&gt;::BlockTreePruningDepth::get();
 
@@ -1535,6 +1557,7 @@
                     <span class="macro">vec!</span>[BundleDigest {
                         header_hash: bundle_header_hash,
                         extrinsics_root: bundle_extrinsics_root,
+                        size: <span class="number">0</span>,
                     }]
                 );
                 <span class="macro">assert!</span>(InboxedBundleAuthor::&lt;Test&gt;::contains_key(
@@ -1595,7 +1618,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_confirm_current_head_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id1 = <span class="number">1u64</span>;
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
@@ -1661,7 +1684,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_non_head_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id1 = <span class="number">1u64</span>;
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
@@ -1706,7 +1729,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_previous_head_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id1 = <span class="number">1u64</span>;
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
@@ -1747,7 +1770,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_new_branch_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id1 = <span class="number">1u64</span>;
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
@@ -1794,7 +1817,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_invalid_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id = <span class="number">1u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
         ext.execute_with(|| {
@@ -1819,6 +1842,7 @@
                     .map(|b| BundleDigest {
                         header_hash: H256::random(),
                         extrinsics_root: b.extrinsics_root,
+                        size: <span class="number">0</span>,
                     })
                     .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
             );
@@ -1881,7 +1905,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_invalid_trace_root_receipt() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>operator_id1 = <span class="number">1u64</span>;
         <span class="kw">let </span>operator_id2 = <span class="number">2u64</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();
@@ -1943,7 +1967,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_collect_invalid_bundle_author() {
-        <span class="kw">let </span>creator = <span class="number">0u64</span>;
+        <span class="kw">let </span>creator = <span class="number">0u128</span>;
         <span class="kw">let </span>challenge_period = BlockTreePruningDepth::get() <span class="kw">as </span>u64;
         <span class="kw">let </span>operator_set: Vec&lt;<span class="kw">_</span>&gt; = (<span class="number">1</span>..<span class="number">15</span>).collect();
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext_with_extensions();

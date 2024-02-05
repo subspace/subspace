@@ -16,7 +16,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["orml_vesting",["",[],["lib.rs","weights.rs"]]],\
 ["pallet_block_fees",["",[],["fees.rs","lib.rs"]]],\
 ["pallet_domain_id",["",[],["lib.rs"]]],\
-["pallet_domains",["",[],["block_tree.rs","domain_registry.rs","lib.rs","runtime_registry.rs","staking.rs","staking_epoch.rs","weights.rs"]]],\
+["pallet_domains",["",[],["block_tree.rs","bundle_storage_fund.rs","domain_registry.rs","lib.rs","runtime_registry.rs","staking.rs","staking_epoch.rs","weights.rs"]]],\
 ["pallet_feeds",["",[],["feed_processor.rs","lib.rs"]]],\
 ["pallet_grandpa_finality_verifier",["",[],["chain.rs","grandpa.rs","lib.rs"]]],\
 ["pallet_messenger",["",[],["fees.rs","lib.rs","messages.rs","weights.rs"]]],\
