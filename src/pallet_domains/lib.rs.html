@@ -2026,25 +2026,6 @@
 <a href="#2024" id="2024">2024</a>
 <a href="#2025" id="2025">2025</a>
 <a href="#2026" id="2026">2026</a>
-<a href="#2027" id="2027">2027</a>
-<a href="#2028" id="2028">2028</a>
-<a href="#2029" id="2029">2029</a>
-<a href="#2030" id="2030">2030</a>
-<a href="#2031" id="2031">2031</a>
-<a href="#2032" id="2032">2032</a>
-<a href="#2033" id="2033">2033</a>
-<a href="#2034" id="2034">2034</a>
-<a href="#2035" id="2035">2035</a>
-<a href="#2036" id="2036">2036</a>
-<a href="#2037" id="2037">2037</a>
-<a href="#2038" id="2038">2038</a>
-<a href="#2039" id="2039">2039</a>
-<a href="#2040" id="2040">2040</a>
-<a href="#2041" id="2041">2041</a>
-<a href="#2042" id="2042">2042</a>
-<a href="#2043" id="2043">2043</a>
-<a href="#2044" id="2044">2044</a>
-<a href="#2045" id="2045">2045</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2206,8 +2187,8 @@
     <span class="kw">use </span>sp_core::H256;
     <span class="kw">use </span>sp_domains::bundle_producer_election::ProofOfElectionError;
     <span class="kw">use </span>sp_domains::{
-        BundleDigest, DomainId, EpochIndex, GenesisDomain, OperatorAllowList, OperatorId,
-        OperatorPublicKey, RuntimeId, RuntimeType,
+        BundleDigest, ConfirmedDomainBlock, DomainId, EpochIndex, GenesisDomain, OperatorAllowList,
+        OperatorId, OperatorPublicKey, RuntimeId, RuntimeType,
     };
     <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::FraudProof;
     <span class="kw">use </span>sp_domains_fraud_proof::InvalidTransactionCode;
@@ -2542,28 +2523,12 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>HeadReceiptNumber&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, DomainBlockNumberFor&lt;T&gt;, ValueQuery&gt;;
 
-    <span class="doccomment">/// The latest confirmed block number of each domain.
-    </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>LatestConfirmedDomainBlockNumber&lt;T: Config&gt; =
-        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, DomainBlockNumberFor&lt;T&gt;, ValueQuery&gt;;
-
     <span class="doccomment">/// Whether the head receipt have extended in the current consensus block
     ///
     /// Temporary storage only exist during block execution
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>HeadReceiptExtended&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, bool, ValueQuery&gt;;
-
-    <span class="doccomment">/// State root mapped again each domain (block, hash)
-    /// This acts as an index for other protocols like XDM to fetch state roots faster.
-    </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>StateRoots&lt;T: Config&gt; = StorageMap&lt;
-        <span class="kw">_</span>,
-        Identity,
-        (DomainId, DomainBlockNumberFor&lt;T&gt;, T::DomainHash),
-        T::DomainHash,
-        OptionQuery,
-    &gt;;
 
     <span class="doccomment">/// The consensus block hash used to verify ER,
     /// only store the consensus block hash for a domain
@@ -2617,6 +2582,16 @@
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>LastEpochStakingDistribution&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, ElectionVerificationParams&lt;BalanceOf&lt;T&gt;&gt;, OptionQuery&gt;;
+
+    <span class="doccomment">/// Storage to hold all the domain's latest confirmed block.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>LatestConfirmedDomainBlock&lt;T: Config&gt; = StorageMap&lt;
+        <span class="kw">_</span>,
+        Identity,
+        DomainId,
+        ConfirmedDomainBlock&lt;DomainBlockNumberFor&lt;T&gt;, T::DomainHash&gt;,
+        OptionQuery,
+    &gt;;
 
     <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
     </span><span class="kw">pub enum </span>BundleError {
@@ -2944,11 +2919,6 @@
                         )
                         .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
-                        LatestConfirmedDomainBlockNumber::&lt;T&gt;::insert(
-                            domain_id,
-                            confirmed_block_info.domain_block_number,
-                        );
-
                         <span class="kw">if </span>confirmed_block_info.domain_block_number % T::StakeEpochDuration::get()
                             == Zero::zero()
                         {
@@ -3043,17 +3013,9 @@
                     <span class="kw">let </span>receipt_hash = BlockTree::&lt;T&gt;::take(domain_id, to_prune)
                         .ok_or::&lt;Error&lt;T&gt;&gt;(FraudProofError::BadReceiptNotFound.into())<span class="question-mark">?</span>;
 
-                    <span class="kw">let </span>BlockTreeNode {
-                        execution_receipt,
-                        operator_ids,
-                    } = BlockTreeNodes::&lt;T&gt;::take(receipt_hash)
-                        .ok_or::&lt;Error&lt;T&gt;&gt;(FraudProofError::BadReceiptNotFound.into())<span class="question-mark">?</span>;
-
-                    <span class="kw">let _ </span>= StateRoots::&lt;T&gt;::take((
-                        domain_id,
-                        execution_receipt.domain_block_number,
-                        execution_receipt.domain_block_hash,
-                    ));
+                    <span class="kw">let </span>BlockTreeNode { operator_ids, .. } =
+                        BlockTreeNodes::&lt;T&gt;::take(receipt_hash)
+                            .ok_or::&lt;Error&lt;T&gt;&gt;(FraudProofError::BadReceiptNotFound.into())<span class="question-mark">?</span>;
 
                     <span class="comment">// NOTE: the operator id will be deduplicated since we are using `BTreeMap`
                     // and slashed reason will hold earliest bad execution receipt hash which this
@@ -3553,14 +3515,6 @@
         <span class="prelude-val">Some</span>(HeadDomainNumber::&lt;T&gt;::get(domain_id))
     }
 
-    <span class="kw">pub fn </span>domain_state_root(
-        domain_id: DomainId,
-        domain_block_number: DomainBlockNumberFor&lt;T&gt;,
-        domain_block_hash: T::DomainHash,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;T::DomainHash&gt; {
-        StateRoots::&lt;T&gt;::get((domain_id, domain_block_number, domain_block_hash))
-    }
-
     <span class="kw">pub fn </span>runtime_id(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;RuntimeId&gt; {
         DomainRegistry::&lt;T&gt;::get(domain_id)
             .map(|domain_object| domain_object.domain_config.runtime_id)
@@ -3958,7 +3912,7 @@
         domain_id: DomainId,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;DomainBlockNumberFor&lt;T&gt;&gt; {
         <span class="kw">let </span>oldest_nonconfirmed_er_number =
-            LatestConfirmedDomainBlockNumber::&lt;T&gt;::get(domain_id).saturating_add(One::one());
+            <span class="self">Self</span>::latest_confirmed_domain_block_number(domain_id).saturating_add(One::one());
 
         <span class="kw">if </span>BlockTree::&lt;T&gt;::get(domain_id, oldest_nonconfirmed_er_number).is_some() {
             <span class="prelude-val">Some</span>(oldest_nonconfirmed_er_number)
@@ -3969,6 +3923,14 @@
             // - When using consensus block to derive the challenge period forward (unimplemented yet)
             </span><span class="prelude-val">None
         </span>}
+    }
+
+    <span class="doccomment">/// Returns the latest confirmed domain block number for a given domain
+    /// Zero block is always a default confirmed block.
+    </span><span class="kw">pub fn </span>latest_confirmed_domain_block_number(domain_id: DomainId) -&gt; DomainBlockNumberFor&lt;T&gt; {
+        LatestConfirmedDomainBlock::&lt;T&gt;::get(domain_id)
+            .map(|block| block.block_number)
+            .unwrap_or_default()
     }
 
     <span class="doccomment">/// Returns the domain block limit of the given domain.
@@ -3988,7 +3950,7 @@
 
         <span class="comment">// Start from the oldest non-confirmed ER to the head domain number
         </span><span class="kw">let </span><span class="kw-2">mut </span>to_check =
-            LatestConfirmedDomainBlockNumber::&lt;T&gt;::get(domain_id).saturating_add(One::one());
+            <span class="self">Self</span>::latest_confirmed_domain_block_number(domain_id).saturating_add(One::one());
         <span class="kw">let </span>head_number = HeadDomainNumber::&lt;T&gt;::get(domain_id);
 
         <span class="kw">while </span>to_check &lt;= head_number {

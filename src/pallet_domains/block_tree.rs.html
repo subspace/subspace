@@ -1028,20 +1028,20 @@
 <a href="#1026" id="1026">1026</a>
 <a href="#1027" id="1027">1027</a>
 <a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
-</span><span class="kw">use </span><span class="kw">crate</span>::pallet::StateRoots;
-<span class="kw">use crate</span>::{
+</span><span class="kw">use crate</span>::{
     BalanceOf, BlockTree, BlockTreeNodes, Config, ConsensusBlockHash, DomainBlockNumberFor,
     DomainHashingFor, ExecutionInbox, ExecutionReceiptOf, HeadReceiptExtended, HeadReceiptNumber,
-    InboxedBundleAuthor, LatestConfirmedDomainBlockNumber, ReceiptHashFor,
+    InboxedBundleAuthor, LatestConfirmedDomainBlock, Pallet, ReceiptHashFor,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::Get;
 <span class="kw">use </span>sp_domains::merkle_tree::MerkleTree;
-<span class="kw">use </span>sp_domains::{DomainId, ExecutionReceipt, OperatorId};
+<span class="kw">use </span>sp_domains::{ConfirmedDomainBlock, DomainId, ExecutionReceipt, OperatorId};
 <span class="kw">use </span>sp_runtime::traits::{BlockNumberProvider, CheckedSub, One, Saturating, Zero};
 <span class="kw">use </span>sp_std::cmp::Ordering;
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
@@ -1139,7 +1139,7 @@
     <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;T&gt;::get(domain_id);
     <span class="kw">let </span>next_receipt_number = head_receipt_number.saturating_add(One::one());
     <span class="kw">let </span>latest_confirmed_domain_block_number =
-        LatestConfirmedDomainBlockNumber::&lt;T&gt;::get(domain_id);
+        Pallet::&lt;T&gt;::latest_confirmed_domain_block_number(domain_id);
 
     <span class="kw">match </span>receipt_number.cmp(<span class="kw-2">&amp;</span>next_receipt_number) {
         Ordering::Greater =&gt; ReceiptType::Rejected(RejectedReceiptType::InFuture),
@@ -1343,12 +1343,6 @@
                     operator_ids,
                 } = BlockTreeNodes::&lt;T&gt;::take(receipt_hash).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
 
-                <span class="kw">_ </span>= StateRoots::&lt;T&gt;::take((
-                    domain_id,
-                    to_prune,
-                    execution_receipt.domain_block_hash,
-                ));
-
                 <span class="comment">// Collect the paid bundle storage fees and the invalid bundle author
                 </span><span class="kw">let </span><span class="kw-2">mut </span>paid_bundle_storage_fees = BTreeMap::new();
                 <span class="kw">let </span><span class="kw-2">mut </span>invalid_bundle_authors = Vec::new();
@@ -1379,6 +1373,18 @@
                 ConsensusBlockHash::&lt;T&gt;::remove(
                     domain_id,
                     execution_receipt.consensus_block_number,
+                );
+
+                LatestConfirmedDomainBlock::&lt;T&gt;::insert(
+                    domain_id,
+                    ConfirmedDomainBlock {
+                        block_number: to_prune,
+                        block_hash: execution_receipt.domain_block_hash,
+                        parent_block_receipt_hash: execution_receipt
+                            .parent_domain_block_receipt_hash,
+                        state_root: execution_receipt.final_state_root,
+                        extrinsics_root: execution_receipt.domain_block_extrinsic_root,
+                    },
                 );
 
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(ConfirmedDomainBlockInfo {
@@ -1413,14 +1419,6 @@
     <span class="comment">// Construct and add a new domain block to the block tree
     </span><span class="kw">let </span>er_hash = execution_receipt.hash::&lt;DomainHashingFor&lt;T&gt;&gt;();
     <span class="kw">let </span>domain_block_number = execution_receipt.domain_block_number;
-    StateRoots::&lt;T&gt;::insert(
-        (
-            domain_id,
-            domain_block_number,
-            execution_receipt.domain_block_hash,
-        ),
-        execution_receipt.final_state_root,
-    );
 
     BlockTree::&lt;T&gt;::insert(domain_id, domain_block_number, er_hash);
     <span class="kw">let </span>block_tree_node = BlockTreeNode {
@@ -1437,20 +1435,24 @@
 ) {
     <span class="kw">let </span>er_hash = genesis_receipt.hash::&lt;DomainHashingFor&lt;T&gt;&gt;();
     <span class="kw">let </span>domain_block_number = genesis_receipt.domain_block_number;
+
+    LatestConfirmedDomainBlock::&lt;T&gt;::insert(
+        domain_id,
+        ConfirmedDomainBlock {
+            block_number: domain_block_number,
+            block_hash: genesis_receipt.domain_block_hash,
+            parent_block_receipt_hash: Default::default(),
+            state_root: genesis_receipt.final_state_root,
+            extrinsics_root: genesis_receipt.domain_block_extrinsic_root,
+        },
+    );
+
     <span class="kw">let </span>block_tree_node = BlockTreeNode {
         execution_receipt: genesis_receipt,
         operator_ids: <span class="macro">sp_std::vec!</span>[],
     };
     <span class="comment">// NOTE: no need to update the head receipt number as `HeadReceiptNumber` is using `ValueQuery`
     </span>BlockTree::&lt;T&gt;::insert(domain_id, domain_block_number, er_hash);
-    StateRoots::&lt;T&gt;::insert(
-        (
-            domain_id,
-            domain_block_number,
-            block_tree_node.execution_receipt.domain_block_hash,
-        ),
-        block_tree_node.execution_receipt.final_state_root,
-    );
     BlockTreeNodes::&lt;T&gt;::insert(er_hash, block_tree_node);
 }
 
