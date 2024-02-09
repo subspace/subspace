@@ -103,102 +103,53 @@
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
 <a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
 </pre></div><pre class="rust"><code><span class="attr">#![warn(missing_docs)]
 </span><span class="doccomment">//! This Rust module serves as a bridge between two different Prometheus metrics libraries
-//! used within our frameworks — Substrate and Libp2p.
+//! used: `prometheus-client` (official library) and TiKV's `prometheus` client (used by Substrate).
 //! The module exposes a web server endpoint at "/metrics" that outputs metrics in Prometheus
-//! format. It adapts metrics from either or both of the following libraries:
-//! - Official Rust Prometheus client (registry aliased as Libp2pMetricsRegistry)
-//! - TiKV's Prometheus client (registry aliased as SubstrateMetricsRegistry)
+//! format. It adapts metrics from either or both of those libraries.
 
 </span><span class="kw">use </span>actix_web::http::StatusCode;
 <span class="kw">use </span>actix_web::web::Data;
 <span class="kw">use </span>actix_web::{get, App, HttpResponse, HttpServer};
-<span class="kw">use </span>parking_lot::Mutex;
-<span class="kw">use </span>prometheus::{Encoder, Registry <span class="kw">as </span>SubstrateMetricsRegistry, TextEncoder};
+<span class="kw">use </span>prometheus::{Registry <span class="kw">as </span>SubstrateRegistry, TextEncoder};
 <span class="kw">use </span>prometheus_client::encoding::text::encode;
-<span class="kw">use </span>prometheus_client::registry::Registry <span class="kw">as </span>Libp2pMetricsRegistry;
+<span class="kw">use </span>prometheus_client::registry::Registry <span class="kw">as </span>PrometheusClientRegistry;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::io::ErrorKind;
 <span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::ops::DerefMut;
-<span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>tracing::{error, info, warn};
 
-<span class="kw">type </span>SharedRegistry = Arc&lt;Mutex&lt;RegistryAdapter&gt;&gt;;
-
-<span class="doccomment">/// An metrics registry adapter for Libp2p and Substrate frameworks.
+<span class="doccomment">/// Metrics registry adapter for prometheus-client and Substrate frameworks.
 /// It specifies which metrics registry or registries are in use.
 </span><span class="kw">pub enum </span>RegistryAdapter {
-    <span class="doccomment">/// Uses only the Libp2p metrics registry.
-    </span>Libp2p(Libp2pMetricsRegistry),
+    <span class="doccomment">/// Uses only the prometheus-client metrics registry.
+    </span>PrometheusClient(PrometheusClientRegistry),
     <span class="doccomment">/// Uses only the Substrate metrics registry.
-    </span>Substrate(SubstrateMetricsRegistry),
-    <span class="doccomment">/// We use both Substrate and Libp2p metrics registries.
-    </span>Both(Libp2pMetricsRegistry, SubstrateMetricsRegistry),
+    </span>Substrate(SubstrateRegistry),
+    <span class="doccomment">/// We use both Substrate and prometheus-client metrics registries.
+    </span>Both(PrometheusClientRegistry, SubstrateRegistry),
 }
 
 <span class="attr">#[get(<span class="string">"/metrics"</span>)]
-</span><span class="kw">async fn </span>metrics(registry: Data&lt;SharedRegistry&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;HttpResponse, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
-    <span class="kw">let </span>encoded_metrics = <span class="kw">match </span>registry.lock().deref_mut() {
-        RegistryAdapter::Libp2p(libp2p_registry) =&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>encoded = String::new();
-            encode(<span class="kw-2">&amp;mut </span>encoded, libp2p_registry)<span class="question-mark">?</span>;
+</span><span class="kw">async fn </span>metrics(registry: Data&lt;RegistryAdapter&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;HttpResponse, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>encoded_metrics = String::new();
 
-            encoded
+    <span class="kw">match </span><span class="kw-2">&amp;**</span>registry {
+        RegistryAdapter::PrometheusClient(libp2p_registry) =&gt; {
+            encode(<span class="kw-2">&amp;mut </span>encoded_metrics, libp2p_registry)<span class="question-mark">?</span>;
         }
         RegistryAdapter::Substrate(substrate_registry) =&gt; {
-            <span class="kw">let </span>encoder = TextEncoder::new();
-            <span class="kw">let </span><span class="kw-2">mut </span>encoded = String::new();
-            <span class="kw">unsafe </span>{
-                encoder.encode(<span class="kw-2">&amp;</span>substrate_registry.gather(), <span class="kw-2">&amp;mut </span>encoded.as_mut_vec())<span class="question-mark">?</span>;
-            }
-            encoded
+            TextEncoder::new().encode_utf8(<span class="kw-2">&amp;</span>substrate_registry.gather(), <span class="kw-2">&amp;mut </span>encoded_metrics)<span class="question-mark">?</span>;
         }
         RegistryAdapter::Both(libp2p_registry, substrate_registry) =&gt; {
             <span class="comment">// We combine outputs of both metrics registries in one string.
-            </span><span class="kw">let </span><span class="kw-2">mut </span>libp2p_encoded = String::new();
-            encode(<span class="kw-2">&amp;mut </span>libp2p_encoded, libp2p_registry)<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>encoder = TextEncoder::new();
-            <span class="kw">let </span><span class="kw-2">mut </span>substrate_encoded = String::new();
-            <span class="kw">unsafe </span>{
-                encoder.encode(
-                    <span class="kw-2">&amp;</span>substrate_registry.gather(),
-                    <span class="kw-2">&amp;mut </span>substrate_encoded.as_mut_vec(),
-                )<span class="question-mark">?</span>;
-            }
-
-            <span class="comment">// libp2p string contains #EOF, order is important here.
-            </span>substrate_encoded + <span class="kw-2">&amp;</span>libp2p_encoded
+            </span>TextEncoder::new().encode_utf8(<span class="kw-2">&amp;</span>substrate_registry.gather(), <span class="kw-2">&amp;mut </span>encoded_metrics)<span class="question-mark">?</span>;
+            <span class="comment">// prometheus-client string contains #EOF, order is important here
+            </span>encode(<span class="kw-2">&amp;mut </span>encoded_metrics, libp2p_registry)<span class="question-mark">?</span>;
         }
-    };
+    }
 
     <span class="kw">let </span>resp = HttpResponse::build(StatusCode::OK).body(encoded_metrics);
 
@@ -210,8 +161,7 @@
     <span class="kw-2">mut </span>endpoints: Vec&lt;SocketAddr&gt;,
     registry: RegistryAdapter,
 ) -&gt; std::io::Result&lt;<span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt;&gt; {
-    <span class="kw">let </span>shared_registry = Arc::new(Mutex::new(registry));
-    <span class="kw">let </span>data = Data::new(shared_registry);
+    <span class="kw">let </span>data = Data::new(registry);
 
     <span class="kw">let </span>app_factory = <span class="kw">move </span>|| App::new().app_data(data.clone()).service(metrics);
     <span class="kw">let </span>result = HttpServer::new(app_factory.clone())

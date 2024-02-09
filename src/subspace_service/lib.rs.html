@@ -1102,27 +1102,6 @@
 <a href="#1100" id="1100">1100</a>
 <a href="#1101" id="1101">1101</a>
 <a href="#1102" id="1102">1102</a>
-<a href="#1103" id="1103">1103</a>
-<a href="#1104" id="1104">1104</a>
-<a href="#1105" id="1105">1105</a>
-<a href="#1106" id="1106">1106</a>
-<a href="#1107" id="1107">1107</a>
-<a href="#1108" id="1108">1108</a>
-<a href="#1109" id="1109">1109</a>
-<a href="#1110" id="1110">1110</a>
-<a href="#1111" id="1111">1111</a>
-<a href="#1112" id="1112">1112</a>
-<a href="#1113" id="1113">1113</a>
-<a href="#1114" id="1114">1114</a>
-<a href="#1115" id="1115">1115</a>
-<a href="#1116" id="1116">1116</a>
-<a href="#1117" id="1117">1117</a>
-<a href="#1118" id="1118">1118</a>
-<a href="#1119" id="1119">1119</a>
-<a href="#1120" id="1120">1120</a>
-<a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1170,6 +1149,7 @@
 <span class="kw">use </span>jsonrpsee::RpcModule;
 <span class="kw">use </span>pallet_transaction_payment_rpc_runtime_api::TransactionPaymentApi;
 <span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="kw">use </span>sc_basic_authorship::ProposerFactory;
 <span class="kw">use </span>sc_client_api::execution_extensions::ExtensionsFactory;
 <span class="kw">use </span>sc_client_api::{
@@ -1229,7 +1209,6 @@
 <span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::{embedded_kzg_settings, Kzg};
 <span class="kw">use </span>subspace_core_primitives::{BlockNumber, PotSeed, REWARD_SIGNING_CONTEXT};
-<span class="kw">use </span>subspace_metrics::{start_prometheus_metrics_server, RegistryAdapter};
 <span class="kw">use </span>subspace_networking::libp2p::multiaddr::Protocol;
 <span class="kw">use </span>subspace_networking::utils::piece_provider::PieceProvider;
 <span class="kw">use </span>subspace_proof_of_space::Table;
@@ -1268,10 +1247,6 @@
     <span class="doccomment">/// Telemetry error.
     </span><span class="attr">#[error(transparent)]
     </span>Telemetry(<span class="attr">#[from] </span>sc_telemetry::Error),
-
-    <span class="doccomment">/// Prometheus error.
-    </span><span class="attr">#[error(transparent)]
-    </span>Prometheus(<span class="attr">#[from] </span>substrate_prometheus_endpoint::PrometheusError),
 
     <span class="doccomment">/// Subspace networking (DSN) error.
     </span><span class="attr">#[error(transparent)]
@@ -1751,6 +1726,7 @@
 </span><span class="kw">pub async fn </span>new_full&lt;PosTable, RuntimeApi&gt;(
     <span class="kw-2">mut </span>config: SubspaceConfiguration,
     partial_components: PartialComponents&lt;RuntimeApi&gt;,
+    prometheus_registry: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>Registry&gt;,
     enable_rpc_extensions: bool,
     block_proposal_slot_portion: SlotProportion,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;FullNode&lt;RuntimeApi&gt;, Error&gt;
@@ -1791,12 +1767,11 @@
     } = other;
 
     <span class="kw">let </span>offchain_indexing_enabled = config.offchain_worker.indexing_enabled;
-    <span class="kw">let </span>(node, bootstrap_nodes, dsn_metrics_registry) = <span class="kw">match </span>config.subspace_networking {
+    <span class="kw">let </span>(node, bootstrap_nodes) = <span class="kw">match </span>config.subspace_networking {
         SubspaceNetworking::Reuse {
             node,
             bootstrap_nodes,
-            metrics_registry,
-        } =&gt; (node, bootstrap_nodes, metrics_registry),
+        } =&gt; (node, bootstrap_nodes),
         SubspaceNetworking::Create { config: dsn_config } =&gt; {
             <span class="kw">let </span>dsn_protocol_version = hex::encode(client.chain_info().genesis_hash);
 
@@ -1806,10 +1781,10 @@
                 <span class="string">"Setting DSN protocol version..."
             </span>);
 
-            <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner, dsn_metrics_registry) = create_dsn_instance(
+            <span class="kw">let </span>(node, <span class="kw-2">mut </span>node_runner) = create_dsn_instance(
                 dsn_protocol_version,
                 dsn_config.clone(),
-                config.base.prometheus_config.is_some(),
+                prometheus_registry,
             )<span class="question-mark">?</span>;
 
             <span class="macro">info!</span>(<span class="string">"Subspace networking initialized: Node ID is {}"</span>, node.id());
@@ -1839,7 +1814,7 @@
                     ),
                 );
 
-            (node, dsn_config.bootstrap_nodes, dsn_metrics_registry)
+            (node, dsn_config.bootstrap_nodes)
         }
     };
 
@@ -2164,24 +2139,7 @@
     }
 
     <span class="comment">// We replace the Substrate implementation of metrics server with our own.
-    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(prometheus_config) = config.base.prometheus_config.take() {
-        <span class="kw">let </span>registry = <span class="kw">if let </span><span class="prelude-val">Some</span>(dsn_metrics_registry) = dsn_metrics_registry {
-            RegistryAdapter::Both(dsn_metrics_registry, prometheus_config.registry)
-        } <span class="kw">else </span>{
-            RegistryAdapter::Substrate(prometheus_config.registry)
-        };
-
-        <span class="kw">let </span>metrics_server =
-            start_prometheus_metrics_server(<span class="macro">vec!</span>[prometheus_config.port], registry)<span class="question-mark">?</span>.map(|error| {
-                <span class="macro">debug!</span>(<span class="question-mark">?</span>error, <span class="string">"Metrics server error."</span>);
-            });
-
-        task_manager.spawn_handle().spawn(
-            <span class="string">"node-metrics-server"</span>,
-            <span class="prelude-val">Some</span>(<span class="string">"node-metrics-server"</span>),
-            metrics_server,
-        );
-    };
+    </span>config.base.prometheus_config.take();
 
     <span class="kw">let </span>rpc_handlers = sc_service::spawn_tasks(SpawnTasksParams {
         network: network_service.clone(),
