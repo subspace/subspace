@@ -837,16 +837,6 @@
 <a href="#835" id="835">835</a>
 <a href="#836" id="836">836</a>
 <a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">mod </span>types;
@@ -865,10 +855,10 @@
 <span class="kw">use </span>core::simd::num::SimdUint;
 <span class="kw">use </span>core::simd::Simd;
 <span class="attr">#[cfg(any(feature = <span class="string">"parallel"</span>, test))]
+</span><span class="kw">use </span>core::sync::atomic::{AtomicUsize, Ordering};
+<span class="attr">#[cfg(any(feature = <span class="string">"parallel"</span>, test))]
 </span><span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>seq_macro::seq;
-<span class="attr">#[cfg(any(feature = <span class="string">"parallel"</span>, test))]
-</span><span class="kw">use </span>std::sync::mpsc;
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, blake3_hash_list};
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>COMPUTE_F1_SIMD_FACTOR: usize = <span class="number">8</span>;
@@ -1608,56 +1598,46 @@
         <span class="comment">// Iteration stopped, but we did not store the last bucket yet
         </span>buckets.push(bucket);
 
-        <span class="kw">let </span>(entries_sender, entries_receiver) = mpsc::sync_channel(<span class="number">1</span>);
+        <span class="kw">let </span>counter = AtomicUsize::new(<span class="number">0</span>);
 
-        <span class="kw">let </span>t_n_handle = std::thread::spawn(<span class="kw">move </span>|| {
-            <span class="kw">let </span>num_values = <span class="number">1 </span>&lt;&lt; K;
-            <span class="kw">let </span><span class="kw-2">mut </span>t_n = Vec::with_capacity(num_values);
+        <span class="kw">let </span>t_n = rayon::broadcast(|_ctx| {
+            <span class="kw">let </span><span class="kw-2">mut </span>entries = Vec::new();
+            <span class="kw">let </span><span class="kw-2">mut </span>rmap_scratch = Vec::new();
 
-            <span class="kw">while let </span><span class="prelude-val">Ok</span>(entries) = entries_receiver.recv() {
-                t_n.extend(entries);
+            <span class="kw">loop </span>{
+                <span class="kw">let </span>offset = counter.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+                <span class="kw">if </span>offset &gt;= buckets.len() - <span class="number">1 </span>{
+                    <span class="kw">break</span>;
+                }
+
+                match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
+                    last_table,
+                    buckets[offset],
+                    buckets[offset + <span class="number">1</span>],
+                    <span class="kw-2">&amp;mut </span>rmap_scratch,
+                    left_targets,
+                    <span class="kw-2">&amp;mut </span>entries,
+                );
             }
 
-            t_n
+            entries
         });
 
-        buckets
-            .par_windows(<span class="number">2</span>)
-            .fold(
-                || (Vec::new(), Vec::new()),
-                |(<span class="kw-2">mut </span>entries, <span class="kw-2">mut </span>rmap_scratch), buckets| {
-                    match_and_compute_fn::&lt;K, TABLE_NUMBER, PARENT_TABLE_NUMBER&gt;(
-                        last_table,
-                        buckets[<span class="number">0</span>],
-                        buckets[<span class="number">1</span>],
-                        <span class="kw-2">&amp;mut </span>rmap_scratch,
-                        left_targets,
-                        <span class="kw-2">&amp;mut </span>entries,
-                    );
-                    (entries, rmap_scratch)
-                },
-            )
-            .for_each(<span class="kw">move </span>|(entries, _rmap_scratch)| {
-                entries_sender
-                    .send(entries)
-                    .expect(<span class="string">"Receiver is waiting until sender is exhausted; qed"</span>);
-            });
-
-        <span class="kw">let </span><span class="kw-2">mut </span>t_n = t_n_handle.join().expect(<span class="string">"Not joining itself; qed"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>t_n = t_n.into_iter().flatten().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         t_n.par_sort_unstable();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>ys = <span class="macro">vec!</span>[Default::default(); t_n.len()];
-        <span class="kw">let </span><span class="kw-2">mut </span>positions = <span class="macro">vec!</span>[Default::default(); t_n.len()];
-        <span class="kw">let </span><span class="kw-2">mut </span>metadatas = <span class="macro">vec!</span>[Default::default(); t_n.len()];
+        <span class="kw">let </span><span class="kw-2">mut </span>ys = Vec::with_capacity(t_n.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>positions = Vec::with_capacity(t_n.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>metadatas = Vec::with_capacity(t_n.len());
 
-        <span class="comment">// Going in parallel saves a bit of time
-        </span>t_n.into_par_iter()
-            .zip(ys.par_iter_mut().zip(<span class="kw-2">&amp;mut </span>positions).zip(<span class="kw-2">&amp;mut </span>metadatas))
-            .for_each(|(input, output)| {
-                <span class="kw-2">*</span>output.<span class="number">0 </span>.<span class="number">0 </span>= input.<span class="number">0</span>;
-                <span class="kw-2">*</span>output.<span class="number">0 </span>.<span class="number">1 </span>= input.<span class="number">1</span>;
-                <span class="kw-2">*</span>output.<span class="number">1 </span>= input.<span class="number">2</span>;
-            });
+        <span class="kw">for </span>(y, [left_position, right_position], metadata) <span class="kw">in </span>t_n {
+            ys.push(y);
+            positions.push([left_position, right_position]);
+            <span class="comment">// Last table doesn't have metadata
+            </span><span class="kw">if </span>metadata_size_bits(K, TABLE_NUMBER) &gt; <span class="number">0 </span>{
+                metadatas.push(metadata);
+            }
+        }
 
         <span class="self">Self</span>::Other {
             ys,
