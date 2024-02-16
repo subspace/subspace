@@ -1177,6 +1177,22 @@
 <a href="#1175" id="1175">1175</a>
 <a href="#1176" id="1176">1176</a>
 <a href="#1177" id="1177">1177</a>
+<a href="#1178" id="1178">1178</a>
+<a href="#1179" id="1179">1179</a>
+<a href="#1180" id="1180">1180</a>
+<a href="#1181" id="1181">1181</a>
+<a href="#1182" id="1182">1182</a>
+<a href="#1183" id="1183">1183</a>
+<a href="#1184" id="1184">1184</a>
+<a href="#1185" id="1185">1185</a>
+<a href="#1186" id="1186">1186</a>
+<a href="#1187" id="1187">1187</a>
+<a href="#1188" id="1188">1188</a>
+<a href="#1189" id="1189">1189</a>
+<a href="#1190" id="1190">1190</a>
+<a href="#1191" id="1191">1191</a>
+<a href="#1192" id="1192">1192</a>
+<a href="#1193" id="1193">1193</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::aux_schema::BundleMismatchType;
 <span class="kw">use </span><span class="kw">crate</span>::fraud_proof::FraudProofGenerator;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{DomainBlockImportNotification, DomainImportNotificationSinks};
@@ -1185,7 +1201,6 @@
 <span class="kw">use </span>domain_block_builder::{BlockBuilder, BuiltBlock, RecordProof};
 <span class="kw">use </span>domain_block_preprocessor::inherents::get_inherent_data;
 <span class="kw">use </span>domain_block_preprocessor::PreprocessResult;
-<span class="kw">use </span>domain_runtime_primitives::DomainCoreApi;
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, Finalizer, ProofProvider};
 <span class="kw">use </span>sc_consensus::{
     BlockImportParams, ForkChoiceStrategy, ImportResult, SharedBlockImport, StateAction,
@@ -1197,6 +1212,7 @@
 <span class="kw">use </span>sp_consensus::{BlockOrigin, SyncOracle};
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
 <span class="kw">use </span>sp_core::H256;
+<span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
 <span class="kw">use </span>sp_domains::merkle_tree::MerkleTree;
 <span class="kw">use </span>sp_domains::{BundleValidity, DomainId, DomainsApi, ExecutionReceipt, HeaderHashingFor};
 <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::{FraudProof, ValidBundleProof};
@@ -1512,7 +1528,9 @@
         //     }
         // }
 
-        </span><span class="kw">let </span><span class="kw-2">mut </span>roots = <span class="self">self</span>.client.runtime_api().intermediate_roots(header_hash)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
+
+        <span class="kw">let </span><span class="kw-2">mut </span>roots = runtime_api.intermediate_roots(header_hash)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>encoded_state_root = state_root
             .encode()
@@ -1560,7 +1578,8 @@
 
         <span class="comment">// Get the accumulated transaction fee of all transactions included in the block
         // and used as the operator reward
-        </span><span class="kw">let </span>block_fees = <span class="self">self</span>.client.runtime_api().block_fees(header_hash)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>block_fees = runtime_api.block_fees(header_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span>transfers = runtime_api.transfers(header_hash)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>execution_receipt = ExecutionReceipt {
             domain_block_number: header_number,
@@ -1575,8 +1594,7 @@
             execution_trace: trace,
             execution_trace_root: sp_core::H256(trace_root),
             block_fees,
-            <span class="comment">// TODO: Fetch transfers from the runtime
-            </span>transfers: Default::default(),
+            transfers,
         };
 
         <span class="prelude-val">Ok</span>(DomainBlockResult {
@@ -1819,7 +1837,10 @@
                 // the extrinsic can be considered as invalid due to multiple `invalid_type` (i.e. an extrinsic
                 // can be `OutOfRangeTx` and `InvalidXDM` at the same time) thus use the checking order and
                 // consider the first check as the mismatch.
-                </span>Ordering::Equal =&gt; <span class="kw">match </span>local_invalid_type.checking_order().cmp(<span class="kw-2">&amp;</span>external_invalid_type.checking_order()) {
+                </span>Ordering::Equal =&gt; <span class="kw">match </span>local_invalid_type
+                    .checking_order()
+                    .cmp(<span class="kw-2">&amp;</span>external_invalid_type.checking_order())
+                {
                     Ordering::Less =&gt; BundleMismatchType::TrueInvalid(local_invalid_type),
                     Ordering::Greater =&gt; BundleMismatchType::FalseInvalid(external_invalid_type),
                     Ordering::Equal =&gt; <span class="macro">unreachable!</span>(
@@ -2105,6 +2126,17 @@
                 });
         }
 
+        <span class="kw">if </span>bad_receipt.transfers != local_receipt.transfers {
+            <span class="kw">return </span><span class="self">self
+                </span>.fraud_proof_generator
+                .generate_invalid_transfers_proof(<span class="self">self</span>.domain_id, <span class="kw-2">&amp;</span>local_receipt, bad_receipt_hash)
+                .map_err(|err| {
+                    sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                        <span class="string">"Failed to generate invalid transfers fraud proof: {err}"
+                    </span>)))
+                });
+        }
+
         <span class="kw">if </span>bad_receipt.domain_block_hash != local_receipt.domain_block_hash {
             <span class="kw">return </span><span class="self">self
                 </span>.fraud_proof_generator
@@ -2174,11 +2206,11 @@
             find_inboxed_bundles_mismatch::&lt;Block, CBlock&gt;(
                 <span class="kw-2">&amp;</span>create_test_execution_receipt(<span class="macro">vec!</span>[InboxedBundle::invalid(
                     InvalidBundleType::UndecodableTx(<span class="number">0</span>),
-                    Default::default()
+                    Default::default(),
                 )]),
                 <span class="kw-2">&amp;</span>create_test_execution_receipt(<span class="macro">vec!</span>[InboxedBundle::invalid(
                     InvalidBundleType::UndecodableTx(<span class="number">0</span>),
-                    Default::default()
+                    Default::default(),
                 )]),
             )
             .unwrap(),
@@ -2320,11 +2352,11 @@
             find_inboxed_bundles_mismatch::&lt;Block, CBlock&gt;(
                 <span class="kw-2">&amp;</span>create_test_execution_receipt(<span class="macro">vec!</span>[InboxedBundle::valid(
                     H256::random(),
-                    Default::default()
+                    Default::default(),
                 ),]),
                 <span class="kw-2">&amp;</span>create_test_execution_receipt(<span class="macro">vec!</span>[InboxedBundle::invalid(
                     InvalidBundleType::IllegalTx(<span class="number">3</span>),
-                    Default::default()
+                    Default::default(),
                 ),]),
             )
             .unwrap(),
@@ -2339,11 +2371,11 @@
             find_inboxed_bundles_mismatch::&lt;Block, CBlock&gt;(
                 <span class="kw-2">&amp;</span>create_test_execution_receipt(<span class="macro">vec!</span>[InboxedBundle::invalid(
                     InvalidBundleType::IllegalTx(<span class="number">3</span>),
-                    Default::default()
+                    Default::default(),
                 ),]),
                 <span class="kw-2">&amp;</span>create_test_execution_receipt(<span class="macro">vec!</span>[InboxedBundle::valid(
                     H256::random(),
-                    Default::default()
+                    Default::default(),
                 ),]),
             )
             .unwrap(),
