@@ -1072,6 +1072,20 @@
 <a href="#1070" id="1070">1070</a>
 <a href="#1071" id="1071">1071</a>
 <a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1161,6 +1175,8 @@
 
 <span class="kw">type </span>FraudProofFor&lt;Block, DomainBlock&gt; =
     FraudProof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, &lt;DomainBlock <span class="kw">as </span>BlockT&gt;::Header&gt;;
+
+<span class="kw">const </span>MAX_PRODUCE_BUNDLE_TRY: usize = <span class="number">10</span>;
 
 <span class="doccomment">/// Create a Subspace `Configuration`.
 ///
@@ -1584,13 +1600,15 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; (
         NewSlot,
-        <span class="prelude-ty">Option</span>&lt;OpaqueBundle&lt;NumberFor&lt;Block&gt;, Hash, DomainHeader, Balance&gt;&gt;,
+        OpaqueBundle&lt;NumberFor&lt;Block&gt;, Hash, DomainHeader, Balance&gt;,
     ) {
-        <span class="kw">let </span>slot = <span class="self">self</span>.produce_slot();
-
-        <span class="kw">let </span>bundle = <span class="self">self</span>.notify_new_slot_and_wait_for_bundle(slot).<span class="kw">await</span>;
-
-        (slot, bundle)
+        <span class="kw">for _ in </span><span class="number">0</span>..MAX_PRODUCE_BUNDLE_TRY {
+            <span class="kw">let </span>slot = <span class="self">self</span>.produce_slot();
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(bundle) = <span class="self">self</span>.notify_new_slot_and_wait_for_bundle(slot).<span class="kw">await </span>{
+                <span class="kw">return </span>(slot, bundle);
+            }
+        }
+        <span class="macro">panic!</span>(<span class="string">"Failed to produce bundle after {MAX_PRODUCE_BUNDLE_TRY:?} tries, something must be wrong"</span>);
     }
 
     <span class="doccomment">/// Subscribe the new slot notification
@@ -1933,7 +1951,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         extrinsics: Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
-        <span class="kw">let </span>(slot, <span class="kw">_</span>) = <span class="self">self</span>.produce_slot_and_wait_for_bundle_submission().<span class="kw">await</span>;
+        <span class="kw">let </span>slot = <span class="self">self</span>.produce_slot();
         <span class="self">self</span>.produce_block_with_slot_at(slot, <span class="self">self</span>.client.info().best_hash, <span class="prelude-val">Some</span>(extrinsics))
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -1942,6 +1960,16 @@
     <span class="doccomment">/// Produce `n` number of blocks.
     </span><span class="attr">#[sc_tracing::logging::prefix_logs_with(<span class="self">self</span>.log_prefix)]
     </span><span class="kw">pub async fn </span>produce_blocks(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: u64) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+        <span class="kw">for _ in </span><span class="number">0</span>..n {
+            <span class="kw">let </span>slot = <span class="self">self</span>.produce_slot();
+            <span class="self">self</span>.produce_block_with_slot(slot).<span class="kw">await</span><span class="question-mark">?</span>;
+        }
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Produce `n` number of blocks and wait for bundle submitted to the block.
+    </span><span class="attr">#[sc_tracing::logging::prefix_logs_with(<span class="self">self</span>.log_prefix)]
+    </span><span class="kw">pub async fn </span>produce_blocks_with_bundles(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: u64) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
         <span class="kw">for _ in </span><span class="number">0</span>..n {
             <span class="kw">let </span>(slot, <span class="kw">_</span>) = <span class="self">self</span>.produce_slot_and_wait_for_bundle_submission().<span class="kw">await</span>;
             <span class="self">self</span>.produce_block_with_slot(slot).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2102,7 +2130,7 @@
                     $( futs.push( Box::pin( <span class="macro-nonterminal">$domain_node</span>.wait_for_blocks(<span class="macro-nonterminal">$count</span>) ) ); )*
                     futures::future::join_all(futs)
                 };
-                <span class="macro-nonterminal">$primary_node</span>.produce_blocks(<span class="macro-nonterminal">$count</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="macro-nonterminal">$primary_node</span>.produce_blocks_with_bundles(<span class="macro-nonterminal">$count</span>).<span class="kw">await</span><span class="question-mark">?</span>;
                 domain_fut.<span class="kw">await</span>;
                 <span class="prelude-val">Ok</span>::&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt;(())
             }
