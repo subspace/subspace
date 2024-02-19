@@ -899,6 +899,12 @@
 <a href="#897" id="897">897</a>
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, SectorUpdate, RESERVED_PLOT_METADATA,
 };
@@ -916,8 +922,7 @@
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::num::{NonZeroU16, NonZeroUsize};
 <span class="kw">use </span>std::ops::Range;
-<span class="kw">use </span>std::pin::pin;
-<span class="kw">use </span>std::sync::atomic::Ordering;
+<span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
@@ -935,7 +940,6 @@
 <span class="kw">use </span>subspace_farmer_components::{plotting, PieceGetter, PieceGetterRetryPolicy};
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>thiserror::Error;
-<span class="kw">use </span>tokio::runtime::Handle;
 <span class="kw">use </span>tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 <span class="kw">use </span>tokio::task::yield_now;
 <span class="kw">use </span>tracing::{debug, info, trace, warn, Instrument};
@@ -1032,9 +1036,6 @@
         <span class="doccomment">/// Lower-level error
         </span>error: node_client::Error,
     },
-    <span class="doccomment">/// Farm is shutting down
-    </span><span class="attr">#[error(<span class="string">"Farm is shutting down"</span>)]
-    </span>FarmIsShuttingDown,
     <span class="doccomment">/// Low-level plotting error
     </span><span class="attr">#[error(<span class="string">"Low-level plotting error: {0}"</span>)]
     </span>LowLevel(<span class="attr">#[from] </span>plotting::PlottingError),
@@ -1065,8 +1066,9 @@
     <span class="doccomment">/// Semaphore for part of the plotting when farmer downloads new sector, allows to limit memory
     /// usage of the plotting process, permit will be held until the end of the plotting process
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) downloading_semaphore: Arc&lt;Semaphore&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) record_encoding_concurrency: NonZeroUsize,
     <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool_manager: PlottingThreadPoolManager,
-    <span class="kw">pub</span>(<span class="kw">super</span>) stop_receiver: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>broadcast::Receiver&lt;()&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) stop_receiver: broadcast::Receiver&lt;()&gt;,
 }
 
 <span class="doccomment">/// Starts plotting process.
@@ -1098,11 +1100,30 @@
         modifying_sector_index,
         <span class="kw-2">mut </span>sectors_to_plot_receiver,
         downloading_semaphore,
+        record_encoding_concurrency,
         plotting_thread_pool_manager,
-        stop_receiver,
+        <span class="kw-2">mut </span>stop_receiver,
     } = plotting_options;
 
-    <span class="kw">let </span><span class="kw-2">mut </span>table_generator = PosTable::generator();
+    <span class="kw">let </span>abort_early = Arc::new(AtomicBool::new(<span class="bool-val">false</span>));
+
+    <span class="kw">let </span>_abort_early_task = AsyncJoinOnDrop::new(
+        tokio::spawn({
+            <span class="kw">let </span>abort_early = Arc::clone(<span class="kw-2">&amp;</span>abort_early);
+
+            <span class="kw">async move </span>{
+                <span class="comment">// Error doesn't matter here
+                </span><span class="kw">let _ </span>= stop_receiver.recv().<span class="kw">await</span>;
+
+                abort_early.store(<span class="bool-val">true</span>, Ordering::Release);
+            }
+        }),
+        <span class="bool-val">true</span>,
+    );
+
+    <span class="kw">let </span><span class="kw-2">mut </span>table_generators = (<span class="number">0</span>..record_encoding_concurrency.get())
+        .map(|<span class="kw">_</span>| PosTable::generator())
+        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
     <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_downloaded_sector_fut = <span class="prelude-val">None</span>::&lt;
         AsyncJoinOnDrop&lt;<span class="prelude-ty">Result</span>&lt;(OwnedSemaphorePermit, DownloadedSector), plotting::PlottingError&gt;&gt;,
@@ -1266,7 +1287,7 @@
         <span class="kw">let </span>sector_metadata;
         <span class="kw">let </span>plotted_sector;
 
-        (sector, sector_metadata, table_generator, plotted_sector) = {
+        (sector, sector_metadata, table_generators, plotted_sector) = {
             <span class="kw">let </span>plotting_fn = || {
                 tokio::task::block_in_place(|| {
                     <span class="kw">let </span><span class="kw-2">mut </span>sector = Vec::new();
@@ -1279,37 +1300,25 @@
 
                     <span class="kw">let </span>start = Instant::now();
 
-                    <span class="kw">let </span>plotted_sector = {
-                        <span class="kw">let </span>plot_sector_fut = <span class="macro">pin!</span>(encode_sector::&lt;PosTable&gt;(
-                            downloaded_sector,
-                            EncodeSectorOptions {
-                                sector_index,
-                                erasure_coding,
-                                pieces_in_sector,
-                                sector_output: <span class="kw-2">&amp;mut </span>sector,
-                                sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
-                                table_generator: <span class="kw-2">&amp;mut </span>table_generator,
-                            },
-                        ));
-
-                        Handle::current().block_on(<span class="kw">async </span>{
-                            <span class="macro">select! </span>{
-                                plotting_result = plot_sector_fut.fuse() =&gt; {
-                                    plotting_result.map_err(PlottingError::from)
-                                }
-                                <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
-                                    <span class="prelude-val">Err</span>(PlottingError::FarmIsShuttingDown)
-                                }
-                            }
-                        })<span class="question-mark">?
-                    </span>};
+                    <span class="kw">let </span>plotted_sector = encode_sector::&lt;PosTable&gt;(
+                        downloaded_sector,
+                        EncodeSectorOptions {
+                            sector_index,
+                            erasure_coding,
+                            pieces_in_sector,
+                            sector_output: <span class="kw-2">&amp;mut </span>sector,
+                            sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
+                            table_generators: <span class="kw-2">&amp;mut </span>table_generators,
+                            abort_early: <span class="kw-2">&amp;</span>abort_early,
+                        },
+                    )<span class="question-mark">?</span>;
 
                     handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                         sector_index,
                         SectorUpdate::Plotting(SectorPlottingDetails::Encoded(start.elapsed())),
                     ));
 
-                    <span class="prelude-val">Ok</span>((sector, sector_metadata, table_generator, plotted_sector))
+                    <span class="prelude-val">Ok</span>((sector, sector_metadata, table_generators, plotted_sector))
                 })
             };
 
@@ -1325,7 +1334,10 @@
 
             <span class="kw">let </span>plotting_result = thread_pool.install(plotting_fn);
 
-            <span class="kw">if </span><span class="macro">matches!</span>(plotting_result, <span class="prelude-val">Err</span>(PlottingError::FarmIsShuttingDown)) {
+            <span class="kw">if </span><span class="macro">matches!</span>(
+                plotting_result,
+                <span class="prelude-val">Err</span>(PlottingError::LowLevel(plotting::PlottingError::AbortEarly))
+            ) {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
             }
 

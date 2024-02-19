@@ -642,33 +642,96 @@
 <a href="#640" id="640">640</a>
 <a href="#641" id="641">641</a>
 <a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
-    sector_record_chunks_size, sector_size, RawSector, RecordMetadata, SectorContentsMap,
-    SectorMetadata, SectorMetadataChecksummed,
+    sector_record_chunks_size, sector_size, EncodedChunksUsed, RawSector, RecordMetadata,
+    SectorContentsMap, SectorMetadata, SectorMetadataChecksummed,
 };
 <span class="kw">use </span><span class="kw">crate</span>::segment_reconstruction::recover_missing_piece;
 <span class="kw">use crate</span>::{FarmerProtocolInfo, PieceGetter, PieceGetterRetryPolicy};
-<span class="kw">use </span>async_lock::Mutex;
+<span class="kw">use </span>async_lock::Mutex <span class="kw">as </span>AsyncMutex;
 <span class="kw">use </span>backoff::future::retry;
 <span class="kw">use </span>backoff::{Error <span class="kw">as </span>BackoffError, ExponentialBackoff};
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>std::mem;
 <span class="kw">use </span>std::simd::Simd;
+<span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>std::{mem, slice};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, blake3_hash_parallel, Scalar};
 <span class="kw">use </span>subspace_core_primitives::{
-    Blake3Hash, PieceIndex, PieceOffset, PublicKey, Record, SBucket, SectorId, SectorIndex,
+    Blake3Hash, PieceIndex, PieceOffset, PosSeed, PublicKey, Record, SBucket, SectorId, SectorIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_proof_of_space::{Table, TableGenerator};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::sync::{AcquireError, Semaphore};
-<span class="kw">use </span>tokio::task::yield_now;
 <span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="kw">const </span>RECONSTRUCTION_CONCURRENCY_LIMIT: usize = <span class="number">1</span>;
@@ -702,6 +765,9 @@
     <span class="doccomment">/// Invalid erasure coding instance
     </span><span class="attr">#[error(<span class="string">"Invalid erasure coding instance"</span>)]
     </span>InvalidErasureCodingInstance,
+    <span class="doccomment">/// No table generators
+    </span><span class="attr">#[error(<span class="string">"No table generators"</span>)]
+    </span>NoTableGenerators,
     <span class="doccomment">/// Bad sector output size
     </span><span class="attr">#[error(<span class="string">"Bad sector output size: provided {provided}, expected {expected}"</span>)]
     </span>BadSectorOutputSize {
@@ -745,6 +811,9 @@
         </span><span class="attr">#[from]
         </span>error: AcquireError,
     },
+    <span class="doccomment">/// Abort early
+    </span><span class="attr">#[error(<span class="string">"Abort early"</span>)]
+    </span>AbortEarly,
 }
 
 <span class="doccomment">/// Options for plotting a sector.
@@ -786,6 +855,8 @@
     </span><span class="kw">pub </span>encoding_semaphore: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>Semaphore&gt;,
     <span class="doccomment">/// Proof of space table generator
     </span><span class="kw">pub </span>table_generator: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PosTable::Generator,
+    <span class="doccomment">/// Whether encoding should be aborted early
+    </span><span class="kw">pub </span>abort_early: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AtomicBool,
 }
 
 <span class="doccomment">/// Plot a single sector.
@@ -815,6 +886,7 @@
         downloading_semaphore,
         encoding_semaphore,
         table_generator,
+        abort_early,
     } = options;
 
     <span class="kw">let </span>_downloading_permit = <span class="kw">match </span>downloading_semaphore {
@@ -845,11 +917,11 @@
             pieces_in_sector,
             sector_output,
             sector_metadata_output,
-            table_generator,
+            table_generators: slice::from_mut(table_generator),
+            abort_early,
         },
     )
-    .<span class="kw">await
-</span>}
+}
 
 <span class="doccomment">/// Opaque sector downloaded and ready for encoding
 </span><span class="kw">pub struct </span>DownloadedSector {
@@ -912,12 +984,12 @@
         })
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-    <span class="kw">let </span>raw_sector = Mutex::new(RawSector::new(pieces_in_sector));
+    <span class="kw">let </span>raw_sector = AsyncMutex::new(RawSector::new(pieces_in_sector));
 
     {
         <span class="comment">// This list will be mutated, replacing pieces we have already processed with `None`
         </span><span class="kw">let </span>incremental_piece_indices =
-            Mutex::new(piece_indices.iter().copied().map(<span class="prelude-val">Some</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
+            AsyncMutex::new(piece_indices.iter().copied().map(<span class="prelude-val">Some</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
 
         retry(default_backoff(), || <span class="kw">async </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>raw_sector = raw_sector.lock().<span class="kw">await</span>;
@@ -984,10 +1056,12 @@
     /// it'll be resized to correct size automatically) or correctly sized from the beginning
     </span><span class="kw">pub </span>sector_metadata_output: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;u8&gt;,
     <span class="doccomment">/// Proof of space table generator
-    </span><span class="kw">pub </span>table_generator: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PosTable::Generator,
+    </span><span class="kw">pub </span>table_generators: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[PosTable::Generator],
+    <span class="doccomment">/// Whether encoding should be aborted early
+    </span><span class="kw">pub </span>abort_early: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AtomicBool,
 }
 
-<span class="kw">pub async fn </span>encode_sector&lt;PosTable&gt;(
+<span class="kw">pub fn </span>encode_sector&lt;PosTable&gt;(
     downloaded_sector: DownloadedSector,
     encoding_options: EncodeSectorOptions&lt;<span class="lifetime">'_</span>, PosTable&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;PlottedSector, PlottingError&gt;
@@ -1006,11 +1080,16 @@
         pieces_in_sector,
         sector_output,
         sector_metadata_output,
-        table_generator,
+        table_generators,
+        abort_early,
     } = encoding_options;
 
     <span class="kw">if </span>erasure_coding.max_shards() &lt; Record::NUM_S_BUCKETS {
         <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::InvalidErasureCodingInstance);
+    }
+
+    <span class="kw">if </span>table_generators.is_empty() {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::NoTableGenerators);
     }
 
     <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
@@ -1032,95 +1111,52 @@
     }
 
     <span class="kw">let </span><span class="kw-2">mut </span>sector_contents_map = SectorContentsMap::new(pieces_in_sector);
-    <span class="kw">let </span><span class="kw-2">mut </span>chunks_scratch = Vec::with_capacity(Record::NUM_S_BUCKETS);
-
-    <span class="kw">for </span>((piece_offset, record), <span class="kw-2">mut </span>encoded_chunks_used) <span class="kw">in </span>(PieceOffset::ZERO..)
-        .zip(raw_sector.records.iter_mut())
-        .zip(sector_contents_map.iter_record_bitfields_mut())
     {
-        <span class="comment">// Derive PoSpace table (use parallel mode because multiple tables concurrently will use
-        // too much RAM)
-        </span><span class="kw">let </span>pos_table = table_generator.generate_parallel(
-            <span class="kw-2">&amp;</span>sector_id.derive_evaluation_seed(piece_offset, farmer_protocol_info.history_size),
+        <span class="kw">let </span>iter = Mutex::new(
+            (PieceOffset::ZERO..)
+                .zip(raw_sector.records.iter_mut())
+                .zip(sector_contents_map.iter_record_bitfields_mut()),
         );
 
-        <span class="kw">let </span>source_record_chunks = record
-            .iter()
-            .map(|scalar_bytes| {
-                Scalar::try_from(scalar_bytes).expect(
-                    <span class="string">"Piece getter must returns valid pieces of history that contain proper \
-                    scalar bytes; qed"</span>,
-                )
-            })
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="comment">// Erasure code source record chunks
-        </span><span class="kw">let </span>parity_record_chunks = erasure_coding
-            .extend(<span class="kw-2">&amp;</span>source_record_chunks)
-            .expect(<span class="string">"Instance was verified to be able to work with this many values earlier; qed"</span>);
+        rayon::scope(|scope| {
+            <span class="kw">for </span>table_generator <span class="kw">in </span>table_generators {
+                scope.spawn(|_scope| {
+                    <span class="kw">let </span><span class="kw-2">mut </span>chunks_scratch = Vec::with_capacity(Record::NUM_S_BUCKETS);
 
-        <span class="comment">// For every erasure coded chunk check if there is quality present, if so then encode
-        // with PoSpace quality bytes and set corresponding `quality_present` bit to `true`
-        </span>(u16::from(SBucket::ZERO)..=u16::from(SBucket::MAX))
-            .into_par_iter()
-            .map(SBucket::from)
-            .zip(
-                source_record_chunks
-                    .par_iter()
-                    .interleave(<span class="kw-2">&amp;</span>parity_record_chunks),
-            )
-            .map(|(s_bucket, record_chunk)| {
-                <span class="kw">let </span>proof = pos_table.find_proof(s_bucket.into())<span class="question-mark">?</span>;
+                    <span class="kw">loop </span>{
+                        <span class="comment">// This instead of `while` above because otherwise mutex will be held for
+                        // the duration of the loop and wil limit concurrency to 1 table generator
+                        </span><span class="kw">let </span><span class="prelude-val">Some</span>(((piece_offset, record), encoded_chunks_used)) =
+                            iter.lock().next()
+                        <span class="kw">else </span>{
+                            <span class="kw">return</span>;
+                        };
+                        <span class="kw">let </span>pos_seed = sector_id.derive_evaluation_seed(
+                            piece_offset,
+                            farmer_protocol_info.history_size,
+                        );
 
-                <span class="prelude-val">Some</span>(Simd::from(record_chunk.to_bytes()) ^ Simd::from(proof.hash()))
-            })
-            .collect_into_vec(<span class="kw-2">&amp;mut </span>chunks_scratch);
-        <span class="kw">let </span>num_successfully_encoded_chunks = chunks_scratch
-            .drain(..)
-            .zip(encoded_chunks_used.iter_mut())
-            .filter_map(|(maybe_encoded_chunk, <span class="kw-2">mut </span>encoded_chunk_used)| {
-                <span class="kw">let </span>encoded_chunk = maybe_encoded_chunk<span class="question-mark">?</span>;
+                        record_encoding::&lt;PosTable&gt;(
+                            <span class="kw-2">&amp;</span>pos_seed,
+                            record,
+                            encoded_chunks_used,
+                            table_generator,
+                            erasure_coding,
+                            <span class="kw-2">&amp;mut </span>chunks_scratch,
+                        );
 
-                <span class="kw-2">*</span>encoded_chunk_used = <span class="bool-val">true</span>;
+                        <span class="kw">if </span>abort_early.load(Ordering::Relaxed) {
+                            <span class="kw">return</span>;
+                        }
+                    }
+                });
+            }
+        });
+    }
 
-                <span class="prelude-val">Some</span>(encoded_chunk)
-            })
-            <span class="comment">// Make sure above filter function (and corresponding `encoded_chunk_used` update)
-            // happen at most as many times as there is number of chunks in the record,
-            // otherwise `n+1` iterations could happen and update extra `encoded_chunk_used`
-            // unnecessarily causing issues down the line
-            </span>.take(record.len())
-            .zip(record.iter_mut())
-            <span class="comment">// Write encoded chunk back so we can reuse original allocation
-            </span>.map(|(input_chunk, output_chunk)| {
-                <span class="kw-2">*</span>output_chunk = input_chunk.to_array();
-            })
-            .count();
-
-        <span class="comment">// In some cases there is not enough PoSpace qualities available, in which case we add
-        // remaining number of unencoded erasure coded record chunks to the end
-        </span>source_record_chunks
-            .iter()
-            .zip(<span class="kw-2">&amp;</span>parity_record_chunks)
-            .flat_map(|(a, b)| [a, b])
-            .zip(encoded_chunks_used.iter())
-            <span class="comment">// Skip chunks that were used previously
-            </span>.filter_map(|(record_chunk, encoded_chunk_used)| {
-                <span class="kw">if </span><span class="kw-2">*</span>encoded_chunk_used {
-                    <span class="prelude-val">None
-                </span>} <span class="kw">else </span>{
-                    <span class="prelude-val">Some</span>(record_chunk)
-                }
-            })
-            <span class="comment">// First `num_successfully_encoded_chunks` chunks are encoded
-            </span>.zip(record.iter_mut().skip(num_successfully_encoded_chunks))
-            <span class="comment">// Write necessary number of unencoded chunks at the end
-            </span>.for_each(|(input_chunk, output_chunk)| {
-                <span class="kw-2">*</span>output_chunk = input_chunk.to_bytes();
-            });
-
-        <span class="comment">// Give a chance to interrupt plotting if necessary in between pieces
-        </span>yield_now().<span class="kw">await
-    </span>}
+    <span class="kw">if </span>abort_early.load(Ordering::Acquire) {
+        <span class="kw">return </span><span class="prelude-val">Err</span>(PlottingError::AbortEarly);
+    }
 
     sector_output.resize(sector_size, <span class="number">0</span>);
     sector_metadata_output.resize(SectorMetadataChecksummed::encoded_size(), <span class="number">0</span>);
@@ -1202,6 +1238,94 @@
         sector_metadata,
         piece_indexes: piece_indices,
     })
+}
+
+<span class="kw">fn </span>record_encoding&lt;PosTable&gt;(
+    pos_seed: <span class="kw-2">&amp;</span>PosSeed,
+    record: <span class="kw-2">&amp;mut </span>Record,
+    <span class="kw-2">mut </span>encoded_chunks_used: EncodedChunksUsed&lt;<span class="lifetime">'_</span>&gt;,
+    table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
+    erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
+    chunks_scratch: <span class="kw-2">&amp;mut </span>Vec&lt;<span class="prelude-ty">Option</span>&lt;Simd&lt;u8, <span class="number">32</span>&gt;&gt;&gt;,
+) <span class="kw">where
+    </span>PosTable: Table,
+{
+    <span class="comment">// Derive PoSpace table
+    </span><span class="kw">let </span>pos_table = table_generator.generate_parallel(pos_seed);
+
+    <span class="kw">let </span>source_record_chunks = record
+        .iter()
+        .map(|scalar_bytes| {
+            Scalar::try_from(scalar_bytes).expect(
+                <span class="string">"Piece getter must returns valid pieces of history that contain proper \
+                    scalar bytes; qed"</span>,
+            )
+        })
+        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+    <span class="comment">// Erasure code source record chunks
+    </span><span class="kw">let </span>parity_record_chunks = erasure_coding
+        .extend(<span class="kw-2">&amp;</span>source_record_chunks)
+        .expect(<span class="string">"Instance was verified to be able to work with this many values earlier; qed"</span>);
+
+    <span class="comment">// For every erasure coded chunk check if there is quality present, if so then encode
+    // with PoSpace quality bytes and set corresponding `quality_present` bit to `true`
+    </span>(u16::from(SBucket::ZERO)..=u16::from(SBucket::MAX))
+        .into_par_iter()
+        .map(SBucket::from)
+        .zip(
+            source_record_chunks
+                .par_iter()
+                .interleave(<span class="kw-2">&amp;</span>parity_record_chunks),
+        )
+        .map(|(s_bucket, record_chunk)| {
+            <span class="kw">let </span>proof = pos_table.find_proof(s_bucket.into())<span class="question-mark">?</span>;
+
+            <span class="prelude-val">Some</span>(Simd::from(record_chunk.to_bytes()) ^ Simd::from(proof.hash()))
+        })
+        .collect_into_vec(chunks_scratch);
+    <span class="kw">let </span>num_successfully_encoded_chunks = chunks_scratch
+        .drain(..)
+        .zip(encoded_chunks_used.iter_mut())
+        .filter_map(|(maybe_encoded_chunk, <span class="kw-2">mut </span>encoded_chunk_used)| {
+            <span class="kw">let </span>encoded_chunk = maybe_encoded_chunk<span class="question-mark">?</span>;
+
+            <span class="kw-2">*</span>encoded_chunk_used = <span class="bool-val">true</span>;
+
+            <span class="prelude-val">Some</span>(encoded_chunk)
+        })
+        <span class="comment">// Make sure above filter function (and corresponding `encoded_chunk_used` update)
+        // happen at most as many times as there is number of chunks in the record,
+        // otherwise `n+1` iterations could happen and update extra `encoded_chunk_used`
+        // unnecessarily causing issues down the line
+        </span>.take(record.len())
+        .zip(record.iter_mut())
+        <span class="comment">// Write encoded chunk back so we can reuse original allocation
+        </span>.map(|(input_chunk, output_chunk)| {
+            <span class="kw-2">*</span>output_chunk = input_chunk.to_array();
+        })
+        .count();
+
+    <span class="comment">// In some cases there is not enough PoSpace qualities available, in which case we add
+    // remaining number of unencoded erasure coded record chunks to the end
+    </span>source_record_chunks
+        .iter()
+        .zip(<span class="kw-2">&amp;</span>parity_record_chunks)
+        .flat_map(|(a, b)| [a, b])
+        .zip(encoded_chunks_used.iter())
+        <span class="comment">// Skip chunks that were used previously
+        </span>.filter_map(|(record_chunk, encoded_chunk_used)| {
+            <span class="kw">if </span><span class="kw-2">*</span>encoded_chunk_used {
+                <span class="prelude-val">None
+            </span>} <span class="kw">else </span>{
+                <span class="prelude-val">Some</span>(record_chunk)
+            }
+        })
+        <span class="comment">// First `num_successfully_encoded_chunks` chunks are encoded
+        </span>.zip(record.iter_mut().skip(num_successfully_encoded_chunks))
+        <span class="comment">// Write necessary number of unencoded chunks at the end
+        </span>.for_each(|(input_chunk, output_chunk)| {
+            <span class="kw-2">*</span>output_chunk = input_chunk.to_bytes();
+        });
 }
 
 <span class="kw">async fn </span>download_sector_internal&lt;PG: PieceGetter&gt;(
