@@ -131,13 +131,80 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::piece_cache::PieceCache;
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farmer_cache::FarmerCache;
 <span class="kw">use </span><span class="kw">crate</span>::utils::plotted_pieces::PlottedPieces;
 <span class="kw">use </span><span class="kw">crate</span>::NodeClient;
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::error::Error;
-<span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
 <span class="kw">use </span>subspace_farmer_components::{PieceGetter, PieceGetterRetryPolicy};
 <span class="kw">use </span>subspace_networking::libp2p::kad::RecordKey;
@@ -147,25 +214,47 @@
 
 <span class="kw">const </span>MAX_RANDOM_WALK_ROUNDS: usize = <span class="number">15</span>;
 
-<span class="kw">pub struct </span>FarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">struct </span>Inner&lt;PV, NC&gt; {
     piece_provider: PieceProvider&lt;PV&gt;,
-    piece_cache: PieceCache,
+    farmer_cache: FarmerCache,
     node_client: NC,
     plotted_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;PlottedPieces&gt;&gt;&gt;,
+}
+
+<span class="kw">pub struct </span>FarmerPieceGetter&lt;PV, NC&gt; {
+    inner: Arc&lt;Inner&lt;PV, NC&gt;&gt;,
+}
+
+<span class="kw">impl</span>&lt;PV, NC&gt; Clone <span class="kw">for </span>FarmerPieceGetter&lt;PV, NC&gt; {
+    <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            inner: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
+        }
+    }
 }
 
 <span class="kw">impl</span>&lt;PV, NC&gt; FarmerPieceGetter&lt;PV, NC&gt; {
     <span class="kw">pub fn </span>new(
         piece_provider: PieceProvider&lt;PV&gt;,
-        piece_cache: PieceCache,
+        farmer_cache: FarmerCache,
         node_client: NC,
         plotted_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;PlottedPieces&gt;&gt;&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            piece_provider,
-            piece_cache,
-            node_client,
-            plotted_pieces,
+            inner: Arc::new(Inner {
+                piece_provider,
+                farmer_cache,
+                node_client,
+                plotted_pieces,
+            }),
+        }
+    }
+
+    <span class="doccomment">/// Downgrade to [`WeakFarmerPieceGetter`] in order to break reference cycles with internally
+    /// used [`Arc`]
+    </span><span class="kw">pub fn </span>downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeakFarmerPieceGetter&lt;PV, NC&gt; {
+        WeakFarmerPieceGetter {
+            inner: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
         }
     }
 
@@ -190,16 +279,18 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
         <span class="kw">let </span>key = RecordKey::from(piece_index.to_multihash());
 
-        <span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from local cache"</span>);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.piece_cache.get_piece(key).<span class="kw">await </span>{
-            <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from local cache successfully"</span>);
+        <span class="kw">let </span>inner = <span class="kw-2">&amp;</span><span class="self">self</span>.inner;
+
+        <span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from farmer cache"</span>);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = inner.farmer_cache.get_piece(key).<span class="kw">await </span>{
+            <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from farmer cache successfully"</span>);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
         }
 
         <span class="comment">// L2 piece acquisition
         </span><span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from DSN L2 cache"</span>);
-        <span class="kw">let </span>maybe_piece = <span class="self">self
-            </span>.piece_provider
+        <span class="kw">let </span>maybe_piece = inner
+            .piece_provider
             .get_piece_from_dsn_cache(piece_index, <span class="self">Self</span>::convert_retry_policy(retry_policy))
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -210,7 +301,7 @@
 
         <span class="comment">// Try node's RPC before reaching to L1 (archival storage on DSN)
         </span><span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from node"</span>);
-        <span class="kw">match </span><span class="self">self</span>.node_client.piece(piece_index).<span class="kw">await </span>{
+        <span class="kw">match </span>inner.node_client.piece(piece_index).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece)) =&gt; {
                 <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from node successfully"</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
@@ -228,8 +319,8 @@
         }
 
         <span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from local plot"</span>);
-        <span class="kw">let </span>maybe_read_piece_fut = <span class="self">self
-            </span>.plotted_pieces
+        <span class="kw">let </span>maybe_read_piece_fut = inner
+            .plotted_pieces
             .lock()
             .as_ref()
             .and_then(|plotted_pieces| plotted_pieces.read_piece(<span class="kw-2">&amp;</span>piece_index));
@@ -244,8 +335,8 @@
         <span class="comment">// L1 piece acquisition
         </span><span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from DSN L1."</span>);
 
-        <span class="kw">let </span>archival_storage_search_result = <span class="self">self
-            </span>.piece_provider
+        <span class="kw">let </span>archival_storage_search_result = inner
+            .piece_provider
             .get_piece_from_archival_storage(piece_index, MAX_RANDOM_WALK_ROUNDS)
             .<span class="kw">await</span>;
 
@@ -260,6 +351,49 @@
             <span class="string">"Cannot acquire piece: all methods yielded empty result"
         </span>);
         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+    }
+}
+
+<span class="doccomment">/// Weak farmer piece getter, can be upgraded to [`FarmerPieceGetter`]
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>WeakFarmerPieceGetter&lt;PV, NC&gt; {
+    inner: Weak&lt;Inner&lt;PV, NC&gt;&gt;,
+}
+
+<span class="kw">impl</span>&lt;PV, NC&gt; Clone <span class="kw">for </span>WeakFarmerPieceGetter&lt;PV, NC&gt; {
+    <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            inner: <span class="self">self</span>.inner.clone(),
+        }
+    }
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl</span>&lt;PV, NC&gt; PieceGetter <span class="kw">for </span>WeakFarmerPieceGetter&lt;PV, NC&gt;
+<span class="kw">where
+    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
+    NC: NodeClient,
+{
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+        retry_policy: PieceGetterRetryPolicy,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(piece_getter) = <span class="self">self</span>.upgrade() <span class="kw">else </span>{
+            <span class="macro">debug!</span>(<span class="string">"Farmer piece getter upgrade didn't succeed"</span>);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+        };
+
+        piece_getter.get_piece(piece_index, retry_policy).<span class="kw">await
+    </span>}
+}
+
+<span class="kw">impl</span>&lt;PV, NC&gt; WeakFarmerPieceGetter&lt;PV, NC&gt; {
+    <span class="doccomment">/// Try to upgrade to [`FarmerPieceGetter`] if there is at least one other instance of it alive
+    </span><span class="kw">pub fn </span>upgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;FarmerPieceGetter&lt;PV, NC&gt;&gt; {
+        <span class="prelude-val">Some</span>(FarmerPieceGetter {
+            inner: <span class="self">self</span>.inner.upgrade()<span class="question-mark">?</span>,
+        })
     }
 }
 </code></pre></div></section></main></body></html>
