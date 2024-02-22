@@ -704,6 +704,7 @@
 <a href="#702" id="702">702</a>
 <a href="#703" id="703">703</a>
 <a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, sector_size, EncodedChunksUsed, RawSector, RecordMetadata,
     SectorContentsMap, SectorMetadata, SectorMetadataChecksummed,
@@ -718,11 +719,11 @@
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
+<span class="kw">use </span>std::mem;
 <span class="kw">use </span>std::simd::Simd;
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Duration;
-<span class="kw">use </span>std::{mem, slice};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, blake3_hash_parallel, Scalar};
 <span class="kw">use </span>subspace_core_primitives::{
@@ -853,8 +854,8 @@
     <span class="doccomment">/// Semaphore for part of the plotting when farmer encodes downloaded sector, should typically
     /// allow one permit at a time for efficient CPU utilization
     </span><span class="kw">pub </span>encoding_semaphore: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>Semaphore&gt;,
-    <span class="doccomment">/// Proof of space table generator
-    </span><span class="kw">pub </span>table_generator: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>PosTable::Generator,
+    <span class="doccomment">/// Proof of space table generators
+    </span><span class="kw">pub </span>table_generators: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[PosTable::Generator],
     <span class="doccomment">/// Whether encoding should be aborted early
     </span><span class="kw">pub </span>abort_early: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AtomicBool,
 }
@@ -885,7 +886,7 @@
         sector_metadata_output,
         downloading_semaphore,
         encoding_semaphore,
-        table_generator,
+        table_generators,
         abort_early,
     } = options;
 
@@ -917,7 +918,7 @@
             pieces_in_sector,
             sector_output,
             sector_metadata_output,
-            table_generators: slice::from_mut(table_generator),
+            table_generators,
             abort_early,
         },
     )
@@ -1055,7 +1056,7 @@
     <span class="doccomment">/// Where plotted sector metadata should be written, vector must either be empty (in which case
     /// it'll be resized to correct size automatically) or correctly sized from the beginning
     </span><span class="kw">pub </span>sector_metadata_output: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;u8&gt;,
-    <span class="doccomment">/// Proof of space table generator
+    <span class="doccomment">/// Proof of space table generators
     </span><span class="kw">pub </span>table_generators: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[PosTable::Generator],
     <span class="doccomment">/// Whether encoding should be aborted early
     </span><span class="kw">pub </span>abort_early: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AtomicBool,
@@ -1125,7 +1126,7 @@
 
                     <span class="kw">loop </span>{
                         <span class="comment">// This instead of `while` above because otherwise mutex will be held for
-                        // the duration of the loop and wil limit concurrency to 1 table generator
+                        // the duration of the loop and will limit concurrency to 1 table generator
                         </span><span class="kw">let </span><span class="prelude-val">Some</span>(((piece_offset, record), encoded_chunks_used)) =
                             iter.lock().next()
                         <span class="kw">else </span>{
@@ -1267,6 +1268,7 @@
         .extend(<span class="kw-2">&amp;</span>source_record_chunks)
         .expect(<span class="string">"Instance was verified to be able to work with this many values earlier; qed"</span>);
 
+    chunks_scratch.clear();
     <span class="comment">// For every erasure coded chunk check if there is quality present, if so then encode
     // with PoSpace quality bytes and set corresponding `quality_present` bit to `true`
     </span>(u16::from(SBucket::ZERO)..=u16::from(SBucket::MAX))
