@@ -569,6 +569,60 @@
 <a href="#567" id="567">567</a>
 <a href="#568" id="568">568</a>
 <a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     FraudProofVerificationInfoRequest, FraudProofVerificationInfoResponse, SetCodeExtrinsic,
     StorageKeyRequest,
@@ -577,18 +631,22 @@
 <span class="kw">use </span>domain_block_preprocessor::inherents::extract_domain_runtime_upgrade_code;
 <span class="kw">use </span>domain_block_preprocessor::stateless_runtime::StatelessRuntime;
 <span class="kw">use </span>domain_runtime_primitives::{
-    CheckExtrinsicsValidityError, CHECK_EXTRINSICS_AND_DO_PRE_DISPATCH_METHOD_NAME,
+    BlockNumber, CheckExtrinsicsValidityError, CHECK_EXTRINSICS_AND_DO_PRE_DISPATCH_METHOD_NAME,
 };
+<span class="kw">use </span>hash_db::Hasher;
+<span class="kw">use </span>sc_client_api::execution_extensions::ExtensionsFactory;
 <span class="kw">use </span>sc_client_api::BlockBackend;
 <span class="kw">use </span>sc_executor::RuntimeVersionOf;
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
-<span class="kw">use </span>sp_core::traits::{CodeExecutor, FetchRuntimeCode, RuntimeCode};
+<span class="kw">use </span>sp_core::traits::{CallContext, CodeExecutor, FetchRuntimeCode, RuntimeCode};
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::bundle_producer_election::BundleProducerElectionParams;
 <span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainId, DomainsApi, OperatorId};
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT};
+<span class="kw">use </span>sp_externalities::Extensions;
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT, NumberFor};
 <span class="kw">use </span>sp_runtime::OpaqueExtrinsic;
+<span class="kw">use </span>sp_state_machine::{create_proof_check_backend, Error, OverlayedChanges, StateMachine};
 <span class="kw">use </span>sp_std::vec::Vec;
 <span class="kw">use </span>sp_trie::StorageProof;
 <span class="kw">use </span>std::borrow::Cow;
@@ -625,6 +683,7 @@
     <span class="doccomment">/// Check the execution proof
     </span><span class="kw">fn </span>execution_proof_check(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        domain_block_id: (BlockNumber, H256),
         pre_state_root: H256,
         <span class="comment">// TODO: implement `PassBy` for `sp_trie::StorageProof` in upstream to pass it directly here
         </span>encoded_proof: Vec&lt;u8&gt;,
@@ -650,16 +709,22 @@
 </span><span class="kw">pub struct </span>FraudProofHostFunctionsImpl&lt;Block, Client, DomainBlock, Executor&gt; {
     consensus_client: Arc&lt;Client&gt;,
     executor: Arc&lt;Executor&gt;,
+    domain_extensions_factory: Box&lt;<span class="kw">dyn </span>ExtensionsFactory&lt;DomainBlock&gt;&gt;,
     _phantom: PhantomData&lt;(Block, DomainBlock)&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, Client, DomainBlock, Executor&gt;
     FraudProofHostFunctionsImpl&lt;Block, Client, DomainBlock, Executor&gt;
 {
-    <span class="kw">pub fn </span>new(consensus_client: Arc&lt;Client&gt;, executor: Arc&lt;Executor&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(
+        consensus_client: Arc&lt;Client&gt;,
+        executor: Arc&lt;Executor&gt;,
+        domain_extensions_factory: Box&lt;<span class="kw">dyn </span>ExtensionsFactory&lt;DomainBlock&gt;&gt;,
+    ) -&gt; <span class="self">Self </span>{
         FraudProofHostFunctionsImpl {
             consensus_client,
             executor,
+            domain_extensions_factory,
             _phantom: Default::default(),
         }
     }
@@ -916,7 +981,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         consensus_block_hash: H256,
         domain_id: DomainId,
-        domain_block_id: (u32, H256),
+        domain_block_id: (BlockNumber, H256),
         domain_block_state_root: H256,
         bundle_extrinsics: Vec&lt;OpaqueExtrinsic&gt;,
         storage_proof: StorageProof,
@@ -926,6 +991,7 @@
         <span class="kw">let </span>runtime_code = <span class="self">self</span>.get_domain_runtime_code(consensus_block_hash, domain_id)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>raw_response = <span class="self">self</span>.execution_proof_check(
+            domain_block_id,
             domain_block_state_root,
             storage_proof.encode(),
             CHECK_EXTRINSICS_AND_DO_PRE_DISPATCH_METHOD_NAME,
@@ -951,6 +1017,7 @@
     Block::Hash: From&lt;H256&gt;,
     DomainBlock: BlockT,
     DomainBlock::Hash: From&lt;H256&gt; + Into&lt;H256&gt;,
+    NumberFor&lt;DomainBlock&gt;: From&lt;BlockNumber&gt;,
     Client: BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: DomainsApi&lt;Block, DomainBlock::Header&gt; + BundleProducerElectionApi&lt;Block, Balance&gt;,
     Executor: CodeExecutor + RuntimeVersionOf,
@@ -1110,6 +1177,7 @@
 
     <span class="kw">fn </span>execution_proof_check(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        domain_block_id: (BlockNumber, H256),
         pre_state_root: H256,
         encoded_proof: Vec&lt;u8&gt;,
         execution_method: <span class="kw-2">&amp;</span>str,
@@ -1126,7 +1194,12 @@
             heap_pages: <span class="prelude-val">None</span>,
         };
 
-        sp_state_machine::execution_proof_check::&lt;&lt;DomainBlock::Header <span class="kw">as </span>HeaderT&gt;::Hashing, <span class="kw">_</span>&gt;(
+        <span class="kw">let </span>(domain_block_number, domain_block_hash) = domain_block_id;
+        <span class="kw">let </span><span class="kw-2">mut </span>domain_extensions = <span class="self">self
+            </span>.domain_extensions_factory
+            .extensions_for(domain_block_hash.into(), domain_block_number.into());
+
+        execution_proof_check::&lt;&lt;DomainBlock::Header <span class="kw">as </span>HeaderT&gt;::Hashing, <span class="kw">_</span>&gt;(
             pre_state_root.into(),
             proof,
             <span class="kw-2">&amp;mut </span>Default::default(),
@@ -1134,8 +1207,43 @@
             execution_method,
             call_data,
             <span class="kw-2">&amp;</span>runtime_code,
+            <span class="kw-2">&amp;mut </span>domain_extensions,
         )
         .ok()
     }
+}
+
+<span class="attr">#[allow(clippy::too_many_arguments)]
+</span><span class="doccomment">/// Executes the given proof using the runtime
+/// The only difference between sp_state_machine::execution_proof_check is Extensions
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>execution_proof_check&lt;H, Exec&gt;(
+    root: H::Out,
+    proof: StorageProof,
+    overlay: <span class="kw-2">&amp;mut </span>OverlayedChanges&lt;H&gt;,
+    exec: <span class="kw-2">&amp;</span>Exec,
+    method: <span class="kw-2">&amp;</span>str,
+    call_data: <span class="kw-2">&amp;</span>[u8],
+    runtime_code: <span class="kw-2">&amp;</span>RuntimeCode,
+    extensions: <span class="kw-2">&amp;mut </span>Extensions,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt;
+<span class="kw">where
+    </span>H: Hasher,
+    H::Out: Ord + <span class="lifetime">'static </span>+ codec::Codec,
+    Exec: CodeExecutor + Clone + <span class="lifetime">'static</span>,
+{
+    <span class="kw">let </span>trie_backend = create_proof_check_backend::&lt;H&gt;(root, proof)<span class="question-mark">?</span>;
+    <span class="kw">let </span>result = StateMachine::&lt;<span class="kw">_</span>, H, Exec&gt;::new(
+        <span class="kw-2">&amp;</span>trie_backend,
+        overlay,
+        exec,
+        method,
+        call_data,
+        extensions,
+        runtime_code,
+        CallContext::Offchain,
+    )
+    .execute();
+
+    result
 }
 </code></pre></div></section></main></body></html>

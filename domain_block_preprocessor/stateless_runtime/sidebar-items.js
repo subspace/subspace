@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["StatelessRuntime"],"type":["ExtractSignerResult","ExtractedStateRoots"]};
+window.SIDEBAR_ITEMS = {"struct":["StatelessRuntime"],"type":["ExtractSignerResult"]};

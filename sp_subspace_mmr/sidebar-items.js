@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["MmrDigestItem","MmrLeaf"],"mod":["host_functions","subspace_mmr_runtime_interface"],"struct":["HostFunctions","LeafDataV0"],"trait":["MmrDigest"]};
+window.SIDEBAR_ITEMS = {"enum":["MmrDigestItem","MmrLeaf"],"mod":["domain_mmr_runtime_interface","host_functions","subspace_mmr_runtime_interface"],"struct":["DomainHostFunctions","HostFunctions","LeafDataV0"],"trait":["MmrDigest"]};

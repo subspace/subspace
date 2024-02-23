@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Endpoint"],"struct":["EndpointRequest"],"trait":["DomainInfo","EndpointHandler","Sender"],"type":["EndpointId","EndpointPayload","EndpointResponse"]};
+window.SIDEBAR_ITEMS = {"enum":["Endpoint"],"struct":["EndpointRequest"],"trait":["EndpointHandler","Sender"],"type":["EndpointId","EndpointPayload","EndpointResponse"]};

@@ -492,9 +492,14 @@
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::providers::{BlockImportProvider, RpcProvider};
 <span class="kw">use </span><span class="kw">crate</span>::transaction_pool::FullChainApiWrapper;
-<span class="kw">use crate</span>::{FullBackend, FullClient, RuntimeExecutor};
+<span class="kw">use crate</span>::{FullBackend, FullClient};
 <span class="kw">use </span>cross_domain_message_gossip::ChainTxPoolMsg;
 <span class="kw">use </span>domain_client_block_preprocessor::inherents::CreateInherentDataProvider;
 <span class="kw">use </span>domain_client_message_relayer::GossipMessageSink;
@@ -504,8 +509,11 @@
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::Stream;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
-<span class="kw">use </span>sc_client_api::{BlockBackend, BlockImportNotification, BlockchainEvents, ProofProvider};
+<span class="kw">use </span>sc_client_api::{
+    BlockBackend, BlockImportNotification, BlockchainEvents, ExecutorProvider, ProofProvider,
+};
 <span class="kw">use </span>sc_consensus::SharedBlockImport;
+<span class="kw">use </span>sc_domains::{ExtensionsFactory, RuntimeExecutor};
 <span class="kw">use </span>sc_network::NetworkPeers;
 <span class="kw">use </span>sc_rpc_api::DenyUnsafe;
 <span class="kw">use </span>sc_service::{
@@ -522,12 +530,13 @@
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
-<span class="kw">use </span>sp_core::{Decode, Encode};
+<span class="kw">use </span>sp_core::{Decode, Encode, H256};
 <span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
 <span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainId, DomainsApi, OperatorId};
 <span class="kw">use </span>sp_domains_fraud_proof::FraudProofApi;
 <span class="kw">use </span>sp_messenger::messages::ChainId;
 <span class="kw">use </span>sp_messenger::{MessengerApi, RelayerApi};
+<span class="kw">use </span>sp_mmr_primitives::MmrApi;
 <span class="kw">use </span>sp_offchain::OffchainWorkerApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, NumberFor};
 <span class="kw">use </span>sp_session::SessionKeys;
@@ -545,7 +554,7 @@
     CBlock,
     FullClient&lt;Block, RuntimeApi&gt;,
     CClient,
-    FullPool&lt;CBlock, CClient, RuntimeApi&gt;,
+    FullPool&lt;RuntimeApi&gt;,
     FullBackend&lt;Block&gt;,
     RuntimeExecutor,
 &gt;;
@@ -597,12 +606,12 @@
     <span class="doccomment">/// Operator.
     </span><span class="kw">pub </span>operator: DomainOperator&lt;Block, CBlock, CClient, RuntimeApi&gt;,
     <span class="doccomment">/// Transaction pool
-    </span><span class="kw">pub </span>transaction_pool: Arc&lt;FullPool&lt;CBlock, CClient, RuntimeApi&gt;&gt;,
+    </span><span class="kw">pub </span>transaction_pool: Arc&lt;FullPool&lt;RuntimeApi&gt;&gt;,
     _phantom_data: PhantomData&lt;AccountId&gt;,
 }
 
-<span class="kw">pub type </span>FullPool&lt;CBlock, CClient, RuntimeApi&gt; =
-    <span class="kw">crate</span>::transaction_pool::FullPool&lt;CClient, CBlock, Block, FullClient&lt;Block, RuntimeApi&gt;&gt;;
+<span class="kw">pub type </span>FullPool&lt;RuntimeApi&gt; =
+    <span class="kw">crate</span>::transaction_pool::FullPool&lt;Block, FullClient&lt;Block, RuntimeApi&gt;&gt;;
 
 <span class="doccomment">/// Constructs a partial domain node.
 </span><span class="attr">#[allow(clippy::type_complexity)]
@@ -616,11 +625,11 @@
         FullBackend&lt;Block&gt;,
         (),
         sc_consensus::DefaultImportQueue&lt;Block&gt;,
-        FullPool&lt;CBlock, CClient, RuntimeApi&gt;,
+        FullPool&lt;RuntimeApi&gt;,
         (
             <span class="prelude-ty">Option</span>&lt;Telemetry&gt;,
             <span class="prelude-ty">Option</span>&lt;TelemetryWorkerHandle&gt;,
-            RuntimeExecutor,
+            Arc&lt;RuntimeExecutor&gt;,
             SharedBlockImport&lt;Block&gt;,
         ),
     &gt;,
@@ -636,7 +645,9 @@
         + Send
         + Sync
         + <span class="lifetime">'static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, Header&gt; + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Header&gt;
+        + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
+        + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
     RuntimeApi: ConstructRuntimeApi&lt;Block, FullClient&lt;Block, RuntimeApi&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
     RuntimeApi::RuntimeApi:
         TaggedTransactionQueue&lt;Block&gt; + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt; + ApiExt&lt;Block&gt;,
@@ -662,6 +673,11 @@
     )<span class="question-mark">?</span>;
     <span class="kw">let </span>client = Arc::new(client);
 
+    <span class="kw">let </span>executor = Arc::new(executor);
+    client.execution_extensions().set_extensions_factory(
+        ExtensionsFactory::&lt;<span class="kw">_</span>, CBlock, Block, <span class="kw">_</span>&gt;::new(consensus_client.clone(), executor.clone()),
+    );
+
     <span class="kw">let </span>telemetry_worker_handle = telemetry.as_ref().map(|(worker, <span class="kw">_</span>)| worker.handle());
 
     <span class="kw">let </span>telemetry = telemetry.map(|(worker, telemetry)| {
@@ -671,12 +687,7 @@
         telemetry
     });
 
-    <span class="kw">let </span>transaction_pool = <span class="kw">crate</span>::transaction_pool::new_full(
-        config,
-        <span class="kw-2">&amp;</span>task_manager,
-        client.clone(),
-        consensus_client.clone(),
-    );
+    <span class="kw">let </span>transaction_pool = <span class="kw">crate</span>::transaction_pool::new_full(config, <span class="kw-2">&amp;</span>task_manager, client.clone());
 
     <span class="kw">let </span>block_import = SharedBlockImport::new(BlockImportProvider::block_import(
         block_import_provider,
@@ -762,7 +773,8 @@
         + RelayerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
         + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
         + BundleProducerElectionApi&lt;CBlock, subspace_runtime_primitives::Balance&gt;
-        + FraudProofApi&lt;CBlock, Header&gt;,
+        + FraudProofApi&lt;CBlock, Header&gt;
+        + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
     IBNS: Stream&lt;Item = (NumberFor&lt;CBlock&gt;, mpsc::Sender&lt;()&gt;)&gt; + Send + <span class="lifetime">'static</span>,
     CIBNS: Stream&lt;Item = BlockImportNotification&lt;CBlock&gt;&gt; + Send + <span class="lifetime">'static</span>,
     NSNS: Stream&lt;Item = (Slot, PotOutput)&gt; + Send + <span class="lifetime">'static</span>,
@@ -792,8 +804,8 @@
     Provider: RpcProvider&lt;
             Block,
             FullClient&lt;Block, RuntimeApi&gt;,
-            FullPool&lt;CBlock, CClient, RuntimeApi&gt;,
-            FullChainApiWrapper&lt;CClient, CBlock, Block, FullClient&lt;Block, RuntimeApi&gt;&gt;,
+            FullPool&lt;RuntimeApi&gt;,
+            FullChainApiWrapper&lt;Block, FullClient&lt;Block, RuntimeApi&gt;&gt;,
             TFullBackend&lt;Block&gt;,
             AccountId,
             CreateInherentDataProvider&lt;CClient, CBlock&gt;,
@@ -902,8 +914,6 @@
         sync_service: sync_service.clone(),
         telemetry: telemetry.as_mut(),
     })<span class="question-mark">?</span>;
-
-    <span class="kw">let </span>code_executor = Arc::new(code_executor);
 
     <span class="kw">let </span>spawn_essential = task_manager.spawn_essential_handle();
     <span class="kw">let </span>(bundle_sender, _bundle_receiver) = tracing_unbounded(<span class="string">"domain_bundle_stream"</span>, <span class="number">100</span>);

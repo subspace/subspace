@@ -941,6 +941,17 @@
 <a href="#939" id="939">939</a>
 <a href="#940" id="940">940</a>
 <a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -961,6 +972,7 @@
 </span><span class="attr">#![cfg_attr(not(feature = <span class="string">"std"</span>), no_std)]
 #![forbid(unsafe_code)]
 #![warn(rust_2018_idioms, missing_debug_implementations)]
+#![feature(let_chains)]
 
 #[cfg(test)]
 </span><span class="kw">mod </span>mock;
@@ -977,7 +989,6 @@
 
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::traits::fungible::Inspect;
-<span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
 <span class="kw">pub use </span>pallet::<span class="kw-2">*</span>;
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::U256;
@@ -1030,7 +1041,9 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>BalanceOf&lt;T&gt; =
     &lt;&lt;T <span class="kw">as </span>Config&gt;::Currency <span class="kw">as </span>Inspect&lt;&lt;T <span class="kw">as </span>frame_system::Config&gt;::AccountId&gt;&gt;::Balance;
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ValidatedRelayMessage&lt;Balance&gt; {
+<span class="doccomment">/// A validated relay message.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>ValidatedRelayMessage&lt;Balance&gt; {
     msg: Message&lt;Balance&gt;,
     next_nonce: Nonce,
     should_init_channel: bool,
@@ -1049,16 +1062,16 @@
     <span class="kw">use </span>frame_system::pallet_prelude::<span class="kw-2">*</span>;
     <span class="kw">use </span>sp_core::storage::StorageKey;
     <span class="kw">use </span>sp_domains::proof_provider_and_verifier::{StorageProofVerifier, VerificationError};
-    <span class="kw">use </span>sp_domains::DomainId;
-    <span class="kw">use </span>sp_messenger::endpoint::{DomainInfo, Endpoint, EndpointHandler, EndpointRequest, Sender};
+    <span class="kw">use </span>sp_messenger::endpoint::{Endpoint, EndpointHandler, EndpointRequest, Sender};
     <span class="kw">use </span>sp_messenger::messages::{
-        BlockInfo, ChainId, CrossDomainMessage, InitiateChannelParams, Message, MessageId,
-        MessageWeightTag, Payload, ProtocolMessageRequest, RequestResponse, VersionedPayload,
+        ChainId, CrossDomainMessage, InitiateChannelParams, Message, MessageId, MessageWeightTag,
+        Payload, ProtocolMessageRequest, RequestResponse, VersionedPayload,
     };
-    <span class="kw">use </span>sp_messenger::OnXDMRewards;
-    <span class="kw">use </span>sp_runtime::traits::CheckedSub;
+    <span class="kw">use </span>sp_messenger::{MmrProofVerifier, OnXDMRewards, StorageKeys};
+    <span class="kw">use </span>sp_mmr_primitives::EncodableOpaqueLeaf;
     <span class="kw">use </span>sp_runtime::ArithmeticError;
     <span class="kw">use </span>sp_std::boxed::Box;
+    <span class="kw">use </span>sp_std::vec::Vec;
 
     <span class="attr">#[pallet::config]
     </span><span class="kw">pub trait </span>Config: frame_system::Config {
@@ -1070,8 +1083,6 @@
             -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>EndpointHandler&lt;MessageId&gt;&gt;&gt;;
         <span class="doccomment">/// Currency type pallet uses for fees and deposits.
         </span><span class="kw">type </span>Currency: Mutate&lt;<span class="self">Self</span>::AccountId&gt;;
-        <span class="doccomment">/// Chain info to verify chain state roots at a confirmation depth.
-        </span><span class="kw">type </span>DomainInfo: DomainInfo&lt;BlockNumberFor&lt;<span class="self">Self</span>&gt;, <span class="self">Self</span>::Hash, StateRootOf&lt;<span class="self">Self</span>&gt;&gt;;
         <span class="doccomment">/// Confirmation depth for XDM coming from chains.
         </span><span class="kw">type </span>ConfirmationDepth: Get&lt;BlockNumberFor&lt;<span class="self">Self</span>&gt;&gt;;
         <span class="doccomment">/// Weight information for extrinsics in this pallet.
@@ -1080,6 +1091,12 @@
         </span><span class="kw">type </span>WeightToFee: WeightToFee&lt;Balance = BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
         <span class="doccomment">/// Handle XDM rewards.
         </span><span class="kw">type </span>OnXDMRewards: OnXDMRewards&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;;
+        <span class="doccomment">/// Hash type of MMR
+        </span><span class="kw">type </span>MmrHash: Parameter + Member + Default + Clone;
+        <span class="doccomment">/// MMR proof verifier
+        </span><span class="kw">type </span>MmrProofVerifier: MmrProofVerifier&lt;<span class="self">Self</span>::MmrHash, StateRootOf&lt;<span class="self">Self</span>&gt;&gt;;
+        <span class="doccomment">/// Storage key provider.
+        </span><span class="kw">type </span>StorageKeys: StorageKeys;
     }
 
     <span class="doccomment">/// Pallet messenger used to communicate between chains and other blockchains.
@@ -1246,7 +1263,7 @@
                         msg,
                         next_nonce,
                         should_init_channel,
-                    } = <span class="self">Self</span>::do_validate_relay_message(xdm)<span class="question-mark">?</span>;
+                    } = <span class="self">Self</span>::validate_relay_message(xdm)<span class="question-mark">?</span>;
                     <span class="kw">if </span>msg.nonce != next_nonce {
                         <span class="macro">log::error!</span>(
                             <span class="string">"Unexpected message nonce, channel next nonce {:?}, msg nonce {:?}"</span>,
@@ -1263,7 +1280,7 @@
                     <span class="self">Self</span>::pre_dispatch_relay_message(msg, should_init_channel)
                 }
                 Call::relay_message_response { msg: xdm } =&gt; {
-                    <span class="kw">let </span>(msg, next_nonce) = <span class="self">Self</span>::do_validate_relay_message_response(xdm)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>(msg, next_nonce) = <span class="self">Self</span>::validate_relay_message_response(xdm)<span class="question-mark">?</span>;
                     <span class="kw">if </span>msg.nonce != next_nonce {
                         <span class="macro">log::error!</span>(
                             <span class="string">"Unexpected message response nonce, channel next nonce {:?}, msg nonce {:?}"</span>,
@@ -1291,7 +1308,7 @@
                         msg,
                         next_nonce,
                         should_init_channel: <span class="kw">_</span>,
-                    } = <span class="self">Self</span>::do_validate_relay_message(xdm)<span class="question-mark">?</span>;
+                    } = <span class="self">Self</span>::validate_relay_message(xdm)<span class="question-mark">?</span>;
 
                     <span class="kw">let </span><span class="kw-2">mut </span>valid_tx_builder = ValidTransaction::with_tag_prefix(<span class="string">"MessengerInbox"</span>);
                     <span class="comment">// Only add the requires tag if the msg nonce is in future
@@ -1310,7 +1327,7 @@
                         .build()
                 }
                 Call::relay_message_response { msg: xdm } =&gt; {
-                    <span class="kw">let </span>(msg, next_nonce) = <span class="self">Self</span>::do_validate_relay_message_response(xdm)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>(msg, next_nonce) = <span class="self">Self</span>::validate_relay_message_response(xdm)<span class="question-mark">?</span>;
 
                     <span class="kw">let </span><span class="kw-2">mut </span>valid_tx_builder =
                         ValidTransaction::with_tag_prefix(<span class="string">"MessengerOutboxResponse"</span>);
@@ -1444,7 +1461,7 @@
         #[pallet::weight((T::WeightInfo::relay_message().saturating_add(Pallet::&lt; T &gt;::message_weight(&amp; msg.weight_tag)), Pays::No))]
         </span><span class="kw">pub fn </span>relay_message(
             origin: OriginFor&lt;T&gt;,
-            msg: CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+            msg: CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
         ) -&gt; DispatchResult {
             ensure_none(origin)<span class="question-mark">?</span>;
             <span class="kw">let </span>inbox_msg = Inbox::&lt;T&gt;::take().ok_or(Error::&lt;T&gt;::MissingMessage)<span class="question-mark">?</span>;
@@ -1457,7 +1474,7 @@
         #[pallet::weight((T::WeightInfo::relay_message_response().saturating_add(Pallet::&lt; T &gt;::message_weight(&amp; msg.weight_tag)), Pays::No))]
         </span><span class="kw">pub fn </span>relay_message_response(
             origin: OriginFor&lt;T&gt;,
-            msg: CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+            msg: CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
         ) -&gt; DispatchResult {
             ensure_none(origin)<span class="question-mark">?</span>;
             <span class="kw">let </span>outbox_resp_msg = OutboxResponses::&lt;T&gt;::take().ok_or(Error::&lt;T&gt;::MissingMessage)<span class="question-mark">?</span>;
@@ -1635,8 +1652,8 @@
             <span class="prelude-val">Ok</span>(channel_id)
         }
 
-        <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_validate_relay_message(
-            xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+        <span class="kw">pub fn </span>validate_relay_message(
+            xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;ValidatedRelayMessage&lt;BalanceOf&lt;T&gt;&gt;, TransactionValidityError&gt; {
             <span class="kw">let </span><span class="kw-2">mut </span>should_init_channel = <span class="bool-val">false</span>;
             <span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_chain_id, xdm.channel_id) {
@@ -1668,11 +1685,13 @@
             };
 
             <span class="comment">// derive the key as stored on the src_chain.
-            </span><span class="kw">let </span>key = StorageKey(Outbox::&lt;T&gt;::hashed_key_for((
-                T::SelfChainId::get(),
-                xdm.channel_id,
-                xdm.nonce,
-            )));
+            </span><span class="kw">let </span>key = StorageKey(
+                T::StorageKeys::outbox_storage_key(
+                    T::SelfChainId::get(),
+                    (xdm.channel_id, xdm.nonce),
+                )
+                .ok_or(UnknownTransaction::CannotLookup)<span class="question-mark">?</span>,
+            );
 
             <span class="comment">// verify and decode message
             </span><span class="kw">let </span>msg = <span class="self">Self</span>::do_verify_xdm(next_nonce, key, xdm)<span class="question-mark">?</span>;
@@ -1730,8 +1749,8 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_validate_relay_message_response(
-            xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+        <span class="kw">pub fn </span>validate_relay_message_response(
+            xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;(Message&lt;BalanceOf&lt;T&gt;&gt;, Nonce), TransactionValidityError&gt; {
             <span class="comment">// channel should be open and message should be present in outbox
             </span><span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_chain_id, xdm.channel_id) {
@@ -1748,11 +1767,13 @@
             .ok_or(TransactionValidityError::Invalid(InvalidTransaction::Call))<span class="question-mark">?</span>;
 
             <span class="comment">// derive the key as stored on the src_chain.
-            </span><span class="kw">let </span>key = StorageKey(InboxResponses::&lt;T&gt;::hashed_key_for((
-                T::SelfChainId::get(),
-                xdm.channel_id,
-                xdm.nonce,
-            )));
+            </span><span class="kw">let </span>key = StorageKey(
+                T::StorageKeys::inbox_responses_storage_key(
+                    T::SelfChainId::get(),
+                    (xdm.channel_id, xdm.nonce),
+                )
+                .ok_or(UnknownTransaction::CannotLookup)<span class="question-mark">?</span>,
+            );
 
             <span class="comment">// verify, decode, and store the message
             </span><span class="kw">let </span>msg = <span class="self">Self</span>::do_verify_xdm(next_nonce, key, xdm)<span class="question-mark">?</span>;
@@ -1776,7 +1797,7 @@
         <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_verify_xdm(
             next_nonce: Nonce,
             storage_key: StorageKey,
-            xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+            xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;Message&lt;BalanceOf&lt;T&gt;&gt;, TransactionValidityError&gt; {
             <span class="comment">// channel should be either already be created or match the next channelId for chain.
             </span><span class="kw">let </span>next_channel_id = NextChannelId::&lt;T&gt;::get(xdm.src_chain_id);
@@ -1786,32 +1807,49 @@
             // nonce should be either be next or in future.
             </span><span class="macro">ensure!</span>(xdm.nonce &gt;= next_nonce, InvalidTransaction::Call);
 
-            <span class="kw">let </span>extracted_state_roots = xdm.extract_state_roots_from_proof::&lt;T::Hashing&gt;().ok_or(
-                TransactionValidityError::Invalid(InvalidTransaction::BadProof),
-            )<span class="question-mark">?</span>;
+            <span class="kw">let </span>mmr_leaf =
+                EncodableOpaqueLeaf(xdm.proof.consensus_mmr_proof().opaque_mmr_leaf.<span class="number">0</span>.clone());
 
-            <span class="comment">// on consensus, ensure the domain info is at K-depth and state root matches
-            </span><span class="kw">if </span>T::SelfChainId::get().is_consensus_chain() {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>((domain_id, block_info, state_root)) =
-                    extracted_state_roots.domain_info.clone()
-                {
-                    <span class="macro">ensure!</span>(
-                        <span class="self">Self</span>::is_domain_info_confirmed(domain_id, block_info, state_root),
-                        InvalidTransaction::BadProof
-                    )
-                }
-            }
+            <span class="kw">let </span>mmr_proof = xdm.proof.consensus_mmr_proof().proof.clone();
 
-            <span class="kw">let </span>state_root = extracted_state_roots
-                .domain_info
-                .map(|(_chain_id, _info, state_root)| state_root)
-                .unwrap_or(extracted_state_roots.consensus_chain_state_root);
+            <span class="kw">let </span>state_root = T::MmrProofVerifier::verify_proof_and_extract_consensus_state_root(
+                mmr_leaf, mmr_proof,
+            )
+            .ok_or(InvalidTransaction::BadProof)<span class="question-mark">?</span>;
+
+            <span class="comment">// if the message is from domain, verify domain confirmation proof
+            </span><span class="kw">let </span>state_root = <span class="kw">if let </span><span class="prelude-val">Some</span>(domain_proof) = xdm.proof.domain_proof().clone()
+                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(domain_id) = xdm.src_chain_id.maybe_domain_chain()
+            {
+                <span class="kw">let </span>confirmed_domain_block_storage_key =
+                    T::StorageKeys::confirmed_domain_block_storage_key(domain_id)
+                        .ok_or(UnknownTransaction::CannotLookup)<span class="question-mark">?</span>;
+
+                StorageProofVerifier::&lt;T::Hashing&gt;::get_decoded_value::&lt;
+                    sp_domains::ConfirmedDomainBlock&lt;BlockNumberFor&lt;T&gt;, T::Hash&gt;,
+                &gt;(
+                    <span class="kw-2">&amp;</span>state_root,
+                    domain_proof,
+                    StorageKey(confirmed_domain_block_storage_key),
+                )
+                .map_err(|err| {
+                    <span class="macro">log::error!</span>(
+                        target: <span class="string">"runtime::messenger"</span>,
+                        <span class="string">"Failed to verify storage proof: {:?}"</span>,
+                        err
+                    );
+                    TransactionValidityError::Invalid(InvalidTransaction::BadProof)
+                })<span class="question-mark">?
+                </span>.state_root
+            } <span class="kw">else </span>{
+                state_root
+            };
 
             <span class="comment">// verify and decode the message
             </span><span class="kw">let </span>msg =
                 StorageProofVerifier::&lt;T::Hashing&gt;::get_decoded_value::&lt;Message&lt;BalanceOf&lt;T&gt;&gt;&gt;(
                     <span class="kw-2">&amp;</span>state_root,
-                    xdm.proof.message_proof.clone(),
+                    xdm.proof.message_proof(),
                     storage_key,
                 )
                 .map_err(|err| {
@@ -1826,30 +1864,14 @@
             <span class="prelude-val">Ok</span>(msg)
         }
 
-        <span class="kw">pub fn </span>is_domain_info_confirmed(
-            domain_id: DomainId,
-            domain_block_info: BlockInfo&lt;BlockNumberFor&lt;T&gt;, T::Hash&gt;,
-            domain_state_root: T::Hash,
-        ) -&gt; bool {
-            <span class="comment">// ensure the block is at-least k-deep
-            </span><span class="kw">let </span>confirmed = T::DomainInfo::domain_best_number(domain_id)
-                .and_then(|best_number| {
-                    best_number
-                        .checked_sub(<span class="kw-2">&amp;</span>T::ConfirmationDepth::get())
-                        .map(|confirmed_number| confirmed_number &gt;= domain_block_info.block_number)
-                })
-                .unwrap_or(<span class="bool-val">false</span>);
+        <span class="kw">pub fn </span>outbox_storage_key(message_id: MessageId) -&gt; Vec&lt;u8&gt; {
+            <span class="kw">let </span>(channel_id, nonce) = message_id;
+            Outbox::&lt;T&gt;::hashed_key_for((T::SelfChainId::get(), channel_id, nonce))
+        }
 
-            <span class="comment">// verify state root of the block
-            </span><span class="kw">let </span>valid_state_root = T::DomainInfo::domain_state_root(
-                domain_id,
-                domain_block_info.block_number,
-                domain_block_info.block_hash,
-            )
-            .map(|got_state_root| got_state_root == domain_state_root)
-            .unwrap_or(<span class="bool-val">false</span>);
-
-            confirmed &amp;&amp; valid_state_root
+        <span class="kw">pub fn </span>inbox_response_storage_key(message_id: MessageId) -&gt; Vec&lt;u8&gt; {
+            <span class="kw">let </span>(channel_id, nonce) = message_id;
+            InboxResponses::&lt;T&gt;::hashed_key_for((T::SelfChainId::get(), channel_id, nonce))
         }
     }
 }
@@ -1859,14 +1881,14 @@
     </span>T: Config + frame_system::offchain::SendTransactionTypes&lt;Call&lt;T&gt;&gt;,
 {
     <span class="kw">pub fn </span>outbox_message_unsigned(
-        msg: CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+        msg: CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;T::Extrinsic&gt; {
         <span class="kw">let </span>call = Call::relay_message { msg };
         T::Extrinsic::new(call.into(), <span class="prelude-val">None</span>)
     }
 
     <span class="kw">pub fn </span>inbox_response_message_unsigned(
-        msg: CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, StateRootOf&lt;T&gt;&gt;,
+        msg: CrossDomainMessage&lt;T::Hash, T::MmrHash&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;T::Extrinsic&gt; {
         <span class="kw">let </span>call = Call::relay_message_response { msg };
         T::Extrinsic::new(call.into(), <span class="prelude-val">None</span>)

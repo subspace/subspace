@@ -1,7 +1,7 @@
 var srcIndex = new Map(JSON.parse('[\
 ["cross_domain_message_gossip",["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]]],\
 ["domain_block_builder",["",[],["lib.rs"]]],\
-["domain_block_preprocessor",["",[],["inherents.rs","lib.rs","stateless_runtime.rs","xdm_verifier.rs"]]],\
+["domain_block_preprocessor",["",[],["inherents.rs","lib.rs","stateless_runtime.rs"]]],\
 ["domain_client_consensus_relay_chain",["",[],["import_queue.rs","lib.rs"]]],\
 ["domain_client_message_relayer",["",[],["lib.rs","worker.rs"]]],\
 ["domain_client_operator",["",[],["aux_schema.rs","bundle_processor.rs","bundle_producer_election_solver.rs","domain_block_processor.rs","domain_bundle_producer.rs","domain_bundle_proposer.rs","domain_worker.rs","fetch_domain_bootstrap_info.rs","fraud_proof.rs","lib.rs","operator.rs","utils.rs"]]],\
@@ -30,6 +30,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["pallet_transporter",["",[],["lib.rs","weights.rs"]]],\
 ["sc_consensus_subspace",["",[],["archiver.rs","aux_schema.rs","block_import.rs","lib.rs","notification.rs","slot_worker.rs","verifier.rs"]]],\
 ["sc_consensus_subspace_rpc",["",[],["lib.rs"]]],\
+["sc_domains",["",[],["lib.rs"]]],\
 ["sc_proof_of_time",["",[["source",[],["gossip.rs","state.rs","timekeeper.rs"]]],["lib.rs","slots.rs","source.rs","verifier.rs"]]],\
 ["sc_subspace_block_relay",["",[["consensus",[],["relay.rs","types.rs"]],["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","types.rs","utils.rs"]]],\
 ["sc_subspace_chain_specs",["",[],["lib.rs"]]],\
@@ -40,6 +41,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["sp_domains_fraud_proof",["",[],["bundle_equivocation.rs","execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","verification.rs"]]],\
 ["sp_executive",["",[],["lib.rs"]]],\
 ["sp_messenger",["",[],["endpoint.rs","lib.rs","messages.rs"]]],\
+["sp_messenger_host_functions",["",[],["host_functions.rs","lib.rs","runtime_interface.rs"]]],\
 ["sp_objects",["",[],["lib.rs"]]],\
 ["sp_subspace_mmr",["",[],["host_functions.rs","lib.rs","runtime_interface.rs"]]],\
 ["subspace_archiving",["",[["archiver",[],["incremental_record_commitments.rs"]]],["archiver.rs","lib.rs","piece_reconstructor.rs","reconstructor.rs"]]],\

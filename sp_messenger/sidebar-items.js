@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["endpoint","messages"],"trait":["MessengerApi","OnXDMRewards","RelayerApi"]};
+window.SIDEBAR_ITEMS = {"mod":["endpoint","messages"],"trait":["MessengerApi","MmrProofVerifier","OnXDMRewards","RelayerApi","StorageKeys"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["verify_mmr_proof"],"struct":["HostFunctions"]};
