@@ -256,6 +256,8 @@
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -283,9 +285,9 @@
     </span><span class="attr">#[error(<span class="string">"Offset outsize of range: provided {provided}, max {max}"</span>)]
     </span>OffsetOutsideOfRange {
         <span class="doccomment">/// Provided offset
-        </span>provided: usize,
+        </span>provided: u32,
         <span class="doccomment">/// Max offset
-        </span>max: usize,
+        </span>max: u32,
     },
     <span class="doccomment">/// Cache size has zero capacity, this is not supported
     </span><span class="attr">#[error(<span class="string">"Cache size has zero capacity, this is not supported"</span>)]
@@ -298,12 +300,12 @@
 <span class="doccomment">/// Offset wrapper for pieces in [`DiskPieceCache`]
 </span><span class="attr">#[derive(Debug, Display, Copy, Clone)]
 #[repr(transparent)]
-</span><span class="kw">pub struct </span>Offset(usize);
+</span><span class="kw">pub struct </span>Offset(u32);
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Inner {
     file: File,
-    num_elements: usize,
+    num_elements: u32,
 }
 
 <span class="doccomment">/// Dedicated piece cache stored on one disk, is used both to accelerate DSN queries and to plot
@@ -314,12 +316,9 @@
 }
 
 <span class="kw">impl </span>DiskPieceCache {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>FILE_NAME: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"piece_cache.bin"</span>;
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>FILE_NAME: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"piece_cache.bin"</span>;
 
-    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">super</span>::<span class="kw">super</span>) <span class="kw">fn </span>open(
-        directory: <span class="kw-2">&amp;</span>Path,
-        capacity: usize,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiskPieceCacheError&gt; {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>open(directory: <span class="kw-2">&amp;</span>Path, capacity: u32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiskPieceCacheError&gt; {
         <span class="kw">if </span>capacity == <span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::ZeroCapacity);
         }
@@ -333,24 +332,24 @@
 
         file.advise_random_access()<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>expected_size = <span class="self">Self</span>::element_size() * capacity;
+        <span class="kw">let </span>expected_size = u64::from(<span class="self">Self</span>::element_size()) * u64::from(capacity);
         <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
         // writes to fail later)
-        </span>file.preallocate(expected_size <span class="kw">as </span>u64)
+        </span>file.preallocate(expected_size)
             .map_err(DiskPieceCacheError::CantPreallocateCacheFile)<span class="question-mark">?</span>;
         <span class="comment">// Truncating file (if necessary)
-        </span>file.set_len(expected_size <span class="kw">as </span>u64)<span class="question-mark">?</span>;
+        </span>file.set_len(expected_size)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             inner: Arc::new(Inner {
                 file,
-                num_elements: expected_size / <span class="self">Self</span>::element_size(),
+                num_elements: capacity,
             }),
         })
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const fn </span>element_size() -&gt; usize {
-        PieceIndex::SIZE + Piece::SIZE + mem::size_of::&lt;Blake3Hash&gt;()
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>element_size() -&gt; u32 {
+        (PieceIndex::SIZE + Piece::SIZE + mem::size_of::&lt;Blake3Hash&gt;()) <span class="kw">as </span>u32
     }
 
     <span class="doccomment">/// Contents of this disk cache
@@ -361,10 +360,11 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (Offset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">'_ </span>{
         <span class="kw">let </span>file = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.file;
-        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size()];
+        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
         <span class="kw">let </span><span class="kw-2">mut </span>early_exit = <span class="bool-val">false</span>;
 
-        (<span class="number">0</span>..<span class="self">self</span>.inner.num_elements).map(<span class="kw">move </span>|offset| {
+        <span class="comment">// TODO: Parallelize or read in larger batches
+        </span>(<span class="number">0</span>..<span class="self">self</span>.inner.num_elements).map(<span class="kw">move </span>|offset| {
             <span class="kw">if </span>early_exit {
                 <span class="kw">return </span>(Offset(offset), <span class="prelude-val">None</span>);
             }
@@ -404,7 +404,7 @@
             });
         }
 
-        <span class="kw">let </span>element_offset = (offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64;
+        <span class="kw">let </span>element_offset = u64::from(offset) * u64::from(<span class="self">Self</span>::element_size());
 
         <span class="kw">let </span>piece_index_bytes = piece_index.to_bytes();
         <span class="self">self</span>.inner
@@ -440,7 +440,11 @@
             });
         }
 
-        <span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.file, offset, <span class="kw-2">&amp;mut </span><span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size()])
+        <span class="self">Self</span>::read_piece_internal(
+            <span class="kw-2">&amp;</span><span class="self">self</span>.inner.file,
+            offset,
+            <span class="kw-2">&amp;mut </span><span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize],
+        )
     }
 
     <span class="doccomment">/// Read piece from cache at specified offset.
@@ -459,7 +463,7 @@
             });
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size()];
+        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
         <span class="kw">if </span><span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.file, offset, <span class="kw-2">&amp;mut </span>element)<span class="question-mark">?</span>.is_some() {
             <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
             piece.copy_from_slice(<span class="kw-2">&amp;</span>element[PieceIndex::SIZE..][..Piece::SIZE]);
@@ -471,10 +475,10 @@
 
     <span class="kw">fn </span>read_piece_internal(
         file: <span class="kw-2">&amp;</span>File,
-        offset: usize,
+        offset: u32,
         element: <span class="kw-2">&amp;mut </span>[u8],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PieceIndex&gt;, DiskPieceCacheError&gt; {
-        file.read_exact_at(element, (offset * <span class="self">Self</span>::element_size()) <span class="kw">as </span>u64)<span class="question-mark">?</span>;
+        file.read_exact_at(element, u64::from(offset) * u64::from(<span class="self">Self</span>::element_size()))<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = element.split_at(PieceIndex::SIZE);
         <span class="kw">let </span>(piece_bytes, expected_checksum) = remaining_bytes.split_at(Piece::SIZE);

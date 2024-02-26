@@ -1994,9 +1994,25 @@
 <a href="#1992" id="1992">1992</a>
 <a href="#1993" id="1993">1993</a>
 <a href="#1994" id="1994">1994</a>
+<a href="#1995" id="1995">1995</a>
+<a href="#1996" id="1996">1996</a>
+<a href="#1997" id="1997">1997</a>
+<a href="#1998" id="1998">1998</a>
+<a href="#1999" id="1999">1999</a>
+<a href="#2000" id="2000">2000</a>
+<a href="#2001" id="2001">2001</a>
+<a href="#2002" id="2002">2002</a>
+<a href="#2003" id="2003">2003</a>
+<a href="#2004" id="2004">2004</a>
+<a href="#2005" id="2005">2005</a>
+<a href="#2006" id="2006">2006</a>
+<a href="#2007" id="2007">2007</a>
+<a href="#2008" id="2008">2008</a>
+<a href="#2009" id="2009">2009</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
+<span class="kw">pub mod </span>plot_cache;
 <span class="kw">mod </span>plotting;
 
 <span class="kw">use </span><span class="kw">crate</span>::identity::{Identity, IdentityError};
@@ -2009,6 +2025,7 @@
 };
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, DiskPieceCacheError};
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_reader::PieceReader;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plot_cache::DiskPlotCache;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions,
 };
@@ -2562,6 +2579,7 @@
     tasks: FuturesUnordered&lt;BackgroundTask&gt;,
     handlers: Arc&lt;Handlers&gt;,
     piece_cache: DiskPieceCache,
+    plot_cache: DiskPlotCache,
     piece_reader: PieceReader,
     <span class="doccomment">/// Sender that will be used to signal to background threads that they should start
     </span>start_sender: <span class="prelude-ty">Option</span>&lt;broadcast::Sender&lt;()&gt;&gt;,
@@ -2744,7 +2762,7 @@
             <span class="kw">let </span>cache_space = allocated_space
                 - fixed_space_usage
                 - (target_sector_count * single_sector_overhead);
-            cache_space <span class="kw">as </span>usize / DiskPieceCache::element_size()
+            (cache_space / u64::from(DiskPieceCache::element_size())) <span class="kw">as </span>u32
         };
         <span class="kw">let </span>target_sector_count = <span class="kw">match </span>SectorIndex::try_from(target_sector_count) {
             <span class="prelude-val">Ok</span>(target_sector_count) <span class="kw">if </span>target_sector_count &lt; SectorIndex::MAX =&gt; {
@@ -2879,6 +2897,12 @@
         </span>plot_file.set_len(sector_size <span class="kw">as </span>u64 * u64::from(target_sector_count))<span class="question-mark">?</span>;
 
         <span class="kw">let </span>piece_cache = DiskPieceCache::open(<span class="kw-2">&amp;</span>directory, cache_capacity)<span class="question-mark">?</span>;
+        <span class="kw">let </span>plot_cache = DiskPlotCache::new(
+            <span class="kw-2">&amp;</span>plot_file,
+            <span class="kw-2">&amp;</span>sectors_metadata,
+            target_sector_count,
+            sector_size,
+        );
 
         <span class="kw">let </span>(error_sender, error_receiver) = oneshot::channel();
         <span class="kw">let </span>error_sender = Arc::new(Mutex::new(<span class="prelude-val">Some</span>(error_sender)));
@@ -3187,6 +3211,7 @@
             tasks,
             handlers,
             piece_cache,
+            plot_cache,
             piece_reader,
             start_sender: <span class="prelude-val">Some</span>(start_sender),
             stop_sender: <span class="prelude-val">Some</span>(stop_sender),
@@ -3331,6 +3356,11 @@
     <span class="doccomment">/// Get piece cache instance
     </span><span class="kw">pub fn </span>piece_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DiskPieceCache {
         <span class="self">self</span>.piece_cache.clone()
+    }
+
+    <span class="doccomment">/// Get plot cache instance
+    </span><span class="kw">pub fn </span>plot_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DiskPlotCache {
+        <span class="self">self</span>.plot_cache.clone()
     }
 
     <span class="doccomment">/// Get piece reader to read plotted pieces later
@@ -3883,14 +3913,14 @@
             };
 
             <span class="kw">let </span>element_size = DiskPieceCache::element_size();
-            <span class="kw">let </span>number_of_cached_elements = cache_size / element_size <span class="kw">as </span>u64;
-            <span class="kw">let </span>dummy_element = <span class="macro">vec!</span>[<span class="number">0</span>; element_size];
+            <span class="kw">let </span>number_of_cached_elements = cache_size / u64::from(element_size);
+            <span class="kw">let </span>dummy_element = <span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize];
             (<span class="number">0</span>..number_of_cached_elements)
                 .into_par_iter()
-                .map_with(<span class="macro">vec!</span>[<span class="number">0</span>; element_size], |element, cache_offset| {
+                .map_with(<span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize], |element, cache_offset| {
                     <span class="kw">let </span>_span_guard = span.enter();
 
-                    <span class="kw">let </span>offset = cache_offset * element_size <span class="kw">as </span>u64;
+                    <span class="kw">let </span>offset = cache_offset * u64::from(element_size);
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.read_exact_at(element, offset) {
                         <span class="macro">warn!</span>(
                             path = %file.display(),
@@ -3904,7 +3934,7 @@
                         <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.write_all_at(<span class="kw-2">&amp;</span>dummy_element, offset) {
                             <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToWriteBytes {
                                 file: file.clone(),
-                                size: element_size <span class="kw">as </span>u64,
+                                size: u64::from(element_size),
                                 offset,
                                 error,
                             });
@@ -3914,7 +3944,7 @@
                     }
 
                     <span class="kw">let </span>(index_and_piece_bytes, expected_checksum) =
-                        element.split_at(element_size - mem::size_of::&lt;Blake3Hash&gt;());
+                        element.split_at(element_size <span class="kw">as </span>usize - mem::size_of::&lt;Blake3Hash&gt;());
                     <span class="kw">let </span>actual_checksum = blake3_hash(index_and_piece_bytes);
                     <span class="kw">if </span>actual_checksum != expected_checksum &amp;&amp; element != <span class="kw-2">&amp;</span>dummy_element {
                         <span class="macro">warn!</span>(
@@ -3927,7 +3957,7 @@
                         <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.write_all_at(<span class="kw-2">&amp;</span>dummy_element, offset) {
                             <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToWriteBytes {
                                 file: file.clone(),
-                                size: element_size <span class="kw">as </span>u64,
+                                size: u64::from(element_size),
                                 offset,
                                 error,
                             });
