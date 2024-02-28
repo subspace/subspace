@@ -424,8 +424,6 @@
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, RecordMetadata, SectorContentsMap, SectorContentsMapFromBytesError,
     SectorMetadataChecksummed,
@@ -546,7 +544,10 @@
     S: ReadAtSync,
     A: ReadAtAsync,
 {
-    <span class="kw">let </span><span class="kw-2">mut </span>record_chunks = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; Record::NUM_S_BUCKETS];
+    <span class="comment">// TODO: Should have been just `::new()`, but https://github.com/rust-lang/rust/issues/53827
+    // SAFETY: Data structure filled with zeroes is a valid invariant
+    </span><span class="kw">let </span><span class="kw-2">mut </span>record_chunks =
+        <span class="kw">unsafe </span>{ Box::&lt;[<span class="prelude-ty">Option</span>&lt;Scalar&gt;; Record::NUM_S_BUCKETS]&gt;::new_zeroed().assume_init() };
 
     <span class="kw">let </span>read_chunks_inputs = record_chunks
         .par_iter_mut()
@@ -672,13 +673,6 @@
         }
     }
 
-    <span class="kw">let </span><span class="kw-2">mut </span>record_chunks = ManuallyDrop::new(record_chunks);
-
-    <span class="comment">// SAFETY: Original memory is not dropped, layout is exactly what we need here
-    </span><span class="kw">let </span>record_chunks = <span class="kw">unsafe </span>{
-        Box::from_raw(record_chunks.as_mut_ptr() <span class="kw">as </span><span class="kw-2">*mut </span>[<span class="prelude-ty">Option</span>&lt;Scalar&gt;; Record::NUM_S_BUCKETS])
-    };
-
     <span class="prelude-val">Ok</span>(record_chunks)
 }
 
@@ -689,6 +683,8 @@
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;[Scalar; Record::NUM_S_BUCKETS]&gt;, ReadingError&gt; {
     <span class="comment">// Restore source record scalars
+    // TODO: Recover into `Box&lt;[Scalar; Record::NUM_S_BUCKETS]&gt;` or else conversion into `Box` below
+    //  might leak memory
     </span><span class="kw">let </span>record_chunks = erasure_coding
         .recover(sector_record_chunks)
         .map_err(|error| ReadingError::FailedToErasureDecodeRecord {
@@ -704,12 +700,12 @@
         });
     }
 
+    <span class="comment">// Allocation in vector can be larger than contents, we need to make sure allocation is the same
+    // as the contents, this should also contain fast path if allocation matches contents
+    </span><span class="kw">let </span>record_chunks = record_chunks.into_iter().collect::&lt;Box&lt;<span class="kw">_</span>&gt;&gt;();
     <span class="kw">let </span><span class="kw-2">mut </span>record_chunks = ManuallyDrop::new(record_chunks);
-
     <span class="comment">// SAFETY: Original memory is not dropped, size of the data checked above
-    </span><span class="kw">let </span>record_chunks = <span class="kw">unsafe </span>{
-        Box::from_raw(record_chunks.as_mut_ptr() <span class="kw">as </span><span class="kw-2">*mut </span>[Scalar; Record::NUM_S_BUCKETS])
-    };
+    </span><span class="kw">let </span>record_chunks = <span class="kw">unsafe </span>{ Box::from_raw(record_chunks.as_mut_ptr() <span class="kw">as </span><span class="kw-2">*mut </span><span class="kw">_</span>) };
 
     <span class="prelude-val">Ok</span>(record_chunks)
 }

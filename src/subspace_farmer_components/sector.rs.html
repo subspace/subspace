@@ -597,6 +597,7 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span>bitvec::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
+<span class="kw">use </span>std::mem::ManuallyDrop;
 <span class="kw">use </span>std::ops::{Deref, DerefMut};
 <span class="kw">use </span>std::{mem, slice};
 <span class="kw">use </span>subspace_core_primitives::checksum::Blake3Checksummed;
@@ -655,24 +656,24 @@
 <span class="kw">impl </span>SectorMetadata {
     <span class="doccomment">/// Returns offsets of each s-bucket relatively to the beginning of the sector (in chunks)
     </span><span class="kw">pub fn </span>s_bucket_offsets(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;[u32; Record::NUM_S_BUCKETS]&gt; {
-        <span class="comment">// TODO: Should have been just `::new()`, but https://github.com/rust-lang/rust/issues/53827
-        // SAFETY: Data structure filled with zeroes is a valid invariant
-        </span><span class="kw">let </span><span class="kw-2">mut </span>s_bucket_offsets =
-            <span class="kw">unsafe </span>{ Box::&lt;[u32; Record::NUM_S_BUCKETS]&gt;::new_zeroed().assume_init() };
-
-        <span class="self">self</span>.s_bucket_sizes
+        <span class="kw">let </span>s_bucket_offsets = <span class="self">self
+            </span>.s_bucket_sizes
             .iter()
-            .zip(s_bucket_offsets.iter_mut())
-            .for_each({
+            .map({
                 <span class="kw">let </span><span class="kw-2">mut </span>base_offset = <span class="number">0</span>;
 
-                <span class="kw">move </span>|(s_bucket_size, s_bucket_offset)| {
-                    <span class="kw-2">*</span>s_bucket_offset = base_offset;
+                <span class="kw">move </span>|s_bucket_size| {
+                    <span class="kw">let </span>offset = base_offset;
                     base_offset += u32::from(<span class="kw-2">*</span>s_bucket_size);
+                    offset
                 }
-            });
+            })
+            .collect::&lt;Box&lt;<span class="kw">_</span>&gt;&gt;();
 
-        s_bucket_offsets
+        <span class="macro">assert_eq!</span>(s_bucket_offsets.len(), Record::NUM_S_BUCKETS);
+        <span class="kw">let </span><span class="kw-2">mut </span>s_bucket_offsets = ManuallyDrop::new(s_bucket_offsets);
+        <span class="comment">// SAFETY: Original memory is not dropped, number of elements checked above
+        </span><span class="kw">unsafe </span>{ Box::from_raw(s_bucket_offsets.as_mut_ptr() <span class="kw">as </span><span class="kw-2">*mut </span>[u32; Record::NUM_S_BUCKETS]) }
     }
 }
 
@@ -760,6 +761,7 @@
 
 <span class="comment">// Bit array containing space for bits equal to the number of s-buckets in a record
 </span><span class="kw">type </span>SingleRecordBitArray = BitArray&lt;[u8; Record::NUM_S_BUCKETS / u8::BITS <span class="kw">as </span>usize]&gt;;
+
 <span class="kw">const </span>SINGLE_RECORD_BIT_ARRAY_SIZE: usize = mem::size_of::&lt;SingleRecordBitArray&gt;();
 
 <span class="comment">// TODO: I really tried to avoid `count_ones()`, but wasn't able to with safe Rust due to lifetimes
@@ -996,23 +998,21 @@
 
     <span class="doccomment">/// Returns sizes of each s-bucket
     </span><span class="kw">pub fn </span>s_bucket_sizes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Box&lt;[u16; Record::NUM_S_BUCKETS]&gt; {
-        <span class="comment">// TODO: Should have been just `::new()`, but https://github.com/rust-lang/rust/issues/53827
-        // SAFETY: Data structure filled with zeroes is a valid invariant
-        </span><span class="kw">let </span><span class="kw-2">mut </span>s_bucket_sizes =
-            <span class="kw">unsafe </span>{ Box::&lt;[u16; Record::NUM_S_BUCKETS]&gt;::new_zeroed().assume_init() };
         <span class="comment">// Rayon doesn't support iteration over custom types yet
-        </span>(u16::from(SBucket::ZERO)..=u16::from(SBucket::MAX))
+        </span><span class="kw">let </span>s_bucket_sizes = (u16::from(SBucket::ZERO)..=u16::from(SBucket::MAX))
             .into_par_iter()
             .map(SBucket::from)
-            .zip(s_bucket_sizes.par_iter_mut())
-            .for_each(|(s_bucket, s_bucket_size)| {
-                <span class="kw-2">*</span>s_bucket_size = <span class="self">self
-                    </span>.iter_s_bucket_records(s_bucket)
+            .map(|s_bucket| {
+                <span class="self">self</span>.iter_s_bucket_records(s_bucket)
                     .expect(<span class="string">"S-bucket guaranteed to be in range; qed"</span>)
-                    .count() <span class="kw">as </span>u16;
-            });
+                    .count() <span class="kw">as </span>u16
+            })
+            .collect::&lt;Box&lt;<span class="kw">_</span>&gt;&gt;();
 
-        s_bucket_sizes
+        <span class="macro">assert_eq!</span>(s_bucket_sizes.len(), Record::NUM_S_BUCKETS);
+        <span class="kw">let </span><span class="kw-2">mut </span>s_bucket_sizes = ManuallyDrop::new(s_bucket_sizes);
+        <span class="comment">// SAFETY: Original memory is not dropped, number of elements checked above
+        </span><span class="kw">unsafe </span>{ Box::from_raw(s_bucket_sizes.as_mut_ptr() <span class="kw">as </span><span class="kw-2">*mut </span>[u16; Record::NUM_S_BUCKETS]) }
     }
 
     <span class="doccomment">/// Creates an iterator of `(s_bucket, encoded_chunk_used, chunk_location)`, where `s_bucket` is
