@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RetryPolicy"],"struct":["NoPieceValidator","PieceProvider"],"trait":["PieceValidator"]};
+window.SIDEBAR_ITEMS = {"struct":["NoPieceValidator","PieceProvider"],"trait":["PieceValidator"]};

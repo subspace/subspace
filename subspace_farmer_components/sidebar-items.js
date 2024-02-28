@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PieceGetterRetryPolicy","ReadAt"],"mod":["auditing","file_ext","plotting","proving","reading","sector"],"struct":["AsyncReadBytes","FarmerProtocolInfo","ReadAtOffset"],"trait":["PieceGetter","ReadAtAsync","ReadAtSync"]};
+window.SIDEBAR_ITEMS = {"enum":["ReadAt"],"mod":["auditing","file_ext","plotting","proving","reading","sector"],"struct":["AsyncReadBytes","FarmerProtocolInfo","ReadAtOffset"],"trait":["PieceGetter","ReadAtAsync","ReadAtSync"]};

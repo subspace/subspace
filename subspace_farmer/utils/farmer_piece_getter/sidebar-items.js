@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["FarmerPieceGetter","WeakFarmerPieceGetter"]};
+window.SIDEBAR_ITEMS = {"struct":["DsnCacheRetryPolicy","FarmerPieceGetter","WeakFarmerPieceGetter"]};

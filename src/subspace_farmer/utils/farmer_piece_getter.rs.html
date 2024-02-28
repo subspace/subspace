@@ -213,27 +213,97 @@
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
 <a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farmer_cache::FarmerCache;
 <span class="kw">use </span><span class="kw">crate</span>::utils::plotted_pieces::PlottedPieces;
 <span class="kw">use </span><span class="kw">crate</span>::NodeClient;
 <span class="kw">use </span>async_trait::async_trait;
+<span class="kw">use </span>backoff::backoff::Backoff;
+<span class="kw">use </span>backoff::future::retry;
+<span class="kw">use </span>backoff::ExponentialBackoff;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::sync::atomic::{AtomicU32, Ordering};
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
-<span class="kw">use </span>subspace_farmer_components::{PieceGetter, PieceGetterRetryPolicy};
+<span class="kw">use </span>subspace_farmer_components::PieceGetter;
 <span class="kw">use </span>subspace_networking::libp2p::kad::RecordKey;
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
-<span class="kw">use </span>subspace_networking::utils::piece_provider::{PieceProvider, PieceValidator, RetryPolicy};
+<span class="kw">use </span>subspace_networking::utils::piece_provider::{PieceProvider, PieceValidator};
 <span class="kw">use </span>tracing::{debug, error, trace};
 
 <span class="kw">const </span>MAX_RANDOM_WALK_ROUNDS: usize = <span class="number">15</span>;
+
+<span class="doccomment">/// Retry policy for getting pieces from DSN cache
+</span><span class="kw">pub struct </span>DsnCacheRetryPolicy {
+    <span class="doccomment">/// Max number of retries when trying to get piece from DSN cache
+    </span><span class="kw">pub </span>max_retries: u16,
+    <span class="doccomment">/// Exponential backoff between retries
+    </span><span class="kw">pub </span>backoff: ExponentialBackoff,
+}
 
 <span class="kw">struct </span>Inner&lt;PV, NC&gt; {
     piece_provider: PieceProvider&lt;PV&gt;,
     farmer_cache: FarmerCache,
     node_client: NC,
     plotted_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;PlottedPieces&gt;&gt;&gt;,
+    dsn_cache_retry_policy: DsnCacheRetryPolicy,
 }
 
 <span class="kw">pub struct </span>FarmerPieceGetter&lt;PV, NC&gt; {
@@ -248,12 +318,17 @@
     }
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; FarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">impl</span>&lt;PV, NC&gt; FarmerPieceGetter&lt;PV, NC&gt;
+<span class="kw">where
+    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
+    NC: NodeClient,
+{
     <span class="kw">pub fn </span>new(
         piece_provider: PieceProvider&lt;PV&gt;,
         farmer_cache: FarmerCache,
         node_client: NC,
         plotted_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;PlottedPieces&gt;&gt;&gt;,
+        dsn_cache_retry_policy: DsnCacheRetryPolicy,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner: Arc::new(Inner {
@@ -261,37 +336,13 @@
                 farmer_cache,
                 node_client,
                 plotted_pieces,
+                dsn_cache_retry_policy,
             }),
         }
     }
 
-    <span class="doccomment">/// Downgrade to [`WeakFarmerPieceGetter`] in order to break reference cycles with internally
-    /// used [`Arc`]
-    </span><span class="kw">pub fn </span>downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeakFarmerPieceGetter&lt;PV, NC&gt; {
-        WeakFarmerPieceGetter {
-            inner: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
-        }
-    }
-
-    <span class="kw">fn </span>convert_retry_policy(retry_policy: PieceGetterRetryPolicy) -&gt; RetryPolicy {
-        <span class="kw">match </span>retry_policy {
-            PieceGetterRetryPolicy::Limited(retries) =&gt; RetryPolicy::Limited(retries),
-            PieceGetterRetryPolicy::Unlimited =&gt; RetryPolicy::Unlimited,
-        }
-    }
-}
-
-<span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;PV, NC&gt; PieceGetter <span class="kw">for </span>FarmerPieceGetter&lt;PV, NC&gt;
-<span class="kw">where
-    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
-    NC: NodeClient,
-{
-    <span class="kw">async fn </span>get_piece(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        piece_index: PieceIndex,
-        retry_policy: PieceGetterRetryPolicy,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
+    <span class="doccomment">/// Fast way to get piece using various caches
+    </span><span class="kw">pub async fn </span>get_piece_fast(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
         <span class="kw">let </span>key = RecordKey::from(piece_index.to_multihash());
 
         <span class="kw">let </span>inner = <span class="kw-2">&amp;</span><span class="self">self</span>.inner;
@@ -299,23 +350,18 @@
         <span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from farmer cache"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = inner.farmer_cache.get_piece(key).<span class="kw">await </span>{
             <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from farmer cache successfully"</span>);
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
         }
 
         <span class="comment">// L2 piece acquisition
         </span><span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from DSN L2 cache"</span>);
-        <span class="kw">let </span>maybe_piece = inner
-            .piece_provider
-            .get_piece_from_dsn_cache(piece_index, <span class="self">Self</span>::convert_retry_policy(retry_policy))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = maybe_piece {
-            <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from DSN L2 cache successfully"</span>);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = inner.piece_provider.get_piece_from_cache(piece_index).<span class="kw">await </span>{
+            <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from DSN L2 cache"</span>);
             inner
                 .farmer_cache
                 .maybe_store_additional_piece(piece_index, <span class="kw-2">&amp;</span>piece)
                 .<span class="kw">await</span>;
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
         }
 
         <span class="comment">// Try node's RPC before reaching to L1 (archival storage on DSN)
@@ -327,7 +373,7 @@
                     .farmer_cache
                     .maybe_store_additional_piece(piece_index, <span class="kw-2">&amp;</span>piece)
                     .<span class="kw">await</span>;
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+                <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
             }
             <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                 <span class="comment">// Nothing to do
@@ -340,6 +386,13 @@
                 </span>);
             }
         }
+
+        <span class="prelude-val">None
+    </span>}
+
+    <span class="doccomment">/// Slow way to get piece using archival storage
+    </span><span class="kw">pub async fn </span>get_piece_slow(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+        <span class="kw">let </span>inner = <span class="kw-2">&amp;</span><span class="self">self</span>.inner;
 
         <span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from local plot"</span>);
         <span class="kw">let </span>maybe_read_piece_fut = inner
@@ -355,7 +408,7 @@
                     .farmer_cache
                     .maybe_store_additional_piece(piece_index, <span class="kw-2">&amp;</span>piece)
                     .<span class="kw">await</span>;
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+                <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
             }
         }
 
@@ -373,6 +426,68 @@
                 .farmer_cache
                 .maybe_store_additional_piece(piece_index, <span class="kw-2">&amp;</span>piece)
                 .<span class="kw">await</span>;
+            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+        }
+
+        <span class="prelude-val">None
+    </span>}
+
+    <span class="doccomment">/// Downgrade to [`WeakFarmerPieceGetter`] in order to break reference cycles with internally
+    /// used [`Arc`]
+    </span><span class="kw">pub fn </span>downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeakFarmerPieceGetter&lt;PV, NC&gt; {
+        WeakFarmerPieceGetter {
+            inner: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
+        }
+    }
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl</span>&lt;PV, NC&gt; PieceGetter <span class="kw">for </span>FarmerPieceGetter&lt;PV, NC&gt;
+<span class="kw">where
+    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
+    NC: NodeClient,
+{
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
+        {
+            <span class="kw">let </span>retries = AtomicU32::new(<span class="number">0</span>);
+            <span class="kw">let </span>max_retries = u32::from(<span class="self">self</span>.inner.dsn_cache_retry_policy.max_retries);
+            <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">self</span>.inner.dsn_cache_retry_policy.backoff.clone();
+            backoff.reset();
+
+            <span class="kw">let </span>maybe_piece_fut = retry(backoff, || <span class="kw">async </span>{
+                <span class="kw">let </span>current_attempt = retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_fast(piece_index).<span class="kw">await </span>{
+                    <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">"Got piece from DSN L2 cache"</span>);
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+                }
+                <span class="kw">if </span>current_attempt &gt;= max_retries {
+                    <span class="kw">if </span>max_retries &gt; <span class="number">0 </span>{
+                        <span class="macro">debug!</span>(
+                            %piece_index,
+                            current_attempt,
+                            max_retries,
+                            <span class="string">"Couldn't get a piece from DSN L2. No retries left"
+                        </span>);
+                    }
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+                }
+
+                <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">"Couldn't get a piece from DSN L2, retrying..."</span>);
+
+                <span class="prelude-val">Err</span>(backoff::Error::transient(<span class="string">"Couldn't get piece from DSN"</span>))
+            });
+
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece)) = maybe_piece_fut.<span class="kw">await </span>{
+                <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from DSN L2 cache successfully"</span>);
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+            }
+        };
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_slow(piece_index).<span class="kw">await </span>{
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
         }
 
@@ -407,14 +522,13 @@
     <span class="kw">async fn </span>get_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
-        retry_policy: PieceGetterRetryPolicy,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(piece_getter) = <span class="self">self</span>.upgrade() <span class="kw">else </span>{
             <span class="macro">debug!</span>(<span class="string">"Farmer piece getter upgrade didn't succeed"</span>);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         };
 
-        piece_getter.get_piece(piece_index, retry_policy).<span class="kw">await
+        piece_getter.get_piece(piece_index).<span class="kw">await
     </span>}
 }
 
