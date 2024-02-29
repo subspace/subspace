@@ -228,6 +228,29 @@
 <a href="#226" id="226">226</a>
 <a href="#227" id="227">227</a>
 <a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::bundle_producer_election_solver::BundleProducerElectionSolver;
 <span class="kw">use </span><span class="kw">crate</span>::domain_bundle_proposer::DomainBundleProposer;
 <span class="kw">use </span><span class="kw">crate</span>::utils::OperatorSlotInfo;
@@ -237,6 +260,7 @@
 <span class="kw">use </span>sp_api::ProvideRuntimeApi;
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
+<span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
 <span class="kw">use </span>sp_domains::{
     Bundle, BundleProducerElectionApi, DomainId, DomainsApi, OperatorId, OperatorPublicKey,
@@ -270,7 +294,13 @@
     keystore: KeystorePtr,
     bundle_producer_election_solver: BundleProducerElectionSolver&lt;Block, CBlock, CClient&gt;,
     domain_bundle_proposer: DomainBundleProposer&lt;Block, Client, CBlock, CClient, TransactionPool&gt;,
-    skip_empty_bundle_production: bool,
+    <span class="comment">// TODO: both `skip_empty_bundle_production` and `skip_out_of_order_slot` are only used in the
+    // tests, we should introduce a trait for `DomainBundleProducer` and use a wrapper of `DomainBundleProducer`
+    // in the test, both `skip_empty_bundle_production` and `skip_out_of_order_slot` should move into the wrapper
+    // to keep the production code clean.
+    </span>skip_empty_bundle_production: bool,
+    skip_out_of_order_slot: bool,
+    last_processed_slot: <span class="prelude-ty">Option</span>&lt;Slot&gt;,
 }
 
 <span class="kw">impl</span>&lt;Block, CBlock, Client, CClient, TransactionPool&gt; Clone
@@ -289,6 +319,8 @@
             bundle_producer_election_solver: <span class="self">self</span>.bundle_producer_election_solver.clone(),
             domain_bundle_proposer: <span class="self">self</span>.domain_bundle_proposer.clone(),
             skip_empty_bundle_production: <span class="self">self</span>.skip_empty_bundle_production,
+            skip_out_of_order_slot: <span class="self">self</span>.skip_out_of_order_slot,
+            last_processed_slot: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -322,6 +354,7 @@
         bundle_sender: Arc&lt;BundleSender&lt;Block, CBlock&gt;&gt;,
         keystore: KeystorePtr,
         skip_empty_bundle_production: bool,
+        skip_out_of_order_slot: bool,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>bundle_producer_election_solver = BundleProducerElectionSolver::&lt;Block, CBlock, <span class="kw">_</span>&gt;::new(
             keystore.clone(),
@@ -336,6 +369,8 @@
             bundle_producer_election_solver,
             domain_bundle_proposer,
             skip_empty_bundle_production,
+            skip_out_of_order_slot,
+            last_processed_slot: <span class="prelude-val">None</span>,
         }
     }
 
@@ -361,7 +396,16 @@
             // already processed a block higher than the local best and submitted the receipt to
             // the parent chain, we ought to catch up with the consensus block processing before
             // producing new bundle.
-            </span>!domain_best_number.is_zero() &amp;&amp; domain_best_number &lt;= head_receipt_number
+            </span><span class="kw">let </span>is_operator_lagging =
+                !domain_best_number.is_zero() &amp;&amp; domain_best_number &lt;= head_receipt_number;
+
+            <span class="kw">let </span>skip_out_of_order_slot = <span class="self">self</span>.skip_out_of_order_slot
+                &amp;&amp; <span class="self">self
+                    </span>.last_processed_slot
+                    .map(|last_slot| last_slot &gt;= slot)
+                    .unwrap_or(<span class="bool-val">false</span>);
+
+            is_operator_lagging || skip_out_of_order_slot
         };
 
         <span class="kw">if </span>should_skip_slot {
@@ -411,6 +455,8 @@
                 </span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
             }
+
+            <span class="self">self</span>.last_processed_slot.replace(slot);
 
             <span class="macro">info!</span>(<span class="string">"🔖 Producing bundle at slot {:?}"</span>, slot_info.slot);
 
