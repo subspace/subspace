@@ -901,6 +901,14 @@
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
 <a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking epoch transition for domain
 </span><span class="kw">use </span><span class="kw">crate</span>::bundle_storage_fund::deposit_reserve_for_storage_fund;
 <span class="kw">use </span><span class="kw">crate</span>::pallet::{
@@ -925,6 +933,7 @@
 <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, One, Zero};
 <span class="kw">use </span>sp_runtime::Saturating;
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
+<span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
 
 <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
 </span><span class="kw">pub enum </span>Error {
@@ -1071,7 +1080,7 @@
             .ok_or(TransitionError::UnknownOperator)<span class="question-mark">?</span>;
 
         <span class="comment">// operator is not registered, just no-op
-        </span><span class="kw">if </span>operator.status != OperatorStatus::Registered {
+        </span><span class="kw">if </span><span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) != OperatorStatus::Registered {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
@@ -1103,7 +1112,15 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>total_domain_stake = BalanceOf::&lt;T&gt;::zero();
         <span class="kw">let </span><span class="kw-2">mut </span>current_operators = BTreeMap::new();
+        <span class="kw">let </span><span class="kw-2">mut </span>next_operators = BTreeSet::new();
         <span class="kw">for </span>next_operator_id <span class="kw">in </span><span class="kw-2">&amp;</span>stake_summary.next_operators {
+            <span class="comment">// If an operator is pending to slash then similar to the slashed operator it should not be added
+            // into the `next_operators/current_operators` and we should not `do_finalize_operator_epoch_staking`
+            // for it.
+            </span><span class="kw">if </span>Pallet::&lt;T&gt;::is_operator_pending_to_slash(domain_id, <span class="kw-2">*</span>next_operator_id) {
+                <span class="kw">continue</span>;
+            }
+
             <span class="kw">let </span>operator_stake = do_finalize_operator_epoch_staking::&lt;T&gt;(
                 domain_id,
                 <span class="kw-2">*</span>next_operator_id,
@@ -1114,6 +1131,7 @@
                 .checked_add(<span class="kw-2">&amp;</span>operator_stake)
                 .ok_or(TransitionError::BalanceOverflow)<span class="question-mark">?</span>;
             current_operators.insert(<span class="kw-2">*</span>next_operator_id, operator_stake);
+            next_operators.insert(<span class="kw-2">*</span>next_operator_id);
         }
 
         <span class="kw">let </span>election_verification_params = ElectionVerificationParams {
@@ -1127,6 +1145,7 @@
         stake_summary.current_epoch_index = next_epoch;
         stake_summary.current_total_stake = total_domain_stake;
         stake_summary.current_operators = current_operators;
+        stake_summary.next_operators = next_operators;
 
         <span class="prelude-val">Ok</span>(previous_epoch)
     })
@@ -1143,7 +1162,7 @@
             .as_mut()
             .ok_or(TransitionError::UnknownOperator)<span class="question-mark">?</span>;
 
-        <span class="kw">if </span>operator.status != OperatorStatus::Registered {
+        <span class="kw">if </span><span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) != OperatorStatus::Registered {
             <span class="kw">return </span><span class="prelude-val">Err</span>(TransitionError::OperatorNotRegistered);
         }
 
@@ -1381,108 +1400,105 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span><span class="kw">crate</span>::bundle_storage_fund::STORAGE_FEE_RESERVE;
-    <span class="kw">use </span><span class="kw">crate</span>::domain_registry::{DomainConfig, DomainObject};
     <span class="kw">use </span><span class="kw">crate</span>::pallet::{
-        Deposits, DomainRegistry, DomainStakingSummary, LastEpochStakingDistribution,
-        LatestConfirmedDomainBlock, NominatorCount, OperatorIdOwner, OperatorSigningKey, Operators,
-        PendingOperatorSwitches, Withdrawals,
+        Deposits, DomainStakingSummary, LastEpochStakingDistribution, LatestConfirmedDomainBlock,
+        NominatorCount, OperatorIdOwner, OperatorSigningKey, Operators, Withdrawals,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking::tests::{register_operator, Share};
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
         do_deregister_operator, do_nominate_operator, do_reward_operators, do_unlock_operator,
-        do_withdraw_stake, StakingSummary,
+        do_withdraw_stake,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::{
-        do_finalize_domain_current_epoch, do_finalize_switch_operator_domain,
-        operator_take_reward_tax_and_stake,
+        do_finalize_domain_current_epoch, operator_take_reward_tax_and_stake,
     };
-    <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, RuntimeOrigin, Test};
+    <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, Test};
     <span class="kw">use crate</span>::{BalanceOf, Config, HoldIdentifier, NominatorId};
     <span class="kw">use </span>frame_support::assert_ok;
     <span class="kw">use </span>frame_support::traits::fungible::InspectHold;
-    <span class="kw">use </span>frame_support::weights::Weight;
     <span class="kw">use </span>sp_core::{Pair, U256};
-    <span class="kw">use </span>sp_domains::{ConfirmedDomainBlock, DomainId, OperatorAllowList, OperatorPair};
+    <span class="kw">use </span>sp_domains::{ConfirmedDomainBlock, DomainId, OperatorPair};
     <span class="kw">use </span>sp_runtime::traits::Zero;
     <span class="kw">use </span>sp_runtime::{PerThing, Percent};
-    <span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
+    <span class="kw">use </span>std::collections::BTreeMap;
     <span class="kw">use </span>subspace_runtime_primitives::SSC;
 
     <span class="kw">type </span>Balances = pallet_balances::Pallet&lt;Test&gt;;
-    <span class="kw">type </span>Domains = <span class="kw">crate</span>::Pallet&lt;Test&gt;;
 
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>finalize_operator_domain_switch() {
-        <span class="kw">let </span>old_domain_id = DomainId::new(<span class="number">0</span>);
-        <span class="kw">let </span>new_domain_id = DomainId::new(<span class="number">1</span>);
-        <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_free_balance = <span class="number">200 </span>* SSC;
-        <span class="kw">let </span>operator_stake = <span class="number">100 </span>* SSC;
-        <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
+    <span class="comment">// TODO: `switch_domain` is not supported currently due to incompatible with lazily slashing
+    // enable this test when `switch_domain` is ready
+    // #[test]
+    // fn finalize_operator_domain_switch() {
+    //     let old_domain_id = DomainId::new(0);
+    //     let new_domain_id = DomainId::new(1);
+    //     let operator_account = 1;
+    //     let operator_free_balance = 200 * SSC;
+    //     let operator_stake = 100 * SSC;
+    //     let pair = OperatorPair::from_seed(&amp;U256::from(0u32).into());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
-        ext.execute_with(|| {
-            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
-                old_domain_id,
-                operator_account,
-                operator_free_balance,
-                operator_stake,
-                <span class="number">100 </span>* SSC,
-                pair.public(),
-                BTreeMap::new(),
-            );
+    //     let mut ext = new_test_ext();
+    //     ext.execute_with(|| {
+    //         let (operator_id, _) = register_operator(
+    //             old_domain_id,
+    //             operator_account,
+    //             operator_free_balance,
+    //             operator_stake,
+    //             100 * SSC,
+    //             pair.public(),
+    //             BTreeMap::new(),
+    //         );
 
-            <span class="kw">let </span>domain_config = DomainConfig {
-                domain_name: String::from_utf8(<span class="macro">vec!</span>[<span class="number">0</span>; <span class="number">1024</span>]).unwrap(),
-                runtime_id: <span class="number">0</span>,
-                max_block_size: u32::MAX,
-                max_block_weight: Weight::MAX,
-                bundle_slot_probability: (<span class="number">0</span>, <span class="number">0</span>),
-                target_bundles_per_block: <span class="number">0</span>,
-                operator_allow_list: OperatorAllowList::Anyone,
-                initial_balances: Default::default(),
-            };
+    //         let domain_config = DomainConfig {
+    //             domain_name: String::from_utf8(vec![0; 1024]).unwrap(),
+    //             runtime_id: 0,
+    //             max_block_size: u32::MAX,
+    //             max_block_weight: Weight::MAX,
+    //             bundle_slot_probability: (0, 0),
+    //             target_bundles_per_block: 0,
+    //             operator_allow_list: OperatorAllowList::Anyone,
+    //             initial_balances: Default::default(),
+    //         };
 
-            <span class="kw">let </span>domain_obj = DomainObject {
-                owner_account_id: <span class="number">0</span>,
-                created_at: <span class="number">0</span>,
-                genesis_receipt_hash: Default::default(),
-                domain_config,
-                domain_runtime_info: Default::default(),
-            };
+    //         let domain_obj = DomainObject {
+    //             owner_account_id: 0,
+    //             created_at: 0,
+    //             genesis_receipt_hash: Default::default(),
+    //             domain_config,
+    //             domain_runtime_info: Default::default(),
+    //         };
 
-            DomainRegistry::&lt;Test&gt;::insert(new_domain_id, domain_obj);
+    //         DomainRegistry::&lt;Test&gt;::insert(new_domain_id, domain_obj);
 
-            DomainStakingSummary::&lt;Test&gt;::insert(
-                new_domain_id,
-                StakingSummary {
-                    current_epoch_index: <span class="number">0</span>,
-                    current_total_stake: <span class="number">0</span>,
-                    current_operators: BTreeMap::new(),
-                    next_operators: BTreeSet::new(),
-                    current_epoch_rewards: BTreeMap::new(),
-                },
-            );
-            <span class="kw">let </span>res = Domains::switch_domain(
-                RuntimeOrigin::signed(operator_account),
-                operator_id,
-                new_domain_id,
-            );
-            <span class="macro">assert_ok!</span>(res);
+    //         DomainStakingSummary::&lt;Test&gt;::insert(
+    //             new_domain_id,
+    //             StakingSummary {
+    //                 current_epoch_index: 0,
+    //                 current_total_stake: 0,
+    //                 current_operators: BTreeMap::new(),
+    //                 next_operators: BTreeSet::new(),
+    //                 current_epoch_rewards: BTreeMap::new(),
+    //             },
+    //         );
+    //         let res = Domains::switch_domain(
+    //             RuntimeOrigin::signed(operator_account),
+    //             operator_id,
+    //             new_domain_id,
+    //         );
+    //         assert_ok!(res);
 
-            <span class="macro">assert!</span>(do_finalize_switch_operator_domain::&lt;Test&gt;(old_domain_id).is_ok());
+    //         assert!(do_finalize_switch_operator_domain::&lt;Test&gt;(old_domain_id).is_ok());
 
-            <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
-            <span class="macro">assert_eq!</span>(operator.current_domain_id, new_domain_id);
-            <span class="macro">assert_eq!</span>(operator.next_domain_id, new_domain_id);
-            <span class="macro">assert_eq!</span>(PendingOperatorSwitches::&lt;Test&gt;::get(old_domain_id), <span class="prelude-val">None</span>);
+    //         let operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
+    //         assert_eq!(operator.current_domain_id, new_domain_id);
+    //         assert_eq!(operator.next_domain_id, new_domain_id);
+    //         assert_eq!(PendingOperatorSwitches::&lt;Test&gt;::get(old_domain_id), None);
 
-            <span class="kw">let </span>domain_stake_summary = DomainStakingSummary::&lt;Test&gt;::get(new_domain_id).unwrap();
-            <span class="macro">assert!</span>(domain_stake_summary.next_operators.contains(<span class="kw-2">&amp;</span>operator_id));
-        });
-    }
+    //         let domain_stake_summary = DomainStakingSummary::&lt;Test&gt;::get(new_domain_id).unwrap();
+    //         assert!(domain_stake_summary.next_operators.contains(&amp;operator_id));
+    //     });
+    // }
 
-    <span class="kw">fn </span>unlock_operator(
+    </span><span class="kw">fn </span>unlock_operator(
         nominators: Vec&lt;(NominatorId&lt;Test&gt;, BalanceOf&lt;Test&gt;)&gt;,
         pending_deposits: Vec&lt;(NominatorId&lt;Test&gt;, BalanceOf&lt;Test&gt;)&gt;,
         withdrawals: Vec&lt;(NominatorId&lt;Test&gt;, Share)&gt;,

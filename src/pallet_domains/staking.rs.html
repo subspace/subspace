@@ -2872,13 +2872,61 @@
 <a href="#2870" id="2870">2870</a>
 <a href="#2871" id="2871">2871</a>
 <a href="#2872" id="2872">2872</a>
+<a href="#2873" id="2873">2873</a>
+<a href="#2874" id="2874">2874</a>
+<a href="#2875" id="2875">2875</a>
+<a href="#2876" id="2876">2876</a>
+<a href="#2877" id="2877">2877</a>
+<a href="#2878" id="2878">2878</a>
+<a href="#2879" id="2879">2879</a>
+<a href="#2880" id="2880">2880</a>
+<a href="#2881" id="2881">2881</a>
+<a href="#2882" id="2882">2882</a>
+<a href="#2883" id="2883">2883</a>
+<a href="#2884" id="2884">2884</a>
+<a href="#2885" id="2885">2885</a>
+<a href="#2886" id="2886">2886</a>
+<a href="#2887" id="2887">2887</a>
+<a href="#2888" id="2888">2888</a>
+<a href="#2889" id="2889">2889</a>
+<a href="#2890" id="2890">2890</a>
+<a href="#2891" id="2891">2891</a>
+<a href="#2892" id="2892">2892</a>
+<a href="#2893" id="2893">2893</a>
+<a href="#2894" id="2894">2894</a>
+<a href="#2895" id="2895">2895</a>
+<a href="#2896" id="2896">2896</a>
+<a href="#2897" id="2897">2897</a>
+<a href="#2898" id="2898">2898</a>
+<a href="#2899" id="2899">2899</a>
+<a href="#2900" id="2900">2900</a>
+<a href="#2901" id="2901">2901</a>
+<a href="#2902" id="2902">2902</a>
+<a href="#2903" id="2903">2903</a>
+<a href="#2904" id="2904">2904</a>
+<a href="#2905" id="2905">2905</a>
+<a href="#2906" id="2906">2906</a>
+<a href="#2907" id="2907">2907</a>
+<a href="#2908" id="2908">2908</a>
+<a href="#2909" id="2909">2909</a>
+<a href="#2910" id="2910">2910</a>
+<a href="#2911" id="2911">2911</a>
+<a href="#2912" id="2912">2912</a>
+<a href="#2913" id="2913">2913</a>
+<a href="#2914" id="2914">2914</a>
+<a href="#2915" id="2915">2915</a>
+<a href="#2916" id="2916">2916</a>
+<a href="#2917" id="2917">2917</a>
+<a href="#2918" id="2918">2918</a>
+<a href="#2919" id="2919">2919</a>
+<a href="#2920" id="2920">2920</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking for domains
 
 </span><span class="kw">use </span><span class="kw">crate</span>::bundle_storage_fund::{<span class="self">self</span>, deposit_reserve_for_storage_fund};
 <span class="kw">use </span><span class="kw">crate</span>::pallet::{
-    Deposits, DomainRegistry, DomainStakingSummary, NextOperatorId, NominatorCount,
-    OperatorIdOwner, OperatorSigningKey, Operators, PendingOperatorSwitches, PendingSlashes,
-    PendingStakingOperationCount, Withdrawals,
+    Deposits, DomainRegistry, DomainStakingSummary, LatestSubmittedER, NextOperatorId,
+    NominatorCount, OperatorIdOwner, OperatorSigningKey, Operators, PendingOperatorSwitches,
+    PendingSlashes, PendingStakingOperationCount, Withdrawals,
 };
 <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::mint_funds;
 <span class="kw">use crate</span>::{
@@ -3038,6 +3086,7 @@
     <span class="doccomment">/// De-registered at given domain epoch.
     </span>Deregistered(OperatorDeregisteredInfo&lt;DomainBlockNumber&gt;),
     Slashed,
+    PendingSlash,
 }
 
 <span class="doccomment">/// Type that represents an operator details.
@@ -3054,13 +3103,57 @@
     </span><span class="kw">pub </span>current_epoch_rewards: Balance,
     <span class="doccomment">/// Total shares of all the nominators under this operator.
     </span><span class="kw">pub </span>current_total_shares: Share,
-    <span class="kw">pub </span>status: OperatorStatus&lt;DomainBlockNumber&gt;,
+    <span class="doccomment">/// The status of the operator, it may be stale due to the `OperatorStatus::PendingSlash` is
+    /// not assigned to this field directlt, thus MUST use the `status()` method to query the status
+    /// instead.
+    /// TODO: update the filed to `_status` to avoid accidental access in next network reset
+    </span>status: OperatorStatus&lt;DomainBlockNumber&gt;,
     <span class="doccomment">/// Total deposits during the previous epoch
     </span><span class="kw">pub </span>deposits_in_epoch: Balance,
     <span class="doccomment">/// Total withdrew shares during the previous epoch
     </span><span class="kw">pub </span>withdrawals_in_epoch: Share,
     <span class="doccomment">/// Total balance deposited to the bundle storage fund
     </span><span class="kw">pub </span>total_storage_fee_deposit: Balance,
+}
+
+<span class="kw">impl</span>&lt;Balance, Share, DomainBlockNumber&gt; Operator&lt;Balance, Share, DomainBlockNumber&gt; {
+    <span class="kw">pub fn </span>status&lt;T: Config&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, operator_id: OperatorId) -&gt; <span class="kw-2">&amp;</span>OperatorStatus&lt;DomainBlockNumber&gt; {
+        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.status, OperatorStatus::Slashed) {
+            <span class="kw-2">&amp;</span>OperatorStatus::Slashed
+        } <span class="kw">else if </span>Pallet::&lt;T&gt;::is_operator_pending_to_slash(<span class="self">self</span>.current_domain_id, operator_id) {
+            <span class="kw-2">&amp;</span>OperatorStatus::PendingSlash
+        } <span class="kw">else </span>{
+            <span class="kw-2">&amp;</span><span class="self">self</span>.status
+        }
+    }
+
+    <span class="kw">pub fn </span>update_status(<span class="kw-2">&amp;mut </span><span class="self">self</span>, new_status: OperatorStatus&lt;DomainBlockNumber&gt;) {
+        <span class="self">self</span>.status = new_status;
+    }
+}
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">impl</span>&lt;Balance: Zero, Share: Zero, DomainBlockNumber&gt; Operator&lt;Balance, Share, DomainBlockNumber&gt; {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>dummy(
+        domain_id: DomainId,
+        signing_key: OperatorPublicKey,
+        minimum_nominator_stake: Balance,
+    ) -&gt; <span class="self">Self </span>{
+        Operator {
+            signing_key,
+            current_domain_id: domain_id,
+            next_domain_id: domain_id,
+            minimum_nominator_stake,
+            nomination_tax: Default::default(),
+            current_total_stake: Zero::zero(),
+            current_epoch_rewards: Zero::zero(),
+            current_total_shares: Zero::zero(),
+            status: OperatorStatus::Registered,
+            deposits_in_epoch: Zero::zero(),
+            withdrawals_in_epoch: Zero::zero(),
+            total_storage_fee_deposit: Zero::zero(),
+        }
+    }
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -3119,6 +3212,7 @@
     UnlockPeriodNotComplete,
     OperatorNotDeregistered,
     BundleStorageFund(bundle_storage_fund::Error),
+    UnconfirmedER,
 }
 
 <span class="comment">// Increase `PendingStakingOperationCount` by one and check if the `MaxPendingStakingOperation`
@@ -3383,7 +3477,7 @@
         <span class="kw">let </span>operator = maybe_operator.as_mut().ok_or(Error::UnknownOperator)<span class="question-mark">?</span>;
 
         <span class="macro">ensure!</span>(
-            operator.status == OperatorStatus::Registered,
+            <span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) == OperatorStatus::Registered,
             Error::OperatorNotRegistered
         );
 
@@ -3465,7 +3559,9 @@
     <span class="prelude-val">Ok</span>(())
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_switch_operator_domain&lt;T: Config&gt;(
+<span class="comment">// TODO: `switch_domain` is not supported currently due to incompatible with lazily slashing
+</span><span class="attr">#[allow(dead_code)]
+</span><span class="kw">fn </span>do_switch_operator_domain&lt;T: Config&gt;(
     operator_owner: T::AccountId,
     operator_id: OperatorId,
     new_domain_id: DomainId,
@@ -3495,8 +3591,15 @@
         note_pending_staking_operation::&lt;T&gt;(operator.current_domain_id)<span class="question-mark">?</span>;
 
         <span class="macro">ensure!</span>(
-            operator.status == OperatorStatus::Registered,
+            <span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) == OperatorStatus::Registered,
             Error::OperatorNotRegistered
+        );
+
+        <span class="comment">// Reject switching domain if there is unconfirmed ER submitted by this operator
+        // on the `current_domain_id`
+        </span><span class="macro">ensure!</span>(
+            !LatestSubmittedER::&lt;T&gt;::contains_key((operator.current_domain_id, operator_id)),
+            Error::UnconfirmedER
         );
 
         <span class="comment">// noop when switch is for same domain
@@ -3547,7 +3650,7 @@
         note_pending_staking_operation::&lt;T&gt;(operator.current_domain_id)<span class="question-mark">?</span>;
 
         <span class="macro">ensure!</span>(
-            operator.status == OperatorStatus::Registered,
+            <span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) == OperatorStatus::Registered,
             Error::OperatorNotRegistered
         );
 
@@ -3570,7 +3673,7 @@
                 )
                     .into();
 
-                operator.status = OperatorStatus::Deregistered(operator_deregister_info);
+                operator.update_status(OperatorStatus::Deregistered(operator_deregister_info));
 
                 stake_summary.next_operators.remove(<span class="kw-2">&amp;</span>operator_id);
                 <span class="prelude-val">Ok</span>(())
@@ -3587,7 +3690,7 @@
     Operators::&lt;T&gt;::try_mutate(operator_id, |maybe_operator| {
         <span class="kw">let </span>operator = maybe_operator.as_mut().ok_or(Error::UnknownOperator)<span class="question-mark">?</span>;
         <span class="macro">ensure!</span>(
-            operator.status == OperatorStatus::Registered,
+            <span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) == OperatorStatus::Registered,
             Error::OperatorNotRegistered
         );
 
@@ -3781,7 +3884,7 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;BalanceOf&lt;T&gt;, Error&gt; {
     <span class="kw">let </span>operator = Operators::&lt;T&gt;::get(operator_id).ok_or(Error::UnknownOperator)<span class="question-mark">?</span>;
     <span class="macro">ensure!</span>(
-        operator.status == OperatorStatus::Registered,
+        <span class="kw-2">*</span>operator.status::&lt;T&gt;(operator_id) == OperatorStatus::Registered,
         Error::OperatorNotRegistered
     );
 
@@ -3870,7 +3973,7 @@
         <span class="kw">let </span>OperatorDeregisteredInfo {
             domain_epoch,
             unlock_at_confirmed_domain_block_number,
-        } = <span class="kw">match </span>operator.status {
+        } = <span class="kw">match </span>operator.status::&lt;T&gt;(operator_id) {
             OperatorStatus::Deregistered(operator_deregistered_info) =&gt; operator_deregistered_info,
             <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperatorNotDeregistered),
         };
@@ -3879,7 +3982,7 @@
         <span class="kw">let </span>latest_confirmed_block_number =
             Pallet::&lt;T&gt;::latest_confirmed_domain_block_number(domain_id);
         <span class="macro">ensure!</span>(
-            unlock_at_confirmed_domain_block_number &lt;= latest_confirmed_block_number,
+            <span class="kw-2">*</span>unlock_at_confirmed_domain_block_number &lt;= latest_confirmed_block_number,
             Error::UnlockPeriodNotComplete
         );
 
@@ -4044,16 +4147,11 @@
 
 <span class="doccomment">/// Freezes the slashed operators and moves the operator to be removed once the domain they are
 /// operating finishes the epoch.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_slash_operators&lt;T: Config, Iter&gt;(operator_ids: Iter) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
-<span class="kw">where
-    </span>Iter: Iterator&lt;
-        Item = (
-            OperatorId,
-            SlashedReason&lt;DomainBlockNumberFor&lt;T&gt;, ReceiptHashFor&lt;T&gt;&gt;,
-        ),
-    &gt;,
-{
-    <span class="kw">for </span>(operator_id, reason) <span class="kw">in </span>operator_ids {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_slash_operators&lt;T: Config&gt;(
+    operator_ids: <span class="kw">impl </span>AsRef&lt;[OperatorId]&gt;,
+    slash_reason: SlashedReason&lt;DomainBlockNumberFor&lt;T&gt;, ReceiptHashFor&lt;T&gt;&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+    <span class="kw">for </span>operator_id <span class="kw">in </span>operator_ids.as_ref() {
         Operators::&lt;T&gt;::try_mutate(operator_id, |maybe_operator| {
             <span class="kw">let </span>operator = <span class="kw">match </span>maybe_operator.as_mut() {
                 <span class="comment">// If the operator is already slashed and removed due to fraud proof, when the operator
@@ -4065,7 +4163,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>pending_slashes =
                 PendingSlashes::&lt;T&gt;::get(operator.current_domain_id).unwrap_or_default();
 
-            <span class="kw">if </span>pending_slashes.contains(<span class="kw-2">&amp;</span>operator_id) {
+            <span class="kw">if </span>pending_slashes.contains(operator_id) {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
             }
 
@@ -4077,24 +4175,24 @@
                         .ok_or(Error::DomainNotInitialized)<span class="question-mark">?</span>;
 
                     <span class="comment">// slash and remove operator from next epoch set
-                    </span>operator.status = OperatorStatus::Slashed;
-                    stake_summary.next_operators.remove(<span class="kw-2">&amp;</span>operator_id);
+                    </span>operator.update_status(OperatorStatus::Slashed);
+                    stake_summary.next_operators.remove(operator_id);
 
                     <span class="comment">// remove any current operator switches
                     </span>PendingOperatorSwitches::&lt;T&gt;::mutate(
                         operator.current_domain_id,
                         |maybe_switching_operators| {
                             <span class="kw">if let </span><span class="prelude-val">Some</span>(switching_operators) = maybe_switching_operators.as_mut() {
-                                switching_operators.remove(<span class="kw-2">&amp;</span>operator_id);
+                                switching_operators.remove(operator_id);
                             }
                         },
                     );
 
-                    pending_slashes.insert(operator_id);
+                    pending_slashes.insert(<span class="kw-2">*</span>operator_id);
                     PendingSlashes::&lt;T&gt;::insert(operator.current_domain_id, pending_slashes);
                     Pallet::&lt;T&gt;::deposit_event(Event::OperatorSlashed {
-                        operator_id,
-                        reason,
+                        operator_id: <span class="kw-2">*</span>operator_id,
+                        reason: slash_reason.clone(),
                     });
                     <span class="prelude-val">Ok</span>(())
                 },
@@ -4110,8 +4208,7 @@
     <span class="kw">use </span><span class="kw">crate</span>::domain_registry::{DomainConfig, DomainObject};
     <span class="kw">use </span><span class="kw">crate</span>::pallet::{
         Config, Deposits, DomainRegistry, DomainStakingSummary, LatestConfirmedDomainBlock,
-        NextOperatorId, NominatorCount, OperatorIdOwner, Operators, PendingOperatorSwitches,
-        PendingSlashes, Withdrawals,
+        NextOperatorId, NominatorCount, OperatorIdOwner, Operators, PendingSlashes, Withdrawals,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
         do_convert_previous_epoch_withdrawal, do_nominate_operator, do_reward_operators,
@@ -4531,99 +4628,101 @@
         });
     }
 
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>switch_domain_operator() {
-        <span class="kw">let </span>old_domain_id = DomainId::new(<span class="number">0</span>);
-        <span class="kw">let </span>new_domain_id = DomainId::new(<span class="number">1</span>);
-        <span class="kw">let </span>operator_account = <span class="number">1</span>;
-        <span class="kw">let </span>operator_free_balance = <span class="number">250 </span>* SSC;
-        <span class="kw">let </span>operator_stake = <span class="number">200 </span>* SSC;
-        <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
+    <span class="comment">// TODO: `switch_domain` is not supported currently due to incompatible with lazily slashing
+    // enable this test when `switch_domain` is ready
+    // #[test]
+    // fn switch_domain_operator() {
+    //     let old_domain_id = DomainId::new(0);
+    //     let new_domain_id = DomainId::new(1);
+    //     let operator_account = 1;
+    //     let operator_free_balance = 250 * SSC;
+    //     let operator_stake = 200 * SSC;
+    //     let pair = OperatorPair::from_seed(&amp;U256::from(0u32).into());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
-        ext.execute_with(|| {
-            <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
-                old_domain_id,
-                operator_account,
-                operator_free_balance,
-                operator_stake,
-                SSC,
-                pair.public(),
-                BTreeMap::new(),
-            );
+    //     let mut ext = new_test_ext();
+    //     ext.execute_with(|| {
+    //         let (operator_id, _) = register_operator(
+    //             old_domain_id,
+    //             operator_account,
+    //             operator_free_balance,
+    //             operator_stake,
+    //             SSC,
+    //             pair.public(),
+    //             BTreeMap::new(),
+    //         );
 
-            <span class="kw">let </span>domain_config = DomainConfig {
-                domain_name: String::from_utf8(<span class="macro">vec!</span>[<span class="number">0</span>; <span class="number">1024</span>]).unwrap(),
-                runtime_id: <span class="number">0</span>,
-                max_block_size: u32::MAX,
-                max_block_weight: Weight::MAX,
-                bundle_slot_probability: (<span class="number">0</span>, <span class="number">0</span>),
-                target_bundles_per_block: <span class="number">0</span>,
-                operator_allow_list: OperatorAllowList::Anyone,
-                initial_balances: Default::default(),
-            };
+    //         let domain_config = DomainConfig {
+    //             domain_name: String::from_utf8(vec![0; 1024]).unwrap(),
+    //             runtime_id: 0,
+    //             max_block_size: u32::MAX,
+    //             max_block_weight: Weight::MAX,
+    //             bundle_slot_probability: (0, 0),
+    //             target_bundles_per_block: 0,
+    //             operator_allow_list: OperatorAllowList::Anyone,
+    //             initial_balances: Default::default(),
+    //         };
 
-            <span class="kw">let </span>domain_obj = DomainObject {
-                owner_account_id: <span class="number">0</span>,
-                created_at: <span class="number">0</span>,
-                genesis_receipt_hash: Default::default(),
-                domain_config,
-                domain_runtime_info: Default::default(),
-            };
+    //         let domain_obj = DomainObject {
+    //             owner_account_id: 0,
+    //             created_at: 0,
+    //             genesis_receipt_hash: Default::default(),
+    //             domain_config,
+    //             domain_runtime_info: Default::default(),
+    //         };
 
-            DomainRegistry::&lt;Test&gt;::insert(new_domain_id, domain_obj);
+    //         DomainRegistry::&lt;Test&gt;::insert(new_domain_id, domain_obj);
 
-            DomainStakingSummary::&lt;Test&gt;::insert(
-                new_domain_id,
-                StakingSummary {
-                    current_epoch_index: <span class="number">0</span>,
-                    current_total_stake: <span class="number">0</span>,
-                    current_operators: BTreeMap::new(),
-                    next_operators: BTreeSet::new(),
-                    current_epoch_rewards: BTreeMap::new(),
-                },
-            );
+    //         DomainStakingSummary::&lt;Test&gt;::insert(
+    //             new_domain_id,
+    //             StakingSummary {
+    //                 current_epoch_index: 0,
+    //                 current_total_stake: 0,
+    //                 current_operators: BTreeMap::new(),
+    //                 next_operators: BTreeSet::new(),
+    //                 current_epoch_rewards: BTreeMap::new(),
+    //             },
+    //         );
 
-            <span class="kw">let </span>res = Domains::switch_domain(
-                RuntimeOrigin::signed(operator_account),
-                operator_id,
-                new_domain_id,
-            );
-            <span class="macro">assert_ok!</span>(res);
+    //         let res = Domains::switch_domain(
+    //             RuntimeOrigin::signed(operator_account),
+    //             operator_id,
+    //             new_domain_id,
+    //         );
+    //         assert_ok!(res);
 
-            <span class="kw">let </span>old_domain_stake_summary =
-                DomainStakingSummary::&lt;Test&gt;::get(old_domain_id).unwrap();
-            <span class="macro">assert!</span>(!old_domain_stake_summary
-                .next_operators
-                .contains(<span class="kw-2">&amp;</span>operator_id));
+    //         let old_domain_stake_summary =
+    //             DomainStakingSummary::&lt;Test&gt;::get(old_domain_id).unwrap();
+    //         assert!(!old_domain_stake_summary
+    //             .next_operators
+    //             .contains(&amp;operator_id));
 
-            <span class="kw">let </span>new_domain_stake_summary =
-                DomainStakingSummary::&lt;Test&gt;::get(new_domain_id).unwrap();
-            <span class="macro">assert!</span>(!new_domain_stake_summary
-                .next_operators
-                .contains(<span class="kw-2">&amp;</span>operator_id));
+    //         let new_domain_stake_summary =
+    //             DomainStakingSummary::&lt;Test&gt;::get(new_domain_id).unwrap();
+    //         assert!(!new_domain_stake_summary
+    //             .next_operators
+    //             .contains(&amp;operator_id));
 
-            <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
-            <span class="macro">assert_eq!</span>(operator.current_domain_id, old_domain_id);
-            <span class="macro">assert_eq!</span>(operator.next_domain_id, new_domain_id);
-            <span class="macro">assert_eq!</span>(
-                PendingOperatorSwitches::&lt;Test&gt;::get(old_domain_id).unwrap(),
-                BTreeSet::from_iter(<span class="macro">vec!</span>[operator_id])
-            );
+    //         let operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
+    //         assert_eq!(operator.current_domain_id, old_domain_id);
+    //         assert_eq!(operator.next_domain_id, new_domain_id);
+    //         assert_eq!(
+    //             PendingOperatorSwitches::&lt;Test&gt;::get(old_domain_id).unwrap(),
+    //             BTreeSet::from_iter(vec![operator_id])
+    //         );
 
-            <span class="kw">let </span>res = Domains::switch_domain(
-                RuntimeOrigin::signed(operator_account),
-                operator_id,
-                new_domain_id,
-            );
-            <span class="macro">assert_err!</span>(
-                res,
-                Error::&lt;Test&gt;::Staking(<span class="kw">crate</span>::staking::Error::PendingOperatorSwitch)
-            )
-        });
-    }
+    //         let res = Domains::switch_domain(
+    //             RuntimeOrigin::signed(operator_account),
+    //             operator_id,
+    //             new_domain_id,
+    //         );
+    //         assert_err!(
+    //             res,
+    //             Error::&lt;Test&gt;::Staking(crate::staking::Error::PendingOperatorSwitch)
+    //         )
+    //     });
+    // }
 
-    <span class="attr">#[test]
+    </span><span class="attr">#[test]
     </span><span class="kw">fn </span>operator_deregistration() {
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>operator_account = <span class="number">1</span>;
@@ -4652,7 +4751,7 @@
 
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
             <span class="macro">assert_eq!</span>(
-                operator.status,
+                <span class="kw-2">*</span>operator.status::&lt;Test&gt;(operator_id),
                 OperatorStatus::Deregistered(
                     (
                         domain_id,
@@ -4695,15 +4794,6 @@
                     next_operators: BTreeSet::new(),
                     current_epoch_rewards: BTreeMap::new(),
                 },
-            );
-            <span class="kw">let </span>res = Domains::switch_domain(
-                RuntimeOrigin::signed(operator_account),
-                operator_id,
-                new_domain_id,
-            );
-            <span class="macro">assert_err!</span>(
-                res,
-                Error::&lt;Test&gt;::Staking(<span class="kw">crate</span>::staking::Error::OperatorNotRegistered)
             );
 
             <span class="comment">// nominations will not work since the is frozen
@@ -5510,16 +5600,16 @@
                 do_nominate_operator::&lt;Test&gt;(operator_id, deposit.<span class="number">0</span>, deposit.<span class="number">1</span>).unwrap();
             }
 
-            do_slash_operators::&lt;Test, <span class="kw">_</span>&gt;(
-                <span class="macro">vec!</span>[(operator_id, SlashedReason::InvalidBundle(<span class="number">1</span>))].into_iter(),
-            )
-            .unwrap();
+            do_slash_operators::&lt;Test&gt;(<span class="macro">vec!</span>[operator_id], SlashedReason::InvalidBundle(<span class="number">1</span>)).unwrap();
 
             <span class="kw">let </span>domain_stake_summary = DomainStakingSummary::&lt;Test&gt;::get(domain_id).unwrap();
             <span class="macro">assert!</span>(!domain_stake_summary.next_operators.contains(<span class="kw-2">&amp;</span>operator_id));
 
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
-            <span class="macro">assert_eq!</span>(operator.status, OperatorStatus::Slashed);
+            <span class="macro">assert_eq!</span>(
+                <span class="kw-2">*</span>operator.status::&lt;Test&gt;(operator_id),
+                OperatorStatus::Slashed
+            );
 
             <span class="kw">let </span>pending_slashes = PendingSlashes::&lt;Test&gt;::get(domain_id).unwrap();
             <span class="macro">assert!</span>(pending_slashes.contains(<span class="kw-2">&amp;</span>operator_id));
@@ -5615,15 +5705,12 @@
                 );
             }
 
-            do_slash_operators::&lt;Test, <span class="kw">_</span>&gt;(
-                <span class="macro">vec!</span>[
-                    (operator_id_1, SlashedReason::InvalidBundle(<span class="number">1</span>)),
-                    (operator_id_2, SlashedReason::InvalidBundle(<span class="number">2</span>)),
-                    (operator_id_3, SlashedReason::InvalidBundle(<span class="number">3</span>)),
-                ]
-                .into_iter(),
-            )
-            .unwrap();
+            do_slash_operators::&lt;Test&gt;(<span class="macro">vec!</span>[operator_id_1], SlashedReason::InvalidBundle(<span class="number">1</span>))
+                .unwrap();
+            do_slash_operators::&lt;Test&gt;(<span class="macro">vec!</span>[operator_id_2], SlashedReason::InvalidBundle(<span class="number">2</span>))
+                .unwrap();
+            do_slash_operators::&lt;Test&gt;(<span class="macro">vec!</span>[operator_id_3], SlashedReason::InvalidBundle(<span class="number">3</span>))
+                .unwrap();
 
             <span class="kw">let </span>domain_stake_summary = DomainStakingSummary::&lt;Test&gt;::get(domain_id).unwrap();
             <span class="macro">assert!</span>(!domain_stake_summary.next_operators.contains(<span class="kw-2">&amp;</span>operator_id_1));
@@ -5631,13 +5718,22 @@
             <span class="macro">assert!</span>(!domain_stake_summary.next_operators.contains(<span class="kw-2">&amp;</span>operator_id_3));
 
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id_1).unwrap();
-            <span class="macro">assert_eq!</span>(operator.status, OperatorStatus::Slashed);
+            <span class="macro">assert_eq!</span>(
+                <span class="kw-2">*</span>operator.status::&lt;Test&gt;(operator_id_1),
+                OperatorStatus::Slashed
+            );
 
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id_2).unwrap();
-            <span class="macro">assert_eq!</span>(operator.status, OperatorStatus::Slashed);
+            <span class="macro">assert_eq!</span>(
+                <span class="kw-2">*</span>operator.status::&lt;Test&gt;(operator_id_2),
+                OperatorStatus::Slashed
+            );
 
             <span class="kw">let </span>operator = Operators::&lt;Test&gt;::get(operator_id_3).unwrap();
-            <span class="macro">assert_eq!</span>(operator.status, OperatorStatus::Slashed);
+            <span class="macro">assert_eq!</span>(
+                <span class="kw-2">*</span>operator.status::&lt;Test&gt;(operator_id_3),
+                OperatorStatus::Slashed
+            );
 
             <span class="macro">assert_eq!</span>(
                 Balances::total_balance(<span class="kw-2">&amp;</span><span class="kw">crate</span>::tests::TreasuryAccount::get()),

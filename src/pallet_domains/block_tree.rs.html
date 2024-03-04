@@ -1103,12 +1103,57 @@
 <a href="#1101" id="1101">1101</a>
 <a href="#1102" id="1102">1102</a>
 <a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a>
+<a href="#1146" id="1146">1146</a>
+<a href="#1147" id="1147">1147</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="kw">use crate</span>::{
-    BalanceOf, BlockTree, BlockTreeNodes, Config, ConsensusBlockHash, DomainBlockNumberFor,
-    DomainHashingFor, ExecutionInbox, ExecutionReceiptOf, HeadReceiptExtended, HeadReceiptNumber,
-    InboxedBundleAuthor, LatestConfirmedDomainBlock, Pallet, ReceiptHashFor,
+    BalanceOf, BlockTree, BlockTreeNodeFor, BlockTreeNodes, Config, ConsensusBlockHash,
+    DomainBlockNumberFor, DomainHashingFor, ExecutionInbox, ExecutionReceiptOf,
+    HeadReceiptExtended, HeadReceiptNumber, InboxedBundleAuthor, LatestConfirmedDomainBlock,
+    LatestSubmittedER, Pallet, ReceiptHashFor,
 };
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::{ensure, PalletError};
@@ -1145,6 +1190,7 @@
     BalanceOverflow,
     DomainTransfersTracking,
     InvalidDomainTransfers,
+    OverwritingER,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -1397,31 +1443,28 @@
     execution_receipt: ExecutionReceiptOf&lt;T&gt;,
     receipt_type: AcceptedReceiptType,
 ) -&gt; ProcessExecutionReceiptResult&lt;T&gt; {
+    <span class="kw">let </span>receipt_block_number = execution_receipt.domain_block_number;
     <span class="kw">match </span>receipt_type {
         AcceptedReceiptType::NewHead =&gt; {
-            <span class="kw">let </span>domain_block_number = execution_receipt.domain_block_number;
-
-            add_new_receipt_to_block_tree::&lt;T&gt;(domain_id, submitter, execution_receipt);
+            add_new_receipt_to_block_tree::&lt;T&gt;(domain_id, submitter, execution_receipt)<span class="question-mark">?</span>;
 
             <span class="comment">// Update the head receipt number
-            </span>HeadReceiptNumber::&lt;T&gt;::insert(domain_id, domain_block_number);
+            </span>HeadReceiptNumber::&lt;T&gt;::insert(domain_id, receipt_block_number);
             HeadReceiptExtended::&lt;T&gt;::insert(domain_id, <span class="bool-val">true</span>);
 
             <span class="comment">// Prune expired domain block
             </span><span class="kw">if let </span><span class="prelude-val">Some</span>(to_prune) =
-                domain_block_number.checked_sub(<span class="kw-2">&amp;</span>T::BlockTreePruningDepth::get())
+                receipt_block_number.checked_sub(<span class="kw-2">&amp;</span>T::BlockTreePruningDepth::get())
             {
-                <span class="kw">let </span>receipt_hash = <span class="kw">match </span>BlockTree::&lt;T&gt;::take(domain_id, to_prune) {
-                    <span class="prelude-val">Some</span>(h) =&gt; h,
+                <span class="kw">let </span>BlockTreeNode {
+                    execution_receipt,
+                    operator_ids,
+                } = <span class="kw">match </span>prune_receipt::&lt;T&gt;(domain_id, to_prune)<span class="question-mark">? </span>{
+                    <span class="prelude-val">Some</span>(n) =&gt; n,
                     <span class="comment">// The receipt at `to_prune` may already been pruned if there is fraud proof being
                     // processed previously and the `HeadReceiptNumber` is reverted.
                     </span><span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
                 };
-
-                <span class="kw">let </span>BlockTreeNode {
-                    execution_receipt,
-                    operator_ids,
-                } = BlockTreeNodes::&lt;T&gt;::take(receipt_hash).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
 
                 <span class="comment">// Collect the paid bundle storage fees and the invalid bundle author
                 </span><span class="kw">let </span><span class="kw-2">mut </span>paid_bundle_storage_fees = BTreeMap::new();
@@ -1503,6 +1546,13 @@
             });
         }
     }
+
+    <span class="comment">// Update the `LatestSubmittedER` for the operator
+    </span><span class="kw">let </span>key = (domain_id, submitter);
+    <span class="kw">if </span>receipt_block_number &gt; Pallet::&lt;T&gt;::latest_submitted_er(key) {
+        LatestSubmittedER::&lt;T&gt;::insert(key, receipt_block_number)
+    }
+
     <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
 }
 
@@ -1563,10 +1613,15 @@
     domain_id: DomainId,
     submitter: OperatorId,
     execution_receipt: ExecutionReceiptOf&lt;T&gt;,
-) {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
     <span class="comment">// Construct and add a new domain block to the block tree
     </span><span class="kw">let </span>er_hash = execution_receipt.hash::&lt;DomainHashingFor&lt;T&gt;&gt;();
     <span class="kw">let </span>domain_block_number = execution_receipt.domain_block_number;
+
+    <span class="macro">ensure!</span>(
+        !BlockTree::&lt;T&gt;::contains_key(domain_id, domain_block_number),
+        Error::OverwritingER,
+    );
 
     BlockTree::&lt;T&gt;::insert(domain_id, domain_block_number, er_hash);
     <span class="kw">let </span>block_tree_node = BlockTreeNode {
@@ -1574,6 +1629,8 @@
         operator_ids: <span class="macro">sp_std::vec!</span>[submitter],
     };
     BlockTreeNodes::&lt;T&gt;::insert(er_hash, block_tree_node);
+
+    <span class="prelude-val">Ok</span>(())
 }
 
 <span class="doccomment">/// Import the genesis receipt to the block tree
@@ -1602,6 +1659,37 @@
     <span class="comment">// NOTE: no need to update the head receipt number as `HeadReceiptNumber` is using `ValueQuery`
     </span>BlockTree::&lt;T&gt;::insert(domain_id, domain_block_number, er_hash);
     BlockTreeNodes::&lt;T&gt;::insert(er_hash, block_tree_node);
+}
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prune_receipt&lt;T: Config&gt;(
+    domain_id: DomainId,
+    receipt_number: DomainBlockNumberFor&lt;T&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;BlockTreeNodeFor&lt;T&gt;&gt;, Error&gt; {
+    <span class="kw">let </span>receipt_hash = <span class="kw">match </span>BlockTree::&lt;T&gt;::take(domain_id, receipt_number) {
+        <span class="prelude-val">Some</span>(er_hash) =&gt; er_hash,
+        <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+    };
+    <span class="kw">let </span>block_tree_node =
+        BlockTreeNodes::&lt;T&gt;::take(receipt_hash).ok_or(Error::MissingDomainBlock)<span class="question-mark">?</span>;
+
+    <span class="comment">// If the pruned ER is the operator's `latest_submitted_er` for this domain, it means either:
+    //
+    // - All the ER the operator submitted for this domain are confirmed and pruned, so the operator
+    //   can't be targetted by fraud proof later unless it submit other new ERs.
+    //
+    // - All the bad ER the operator submitted for this domain are pruned and the operator is already
+    //   slashed, so wwe don't need `LatestSubmittedER` to determine if the operator is pending slash.
+    //
+    // In both cases, it is safe to remove the `LatestSubmittedER` for the operator in this domain
+    </span><span class="kw">for </span>operator_id <span class="kw">in </span>block_tree_node.operator_ids.iter() {
+        <span class="kw">let </span>key = (domain_id, operator_id);
+        <span class="kw">let </span>latest_submitted_er = Pallet::&lt;T&gt;::latest_submitted_er(key);
+        <span class="kw">if </span>block_tree_node.execution_receipt.domain_block_number == latest_submitted_er {
+            LatestSubmittedER::&lt;T&gt;::remove(key);
+        }
+    }
+
+    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(block_tree_node))
 }
 
 <span class="attr">#[cfg(test)]
