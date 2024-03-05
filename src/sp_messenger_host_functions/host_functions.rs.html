@@ -139,6 +139,11 @@
 <a href="#137" id="137">137</a>
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::StorageKeyRequest;
 <span class="kw">use </span>domain_block_preprocessor::stateless_runtime::StatelessRuntime;
 <span class="kw">use </span>sc_executor::RuntimeVersionOf;
@@ -196,12 +201,13 @@
     DomainBlock: BlockT,
     Client: HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt;,
     Client::Api: DomainsApi&lt;Block, DomainBlock::Header&gt;,
+    Executor: CodeExecutor + RuntimeVersionOf,
 {
-    <span class="kw">fn </span>get_domain_runtime_code(
+    <span class="kw">fn </span>get_domain_runtime(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         consensus_block_hash: Block::Hash,
         domain_id: DomainId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;StatelessRuntime&lt;DomainBlock, Executor&gt;&gt; {
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.consensus_client.runtime_api();
         <span class="comment">// Use the parent hash to get the actual used domain runtime code
         // TODO: update once we can get the actual used domain runtime code by `consensus_block_hash`
@@ -210,10 +216,22 @@
             .header(consensus_block_hash)
             .ok()
             .flatten()<span class="question-mark">?</span>;
-        runtime_api
+        <span class="kw">let </span>domain_runtime = runtime_api
             .domain_runtime_code(<span class="kw-2">*</span>consensus_block_header.parent_hash(), domain_id)
             .ok()
+            .flatten()<span class="question-mark">?</span>;
+
+        <span class="comment">// we need the initial state here so that SelfChainId is initialised on domain
+        </span><span class="kw">let </span>domain_state = runtime_api
+            .domain_instance_data(<span class="kw-2">*</span>consensus_block_header.parent_hash(), domain_id)
+            .ok()
             .flatten()
+            .map(|(data, <span class="kw">_</span>)| data.raw_genesis.into_storage())<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>domain_stateless_runtime =
+            StatelessRuntime::&lt;DomainBlock, <span class="kw">_</span>&gt;::new(<span class="self">self</span>.executor.clone(), domain_runtime.into());
+
+        domain_stateless_runtime.set_storage(domain_state);
+        <span class="prelude-val">Some</span>(domain_stateless_runtime)
     }
 }
 
@@ -235,41 +253,33 @@
                 .confirmed_domain_block_storage_key(best_hash, domain_id)
                 .map(<span class="prelude-val">Some</span>),
             StorageKeyRequest::OutboxStorageKey {
-                message_id,
+                message_key,
                 chain_id: ChainId::Consensus,
             } =&gt; runtime_api
-                .outbox_storage_key(best_hash, message_id)
+                .outbox_storage_key(best_hash, message_key)
                 .map(<span class="prelude-val">Some</span>),
             StorageKeyRequest::OutboxStorageKey {
-                message_id,
+                message_key,
                 chain_id: ChainId::Domain(domain_id),
             } =&gt; {
-                <span class="kw">let </span>runtime_code = <span class="self">self</span>.get_domain_runtime_code(best_hash, domain_id)<span class="question-mark">?</span>;
-                <span class="kw">let </span>domain_stateless_runtime = StatelessRuntime::&lt;DomainBlock, <span class="kw">_</span>&gt;::new(
-                    <span class="self">self</span>.executor.clone(),
-                    runtime_code.into(),
-                );
+                <span class="kw">let </span>domain_stateless_runtime = <span class="self">self</span>.get_domain_runtime(best_hash, domain_id)<span class="question-mark">?</span>;
                 domain_stateless_runtime
-                    .outbox_storage_key(message_id)
+                    .outbox_storage_key(message_key)
                     .map(<span class="prelude-val">Some</span>)
             }
             StorageKeyRequest::InboxResponseStorageKey {
-                message_id,
+                message_key,
                 chain_id: ChainId::Consensus,
             } =&gt; runtime_api
-                .inbox_response_storage_key(best_hash, message_id)
+                .inbox_response_storage_key(best_hash, message_key)
                 .map(<span class="prelude-val">Some</span>),
             StorageKeyRequest::InboxResponseStorageKey {
-                message_id,
+                message_key,
                 chain_id: ChainId::Domain(domain_id),
             } =&gt; {
-                <span class="kw">let </span>runtime_code = <span class="self">self</span>.get_domain_runtime_code(best_hash, domain_id)<span class="question-mark">?</span>;
-                <span class="kw">let </span>domain_stateless_runtime = StatelessRuntime::&lt;DomainBlock, <span class="kw">_</span>&gt;::new(
-                    <span class="self">self</span>.executor.clone(),
-                    runtime_code.into(),
-                );
+                <span class="kw">let </span>domain_stateless_runtime = <span class="self">self</span>.get_domain_runtime(best_hash, domain_id)<span class="question-mark">?</span>;
                 domain_stateless_runtime
-                    .inbox_response_storage_key(message_id)
+                    .inbox_response_storage_key(message_key)
                     .map(<span class="prelude-val">Some</span>)
             }
         }

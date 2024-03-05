@@ -59,6 +59,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["subspace_runtime_primitives",["",[],["lib.rs"]]],\
 ["subspace_service",["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs"]]],["config.rs","dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs","transaction_pool.rs"]]],\
 ["subspace_test_client",["",[],["chain_spec.rs","domain_chain_spec.rs","lib.rs"]]],\
+["subspace_test_primitives",["",[],["lib.rs"]]],\
 ["subspace_test_runtime",["",[],["lib.rs"]]],\
 ["subspace_test_service",["",[],["lib.rs"]]],\
 ["subspace_verification",["",[],["lib.rs"]]]\

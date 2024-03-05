@@ -1133,6 +1133,18 @@
 <a href="#1131" id="1131">1131</a>
 <a href="#1132" id="1132">1132</a>
 <a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1222,6 +1234,8 @@
 <span class="kw">use </span>sp_consensus_subspace::{
     FarmerPublicKey, KzgExtension, PosExtension, PotExtension, PotNextSlotInput, SubspaceApi,
 };
+<span class="kw">use </span>sp_core::offchain::storage::OffchainDb;
+<span class="kw">use </span>sp_core::offchain::OffchainDbExt;
 <span class="kw">use </span>sp_core::traits::SpawnEssentialNamed;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::{BundleProducerElectionApi, DomainsApi};
@@ -1362,6 +1376,7 @@
 <span class="kw">struct </span>SubspaceExtensionsFactory&lt;PosTable, Client, DomainBlock&gt; {
     kzg: Kzg,
     client: Arc&lt;Client&gt;,
+    backend: Arc&lt;FullBackend&gt;,
     pot_verifier: PotVerifier,
     executor: Arc&lt;RuntimeExecutor&gt;,
     domains_executor: Arc&lt;sc_domains::RuntimeExecutor&gt;,
@@ -1503,13 +1518,14 @@
         }));
 
         exts.register(FraudProofExtension::new(Arc::new(
-            FraudProofHostFunctionsImpl::&lt;<span class="kw">_</span>, <span class="kw">_</span>, DomainBlock, <span class="kw">_</span>&gt;::new(
+            FraudProofHostFunctionsImpl::&lt;<span class="kw">_</span>, <span class="kw">_</span>, DomainBlock, <span class="kw">_</span>, <span class="kw">_</span>&gt;::new(
                 <span class="self">self</span>.client.clone(),
                 <span class="self">self</span>.domains_executor.clone(),
-                Box::new(DomainsExtensionFactory::&lt;<span class="kw">_</span>, Block, DomainBlock, <span class="kw">_</span>&gt;::new(
-                    <span class="self">self</span>.client.clone(),
-                    <span class="self">self</span>.domains_executor.clone(),
-                )),
+                |client, executor| {
+                    <span class="kw">let </span>extension_factory =
+                        DomainsExtensionFactory::&lt;<span class="kw">_</span>, Block, DomainBlock, <span class="kw">_</span>&gt;::new(client, executor);
+                    Box::new(extension_factory) <span class="kw">as </span>Box&lt;<span class="kw">dyn </span>ExtensionsFactory&lt;DomainBlock&gt;&gt;
+                },
             ),
         )));
 
@@ -1523,6 +1539,13 @@
                 <span class="self">self</span>.executor.clone(),
             ),
         )));
+
+        <span class="comment">// if the offchain storage is available, then add offchain extension
+        // to generate and verify MMR proofs
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(offchain_storage) = <span class="self">self</span>.backend.offchain_storage() {
+            <span class="kw">let </span>offchain_db = OffchainDb::new(offchain_storage);
+            exts.register(OffchainDbExt::new(offchain_db));
+        }
 
         exts
     }
@@ -1620,6 +1643,7 @@
             pot_verifier: pot_verifier.clone(),
             executor: executor.clone(),
             domains_executor: Arc::new(domains_executor),
+            backend: backend.clone(),
             _pos_table: PhantomData,
         });
 

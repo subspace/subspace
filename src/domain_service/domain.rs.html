@@ -500,6 +500,12 @@
 <a href="#498" id="498">498</a>
 <a href="#499" id="499">499</a>
 <a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::providers::{BlockImportProvider, RpcProvider};
 <span class="kw">use </span><span class="kw">crate</span>::transaction_pool::FullChainApiWrapper;
 <span class="kw">use crate</span>::{FullBackend, FullClient};
@@ -513,7 +519,8 @@
 <span class="kw">use </span>futures::Stream;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
 <span class="kw">use </span>sc_client_api::{
-    BlockBackend, BlockImportNotification, BlockchainEvents, ExecutorProvider, ProofProvider,
+    AuxStore, BlockBackend, BlockImportNotification, BlockchainEvents, ExecutorProvider,
+    ProofProvider,
 };
 <span class="kw">use </span>sc_consensus::SharedBlockImport;
 <span class="kw">use </span>sc_domains::{ExtensionsFactory, RuntimeExecutor};
@@ -521,7 +528,7 @@
 <span class="kw">use </span>sc_rpc_api::DenyUnsafe;
 <span class="kw">use </span>sc_service::{
     BuildNetworkParams, Configuration <span class="kw">as </span>ServiceConfiguration, NetworkStarter, PartialComponents,
-    SpawnTasksParams, TFullBackend, TaskManager,
+    PruningMode, SpawnTasksParams, TFullBackend, TaskManager,
 };
 <span class="kw">use </span>sc_telemetry::{Telemetry, TelemetryWorker, TelemetryWorkerHandle};
 <span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
@@ -587,7 +594,7 @@
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + DomainCoreApi&lt;Block&gt;
         + MessengerApi&lt;Block, NumberFor&lt;Block&gt;&gt;
-        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
+        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CBlock::Hash&gt;,
     AccountId: Encode + Decode,
 {
     <span class="doccomment">/// Task manager.
@@ -733,6 +740,7 @@
     <span class="kw">pub </span>domain_message_receiver: TracingUnboundedReceiver&lt;ChainTxPoolMsg&gt;,
     <span class="kw">pub </span>provider: Provider,
     <span class="kw">pub </span>skip_empty_bundle_production: bool,
+    <span class="kw">pub </span>consensus_state_pruning: PruningMode,
     <span class="kw">pub </span>skip_out_of_order_slot: bool,
 }
 
@@ -770,11 +778,12 @@
         + ProofProvider&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + BlockchainEvents&lt;CBlock&gt;
+        + AuxStore
         + Send
         + Sync
         + <span class="lifetime">'static</span>,
     CClient::Api: DomainsApi&lt;CBlock, Header&gt;
-        + RelayerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
+        + RelayerApi&lt;CBlock, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;
         + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;&gt;
         + BundleProducerElectionApi&lt;CBlock, subspace_runtime_primitives::Balance&gt;
         + FraudProofApi&lt;CBlock, Header&gt;
@@ -794,7 +803,7 @@
         + TaggedTransactionQueue&lt;Block&gt;
         + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
-        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;&gt;,
+        + RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CBlock::Hash&gt;,
     AccountId: DeserializeOwned
         + Encode
         + Decode
@@ -831,6 +840,7 @@
         domain_message_receiver,
         provider,
         skip_empty_bundle_production,
+        consensus_state_pruning,
         skip_out_of_order_slot,
     } = domain_params;
 
@@ -957,7 +967,9 @@
 
     <span class="kw">if </span>is_authority {
         <span class="kw">let </span>relayer_worker = domain_client_message_relayer::worker::relay_domain_messages(
+            domain_id,
             consensus_client.clone(),
+            consensus_state_pruning,
             client.clone(),
             domain_state_pruning,
             <span class="comment">// domain relayer will use consensus chain sync oracle instead of domain sync orcle
