@@ -497,7 +497,24 @@
 <a href="#495" id="495">495</a>
 <a href="#496" id="496">496</a>
 <a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>rayon_files;
+<span class="kw">pub mod </span>unbuffered_io_file_windows;
 
 <span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
@@ -507,7 +524,7 @@
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, Error, Input, Output};
 <span class="kw">use </span>parking_lot::Mutex;
-<span class="kw">use </span>rayon::ThreadPoolBuildError;
+<span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuildError};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>std::{fmt, io};
@@ -521,7 +538,7 @@
 <span class="kw">use </span>subspace_proof_of_space::{Table, TableGenerator};
 <span class="kw">use </span>subspace_rpc_primitives::{SlotInfo, SolutionResponse};
 <span class="kw">use </span>thiserror::Error;
-<span class="kw">use </span>tracing::{debug, error, info, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, info, trace, warn, Span};
 
 <span class="doccomment">/// Auditing details
 </span><span class="attr">#[derive(Debug, Copy, Clone, Encode, Decode)]
@@ -829,6 +846,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) thread_pool: ThreadPool,
 }
 
 <span class="doccomment">/// Starts farming process.
@@ -854,6 +872,7 @@
         handlers,
         modifying_sector_index,
         <span class="kw-2">mut </span>slot_info_notifications,
+        thread_pool,
     } = farming_options;
 
     <span class="kw">let </span>farmer_app_info = node_client
@@ -865,6 +884,7 @@
     </span><span class="kw">let </span>farming_timeout = farmer_app_info.farming_timeout;
 
     <span class="kw">let </span>table_generator = Arc::new(Mutex::new(PosTable::generator()));
+    <span class="kw">let </span>span = Span::current();
 
     <span class="kw">while let </span><span class="prelude-val">Some</span>(slot_info) = slot_info_notifications.next().<span class="kw">await </span>{
         <span class="kw">let </span>result: <span class="prelude-ty">Result</span>&lt;(), FarmingError&gt; = <span class="kw">try </span>{
@@ -878,15 +898,19 @@
                 <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read().<span class="kw">await</span>;
                 <span class="kw">let </span>maybe_sector_being_modified = modifying_sector_guard.as_ref().copied();
 
-                plot_audit.audit(PlotAuditOptions::&lt;PosTable&gt; {
-                    public_key: <span class="kw-2">&amp;</span>public_key,
-                    reward_address: <span class="kw-2">&amp;</span>reward_address,
-                    slot_info,
-                    sectors_metadata: <span class="kw-2">&amp;</span>sectors_metadata,
-                    kzg: <span class="kw-2">&amp;</span>kzg,
-                    erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
-                    maybe_sector_being_modified,
-                    table_generator: <span class="kw-2">&amp;</span>table_generator,
+                thread_pool.install(|| {
+                    <span class="kw">let </span>_span_guard = span.enter();
+
+                    plot_audit.audit(PlotAuditOptions::&lt;PosTable&gt; {
+                        public_key: <span class="kw-2">&amp;</span>public_key,
+                        reward_address: <span class="kw-2">&amp;</span>reward_address,
+                        slot_info,
+                        sectors_metadata: <span class="kw-2">&amp;</span>sectors_metadata,
+                        kzg: <span class="kw-2">&amp;</span>kzg,
+                        erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
+                        maybe_sector_being_modified,
+                        table_generator: <span class="kw-2">&amp;</span>table_generator,
+                    })
                 })<span class="question-mark">?
             </span>};
 
@@ -899,6 +923,8 @@
                 a_solution_distance.cmp(<span class="kw-2">&amp;</span>b_solution_distance)
             });
 
+            <span class="kw">let </span><span class="kw-2">mut </span>sectors_solutions = sectors_solutions.into_iter();
+
             handlers
                 .farming_notification
                 .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Auditing(AuditingDetails {
@@ -906,7 +932,13 @@
                     time: start.elapsed(),
                 }));
 
-            <span class="lifetime">'solutions_processing</span>: <span class="kw">for </span>(sector_index, sector_solutions) <span class="kw">in </span>sectors_solutions {
+            <span class="lifetime">'solutions_processing</span>: <span class="kw">while let </span><span class="prelude-val">Some</span>((sector_index, sector_solutions)) = thread_pool
+                .install(|| {
+                    <span class="kw">let </span>_span_guard = span.enter();
+
+                    sectors_solutions.next()
+                })
+            {
                 <span class="kw">if </span>sector_solutions.is_empty() {
                     <span class="kw">continue</span>;
                 }

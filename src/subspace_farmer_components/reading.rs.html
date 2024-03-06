@@ -424,6 +424,28 @@
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::sector::{
     sector_record_chunks_size, RecordMetadata, SectorContentsMap, SectorContentsMapFromBytesError,
     SectorMetadataChecksummed,
@@ -574,16 +596,39 @@
         )
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
+    <span class="kw">let </span>sector_contents_map_size = SectorContentsMap::encoded_size(pieces_in_sector) <span class="kw">as </span>u64;
     <span class="kw">match </span>sector {
         ReadAt::Sync(sector) =&gt; {
+            <span class="comment">// TODO: Random reads are slow on Windows due to a variety of bugs with its disk
+            //  subsystem:
+            //    * https://learn.microsoft.com/en-us/answers/questions/1601862/windows-is-leaking-memory-when-reading-random-chun
+            //    * https://learn.microsoft.com/en-us/answers/questions/1608540/getfileinformationbyhandle-followed-by-read-with-f
+            //    * and likely some more that are less obvious
+            //  As a workaround, read the whole sector at once instead of individual record chunks,
+            //  which while results in higher data transfer from SSD, reads data in larger blocks
+            //  and ends up being faster in many cases even though it uses more RAM while doing so.
+            //  It is also likely possible to read large parts of the sector instead of the whole
+            //  sector if code below is not parallelized, but logic will become even more
+            //  convoluted, so for now it is not done.
+            </span><span class="attr">#[cfg(windows)]
+            </span><span class="kw">let </span>sector_bytes = {
+                <span class="kw">let </span><span class="kw-2">mut </span>sector_bytes = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="kw">crate</span>::sector::sector_size(pieces_in_sector)];
+                sector.read_at(<span class="kw-2">&amp;mut </span>sector_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
+                sector_bytes
+            };
             read_chunks_inputs.into_par_iter().flatten().try_for_each(
                 |(maybe_record_chunk, chunk_location, encoded_chunk_used, s_bucket)| {
                     <span class="kw">let </span><span class="kw-2">mut </span>record_chunk = [<span class="number">0</span>; Scalar::FULL_BYTES];
-                    sector
+                    <span class="attr">#[cfg(windows)]
+                    </span>record_chunk.copy_from_slice(
+                        <span class="kw-2">&amp;</span>sector_bytes[sector_contents_map_size <span class="kw">as </span>usize
+                            + chunk_location <span class="kw">as </span>usize * Scalar::FULL_BYTES..][..Scalar::FULL_BYTES],
+                    );
+                    <span class="attr">#[cfg(not(windows))]
+                    </span>sector
                         .read_at(
                             <span class="kw-2">&amp;mut </span>record_chunk,
-                            SectorContentsMap::encoded_size(pieces_in_sector) <span class="kw">as </span>u64
-                                + chunk_location * Scalar::FULL_BYTES <span class="kw">as </span>u64,
+                            sector_contents_map_size + chunk_location * Scalar::FULL_BYTES <span class="kw">as </span>u64,
                         )
                         .map_err(|error| ReadingError::FailedToReadChunk {
                             chunk_location,
@@ -624,8 +669,7 @@
                             <span class="kw-2">&amp;</span>sector
                                 .read_at(
                                     <span class="macro">vec!</span>[<span class="number">0</span>; Scalar::FULL_BYTES],
-                                    SectorContentsMap::encoded_size(pieces_in_sector) <span class="kw">as </span>u64
-                                        + chunk_location * Scalar::FULL_BYTES <span class="kw">as </span>u64,
+                                    sector_contents_map_size + chunk_location * Scalar::FULL_BYTES <span class="kw">as </span>u64,
                                 )
                                 .<span class="kw">await
                                 </span>.map_err(|error| ReadingError::FailedToReadChunk {

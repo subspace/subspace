@@ -2001,6 +2001,29 @@
 <a href="#1999" id="1999">1999</a>
 <a href="#2000" id="2000">2000</a>
 <a href="#2001" id="2001">2001</a>
+<a href="#2002" id="2002">2002</a>
+<a href="#2003" id="2003">2003</a>
+<a href="#2004" id="2004">2004</a>
+<a href="#2005" id="2005">2005</a>
+<a href="#2006" id="2006">2006</a>
+<a href="#2007" id="2007">2007</a>
+<a href="#2008" id="2008">2008</a>
+<a href="#2009" id="2009">2009</a>
+<a href="#2010" id="2010">2010</a>
+<a href="#2011" id="2011">2011</a>
+<a href="#2012" id="2012">2012</a>
+<a href="#2013" id="2013">2013</a>
+<a href="#2014" id="2014">2014</a>
+<a href="#2015" id="2015">2015</a>
+<a href="#2016" id="2016">2016</a>
+<a href="#2017" id="2017">2017</a>
+<a href="#2018" id="2018">2018</a>
+<a href="#2019" id="2019">2019</a>
+<a href="#2020" id="2020">2020</a>
+<a href="#2021" id="2021">2021</a>
+<a href="#2022" id="2022">2022</a>
+<a href="#2023" id="2023">2023</a>
+<a href="#2024" id="2024">2024</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -2011,6 +2034,9 @@
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::reward_signing::reward_signing;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::rayon_files::RayonFiles;
+<span class="attr">#[cfg(windows)]
+</span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::unbuffered_io_file_windows::UnbufferedIoFileWindows;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::unbuffered_io_file_windows::DISK_SECTOR_SIZE;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::farming::FarmingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::{
     farming, slot_notification_forwarder, FarmingNotification, FarmingOptions, PlotAudit,
@@ -2726,8 +2752,8 @@
                 / <span class="number">100
                 </span>* (<span class="number">100 </span>- u64::from(cache_percentage.get()));
             <span class="comment">// Do the rounding to make sure we have exactly as much space as fits whole number of
-            // sectors
-            </span>potentially_plottable_space / single_sector_overhead
+            // sectors, account for disk sector size just in case
+            </span>(potentially_plottable_space - DISK_SECTOR_SIZE <span class="kw">as </span>u64) / single_sector_overhead
         };
 
         <span class="kw">if </span>target_sector_count == <span class="number">0 </span>{
@@ -2747,12 +2773,17 @@
                 allocated_space,
             });
         }
+        <span class="comment">// Align plot file size for disk sector size
+        </span><span class="kw">let </span>plot_file_size = (target_sector_count * sector_size <span class="kw">as </span>u64)
+            .div_ceil(DISK_SECTOR_SIZE <span class="kw">as </span>u64)
+            * DISK_SECTOR_SIZE <span class="kw">as </span>u64;
 
         <span class="comment">// Remaining space will be used for caching purposes
         </span><span class="kw">let </span>cache_capacity = {
             <span class="kw">let </span>cache_space = allocated_space
                 - fixed_space_usage
-                - (target_sector_count * single_sector_overhead);
+                - plot_file_size
+                - (sector_metadata_size <span class="kw">as </span>u64 * target_sector_count);
             (cache_space / u64::from(DiskPieceCache::element_size())) <span class="kw">as </span>u32
         };
         <span class="kw">let </span>target_sector_count = <span class="kw">match </span>SectorIndex::try_from(target_sector_count) {
@@ -2879,13 +2910,21 @@
 
         plot_file.advise_random_access()<span class="question-mark">?</span>;
 
-        <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
-        // writes to fail later)
-        </span>plot_file
-            .preallocate(sector_size <span class="kw">as </span>u64 * u64::from(target_sector_count))
-            .map_err(SingleDiskFarmError::CantPreallocatePlotFile)<span class="question-mark">?</span>;
-        <span class="comment">// Truncating file (if necessary)
-        </span>plot_file.set_len(sector_size <span class="kw">as </span>u64 * u64::from(target_sector_count))<span class="question-mark">?</span>;
+        <span class="kw">if </span>plot_file.allocated_size()<span class="question-mark">? </span>!= plot_file_size {
+            <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
+            // writes to fail later)
+            </span>plot_file
+                .preallocate(plot_file_size)
+                .map_err(SingleDiskFarmError::CantPreallocatePlotFile)<span class="question-mark">?</span>;
+            <span class="comment">// Truncating file (if necessary)
+            </span>plot_file.set_len(sector_size <span class="kw">as </span>u64 * u64::from(target_sector_count))<span class="question-mark">?</span>;
+
+            <span class="comment">// TODO: Hack due to Windows bugs:
+            //  https://learn.microsoft.com/en-us/answers/questions/1608540/getfileinformationbyhandle-followed-by-read-with-f
+            </span><span class="kw">if </span><span class="macro">cfg!</span>(windows) {
+                <span class="macro">warn!</span>(<span class="string">"Farm was resized, farmer restart is needed for optimal performance!"</span>)
+            }
+        }
 
         <span class="kw">let </span>piece_cache = DiskPieceCache::open(<span class="kw-2">&amp;</span>directory, cache_capacity)<span class="question-mark">?</span>;
         <span class="kw">let </span>plot_cache = DiskPlotCache::new(
@@ -3062,61 +3101,68 @@
                     }
                 };
 
-                <span class="kw">let </span>handle = Handle::current();
-                <span class="kw">let </span>span = span.clone();
-                thread_pool.install(<span class="kw">move </span>|| {
-                    <span class="kw">let </span>_span_guard = span.enter();
+                <span class="kw">let </span>farming_fut = <span class="kw">async move </span>{
+                    <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
+                        <span class="comment">// Dropped before starting
+                        </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    }
 
-                    <span class="kw">let </span>farming_fut = <span class="kw">async move </span>{
-                        <span class="kw">if </span>start_receiver.recv().<span class="kw">await</span>.is_err() {
-                            <span class="comment">// Dropped before starting
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(farming_delay) = delay_farmer_receiver {
+                        <span class="kw">if </span>farming_delay.<span class="kw">await</span>.is_err() {
+                            <span class="comment">// Dropped before resolving
                             </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
                         }
+                    }
 
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(farming_delay) = delay_farmer_receiver {
-                            <span class="kw">if </span>farming_delay.<span class="kw">await</span>.is_err() {
-                                <span class="comment">// Dropped before resolving
-                                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    <span class="kw">let </span>plot = thread_pool.install(|| {
+                        <span class="attr">#[cfg(windows)]
+                        </span>{
+                            RayonFiles::open_with(
+                                <span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE),
+                                UnbufferedIoFileWindows::open,
+                            )
+                        }
+                        <span class="attr">#[cfg(not(windows))]
+                        </span>{
+                            RayonFiles::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE))
+                        }
+                    })<span class="question-mark">?</span>;
+                    <span class="kw">let </span>plot_audit = PlotAudit::new(<span class="kw-2">&amp;</span>plot);
+
+                    <span class="kw">let </span>farming_options = FarmingOptions {
+                        public_key,
+                        reward_address,
+                        node_client,
+                        plot_audit,
+                        sectors_metadata,
+                        kzg,
+                        erasure_coding,
+                        handlers,
+                        modifying_sector_index,
+                        slot_info_notifications: slot_info_forwarder_receiver,
+                        thread_pool,
+                    };
+                    farming::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
+                </span>};
+
+                Handle::current().block_on(<span class="kw">async </span>{
+                    <span class="macro">select! </span>{
+                        farming_result = farming_fut.fuse() =&gt; {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_result
+                                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
+                                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
+                            {
+                                <span class="macro">error!</span>(
+                                    %error,
+                                    <span class="string">"Farming failed to send error to background task"</span>,
+                                );
                             }
                         }
-
-                        <span class="kw">let </span>plot = RayonFiles::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE))<span class="question-mark">?</span>;
-                        <span class="kw">let </span>plot_audit = PlotAudit::new(<span class="kw-2">&amp;</span>plot);
-
-                        <span class="kw">let </span>farming_options = FarmingOptions {
-                            public_key,
-                            reward_address,
-                            node_client,
-                            plot_audit,
-                            sectors_metadata,
-                            kzg,
-                            erasure_coding,
-                            handlers,
-                            modifying_sector_index,
-                            slot_info_notifications: slot_info_forwarder_receiver,
-                        };
-                        farming::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(farming_options).<span class="kw">await
-                    </span>};
-
-                    handle.block_on(<span class="kw">async </span>{
-                        <span class="macro">select! </span>{
-                            farming_result = farming_fut.fuse() =&gt; {
-                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_result
-                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(error_sender) = error_sender.lock().take()
-                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = error_sender.send(error.into())
-                                {
-                                    <span class="macro">error!</span>(
-                                        %error,
-                                        <span class="string">"Farming failed to send error to background task"</span>,
-                                    );
-                                }
-                            }
-                            <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
-                                <span class="comment">// Nothing, just exit
-                            </span>}
-                        }
-                    });
-                })
+                        <span class="kw">_ </span>= stop_receiver.recv().fuse() =&gt; {
+                            <span class="comment">// Nothing, just exit
+                        </span>}
+                    }
+                });
             }
         });
         <span class="kw">let </span>farming_join_handle = AsyncJoinOnDrop::new(farming_join_handle, <span class="bool-val">false</span>);
