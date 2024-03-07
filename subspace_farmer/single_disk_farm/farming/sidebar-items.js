@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["FarmingError","FarmingNotification","ProvingResult"],"mod":["rayon_files","unbuffered_io_file_windows"],"struct":["AuditingDetails","DecodedFarmingError","PlotAudit","PlotAuditOptions","ProvingDetails"]};
+window.SIDEBAR_ITEMS = {"enum":["FarmingError","FarmingNotification","ProvingResult"],"mod":["rayon_files"],"struct":["AuditingDetails","DecodedFarmingError","PlotAudit","PlotAuditOptions","ProvingDetails"]};

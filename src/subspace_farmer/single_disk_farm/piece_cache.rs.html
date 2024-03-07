@@ -260,17 +260,37 @@
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
+<span class="attr">#[cfg(windows)]
+</span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::DISK_SECTOR_SIZE;
 <span class="kw">use </span>derive_more::Display;
-<span class="kw">use </span>std::fs::{File, OpenOptions};
+<span class="attr">#[cfg(not(windows))]
+</span><span class="kw">use </span>std::fs::{File, OpenOptions};
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::{fs, io, mem};
 <span class="kw">use </span>subspace_core_primitives::crypto::blake3_hash_list;
 <span class="kw">use </span>subspace_core_primitives::{Blake3Hash, Piece, PieceIndex};
-<span class="kw">use </span>subspace_farmer_components::file_ext::{FileExt, OpenOptionsExt};
+<span class="kw">use </span>subspace_farmer_components::file_ext::FileExt;
+<span class="attr">#[cfg(not(windows))]
+</span><span class="kw">use </span>subspace_farmer_components::file_ext::OpenOptionsExt;
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::{debug, info, warn};
 
@@ -278,7 +298,7 @@
 </span><span class="attr">#[derive(Debug, Error)]
 </span><span class="kw">pub enum </span>DiskPieceCacheError {
     <span class="doccomment">/// I/O error occurred
-    </span><span class="attr">#[error(<span class="string">"I/O error: {0}"</span>)]
+    </span><span class="attr">#[error(<span class="string">"Disk piece cache I/O error: {0}"</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
     <span class="doccomment">/// Can't preallocate cache file, probably not enough space on disk
     </span><span class="attr">#[error(<span class="string">"Can't preallocate cache file, probably not enough space on disk: {0}"</span>)]
@@ -306,7 +326,10 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Inner {
-    file: File,
+    <span class="attr">#[cfg(not(windows))]
+    </span>file: File,
+    <span class="attr">#[cfg(windows)]
+    </span>file: UnbufferedIoFileWindows,
     num_elements: u32,
 }
 
@@ -325,17 +348,25 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::ZeroCapacity);
         }
 
-        <span class="kw">let </span>file = OpenOptions::new()
+        <span class="attr">#[cfg(not(windows))]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>file = OpenOptions::new()
             .read(<span class="bool-val">true</span>)
             .write(<span class="bool-val">true</span>)
             .create(<span class="bool-val">true</span>)
             .advise_random_access()
             .open(directory.join(<span class="self">Self</span>::FILE_NAME))<span class="question-mark">?</span>;
 
-        file.advise_random_access()<span class="question-mark">?</span>;
+        <span class="attr">#[cfg(not(windows))]
+        </span>file.advise_random_access()<span class="question-mark">?</span>;
+
+        <span class="attr">#[cfg(windows)]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>file = UnbufferedIoFileWindows::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::FILE_NAME))<span class="question-mark">?</span>;
 
         <span class="kw">let </span>expected_size = u64::from(<span class="self">Self</span>::element_size()) * u64::from(capacity);
-        <span class="kw">if </span>file.allocated_size()<span class="question-mark">? </span>!= expected_size {
+        <span class="comment">// Align plot file size for disk sector size
+        </span><span class="kw">let </span>expected_size =
+            expected_size.div_ceil(DISK_SECTOR_SIZE <span class="kw">as </span>u64) * DISK_SECTOR_SIZE <span class="kw">as </span>u64;
+        <span class="kw">if </span>file.size()<span class="question-mark">? </span>!= expected_size {
             <span class="comment">// Allocating the whole file (`set_len` below can create a sparse file, which will cause
             // writes to fail later)
             </span>file.preallocate(expected_size)
@@ -363,7 +394,6 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>contents(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (Offset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">'_ </span>{
-        <span class="kw">let </span>file = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.file;
         <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
         <span class="kw">let </span><span class="kw-2">mut </span>early_exit = <span class="bool-val">false</span>;
 
@@ -373,7 +403,7 @@
                 <span class="kw">return </span>(Offset(offset), <span class="prelude-val">None</span>);
             }
 
-            <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(file, offset, <span class="kw-2">&amp;mut </span>element) {
+            <span class="kw">match </span><span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span>element) {
                 <span class="prelude-val">Ok</span>(maybe_piece_index) =&gt; {
                     <span class="kw">if </span>maybe_piece_index.is_none() {
                         <span class="comment">// End of stored pieces, no need to read further
@@ -444,11 +474,7 @@
             });
         }
 
-        <span class="self">Self</span>::read_piece_internal(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.inner.file,
-            offset,
-            <span class="kw-2">&amp;mut </span><span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize],
-        )
+        <span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span><span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize])
     }
 
     <span class="doccomment">/// Read piece from cache at specified offset.
@@ -468,7 +494,7 @@
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
-        <span class="kw">if </span><span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span><span class="self">self</span>.inner.file, offset, <span class="kw-2">&amp;mut </span>element)<span class="question-mark">?</span>.is_some() {
+        <span class="kw">if </span><span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span>element)<span class="question-mark">?</span>.is_some() {
             <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
             piece.copy_from_slice(<span class="kw-2">&amp;</span>element[PieceIndex::SIZE..][..Piece::SIZE]);
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece))
@@ -478,11 +504,13 @@
     }
 
     <span class="kw">fn </span>read_piece_internal(
-        file: <span class="kw-2">&amp;</span>File,
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
         offset: u32,
         element: <span class="kw-2">&amp;mut </span>[u8],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PieceIndex&gt;, DiskPieceCacheError&gt; {
-        file.read_exact_at(element, u64::from(offset) * u64::from(<span class="self">Self</span>::element_size()))<span class="question-mark">?</span>;
+        <span class="self">self</span>.inner
+            .file
+            .read_exact_at(element, u64::from(offset) * u64::from(<span class="self">Self</span>::element_size()))<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(piece_index_bytes, remaining_bytes) = element.split_at(PieceIndex::SIZE);
         <span class="kw">let </span>(piece_bytes, expected_checksum) = remaining_bytes.split_at(Piece::SIZE);

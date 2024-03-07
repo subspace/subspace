@@ -218,10 +218,21 @@
 <a href="#216" id="216">216</a>
 <a href="#217" id="217">217</a>
 <a href="#218" id="218">218</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>async_lock::RwLock;
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+</pre></div><pre class="rust"><code><span class="attr">#[cfg(windows)]
+</span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
+<span class="kw">use </span>async_lock::RwLock;
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{SinkExt, StreamExt};
-<span class="kw">use </span>std::fs::File;
+<span class="attr">#[cfg(not(windows))]
+</span><span class="kw">use </span>std::fs::File;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceOffset, PublicKey, SectorId, SectorIndex};
@@ -252,7 +263,8 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new&lt;PosTable&gt;(
         public_key: PublicKey,
         pieces_in_sector: u16,
-        plot_file: Arc&lt;File&gt;,
+        <span class="attr">#[cfg(not(windows))] </span>plot_file: Arc&lt;File&gt;,
+        <span class="attr">#[cfg(windows)] </span>plot_file: Arc&lt;UnbufferedIoFileWindows&gt;,
         sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
         erasure_coding: ErasureCoding,
         modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
@@ -262,15 +274,18 @@
     {
         <span class="kw">let </span>(read_piece_sender, read_piece_receiver) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>reading_fut = read_pieces::&lt;PosTable&gt;(
-            public_key,
-            pieces_in_sector,
-            plot_file,
-            sectors_metadata,
-            erasure_coding,
-            modifying_sector_index,
-            read_piece_receiver,
-        );
+        <span class="kw">let </span>reading_fut = <span class="kw">async move </span>{
+            read_pieces::&lt;PosTable, <span class="kw">_</span>&gt;(
+                public_key,
+                pieces_in_sector,
+                <span class="kw-2">&amp;*</span>plot_file,
+                sectors_metadata,
+                erasure_coding,
+                modifying_sector_index,
+                read_piece_receiver,
+            )
+            .<span class="kw">await
+        </span>};
 
         (<span class="self">Self </span>{ read_piece_sender }, reading_fut)
     }
@@ -300,16 +315,17 @@
 }
 
 <span class="attr">#[allow(clippy::too_many_arguments)]
-</span><span class="kw">async fn </span>read_pieces&lt;PosTable&gt;(
+</span><span class="kw">async fn </span>read_pieces&lt;PosTable, S&gt;(
     public_key: PublicKey,
     pieces_in_sector: u16,
-    plot_file: Arc&lt;File&gt;,
+    plot_file: S,
     sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     erasure_coding: ErasureCoding,
     modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw-2">mut </span>read_piece_receiver: mpsc::Receiver&lt;ReadPieceRequest&gt;,
 ) <span class="kw">where
     </span>PosTable: Table,
+    S: ReadAtSync,
 {
     <span class="kw">let </span><span class="kw-2">mut </span>table_generator = PosTable::generator();
 
