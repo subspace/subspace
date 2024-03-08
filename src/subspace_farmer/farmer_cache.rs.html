@@ -983,24 +983,6 @@
 <a href="#981" id="981">981</a>
 <a href="#982" id="982">982</a>
 <a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a>
-<a href="#985" id="985">985</a>
-<a href="#986" id="986">986</a>
-<a href="#987" id="987">987</a>
-<a href="#988" id="988">988</a>
-<a href="#989" id="989">989</a>
-<a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
-<a href="#992" id="992">992</a>
-<a href="#993" id="993">993</a>
-<a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a>
-<a href="#996" id="996">996</a>
-<a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
-<a href="#1001" id="1001">1001</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -1009,7 +991,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plot_cache::{DiskPlotCache, MaybePieceStoredResult};
 <span class="kw">use </span><span class="kw">crate</span>::utils::{run_future_in_dedicated_thread, AsyncJoinOnDrop};
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
-<span class="kw">use </span>futures::channel::oneshot;
 <span class="kw">use </span>futures::stream::{FuturesOrdered, FuturesUnordered};
 <span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>parking_lot::RwLock;
@@ -1055,7 +1036,6 @@
 </span><span class="kw">enum </span>WorkerCommand {
     ReplaceBackingCaches {
         new_piece_caches: Vec&lt;DiskPieceCache&gt;,
-        acknowledgement: oneshot::Sender&lt;()&gt;,
     },
     ForgetKey {
         key: RecordKey,
@@ -1104,15 +1084,11 @@
             .take()
             .expect(<span class="string">"Always set during worker instantiation"</span>);
 
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(WorkerCommand::ReplaceBackingCaches {
-            new_piece_caches,
-            acknowledgement,
-        }) = worker_receiver.recv().<span class="kw">await
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(WorkerCommand::ReplaceBackingCaches { new_piece_caches }) =
+            worker_receiver.recv().<span class="kw">await
         </span>{
             <span class="self">self</span>.initialize(<span class="kw-2">&amp;</span>piece_getter, <span class="kw-2">&amp;mut </span>worker_state, new_piece_caches)
                 .<span class="kw">await</span>;
-            <span class="comment">// Doesn't matter if receiver is still waiting for acknowledgement
-            </span><span class="kw">let _ </span>= acknowledgement.send(());
         } <span class="kw">else </span>{
             <span class="comment">// Piece cache is dropped before backing caches were sent
             </span><span class="kw">return</span>;
@@ -1165,14 +1141,9 @@
         </span>PG: PieceGetter,
     {
         <span class="kw">match </span>command {
-            WorkerCommand::ReplaceBackingCaches {
-                new_piece_caches,
-                acknowledgement,
-            } =&gt; {
+            WorkerCommand::ReplaceBackingCaches { new_piece_caches } =&gt; {
                 <span class="self">self</span>.initialize(piece_getter, worker_state, new_piece_caches)
                     .<span class="kw">await</span>;
-                <span class="comment">// Doesn't matter if receiver is still waiting for acknowledgement
-                </span><span class="kw">let _ </span>= acknowledgement.send(());
             }
             <span class="comment">// TODO: Consider implementing optional re-sync of the piece instead of just forgetting
             </span>WorkerCommand::ForgetKey { key } =&gt; {
@@ -1935,28 +1906,21 @@
         }
     }
 
-    <span class="doccomment">/// Initialize replacement of backing caches, returns acknowledgement receiver that can be used
-    /// to identify when cache initialization has finished
+    <span class="doccomment">/// Initialize replacement of backing caches
     </span><span class="kw">pub async fn </span>replace_backing_caches(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         new_piece_caches: Vec&lt;DiskPieceCache&gt;,
         new_plot_caches: Vec&lt;DiskPlotCache&gt;,
-    ) -&gt; oneshot::Receiver&lt;()&gt; {
-        <span class="kw">let </span>(sender, receiver) = oneshot::channel();
+    ) {
         <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self
             </span>.worker_sender
-            .send(WorkerCommand::ReplaceBackingCaches {
-                new_piece_caches,
-                acknowledgement: sender,
-            })
+            .send(WorkerCommand::ReplaceBackingCaches { new_piece_caches })
             .<span class="kw">await
         </span>{
             <span class="macro">warn!</span>(%error, <span class="string">"Failed to replace backing caches, worker exited"</span>);
         }
 
         <span class="kw-2">*</span><span class="self">self</span>.plot_caches.write() = new_plot_caches;
-
-        receiver
     }
 
     <span class="doccomment">/// Subscribe to cache sync notifications
