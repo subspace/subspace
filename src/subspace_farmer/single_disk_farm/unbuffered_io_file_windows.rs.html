@@ -157,6 +157,35 @@
 <a href="#155" id="155">155</a>
 <a href="#156" id="156">156</a>
 <a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::fs::{File, OpenOptions};
 <span class="kw">use </span>std::io::{Seek, SeekFrom};
@@ -175,6 +204,7 @@
 </span><span class="kw">pub struct </span>UnbufferedIoFileWindows {
     read_file: File,
     write_file: File,
+    physical_sector_size: usize,
     <span class="doccomment">/// Scratch buffer of aligned memory for reads and writes
     </span>buffer: Mutex&lt;Vec&lt;[u8; DISK_SECTOR_SIZE]&gt;&gt;,
 }
@@ -225,9 +255,14 @@
                 buffer.resize(desired_buffer_size, [<span class="number">0</span>; DISK_SECTOR_SIZE]);
             }
 
+            <span class="comment">// While buffer above is allocated with granularity of `MAX_DISK_SECTOR_SIZE`, reads are
+            // done with granularity of physical sector size
+            </span><span class="kw">let </span>offset_in_buffer = (offset % <span class="self">self</span>.physical_sector_size <span class="kw">as </span>u64) <span class="kw">as </span>usize;
             <span class="self">self</span>.read_file.read_at(
-                buffer[..desired_buffer_size].flatten_mut(),
-                offset / DISK_SECTOR_SIZE <span class="kw">as </span>u64 * DISK_SECTOR_SIZE <span class="kw">as </span>u64,
+                <span class="kw-2">&amp;mut </span>buffer.flatten_mut()[..(bytes_to_read + offset_in_buffer)
+                    .div_ceil(<span class="self">self</span>.physical_sector_size)
+                    * <span class="self">self</span>.physical_sector_size],
+                offset / <span class="self">self</span>.physical_sector_size <span class="kw">as </span>u64 * <span class="self">self</span>.physical_sector_size <span class="kw">as </span>u64,
             )<span class="question-mark">?</span>;
 
             buf.copy_from_slice(<span class="kw-2">&amp;</span>buffer.flatten()[offset_in_buffer..][..bytes_to_read]);
@@ -262,9 +297,17 @@
         </span>open_options.advise_unbuffered();
         <span class="kw">let </span>read_file = open_options.read(<span class="bool-val">true</span>).open(path)<span class="question-mark">?</span>;
 
+        <span class="comment">// Physical sector size on many SSDs is smaller than 4096 and should improve performance
+        </span><span class="kw">let </span>physical_sector_size = <span class="kw">if </span>read_file.read_at(<span class="kw-2">&amp;mut </span>[<span class="number">0</span>; <span class="number">512</span>], <span class="number">512</span>).is_ok() {
+            <span class="number">512
+        </span>} <span class="kw">else </span>{
+            DISK_SECTOR_SIZE
+        };
+
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             read_file,
             write_file,
+            physical_sector_size,
             buffer: Mutex::default(),
         })
     }
@@ -293,24 +336,39 @@
         thread_rng().fill(data.as_mut_slice());
         fs::write(<span class="kw-2">&amp;</span>file_path, <span class="kw-2">&amp;</span>data).unwrap();
 
-        <span class="kw">let </span>file = UnbufferedIoFileWindows::open(<span class="kw-2">&amp;</span>file_path).unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>file = UnbufferedIoFileWindows::open(<span class="kw-2">&amp;</span>file_path).unwrap();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>buffer = Vec::new();
-        <span class="kw">for </span>(offset, size) <span class="kw">in </span>[
-            (<span class="number">0_usize</span>, <span class="number">4096_usize</span>),
-            (<span class="number">0</span>, <span class="number">4000</span>),
-            (<span class="number">5</span>, <span class="number">50</span>),
-            (<span class="number">5</span>, <span class="number">4091</span>),
-            (<span class="number">5</span>, MAX_READ_SIZE * <span class="number">2</span>),
-        ] {
-            buffer.resize(size, <span class="number">0</span>);
-            file.read_at(buffer.as_mut_slice(), offset <span class="kw">as </span>u64)
-                .unwrap_or_else(|error| <span class="macro">panic!</span>(<span class="string">"Offset {offset}, size {size}: {error}"</span>));
-            <span class="macro">assert_eq!</span>(
-                <span class="kw-2">&amp;</span>data[offset..][..size],
-                buffer.as_slice(),
-                <span class="string">"Offset {offset}, size {size}"
-            </span>);
+        <span class="kw">for </span>override_physical_sector_size <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="number">4096</span>)] {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(physical_sector_size) = override_physical_sector_size {
+                file.physical_sector_size = physical_sector_size;
+            }
+
+            <span class="kw">let </span><span class="kw-2">mut </span>buffer = Vec::new();
+            <span class="kw">for </span>(offset, size) <span class="kw">in </span>[
+                (<span class="number">0_usize</span>, <span class="number">4096_usize</span>),
+                (<span class="number">0</span>, <span class="number">4000</span>),
+                (<span class="number">5</span>, <span class="number">50</span>),
+                (<span class="number">5</span>, <span class="number">4091</span>),
+                (<span class="number">4091</span>, <span class="number">5</span>),
+                (<span class="number">10000</span>, <span class="number">5</span>),
+                (<span class="number">5</span>, MAX_READ_SIZE * <span class="number">2</span>),
+            ] {
+                buffer.resize(size, <span class="number">0</span>);
+                file.read_at(buffer.as_mut_slice(), offset <span class="kw">as </span>u64)
+                    .unwrap_or_else(|error| {
+                        <span class="macro">panic!</span>(
+                            <span class="string">"Offset {offset}, size {size}, override physical sector size \
+                            {override_physical_sector_size:?}: {error}"
+                        </span>)
+                    });
+
+                <span class="macro">assert_eq!</span>(
+                    <span class="kw-2">&amp;</span>data[offset..][..size],
+                    buffer.as_slice(),
+                    <span class="string">"Offset {offset}, size {size}, override physical sector size \
+                    {override_physical_sector_size:?}"
+                </span>);
+            }
         }
     }
 }
