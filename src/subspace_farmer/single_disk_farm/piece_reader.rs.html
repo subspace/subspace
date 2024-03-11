@@ -226,9 +226,23 @@
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
-<span class="kw">use </span>async_lock::RwLock;
+<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{SinkExt, StreamExt};
 <span class="attr">#[cfg(not(windows))]
@@ -237,6 +251,7 @@
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceOffset, PublicKey, SectorId, SectorIndex};
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
+<span class="kw">use </span>subspace_farmer_components::reading::ReadSectorRecordChunksMode;
 <span class="kw">use </span>subspace_farmer_components::sector::{sector_size, SectorMetadataChecksummed};
 <span class="kw">use </span>subspace_farmer_components::{reading, ReadAt, ReadAtAsync, ReadAtSync};
 <span class="kw">use </span>subspace_proof_of_space::Table;
@@ -260,14 +275,17 @@
     ///
     /// NOTE: Background future is async, but does blocking operations and should be running in
     /// dedicated thread.
+    </span><span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new&lt;PosTable&gt;(
         public_key: PublicKey,
         pieces_in_sector: u16,
         <span class="attr">#[cfg(not(windows))] </span>plot_file: Arc&lt;File&gt;,
         <span class="attr">#[cfg(windows)] </span>plot_file: Arc&lt;UnbufferedIoFileWindows&gt;,
-        sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+        sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
         erasure_coding: ErasureCoding,
-        modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+        modifying_sector_index: Arc&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+        read_sector_record_chunks_mode: ReadSectorRecordChunksMode,
+        global_mutex: Arc&lt;AsyncMutex&lt;()&gt;&gt;,
     ) -&gt; (<span class="self">Self</span>, <span class="kw">impl </span>Future&lt;Output = ()&gt;)
     <span class="kw">where
         </span>PosTable: Table,
@@ -283,6 +301,8 @@
                 erasure_coding,
                 modifying_sector_index,
                 read_piece_receiver,
+                read_sector_record_chunks_mode,
+                global_mutex,
             )
             .<span class="kw">await
         </span>};
@@ -319,10 +339,12 @@
     public_key: PublicKey,
     pieces_in_sector: u16,
     plot_file: S,
-    sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+    sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     erasure_coding: ErasureCoding,
-    modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+    modifying_sector_index: Arc&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw-2">mut </span>read_piece_receiver: mpsc::Receiver&lt;ReadPieceRequest&gt;,
+    mode: ReadSectorRecordChunksMode,
+    global_mutex: Arc&lt;AsyncMutex&lt;()&gt;&gt;,
 ) <span class="kw">where
     </span>PosTable: Table,
     S: ReadAtSync,
@@ -395,6 +417,9 @@
         <span class="kw">let </span>sector_size = sector_size(pieces_in_sector);
         <span class="kw">let </span>sector = plot_file.offset(u64::from(sector_index) * sector_size <span class="kw">as </span>u64);
 
+        <span class="comment">// Take mutex briefly to make sure piece reading is allowed right now
+        </span>global_mutex.lock().<span class="kw">await</span>;
+
         <span class="kw">let </span>maybe_piece = read_piece::&lt;PosTable, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             <span class="kw-2">&amp;</span>public_key,
             piece_offset,
@@ -402,6 +427,7 @@
             <span class="comment">// TODO: Async
             </span><span class="kw-2">&amp;</span>ReadAt::from_sync(<span class="kw-2">&amp;</span>sector),
             <span class="kw-2">&amp;</span>erasure_coding,
+            mode,
             <span class="kw-2">&amp;mut </span>table_generator,
         )
         .<span class="kw">await</span>;
@@ -417,6 +443,7 @@
     sector_metadata: <span class="kw-2">&amp;</span>SectorMetadataChecksummed,
     sector: <span class="kw-2">&amp;</span>ReadAt&lt;S, A&gt;,
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
+    mode: ReadSectorRecordChunksMode,
     table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
 ) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt;
 <span class="kw">where
@@ -434,6 +461,7 @@
         sector_metadata,
         sector,
         erasure_coding,
+        mode,
         table_generator,
     )
     .<span class="kw">await

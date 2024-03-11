@@ -906,6 +906,15 @@
 <a href="#904" id="904">904</a>
 <a href="#905" id="905">905</a>
 <a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
@@ -914,7 +923,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::PlottingThreadPoolManager;
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use crate</span>::{node_client, NodeClient};
-<span class="kw">use </span>async_lock::RwLock;
+<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
@@ -1064,12 +1073,12 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) metadata_file: File,
     <span class="attr">#[cfg(windows)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) metadata_file: UnbufferedIoFileWindows,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) piece_getter: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PG,
     <span class="kw">pub</span>(<span class="kw">super</span>) kzg: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Kzg,
     <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ErasureCoding,
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
     <span class="doccomment">/// Semaphore for part of the plotting when farmer downloads new sector, allows to limit memory
     /// usage of the plotting process, permit will be held until the end of the plotting process
@@ -1077,6 +1086,7 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) record_encoding_concurrency: NonZeroUsize,
     <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool_manager: PlottingThreadPoolManager,
     <span class="kw">pub</span>(<span class="kw">super</span>) stop_receiver: broadcast::Receiver&lt;()&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) global_mutex: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncMutex&lt;()&gt;,
 }
 
 <span class="doccomment">/// Starts plotting process.
@@ -1111,6 +1121,7 @@
         record_encoding_concurrency,
         plotting_thread_pool_manager,
         <span class="kw-2">mut </span>stop_receiver,
+        global_mutex,
     } = plotting_options;
 
     <span class="kw">let </span>abort_early = Arc::new(AtomicBool::new(<span class="bool-val">false</span>));
@@ -1199,6 +1210,9 @@
 
             <span class="kw">break </span>farmer_app_info;
         };
+
+        <span class="comment">// Take mutex briefly to make sure plotting is allowed right now
+        </span>global_mutex.lock().<span class="kw">await</span>;
 
         <span class="kw">let </span>(_downloading_permit, downloaded_sector) =
             <span class="kw">if let </span><span class="prelude-val">Some</span>(downloaded_sector_fut) = maybe_next_downloaded_sector_fut.take() {
@@ -1312,6 +1326,7 @@
                             sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
                             table_generators: <span class="kw-2">&amp;mut </span>table_generators,
                             abort_early: <span class="kw-2">&amp;</span>abort_early,
+                            global_mutex,
                         },
                     )<span class="question-mark">?</span>;
 
@@ -1350,6 +1365,9 @@
         </span>modifying_sector_index.write().<span class="kw">await</span>.replace(sector_index);
 
         {
+            <span class="comment">// Take mutex briefly to make sure writing is allowed right now
+            </span>global_mutex.lock().<span class="kw">await</span>;
+
             handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                 sector_index,
                 SectorUpdate::Plotting(SectorPlottingDetails::Writing),
@@ -1446,7 +1464,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) min_sector_lifetime: HistorySize,
     <span class="kw">pub</span>(<span class="kw">super</span>) node_client: NC,
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) initial_plotting_finished: <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt;,
     <span class="comment">// Delay between segment header being acknowledged by farmer and potentially triggering
@@ -1580,7 +1598,7 @@
     min_sector_lifetime: HistorySize,
     node_client: <span class="kw-2">&amp;</span>NC,
     handlers: <span class="kw-2">&amp;</span>Handlers,
-    sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+    sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     last_archived_segment: <span class="kw-2">&amp;</span>Atomic&lt;SegmentHeader&gt;,
     <span class="kw-2">mut </span>archived_segments_receiver: mpsc::Receiver&lt;()&gt;,
     <span class="kw-2">mut </span>sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,

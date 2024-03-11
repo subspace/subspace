@@ -512,17 +512,26 @@
 <a href="#510" id="510">510</a>
 <a href="#511" id="511">511</a>
 <a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>rayon_files;
 
 <span class="kw">use </span><span class="kw">crate</span>::node_client;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::Handlers;
-<span class="kw">use </span>async_lock::RwLock;
+<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode, Error, Input, Output};
 <span class="kw">use </span>parking_lot::Mutex;
-<span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuildError};
+<span class="kw">use </span>rayon::ThreadPool;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>std::{fmt, io};
@@ -531,6 +540,7 @@
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_farmer_components::auditing::{audit_plot_sync, AuditingError};
 <span class="kw">use </span>subspace_farmer_components::proving::{ProvableSolutions, ProvingError};
+<span class="kw">use </span>subspace_farmer_components::reading::ReadSectorRecordChunksMode;
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadataChecksummed;
 <span class="kw">use </span>subspace_farmer_components::ReadAtSync;
 <span class="kw">use </span>subspace_proof_of_space::{Table, TableGenerator};
@@ -631,9 +641,6 @@
     <span class="doccomment">/// I/O error occurred
     </span><span class="attr">#[error(<span class="string">"Farming I/O error: {0}"</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
-    <span class="doccomment">/// Failed to create thread pool
-    </span><span class="attr">#[error(<span class="string">"Failed to create thread pool: {0}"</span>)]
-    </span>FailedToCreateThreadPool(<span class="attr">#[from] </span>ThreadPoolBuildError),
     <span class="doccomment">/// Decoded farming error
     </span><span class="attr">#[error(<span class="string">"Decoded farming error {0}"</span>)]
     </span>Decoded(DecodedFarmingError),
@@ -665,7 +672,6 @@
             FarmingError::LowLevelAuditing(<span class="kw">_</span>) =&gt; <span class="string">"LowLevelAuditing"</span>,
             FarmingError::LowLevelProving(<span class="kw">_</span>) =&gt; <span class="string">"LowLevelProving"</span>,
             FarmingError::Io(<span class="kw">_</span>) =&gt; <span class="string">"Io"</span>,
-            FarmingError::FailedToCreateThreadPool(<span class="kw">_</span>) =&gt; <span class="string">"FailedToCreateThreadPool"</span>,
             FarmingError::Decoded(<span class="kw">_</span>) =&gt; <span class="string">"Decoded"</span>,
             FarmingError::SlotNotificationStreamEnded =&gt; <span class="string">"SlotNotificationStreamEnded"</span>,
         }
@@ -679,7 +685,6 @@
             FarmingError::LowLevelAuditing(<span class="kw">_</span>) =&gt; <span class="bool-val">true</span>,
             FarmingError::LowLevelProving(error) =&gt; error.is_fatal(),
             FarmingError::Io(<span class="kw">_</span>) =&gt; <span class="bool-val">true</span>,
-            FarmingError::FailedToCreateThreadPool(<span class="kw">_</span>) =&gt; <span class="bool-val">true</span>,
             FarmingError::Decoded(error) =&gt; error.is_fatal,
             FarmingError::SlotNotificationStreamEnded =&gt; <span class="bool-val">true</span>,
         }
@@ -736,6 +741,8 @@
     <span class="doccomment">/// Optional sector that is currently being modified (for example replotted) and should not be
     /// audited
     </span><span class="kw">pub </span>maybe_sector_being_modified: <span class="prelude-ty">Option</span>&lt;SectorIndex&gt;,
+    <span class="doccomment">/// Mode of reading chunks during proving
+    </span><span class="kw">pub </span>read_sector_record_chunks_mode: ReadSectorRecordChunksMode,
     <span class="doccomment">/// Proof of space table generator
     </span><span class="kw">pub </span>table_generator: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Mutex&lt;PosTable::Generator&gt;,
 }
@@ -786,6 +793,7 @@
             kzg,
             erasure_coding,
             maybe_sector_being_modified,
+            read_sector_record_chunks_mode: mode,
             table_generator,
         } = options;
 
@@ -807,6 +815,7 @@
                     reward_address,
                     kzg,
                     erasure_coding,
+                    mode,
                     |seed: <span class="kw-2">&amp;</span>PosSeed| table_generator.lock().generate_parallel(seed),
                 );
 
@@ -838,13 +847,15 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) reward_address: PublicKey,
     <span class="kw">pub</span>(<span class="kw">super</span>) node_client: NC,
     <span class="kw">pub</span>(<span class="kw">super</span>) plot_audit: PlotAudit,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;RwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) kzg: Kzg,
     <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: ErasureCoding,
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;RwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) thread_pool: ThreadPool,
+    <span class="kw">pub</span>(<span class="kw">super</span>) read_sector_record_chunks_mode: ReadSectorRecordChunksMode,
+    <span class="kw">pub</span>(<span class="kw">super</span>) global_mutex: Arc&lt;AsyncMutex&lt;()&gt;&gt;,
 }
 
 <span class="doccomment">/// Starts farming process.
@@ -871,6 +882,8 @@
         modifying_sector_index,
         <span class="kw-2">mut </span>slot_info_notifications,
         thread_pool,
+        read_sector_record_chunks_mode,
+        global_mutex,
     } = farming_options;
 
     <span class="kw">let </span>farmer_app_info = node_client
@@ -885,9 +898,13 @@
     <span class="kw">let </span>span = Span::current();
 
     <span class="kw">while let </span><span class="prelude-val">Some</span>(slot_info) = slot_info_notifications.next().<span class="kw">await </span>{
+        <span class="kw">let </span>slot = slot_info.slot_number;
+
+        <span class="comment">// Take mutex briefly to make sure farming is allowed right now
+        </span>global_mutex.lock().<span class="kw">await</span>;
+
         <span class="kw">let </span>result: <span class="prelude-ty">Result</span>&lt;(), FarmingError&gt; = <span class="kw">try </span>{
             <span class="kw">let </span>start = Instant::now();
-            <span class="kw">let </span>slot = slot_info.slot_number;
             <span class="kw">let </span>sectors_metadata = sectors_metadata.read().<span class="kw">await</span>;
 
             <span class="macro">debug!</span>(%slot, sector_count = %sectors_metadata.len(), <span class="string">"Reading sectors"</span>);
@@ -907,6 +924,7 @@
                         kzg: <span class="kw-2">&amp;</span>kzg,
                         erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
                         maybe_sector_being_modified,
+                        read_sector_record_chunks_mode,
                         table_generator: <span class="kw-2">&amp;</span>table_generator,
                     })
                 })<span class="question-mark">?
@@ -921,8 +939,6 @@
                 a_solution_distance.cmp(<span class="kw-2">&amp;</span>b_solution_distance)
             });
 
-            <span class="kw">let </span><span class="kw-2">mut </span>sectors_solutions = sectors_solutions.into_iter();
-
             handlers
                 .farming_notification
                 .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Auditing(AuditingDetails {
@@ -930,18 +946,20 @@
                     time: start.elapsed(),
                 }));
 
-            <span class="lifetime">'solutions_processing</span>: <span class="kw">while let </span><span class="prelude-val">Some</span>((sector_index, sector_solutions)) = thread_pool
-                .install(|| {
-                    <span class="kw">let </span>_span_guard = span.enter();
+            <span class="comment">// Take mutex and hold until proving end to make sure nothing else major happens at the
+            // same time
+            </span><span class="kw">let </span>_proving_guard = global_mutex.lock().<span class="kw">await</span>;
 
-                    sectors_solutions.next()
-                })
-            {
+            <span class="lifetime">'solutions_processing</span>: <span class="kw">for </span>(sector_index, <span class="kw-2">mut </span>sector_solutions) <span class="kw">in </span>sectors_solutions {
                 <span class="kw">if </span>sector_solutions.is_empty() {
                     <span class="kw">continue</span>;
                 }
                 <span class="kw">let </span><span class="kw-2">mut </span>start = Instant::now();
-                <span class="kw">for </span>maybe_solution <span class="kw">in </span>sector_solutions {
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_solution) = thread_pool.install(|| {
+                    <span class="kw">let </span>_span_guard = span.enter();
+
+                    sector_solutions.next()
+                }) {
                     <span class="kw">let </span>solution = <span class="kw">match </span>maybe_solution {
                         <span class="prelude-val">Ok</span>(solution) =&gt; solution,
                         <span class="prelude-val">Err</span>(error) =&gt; {
