@@ -273,16 +273,6 @@
 <a href="#271" id="271">271</a>
 <a href="#272" id="272">272</a>
 <a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
-<a href="#281" id="281">281</a>
-<a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -303,13 +293,6 @@
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tracing::{debug, info, warn};
-
-<span class="doccomment">/// Max plot space for which to use caching, for larger gaps between the plotted part and the end of
-/// the file it will result in very long period of writing zeroes on Windows, see
-/// https://stackoverflow.com/q/78058306/3806795
-///
-/// Currently set to 2TiB.
-</span><span class="kw">const </span>MAX_WINDOWS_PLOT_SPACE_FOR_CACHE: u64 = <span class="number">2 </span>* <span class="number">1024 </span>* <span class="number">1024 </span>* <span class="number">1024 </span>* <span class="number">1024</span>;
 
 <span class="doccomment">/// Disk plot cache open error
 </span><span class="attr">#[derive(Debug, Error)]
@@ -359,7 +342,7 @@
         target_sector_count: SectorIndex,
         sector_size: usize,
     ) -&gt; <span class="self">Self </span>{
-        <span class="macro">info!</span>(<span class="string">"Checking plot cache contents"</span>);
+        <span class="macro">info!</span>(<span class="string">"Checking plot cache contents, this can take a while"</span>);
         <span class="kw">let </span>sector_size = sector_size <span class="kw">as </span>u64;
         <span class="kw">let </span>cached_pieces = {
             <span class="kw">let </span>sectors_metadata = sectors_metadata.read_blocking();
@@ -372,31 +355,28 @@
             <span class="kw">let </span>file_size = sector_size * u64::from(target_sector_count);
             <span class="kw">let </span>plotted_size = sector_size * sectors_metadata.len() <span class="kw">as </span>u64;
 
-            <span class="comment">// Avoid writing over large gaps on Windows that is very lengthy process
-            </span><span class="kw">if </span>!<span class="macro">cfg!</span>(windows) || (file_size - plotted_size) &lt;= MAX_WINDOWS_PLOT_SPACE_FOR_CACHE {
-                <span class="comment">// Step over all free potential offsets for pieces that could have been cached
-                </span><span class="kw">let </span>from_offset = (plotted_size / <span class="self">Self</span>::element_size() <span class="kw">as </span>u64) <span class="kw">as </span>u32;
-                <span class="kw">let </span>to_offset = (file_size / <span class="self">Self</span>::element_size() <span class="kw">as </span>u64) <span class="kw">as </span>u32;
-                <span class="comment">// TODO: Parallelize or read in larger batches
-                </span><span class="kw">for </span>offset <span class="kw">in </span>(from_offset..to_offset).rev() {
-                    <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(file, offset, <span class="kw-2">&amp;mut </span>element) {
-                        <span class="prelude-val">Ok</span>(maybe_piece_index) =&gt; <span class="kw">match </span>maybe_piece_index {
-                            <span class="prelude-val">Some</span>(piece_index) =&gt; {
-                                map.insert(RecordKey::from(piece_index.to_multihash()), offset);
-                            }
-                            <span class="prelude-val">None </span>=&gt; {
-                                next_offset.replace(offset);
-                                <span class="kw">break</span>;
-                            }
-                        },
-                        <span class="prelude-val">Err</span>(DiskPlotCacheError::ChecksumMismatch) =&gt; {
+            <span class="comment">// Step over all free potential offsets for pieces that could have been cached
+            </span><span class="kw">let </span>from_offset = (plotted_size / <span class="self">Self</span>::element_size() <span class="kw">as </span>u64) <span class="kw">as </span>u32;
+            <span class="kw">let </span>to_offset = (file_size / <span class="self">Self</span>::element_size() <span class="kw">as </span>u64) <span class="kw">as </span>u32;
+            <span class="comment">// TODO: Parallelize or read in larger batches
+            </span><span class="kw">for </span>offset <span class="kw">in </span>(from_offset..to_offset).rev() {
+                <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(file, offset, <span class="kw-2">&amp;mut </span>element) {
+                    <span class="prelude-val">Ok</span>(maybe_piece_index) =&gt; <span class="kw">match </span>maybe_piece_index {
+                        <span class="prelude-val">Some</span>(piece_index) =&gt; {
+                            map.insert(RecordKey::from(piece_index.to_multihash()), offset);
+                        }
+                        <span class="prelude-val">None </span>=&gt; {
                             next_offset.replace(offset);
                             <span class="kw">break</span>;
                         }
-                        <span class="prelude-val">Err</span>(error) =&gt; {
-                            <span class="macro">warn!</span>(%error, %offset, <span class="string">"Failed to read plot cache element"</span>);
-                            <span class="kw">break</span>;
-                        }
+                    },
+                    <span class="prelude-val">Err</span>(DiskPlotCacheError::ChecksumMismatch) =&gt; {
+                        next_offset.replace(offset);
+                        <span class="kw">break</span>;
+                    }
+                    <span class="prelude-val">Err</span>(error) =&gt; {
+                        <span class="macro">warn!</span>(%error, %offset, <span class="string">"Failed to read plot cache element"</span>);
+                        <span class="kw">break</span>;
                     }
                 }
             }
@@ -404,7 +384,7 @@
             CachedPieces { map, next_offset }
         };
 
-        <span class="macro">debug!</span>(<span class="string">"Finished checking plot cache contents"</span>);
+        <span class="macro">info!</span>(<span class="string">"Finished checking plot cache contents"</span>);
 
         <span class="self">Self </span>{
             file: Arc::downgrade(file),

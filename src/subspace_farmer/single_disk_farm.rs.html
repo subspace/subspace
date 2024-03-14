@@ -2134,6 +2134,38 @@
 <a href="#2132" id="2132">2132</a>
 <a href="#2133" id="2133">2133</a>
 <a href="#2134" id="2134">2134</a>
+<a href="#2135" id="2135">2135</a>
+<a href="#2136" id="2136">2136</a>
+<a href="#2137" id="2137">2137</a>
+<a href="#2138" id="2138">2138</a>
+<a href="#2139" id="2139">2139</a>
+<a href="#2140" id="2140">2140</a>
+<a href="#2141" id="2141">2141</a>
+<a href="#2142" id="2142">2142</a>
+<a href="#2143" id="2143">2143</a>
+<a href="#2144" id="2144">2144</a>
+<a href="#2145" id="2145">2145</a>
+<a href="#2146" id="2146">2146</a>
+<a href="#2147" id="2147">2147</a>
+<a href="#2148" id="2148">2148</a>
+<a href="#2149" id="2149">2149</a>
+<a href="#2150" id="2150">2150</a>
+<a href="#2151" id="2151">2151</a>
+<a href="#2152" id="2152">2152</a>
+<a href="#2153" id="2153">2153</a>
+<a href="#2154" id="2154">2154</a>
+<a href="#2155" id="2155">2155</a>
+<a href="#2156" id="2156">2156</a>
+<a href="#2157" id="2157">2157</a>
+<a href="#2158" id="2158">2158</a>
+<a href="#2159" id="2159">2159</a>
+<a href="#2160" id="2160">2160</a>
+<a href="#2161" id="2161">2161</a>
+<a href="#2162" id="2162">2162</a>
+<a href="#2163" id="2163">2163</a>
+<a href="#2164" id="2164">2164</a>
+<a href="#2165" id="2165">2165</a>
+<a href="#2166" id="2166">2166</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -2219,6 +2251,10 @@
 <span class="doccomment">/// Reserve 1M of space for farm info (for potential future expansion)
 </span><span class="kw">const </span>RESERVED_FARM_INFO: u64 = <span class="number">1024 </span>* <span class="number">1024</span>;
 <span class="kw">const </span>NEW_SEGMENT_PROCESSING_DELAY: Duration = Duration::from_secs(<span class="number">30</span>);
+<span class="doccomment">/// Limit for reads in internal benchmark.
+///
+/// 4 seconds is proving time, hence 3 seconds for reads.
+</span><span class="kw">const </span>INTERNAL_BENCHMARK_READ_TIMEOUT: Duration = Duration::from_secs(<span class="number">3</span>);
 
 <span class="doccomment">/// An identifier for single disk farm, can be used for in logs, thread names, etc.
 </span><span class="attr">#[derive(
@@ -3108,6 +3144,47 @@
             (<span class="prelude-val">Some</span>(sender), <span class="prelude-val">Some</span>(receiver))
         };
 
+        <span class="kw">let </span>farming_thread_pool = ThreadPoolBuilder::new()
+            .thread_name(<span class="kw">move </span>|thread_index| <span class="macro">format!</span>(<span class="string">"farming-{disk_farm_index}.{thread_index}"</span>))
+            .num_threads(farming_thread_pool_size)
+            .spawn_handler(tokio_rayon_spawn_handler())
+            .build()
+            .map_err(SingleDiskFarmError::FailedToCreateThreadPool)<span class="question-mark">?</span>;
+        <span class="kw">let </span>farming_plot = farming_thread_pool.install(|| {
+            <span class="attr">#[cfg(windows)]
+            </span>{
+                RayonFiles::open_with(
+                    <span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE),
+                    UnbufferedIoFileWindows::open,
+                )
+            }
+            <span class="attr">#[cfg(not(windows))]
+            </span>{
+                RayonFiles::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE))
+            }
+        })<span class="question-mark">?</span>;
+
+        faster_read_sector_record_chunks_mode_barrier.wait().<span class="kw">await</span>;
+
+        <span class="kw">let </span>read_sector_record_chunks_mode = {
+            <span class="comment">// Error doesn't matter here
+            </span><span class="kw">let </span>_permit = faster_read_sector_record_chunks_mode_concurrency
+                .acquire()
+                .<span class="kw">await</span>;
+            farming_thread_pool.install(|| {
+                <span class="kw">let </span>_span_guard = span.enter();
+
+                faster_read_sector_record_chunks_mode(
+                    <span class="kw-2">&amp;*</span>plot_file,
+                    <span class="kw-2">&amp;</span>farming_plot,
+                    sector_size,
+                    metadata_header.plotted_sector_count,
+                )
+            })<span class="question-mark">?
+        </span>};
+
+        faster_read_sector_record_chunks_mode_barrier.wait().<span class="kw">await</span>;
+
         <span class="kw">let </span>plotting_join_handle = tokio::task::spawn_blocking({
             <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
             <span class="kw">let </span>kzg = kzg.clone();
@@ -3219,38 +3296,6 @@
                     </span>.map_err(BackgroundTaskError::Farming)
             }
         }));
-
-        <span class="kw">let </span>farming_thread_pool = ThreadPoolBuilder::new()
-            .thread_name(<span class="kw">move </span>|thread_index| <span class="macro">format!</span>(<span class="string">"farming-{disk_farm_index}.{thread_index}"</span>))
-            .num_threads(farming_thread_pool_size)
-            .spawn_handler(tokio_rayon_spawn_handler())
-            .build()
-            .map_err(SingleDiskFarmError::FailedToCreateThreadPool)<span class="question-mark">?</span>;
-        <span class="kw">let </span>farming_plot = farming_thread_pool.install(|| {
-            <span class="attr">#[cfg(windows)]
-            </span>{
-                RayonFiles::open_with(
-                    <span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE),
-                    UnbufferedIoFileWindows::open,
-                )
-            }
-            <span class="attr">#[cfg(not(windows))]
-            </span>{
-                RayonFiles::open(<span class="kw-2">&amp;</span>directory.join(<span class="self">Self</span>::PLOT_FILE))
-            }
-        })<span class="question-mark">?</span>;
-
-        faster_read_sector_record_chunks_mode_barrier.wait().<span class="kw">await</span>;
-
-        <span class="kw">let </span>read_sector_record_chunks_mode = {
-            <span class="comment">// Error doesn't matter here
-            </span><span class="kw">let </span>_permit = faster_read_sector_record_chunks_mode_concurrency
-                .acquire()
-                .<span class="kw">await</span>;
-            farming_thread_pool.install(|| {
-                faster_read_sector_record_chunks_mode(<span class="kw-2">&amp;*</span>plot_file, <span class="kw-2">&amp;</span>farming_plot, sector_size)
-            })<span class="question-mark">?
-        </span>};
 
         <span class="kw">let </span>farming_join_handle = tokio::task::spawn_blocking({
             <span class="kw">let </span>erasure_coding = erasure_coding.clone();
@@ -4214,6 +4259,7 @@
     original_plot: <span class="kw-2">&amp;</span>OP,
     farming_plot: <span class="kw-2">&amp;</span>FP,
     sector_size: usize,
+    <span class="kw-2">mut </span>plotted_sector_count: SectorIndex,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ReadSectorRecordChunksMode, SingleDiskFarmError&gt;
 <span class="kw">where
     </span>OP: FileExt + Sync,
@@ -4225,15 +4271,21 @@
 
     original_plot.read_exact_at(<span class="kw-2">&amp;mut </span>sector_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
 
-    <span class="kw">if </span>sector_bytes.iter().all(|byte| <span class="kw-2">*</span>byte == <span class="number">0</span>) {
+    <span class="kw">if </span>plotted_sector_count == <span class="number">0 </span>{
         thread_rng().fill_bytes(<span class="kw-2">&amp;mut </span>sector_bytes);
         original_plot.write_all_at(<span class="kw-2">&amp;</span>sector_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
+
+        plotted_sector_count = <span class="number">1</span>;
     }
 
     <span class="kw">let </span><span class="kw-2">mut </span>fastest_mode = ReadSectorRecordChunksMode::ConcurrentChunks;
     <span class="kw">let </span><span class="kw-2">mut </span>fastest_time = Duration::MAX;
 
     <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">3 </span>{
+        <span class="kw">let </span>sector_offset =
+            sector_size <span class="kw">as </span>u64 * thread_rng().gen_range(<span class="number">0</span>..plotted_sector_count) <span class="kw">as </span>u64;
+        <span class="kw">let </span>farming_plot = farming_plot.offset(sector_offset);
+
         <span class="comment">// A lot simplified version of concurrent chunks
         </span>{
             <span class="kw">let </span>start = Instant::now();
@@ -4246,6 +4298,16 @@
                 })<span class="question-mark">?</span>;
             <span class="kw">let </span>elapsed = start.elapsed();
 
+            <span class="kw">if </span>elapsed &gt;= INTERNAL_BENCHMARK_READ_TIMEOUT {
+                <span class="macro">debug!</span>(
+                    <span class="question-mark">?</span>elapsed,
+                    <span class="string">"Proving method with chunks reading is too slow, using whole sector"
+                </span>);
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(ReadSectorRecordChunksMode::WholeSector);
+            }
+
+            <span class="macro">debug!</span>(<span class="question-mark">?</span>elapsed, <span class="string">"Chunks"</span>);
+
             <span class="kw">if </span>fastest_time &gt; elapsed {
                 fastest_mode = ReadSectorRecordChunksMode::ConcurrentChunks;
                 fastest_time = elapsed;
@@ -4257,6 +4319,8 @@
             farming_plot.read_at(<span class="kw-2">&amp;mut </span>sector_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span>elapsed = start.elapsed();
 
+            <span class="macro">debug!</span>(<span class="question-mark">?</span>elapsed, <span class="string">"Whole sector"</span>);
+
             <span class="kw">if </span>fastest_time &gt; elapsed {
                 fastest_mode = ReadSectorRecordChunksMode::WholeSector;
                 fastest_time = elapsed;
@@ -4264,7 +4328,7 @@
         }
     }
 
-    <span class="macro">debug!</span>(<span class="question-mark">?</span>fastest_mode, <span class="string">"Faster proving method found"</span>);
+    <span class="macro">info!</span>(<span class="question-mark">?</span>fastest_mode, <span class="string">"Faster proving method found"</span>);
 
     <span class="prelude-val">Ok</span>(fastest_mode)
 }
