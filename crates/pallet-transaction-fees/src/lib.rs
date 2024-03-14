@@ -296,3 +296,9 @@ where
         Self::note_transaction_fees(storage_fee, Zero::zero(), Zero::zero())
     }
 }
+
+sp_api::decl_runtime_apis! {
+    pub trait TotalSpacePledgedApi {
+        fn get_total_space_pledged() -> u128;
+    }
+}

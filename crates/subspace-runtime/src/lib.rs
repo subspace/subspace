@@ -431,29 +431,6 @@ parameter_types! {
     pub DynamicCostOfStorage: bool = RuntimeConfigs::enable_dynamic_cost_of_storage();
 }
 
-sp_api::decl_runtime_apis! {
-    pub trait TotalSpacePledgedApi {
-        fn get_total_space_pledged() -> u128;
-    }
-}
-
-impl TotalSpacePledgedApi<Block> for Runtime {
-    fn get_total_space_pledged(&self) -> u128 {
-        self::TotalSpacePledged::get()
-    }
-
-    #[doc = r" !!INTERNAL USE ONLY!!"]
-    #[doc(hidden)]
-    fn __runtime_api_internal_call_api_at(
-        &self,
-        at: <Block as sp_api::__private::BlockT>::Hash,
-        params: std::vec::Vec<u8>,
-        fn_name: &dyn Fn(sp_api::__private::RuntimeVersion) -> &'static str,
-    ) -> std::result::Result<std::vec::Vec<u8>, sp_api::__private::ApiError> {
-        todo!()
-    }
-}
-
 impl pallet_transaction_fees::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type MinReplicationFactor = ConstU16<MIN_REPLICATION_FACTOR>;
@@ -1341,6 +1318,14 @@ impl_runtime_apis! {
             Ok(batches)
         }
     }
+
+    impl pallet_transaction_fees::TotalSpacePledgedApi<Block> for Runtime {
+        fn get_total_space_pledged() -> u128 {
+            self::TotalSpacePledged::get()
+        }
+    }
+
+
 }
 
 #[cfg(test)]
