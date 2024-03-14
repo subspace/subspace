@@ -219,6 +219,26 @@
 <a href="#217" id="217">217</a>
 <a href="#218" id="218">218</a>
 <a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Provides functionality of adding inherent extrinsics to the Domain.
 //! Unlike Primary chain where inherent data is first derived the block author
 //! and the data is verified by the on primary runtime, domains inherents
@@ -233,10 +253,11 @@
 //! Deriving these extrinsics during fraud proof verification should be possible since
 //! verification environment will have access to consensus chain.
 
-</span><span class="kw">use </span>sp_api::ProvideRuntimeApi;
+</span><span class="kw">use </span>sp_api::{ApiExt, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_domains::{DomainId, DomainsApi, DomainsDigestItem};
 <span class="kw">use </span>sp_inherents::{CreateInherentDataProviders, InherentData, InherentDataProvider};
+<span class="kw">use </span>sp_messenger::MessengerApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header};
 <span class="kw">use </span>sp_timestamp::InherentType;
 <span class="kw">use </span>std::error::Error;
@@ -252,7 +273,7 @@
     </span>CBlock: BlockT,
     Block: BlockT,
     CClient: ProvideRuntimeApi&lt;CBlock&gt; + HeaderBackend&lt;CBlock&gt;,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt; + MessengerApi&lt;CBlock&gt;,
 {
     <span class="kw">let </span>create_inherent_data_providers =
         CreateInherentDataProvider::new(consensus_client, <span class="prelude-val">Some</span>(consensus_block_hash), domain_id);
@@ -392,12 +413,13 @@
     </span>Block: BlockT,
     CBlock: BlockT,
     CClient: ProvideRuntimeApi&lt;CBlock&gt; + HeaderBackend&lt;CBlock&gt;,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt; + MessengerApi&lt;CBlock&gt;,
 {
     <span class="kw">type </span>InherentDataProviders = (
         sp_timestamp::InherentDataProvider,
         sp_block_fees::InherentDataProvider,
         sp_executive::InherentDataProvider,
+        sp_messenger::InherentDataProvider,
     );
 
     <span class="kw">async fn </span>create_inherent_data_providers(
@@ -431,10 +453,28 @@
         <span class="kw">let </span>storage_price_provider =
             sp_block_fees::InherentDataProvider::new(consensus_chain_byte_fee);
 
+        <span class="comment">// TODO: remove version check before next network
+        </span><span class="kw">let </span>messenger_api_version = runtime_api
+            .api_version::&lt;<span class="kw">dyn </span>MessengerApi&lt;Block&gt;&gt;(consensus_block_hash)<span class="question-mark">?
+            </span><span class="comment">// safe to return default version as 1 since there will always be version 1.
+            </span>.unwrap_or(<span class="number">1</span>);
+
+        <span class="kw">let </span>domain_chains_allowlist_update = <span class="kw">if </span>messenger_api_version &gt;= <span class="number">3 </span>{
+            runtime_api.domain_chains_allowlist_update(consensus_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?
+        </span>} <span class="kw">else </span>{
+            <span class="prelude-val">None
+        </span>};
+
+        <span class="kw">let </span>messenger_inherent_provider =
+            sp_messenger::InherentDataProvider::new(sp_messenger::InherentType {
+                maybe_updates: domain_chains_allowlist_update,
+            });
+
         <span class="prelude-val">Ok</span>((
             timestamp_provider,
             storage_price_provider,
             runtime_upgrade_provider,
+            messenger_inherent_provider,
         ))
     }
 }
