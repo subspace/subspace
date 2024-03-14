@@ -1270,7 +1270,40 @@
 <a href="#1268" id="1268">1268</a>
 <a href="#1269" id="1269">1269</a>
 <a href="#1270" id="1270">1270</a>
-</pre></div><pre class="rust"><code><span class="attr">#![cfg_attr(not(feature = <span class="string">"std"</span>), no_std)]
+<a href="#1271" id="1271">1271</a>
+<a href="#1272" id="1272">1272</a>
+<a href="#1273" id="1273">1273</a>
+<a href="#1274" id="1274">1274</a>
+<a href="#1275" id="1275">1275</a>
+<a href="#1276" id="1276">1276</a>
+<a href="#1277" id="1277">1277</a>
+<a href="#1278" id="1278">1278</a>
+<a href="#1279" id="1279">1279</a>
+<a href="#1280" id="1280">1280</a>
+<a href="#1281" id="1281">1281</a>
+<a href="#1282" id="1282">1282</a>
+<a href="#1283" id="1283">1283</a>
+<a href="#1284" id="1284">1284</a>
+<a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a>
+<a href="#1289" id="1289">1289</a>
+<a href="#1290" id="1290">1290</a>
+<a href="#1291" id="1291">1291</a>
+<a href="#1292" id="1292">1292</a>
+<a href="#1293" id="1293">1293</a>
+<a href="#1294" id="1294">1294</a>
+<a href="#1295" id="1295">1295</a>
+<a href="#1296" id="1296">1296</a>
+<a href="#1297" id="1297">1297</a>
+<a href="#1298" id="1298">1298</a>
+<a href="#1299" id="1299">1299</a>
+<a href="#1300" id="1300">1300</a>
+<a href="#1301" id="1301">1301</a>
+<a href="#1302" id="1302">1302</a>
+</pre></div><pre class="rust"><code><span class="attr">#![feature(variant_count)]
+#![cfg_attr(not(feature = <span class="string">"std"</span>), no_std)]
 </span><span class="comment">// `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 </span><span class="attr">#![recursion_limit = <span class="string">"256"</span>]
 
@@ -1285,7 +1318,8 @@
 
 <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">use </span>alloc::format;
-<span class="kw">use </span>codec::{Decode, Encode};
+<span class="kw">use </span>codec::{Decode, Encode, MaxEncodedLen};
+<span class="kw">use </span>core::mem;
 <span class="kw">pub use </span>domain_runtime_primitives::opaque::Header;
 <span class="kw">use </span>domain_runtime_primitives::{
     block_weights, maximum_block_length, EXISTENTIAL_DEPOSIT, MAXIMUM_BLOCK_WEIGHT, SLOT_DURATION,
@@ -1297,8 +1331,10 @@
 <span class="kw">use </span>fp_self_contained::{CheckedSignature, SelfContainedCall};
 <span class="kw">use </span>frame_support::dispatch::{DispatchClass, DispatchInfo, GetDispatchInfo};
 <span class="kw">use </span>frame_support::inherent::ProvideInherent;
+<span class="kw">use </span>frame_support::pallet_prelude::TypeInfo;
 <span class="kw">use </span>frame_support::traits::{
     ConstU16, ConstU32, ConstU64, Currency, Everything, FindAuthor, Imbalance, OnFinalize,
+    VariantCount,
 };
 <span class="kw">use </span>frame_support::weights::constants::{ParityDbWeight, WEIGHT_REF_TIME_PER_SECOND};
 <span class="kw">use </span>frame_support::weights::{ConstantMultiplier, IdentityFee, Weight};
@@ -1315,7 +1351,7 @@
 <span class="kw">use </span>sp_api::impl_runtime_apis;
 <span class="kw">use </span>sp_core::crypto::KeyTypeId;
 <span class="kw">use </span>sp_core::{Get, OpaqueMetadata, H160, H256, U256};
-<span class="kw">use </span>sp_domains::{DomainAllowlistUpdates, DomainId, Transfers};
+<span class="kw">use </span>sp_domains::{DomainAllowlistUpdates, DomainId, MessengerHoldIdentifier, Transfers};
 <span class="kw">use </span>sp_messenger::endpoint::{Endpoint, EndpointHandler <span class="kw">as </span>EndpointHandlerT, EndpointId};
 <span class="kw">use </span>sp_messenger::messages::{
     BlockMessagesWithStorageKey, ChainId, ChannelId, CrossDomainMessage, MessageId, MessageKey,
@@ -1341,7 +1377,7 @@
 <span class="kw">use </span>sp_subspace_mmr::MmrLeaf;
 <span class="kw">use </span>sp_version::RuntimeVersion;
 <span class="kw">use </span>subspace_runtime_primitives::{
-    BlockNumber <span class="kw">as </span>ConsensusBlockNumber, Hash <span class="kw">as </span>ConsensusBlockHash, Moment,
+    BlockNumber <span class="kw">as </span>ConsensusBlockNumber, Hash <span class="kw">as </span>ConsensusBlockHash, Moment, SSC,
 };
 
 <span class="doccomment">/// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
@@ -1574,6 +1610,10 @@
     <span class="kw">pub const </span>MaxReserves: u32 = <span class="number">50</span>;
 }
 
+<span class="macro">parameter_types! </span>{
+    <span class="kw">pub const </span>MaxHolds: u32 = <span class="number">100</span>;
+}
+
 <span class="kw">impl </span>pallet_balances::Config <span class="kw">for </span>Runtime {
     <span class="kw">type </span>RuntimeFreezeReason = RuntimeFreezeReason;
     <span class="kw">type </span>MaxLocks = MaxLocks;
@@ -1589,8 +1629,8 @@
     <span class="kw">type </span>ReserveIdentifier = [u8; <span class="number">8</span>];
     <span class="kw">type </span>FreezeIdentifier = ();
     <span class="kw">type </span>MaxFreezes = ();
-    <span class="kw">type </span>RuntimeHoldReason = ();
-    <span class="kw">type </span>MaxHolds = ();
+    <span class="kw">type </span>RuntimeHoldReason = HoldIdentifier;
+    <span class="kw">type </span>MaxHolds = MaxHolds;
 }
 
 <span class="macro">parameter_types! </span>{
@@ -1690,6 +1730,28 @@
     }
 }
 
+<span class="doccomment">/// Balance hold identifier for this runtime.
+</span><span class="attr">#[derive(
+    PartialEq, Eq, Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Ord, PartialOrd, Copy, Debug,
+)]
+</span><span class="kw">pub enum </span>HoldIdentifier {
+    Messenger(MessengerHoldIdentifier),
+}
+
+<span class="kw">impl </span>VariantCount <span class="kw">for </span>HoldIdentifier {
+    <span class="kw">const </span>VARIANT_COUNT: u32 = mem::variant_count::&lt;<span class="self">Self</span>&gt;() <span class="kw">as </span>u32;
+}
+
+<span class="kw">impl </span>pallet_messenger::HoldIdentifier&lt;Runtime&gt; <span class="kw">for </span>HoldIdentifier {
+    <span class="kw">fn </span>messenger_channel(dst_chain_id: ChainId, channel_id: ChannelId) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::Messenger(MessengerHoldIdentifier::Channel((dst_chain_id, channel_id)))
+    }
+}
+
+<span class="macro">parameter_types! </span>{
+    <span class="kw">pub const </span>ChannelReserveFee: Balance = SSC;
+}
+
 <span class="kw">pub struct </span>StorageKeys;
 
 <span class="kw">impl </span>sp_messenger::StorageKeys <span class="kw">for </span>StorageKeys {
@@ -1733,6 +1795,8 @@
     <span class="kw">type </span>MmrProofVerifier = MmrProofVerifier;
     <span class="kw">type </span>StorageKeys = StorageKeys;
     <span class="kw">type </span>DomainOwner = ();
+    <span class="kw">type </span>HoldIdentifier = HoldIdentifier;
+    <span class="kw">type </span>ChannelReserveFee = ChannelReserveFee;
 }
 
 <span class="kw">impl</span>&lt;C&gt; frame_system::offchain::SendTransactionTypes&lt;C&gt; <span class="kw">for </span>Runtime
