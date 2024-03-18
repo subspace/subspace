@@ -22,7 +22,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["pallet_messenger",["",[],["fees.rs","lib.rs","messages.rs","weights.rs"]]],\
 ["pallet_object_store",["",[],["lib.rs"]]],\
 ["pallet_offences_subspace",["",[],["lib.rs"]]],\
-["pallet_rewards",["",[],["default_weights.rs","lib.rs"]]],\
+["pallet_rewards",["",[],["lib.rs","weights.rs"]]],\
 ["pallet_runtime_configs",["",[],["lib.rs","weights.rs"]]],\
 ["pallet_subspace",["",[],["equivocation.rs","lib.rs","weights.rs"]]],\
 ["pallet_subspace_mmr",["",[],["lib.rs"]]],\
