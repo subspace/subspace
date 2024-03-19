@@ -273,12 +273,51 @@
 <a href="#271" id="271">271</a>
 <a href="#272" id="272">272</a>
 <a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
+<span class="kw">use </span><span class="kw">crate</span>::farm::{FarmError, MaybePieceStoredResult, PlotCache};
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
+<span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use </span>async_lock::RwLock <span class="kw">as </span>AsyncRwLock;
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>parking_lot::RwLock;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="attr">#[cfg(not(windows))]
@@ -300,19 +339,12 @@
     <span class="doccomment">/// I/O error occurred
     </span><span class="attr">#[error(<span class="string">"Plot cache I/O error: {0}"</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
+    <span class="doccomment">/// Failed to spawn task for blocking thread
+    </span><span class="attr">#[error(<span class="string">"Failed to spawn task for blocking thread: {0}"</span>)]
+    </span>TokioJoinError(<span class="attr">#[from] </span>tokio::task::JoinError),
     <span class="doccomment">/// Checksum mismatch
     </span><span class="attr">#[error(<span class="string">"Checksum mismatch"</span>)]
     </span>ChecksumMismatch,
-}
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>MaybePieceStoredResult {
-    <span class="doccomment">/// Definitely not stored
-    </span>No,
-    <span class="doccomment">/// Maybe has vacant slot to store
-    </span>Vacant,
-    <span class="doccomment">/// Maybe still stored
-    </span>Yes,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -332,6 +364,28 @@
     sectors_metadata: Weak&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     cached_pieces: Arc&lt;RwLock&lt;CachedPieces&gt;&gt;,
     sector_size: u64,
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>PlotCache <span class="kw">for </span>DiskPlotCache {
+    <span class="kw">async fn </span>is_piece_maybe_stored(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        key: <span class="kw-2">&amp;</span>RecordKey,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;MaybePieceStoredResult, FarmError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.is_piece_maybe_stored(key))
+    }
+
+    <span class="kw">async fn </span>try_store_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+        piece: <span class="kw-2">&amp;</span>Piece,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;bool, FarmError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.try_store_piece(piece_index, piece).<span class="kw">await</span><span class="question-mark">?</span>)
+    }
+
+    <span class="kw">async fn </span>read_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>RecordKey) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, FarmError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.read_piece(key).<span class="kw">await</span>)
+    }
 }
 
 <span class="kw">impl </span>DiskPlotCache {
@@ -420,7 +474,8 @@
         };
 
         <span class="kw">let </span>element_offset = u64::from(offset) * u64::from(<span class="self">Self</span>::element_size());
-        <span class="kw">let </span>plotted_bytes = <span class="self">self</span>.sector_size * sectors_metadata.read_blocking().len() <span class="kw">as </span>u64;
+        <span class="comment">// Blocking read is fine because writes in farmer are very rare and very brief
+        </span><span class="kw">let </span>plotted_bytes = <span class="self">self</span>.sector_size * sectors_metadata.read_blocking().len() <span class="kw">as </span>u64;
 
         <span class="comment">// Make sure offset is after anything that is already plotted
         </span><span class="kw">if </span>element_offset &lt; plotted_bytes {
@@ -433,7 +488,7 @@
     }
 
     <span class="doccomment">/// Store piece in cache if there is free space, otherwise `Ok(false)` is returned
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>try_store_piece(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>try_store_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
         piece: <span class="kw-2">&amp;</span>Piece,
@@ -454,7 +509,7 @@
         };
 
         <span class="kw">let </span>element_offset = u64::from(offset) * u64::from(<span class="self">Self</span>::element_size());
-        <span class="kw">let </span>sectors_metadata = sectors_metadata.write_blocking();
+        <span class="kw">let </span>sectors_metadata = sectors_metadata.read().<span class="kw">await</span>;
         <span class="kw">let </span>plotted_bytes = <span class="self">self</span>.sector_size * sectors_metadata.len() <span class="kw">as </span>u64;
 
         <span class="comment">// Make sure offset is after anything that is already plotted
@@ -471,12 +526,21 @@
         };
 
         <span class="kw">let </span>piece_index_bytes = piece_index.to_bytes();
-        file.write_all_at(<span class="kw-2">&amp;</span>piece_index_bytes, element_offset)<span class="question-mark">?</span>;
-        file.write_all_at(piece.as_ref(), element_offset + PieceIndex::SIZE <span class="kw">as </span>u64)<span class="question-mark">?</span>;
-        file.write_all_at(
-            <span class="kw-2">&amp;</span>blake3_hash_list(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>piece_index_bytes, piece.as_ref()]),
-            element_offset + PieceIndex::SIZE <span class="kw">as </span>u64 + Piece::SIZE <span class="kw">as </span>u64,
-        )<span class="question-mark">?</span>;
+        <span class="kw">let </span>write_fut = tokio::task::spawn_blocking({
+            <span class="kw">let </span>piece = piece.clone();
+
+            <span class="kw">move </span>|| {
+                file.write_all_at(<span class="kw-2">&amp;</span>piece_index_bytes, element_offset)<span class="question-mark">?</span>;
+                file.write_all_at(piece.as_ref(), element_offset + PieceIndex::SIZE <span class="kw">as </span>u64)<span class="question-mark">?</span>;
+                file.write_all_at(
+                    <span class="kw-2">&amp;</span>blake3_hash_list(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>piece_index_bytes, piece.as_ref()]),
+                    element_offset + PieceIndex::SIZE <span class="kw">as </span>u64 + Piece::SIZE <span class="kw">as </span>u64,
+                )
+            }
+        });
+
+        AsyncJoinOnDrop::new(write_fut, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">??</span>;
+
         <span class="comment">// Just to be safe, avoid any overlap of write locks
         </span>drop(sectors_metadata);
         <span class="comment">// Store newly written piece in the map
@@ -491,24 +555,32 @@
     <span class="doccomment">/// Read piece from cache.
     ///
     /// Returns `None` if not cached.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>RecordKey) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>read_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>RecordKey) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
         <span class="kw">let </span>offset = <span class="self">self</span>.cached_pieces.read().map.get(key).copied()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>file = <span class="self">self</span>.file.upgrade()<span class="question-mark">?</span>;
+        <span class="kw">let </span>cached_pieces = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.cached_pieces);
+        <span class="kw">let </span>key = key.clone();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
-        <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span>file, offset, <span class="kw-2">&amp;mut </span>element) {
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(_piece_index)) =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
-                piece.copy_from_slice(<span class="kw-2">&amp;</span>element[PieceIndex::SIZE..][..Piece::SIZE]);
-                <span class="prelude-val">Some</span>(piece)
+        <span class="kw">let </span>read_fut = tokio::task::spawn_blocking(<span class="kw">move </span>|| {
+            <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
+            <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span>file, offset, <span class="kw-2">&amp;mut </span>element) {
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(_piece_index)) =&gt; {
+                    <span class="kw">let </span><span class="kw-2">mut </span>piece = Piece::default();
+                    piece.copy_from_slice(<span class="kw-2">&amp;</span>element[PieceIndex::SIZE..][..Piece::SIZE]);
+                    <span class="prelude-val">Some</span>(piece)
+                }
+                <span class="kw">_ </span>=&gt; {
+                    <span class="comment">// Remove entry just in case it was overridden with a sector already
+                    </span>cached_pieces.write().map.remove(<span class="kw-2">&amp;</span>key);
+                    <span class="prelude-val">None
+                </span>}
             }
-            <span class="kw">_ </span>=&gt; {
-                <span class="comment">// Remove entry just in case it was overridden with a sector already
-                </span><span class="self">self</span>.cached_pieces.write().map.remove(key);
-                <span class="prelude-val">None
-            </span>}
-        }
+        });
+
+        AsyncJoinOnDrop::new(read_fut, <span class="bool-val">false</span>)
+            .<span class="kw">await
+            </span>.unwrap_or_default()
     }
 
     <span class="kw">fn </span>read_piece_internal(

@@ -274,17 +274,87 @@
 <a href="#272" id="272">272</a>
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
+<span class="kw">use </span><span class="kw">crate</span>::farm::{FarmError, PieceCache, PieceCacheOffset};
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::DISK_SECTOR_SIZE;
-<span class="kw">use </span>derive_more::Display;
+<span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
+<span class="kw">use </span>async_trait::async_trait;
+<span class="kw">use </span>futures::channel::mpsc;
+<span class="kw">use </span>futures::{stream, SinkExt, Stream, StreamExt};
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>std::fs::{File, OpenOptions};
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>std::task::Poll;
 <span class="kw">use </span>std::{fs, io, mem};
 <span class="kw">use </span>subspace_core_primitives::crypto::blake3_hash_list;
 <span class="kw">use </span>subspace_core_primitives::{Blake3Hash, Piece, PieceIndex};
@@ -292,6 +362,8 @@
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>subspace_farmer_components::file_ext::OpenOptionsExt;
 <span class="kw">use </span>thiserror::Error;
+<span class="kw">use </span>tokio::runtime::Handle;
+<span class="kw">use </span>tokio::task;
 <span class="kw">use </span>tracing::{debug, info, warn};
 
 <span class="doccomment">/// Disk piece cache open error
@@ -319,11 +391,6 @@
     </span>ChecksumMismatch,
 }
 
-<span class="doccomment">/// Offset wrapper for pieces in [`DiskPieceCache`]
-</span><span class="attr">#[derive(Debug, Display, Copy, Clone)]
-#[repr(transparent)]
-</span><span class="kw">pub struct </span>Offset(u32);
-
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Inner {
     <span class="attr">#[cfg(not(windows))]
@@ -338,6 +405,64 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DiskPieceCache {
     inner: Arc&lt;Inner&gt;,
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>PieceCache <span class="kw">for </span>DiskPieceCache {
+    <span class="kw">fn </span>max_num_elements(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.inner.num_elements <span class="kw">as </span>usize
+    }
+
+    <span class="kw">async fn </span>contents(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+    ) -&gt; Box&lt;<span class="kw">dyn </span>Stream&lt;Item = (PieceCacheOffset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + Unpin + <span class="lifetime">'_</span>&gt; {
+        <span class="kw">let </span>this = <span class="self">self</span>.clone();
+        <span class="kw">let </span>(<span class="kw-2">mut </span>sender, receiver) = mpsc::channel(<span class="number">1</span>);
+        <span class="kw">let </span>read_contents = task::spawn_blocking(<span class="kw">move </span>|| {
+            <span class="kw">let </span>contents = this.contents();
+            <span class="kw">for </span>(piece_cache_offset, maybe_piece) <span class="kw">in </span>contents {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                    Handle::current().block_on(sender.send((piece_cache_offset, maybe_piece)))
+                {
+                    <span class="macro">debug!</span>(%error, <span class="string">"Aborting contents iteration due to receiver dropping"</span>);
+                    <span class="kw">break</span>;
+                }
+            }
+        });
+        <span class="kw">let </span>read_contents = Mutex::new(<span class="prelude-val">Some</span>(AsyncJoinOnDrop::new(read_contents, <span class="bool-val">false</span>)));
+        <span class="comment">// Change order such that in closure below `receiver` is dropped before `read_contents`
+        </span><span class="kw">let </span><span class="kw-2">mut </span>receiver = receiver;
+
+        Box::new(stream::poll_fn(<span class="kw">move </span>|ctx| {
+            <span class="kw">let </span>poll_result = receiver.poll_next_unpin(ctx);
+
+            <span class="kw">if </span><span class="macro">matches!</span>(poll_result, Poll::Ready(<span class="prelude-val">None</span>)) {
+                read_contents.lock().take();
+            }
+
+            poll_result
+        }))
+    }
+
+    <span class="kw">async fn </span>write_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        offset: PieceCacheOffset,
+        piece_index: PieceIndex,
+        piece: <span class="kw-2">&amp;</span>Piece,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), FarmError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.write_piece(offset, piece_index, piece)<span class="question-mark">?</span>)
+    }
+
+    <span class="kw">async fn </span>read_piece_index(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        offset: PieceCacheOffset,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PieceIndex&gt;, FarmError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.read_piece_index(offset)<span class="question-mark">?</span>)
+    }
+
+    <span class="kw">async fn </span>read_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: PieceCacheOffset) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, FarmError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.read_piece(offset)<span class="question-mark">?</span>)
+    }
 }
 
 <span class="kw">impl </span>DiskPieceCache {
@@ -387,20 +512,20 @@
         (PieceIndex::SIZE + Piece::SIZE + mem::size_of::&lt;Blake3Hash&gt;()) <span class="kw">as </span>u32
     }
 
-    <span class="doccomment">/// Contents of this disk cache
+    <span class="doccomment">/// Contents of this disk piece cache
     ///
     /// NOTE: it is possible to do concurrent reads and writes, higher level logic must ensure this
     /// doesn't happen for the same piece being accessed!
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>contents(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (Offset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">'_ </span>{
+    ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (PieceCacheOffset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">'_ </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
         <span class="kw">let </span><span class="kw-2">mut </span>early_exit = <span class="bool-val">false</span>;
 
         <span class="comment">// TODO: Parallelize or read in larger batches
         </span>(<span class="number">0</span>..<span class="self">self</span>.inner.num_elements).map(<span class="kw">move </span>|offset| {
             <span class="kw">if </span>early_exit {
-                <span class="kw">return </span>(Offset(offset), <span class="prelude-val">None</span>);
+                <span class="kw">return </span>(PieceCacheOffset(offset), <span class="prelude-val">None</span>);
             }
 
             <span class="kw">match </span><span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span>element) {
@@ -410,11 +535,11 @@
                         </span>early_exit = <span class="bool-val">true</span>;
                     }
 
-                    (Offset(offset), maybe_piece_index)
+                    (PieceCacheOffset(offset), maybe_piece_index)
                 }
                 <span class="prelude-val">Err</span>(error) =&gt; {
                     <span class="macro">warn!</span>(%error, %offset, <span class="string">"Failed to read cache element"</span>);
-                    (Offset(offset), <span class="prelude-val">None</span>)
+                    (PieceCacheOffset(offset), <span class="prelude-val">None</span>)
                 }
             }
         })
@@ -426,11 +551,11 @@
     /// doesn't happen for the same piece being accessed!
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>write_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        offset: Offset,
+        offset: PieceCacheOffset,
         piece_index: PieceIndex,
         piece: <span class="kw-2">&amp;</span>Piece,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), DiskPieceCacheError&gt; {
-        <span class="kw">let </span>Offset(offset) = offset;
+        <span class="kw">let </span>PieceCacheOffset(offset) = offset;
         <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::OffsetOutsideOfRange {
                 provided: offset,
@@ -463,9 +588,9 @@
     /// doesn't happen for the same piece being accessed!
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_piece_index(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        offset: Offset,
+        offset: PieceCacheOffset,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PieceIndex&gt;, DiskPieceCacheError&gt; {
-        <span class="kw">let </span>Offset(offset) = offset;
+        <span class="kw">let </span>PieceCacheOffset(offset) = offset;
         <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
             <span class="macro">warn!</span>(%offset, <span class="string">"Trying to read piece out of range, this must be an implementation bug"</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::OffsetOutsideOfRange {
@@ -483,8 +608,11 @@
     ///
     /// NOTE: it is possible to do concurrent reads and writes, higher level logic must ensure this
     /// doesn't happen for the same piece being accessed!
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: Offset) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, DiskPieceCacheError&gt; {
-        <span class="kw">let </span>Offset(offset) = offset;
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        offset: PieceCacheOffset,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, DiskPieceCacheError&gt; {
+        <span class="kw">let </span>PieceCacheOffset(offset) = offset;
         <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
             <span class="macro">warn!</span>(%offset, <span class="string">"Trying to read piece out of range, this must be an implementation bug"</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::OffsetOutsideOfRange {

@@ -131,17 +131,31 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_reader::PieceReader;
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::PieceReader;
+<span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::collections::hash_map::Entry;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::future::Future;
+<span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, PieceOffset, SectorIndex};
 <span class="kw">use </span>subspace_farmer_components::plotting::PlottedSector;
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="attr">#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 </span><span class="kw">struct </span>PieceDetails {
-    disk_farm_index: u8,
+    farm_index: u8,
     sector_index: SectorIndex,
     piece_offset: PieceOffset,
 }
@@ -149,13 +163,13 @@
 <span class="doccomment">/// Wrapper data structure for pieces plotted under multiple plots.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>PlottedPieces {
-    readers: Vec&lt;PieceReader&gt;,
+    readers: Vec&lt;Arc&lt;<span class="kw">dyn </span>PieceReader&gt;&gt;,
     pieces: HashMap&lt;PieceIndex, Vec&lt;PieceDetails&gt;&gt;,
 }
 
 <span class="kw">impl </span>PlottedPieces {
     <span class="doccomment">/// Initialize with readers for each farm
-    </span><span class="kw">pub fn </span>new(readers: Vec&lt;PieceReader&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(readers: Vec&lt;Arc&lt;<span class="kw">dyn </span>PieceReader&gt;&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             readers,
             pieces: HashMap::new(),
@@ -167,17 +181,17 @@
         <span class="self">self</span>.pieces.contains_key(piece_index)
     }
 
-    <span class="doccomment">/// Read plotted piece from oneof the farms.
+    <span class="doccomment">/// Read plotted piece from one of the farms.
     ///
     /// If piece doesn't exist `None` is returned, if by the time future is polled piece is no
     /// longer in the plot, future will resolve with `None`.
     </span><span class="kw">pub fn </span>read_piece(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        piece_index: <span class="kw-2">&amp;</span>PieceIndex,
+        piece_index: PieceIndex,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;Piece&gt;&gt; + <span class="lifetime">'static</span>&gt; {
-        <span class="kw">let </span>piece_details = <span class="kw">match </span><span class="self">self</span>.pieces.get(piece_index) {
+        <span class="kw">let </span>piece_details = <span class="kw">match </span><span class="self">self</span>.pieces.get(<span class="kw-2">&amp;</span>piece_index) {
             <span class="prelude-val">Some</span>(piece_details) =&gt; piece_details
-                .first()
+                .choose(<span class="kw-2">&amp;mut </span>thread_rng())
                 .copied()
                 .expect(<span class="string">"Empty lists are not stored in the map; qed"</span>),
             <span class="prelude-val">None </span>=&gt; {
@@ -188,7 +202,7 @@
                 <span class="kw">return </span><span class="prelude-val">None</span>;
             }
         };
-        <span class="kw">let </span><span class="kw-2">mut </span>reader = <span class="kw">match </span><span class="self">self</span>.readers.get(usize::from(piece_details.disk_farm_index)) {
+        <span class="kw">let </span>reader = <span class="kw">match </span><span class="self">self</span>.readers.get(usize::from(piece_details.farm_index)) {
             <span class="prelude-val">Some</span>(reader) =&gt; reader.clone(),
             <span class="prelude-val">None </span>=&gt; {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>piece_index, <span class="question-mark">?</span>piece_details, <span class="string">"Plot offset is invalid"</span>);
@@ -200,16 +214,26 @@
             reader
                 .read_piece(piece_details.sector_index, piece_details.piece_offset)
                 .<span class="kw">await
-        </span>})
+                </span>.unwrap_or_else(|error| {
+                    <span class="macro">warn!</span>(
+                        %error,
+                        %piece_index,
+                        farm_index = piece_details.farm_index,
+                        sector_index = piece_details.sector_index,
+                        <span class="string">"Failed to retrieve piece"
+                    </span>);
+                    <span class="prelude-val">None
+                </span>})
+        })
     }
 
     <span class="doccomment">/// Add new sector to collect plotted pieces
-    </span><span class="kw">pub fn </span>add_sector(<span class="kw-2">&amp;mut </span><span class="self">self</span>, disk_farm_index: u8, plotted_sector: <span class="kw-2">&amp;</span>PlottedSector) {
+    </span><span class="kw">pub fn </span>add_sector(<span class="kw-2">&amp;mut </span><span class="self">self</span>, farm_index: u8, plotted_sector: <span class="kw-2">&amp;</span>PlottedSector) {
         <span class="kw">for </span>(piece_offset, <span class="kw-2">&amp;</span>piece_index) <span class="kw">in
             </span>(PieceOffset::ZERO..).zip(plotted_sector.piece_indexes.iter())
         {
             <span class="kw">let </span>piece_details = PieceDetails {
-                disk_farm_index,
+                farm_index,
                 sector_index: plotted_sector.sector_index,
                 piece_offset,
             };
@@ -226,12 +250,12 @@
     }
 
     <span class="doccomment">/// Add old sector from plotted pieces (happens on replotting)
-    </span><span class="kw">pub fn </span>delete_sector(<span class="kw-2">&amp;mut </span><span class="self">self</span>, disk_farm_index: u8, plotted_sector: <span class="kw-2">&amp;</span>PlottedSector) {
+    </span><span class="kw">pub fn </span>delete_sector(<span class="kw-2">&amp;mut </span><span class="self">self</span>, farm_index: u8, plotted_sector: <span class="kw-2">&amp;</span>PlottedSector) {
         <span class="kw">for </span>(piece_offset, <span class="kw-2">&amp;</span>piece_index) <span class="kw">in
             </span>(PieceOffset::ZERO..).zip(plotted_sector.piece_indexes.iter())
         {
             <span class="kw">let </span>searching_piece_details = PieceDetails {
-                disk_farm_index,
+                farm_index,
                 sector_index: plotted_sector.sector_index,
                 piece_offset,
             };

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["KNOWN_PEERS_CACHE_SIZE"],"mod":["farmer_cache","node_client","reward_signing","single_disk_farm","thread_pool_manager","utils"],"struct":["Identity","NodeRpcClient"]};
+window.SIDEBAR_ITEMS = {"constant":["KNOWN_PEERS_CACHE_SIZE"],"mod":["farm","farmer_cache","node_client","reward_signing","single_disk_farm","thread_pool_manager","utils"],"struct":["Identity","NodeRpcClient"]};

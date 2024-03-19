@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["PieceReader"]};
+window.SIDEBAR_ITEMS = {"struct":["DiskPieceReader"]};

@@ -983,17 +983,23 @@
 <a href="#981" id="981">981</a>
 <a href="#982" id="982">982</a>
 <a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
+<span class="kw">use </span><span class="kw">crate</span>::farm::{MaybePieceStoredResult, PieceCache, PieceCacheOffset, PlotCache};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
-<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::{DiskPieceCache, Offset};
-<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plot_cache::{DiskPlotCache, MaybePieceStoredResult};
-<span class="kw">use </span><span class="kw">crate</span>::utils::{run_future_in_dedicated_thread, AsyncJoinOnDrop};
+<span class="kw">use </span><span class="kw">crate</span>::utils::run_future_in_dedicated_thread;
+<span class="kw">use </span>async_lock::RwLock <span class="kw">as </span>AsyncRwLock;
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
 <span class="kw">use </span>futures::stream::{FuturesOrdered, FuturesUnordered};
-<span class="kw">use </span>futures::{select, FutureExt, StreamExt};
-<span class="kw">use </span>parking_lot::RwLock;
+<span class="kw">use </span>futures::{select, stream, FutureExt, StreamExt};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>std::collections::{HashMap, VecDeque};
 <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
@@ -1006,8 +1012,9 @@
 <span class="kw">use </span>subspace_networking::libp2p::PeerId;
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
 <span class="kw">use </span>subspace_networking::{KeyWrapper, LocalRecordProvider, UniqueRecordBinaryHeap};
+<span class="kw">use </span>tokio::runtime::Handle;
 <span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio::task::yield_now;
+<span class="kw">use </span>tokio::task::{block_in_place, yield_now};
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
 
 <span class="kw">const </span>WORKER_CHANNEL_CAPACITY: usize = <span class="number">100</span>;
@@ -1016,6 +1023,9 @@
 /// this number defines an interval in pieces after which cache is updated
 </span><span class="kw">const </span>INTERMEDIATE_CACHE_UPDATE_INTERVAL: usize = <span class="number">100</span>;
 <span class="kw">const </span>INITIAL_SYNC_FARM_INFO_CHECK_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
+<span class="doccomment">/// How long to wait for `is_piece_maybe_stored` response from plot cache before timing out in order
+/// to prevent blocking of executor for too long
+</span><span class="kw">const </span>IS_PIECE_MAYBE_STORED_TIMEOUT: Duration = Duration::from_millis(<span class="number">100</span>);
 
 <span class="kw">type </span>HandlerFn&lt;A&gt; = Arc&lt;<span class="kw">dyn </span>Fn(<span class="kw-2">&amp;</span>A) + Send + Sync + <span class="lifetime">'static</span>&gt;;
 <span class="kw">type </span>Handler&lt;A&gt; = Bag&lt;HandlerFn&lt;A&gt;, A&gt;;
@@ -1026,16 +1036,16 @@
 }
 
 <span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">struct </span>DiskPieceCacheState {
-    stored_pieces: HashMap&lt;RecordKey, Offset&gt;,
-    free_offsets: VecDeque&lt;Offset&gt;,
-    backend: DiskPieceCache,
+</span><span class="kw">struct </span>PieceCacheState {
+    stored_pieces: HashMap&lt;RecordKey, PieceCacheOffset&gt;,
+    free_offsets: VecDeque&lt;PieceCacheOffset&gt;,
+    backend: Arc&lt;<span class="kw">dyn </span>PieceCache&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>WorkerCommand {
     ReplaceBackingCaches {
-        new_piece_caches: Vec&lt;DiskPieceCache&gt;,
+        new_piece_caches: Vec&lt;Arc&lt;<span class="kw">dyn </span>PieceCache&gt;&gt;,
     },
     ForgetKey {
         key: RecordKey,
@@ -1057,7 +1067,7 @@
 {
     peer_id: PeerId,
     node_client: NC,
-    caches: Arc&lt;RwLock&lt;Vec&lt;DiskPieceCacheState&gt;&gt;&gt;,
+    caches: Arc&lt;AsyncRwLock&lt;Vec&lt;PieceCacheState&gt;&gt;&gt;,
     handlers: Arc&lt;Handlers&gt;,
     worker_receiver: <span class="prelude-ty">Option</span>&lt;mpsc::Receiver&lt;WorkerCommand&gt;&gt;,
 }
@@ -1147,9 +1157,9 @@
             }
             <span class="comment">// TODO: Consider implementing optional re-sync of the piece instead of just forgetting
             </span>WorkerCommand::ForgetKey { key } =&gt; {
-                <span class="kw">let </span><span class="kw-2">mut </span>caches = <span class="self">self</span>.caches.write();
+                <span class="kw">let </span><span class="kw-2">mut </span>caches = <span class="self">self</span>.caches.write().<span class="kw">await</span>;
 
-                <span class="kw">for </span>(disk_farm_index, cache) <span class="kw">in </span>caches.iter_mut().enumerate() {
+                <span class="kw">for </span>(farm_index, cache) <span class="kw">in </span>caches.iter_mut().enumerate() {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.stored_pieces.remove(<span class="kw-2">&amp;</span>key) <span class="kw">else </span>{
                         <span class="comment">// Not this disk farm
                         </span><span class="kw">continue</span>;
@@ -1157,13 +1167,13 @@
 
                     <span class="comment">// Making offset as unoccupied and remove corresponding key from heap
                     </span>cache.free_offsets.push_front(offset);
-                    <span class="kw">match </span>cache.backend.read_piece_index(offset) {
+                    <span class="kw">match </span>cache.backend.read_piece_index(offset).<span class="kw">await </span>{
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece_index)) =&gt; {
                             worker_state.heap.remove(KeyWrapper(piece_index));
                         }
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                             <span class="macro">warn!</span>(
-                                %disk_farm_index,
+                                %farm_index,
                                 %offset,
                                 <span class="string">"Piece index out of range, this is likely an implementation bug, \
                                 not freeing heap element"
@@ -1172,7 +1182,7 @@
                         <span class="prelude-val">Err</span>(error) =&gt; {
                             <span class="macro">error!</span>(
                                 %error,
-                                %disk_farm_index,
+                                %farm_index,
                                 <span class="question-mark">?</span>key,
                                 %offset,
                                 <span class="string">"Error while reading piece from cache, might be a disk corruption"
@@ -1189,13 +1199,13 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_getter: <span class="kw-2">&amp;</span>PG,
         worker_state: <span class="kw-2">&amp;mut </span>CacheWorkerState,
-        new_piece_caches: Vec&lt;DiskPieceCache&gt;,
+        new_piece_caches: Vec&lt;Arc&lt;<span class="kw">dyn </span>PieceCache&gt;&gt;,
     ) <span class="kw">where
         </span>PG: PieceGetter,
     {
         <span class="macro">info!</span>(<span class="string">"Initializing piece cache"</span>);
         <span class="comment">// Pull old cache state since it will be replaced with a new one and reuse its allocations
-        </span><span class="kw">let </span>cache_state = mem::take(<span class="kw-2">&amp;mut *</span><span class="self">self</span>.caches.write());
+        </span><span class="kw">let </span>cache_state = mem::take(<span class="kw-2">&amp;mut *</span><span class="self">self</span>.caches.write().<span class="kw">await</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>stored_pieces = Vec::with_capacity(new_piece_caches.len());
         <span class="kw">let </span><span class="kw-2">mut </span>free_offsets = Vec::with_capacity(new_piece_caches.len());
         <span class="kw">for </span><span class="kw-2">mut </span>state <span class="kw">in </span>cache_state {
@@ -1219,10 +1229,10 @@
                 |(index, ((<span class="kw-2">mut </span>stored_pieces, <span class="kw-2">mut </span>free_offsets), new_cache))| {
                     run_future_in_dedicated_thread(
                         <span class="kw">move </span>|| <span class="kw">async </span>{
-                            <span class="kw">let </span>contents = new_cache.contents();
-                            stored_pieces.reserve(contents.len());
+                            <span class="kw">let </span><span class="kw-2">mut </span>contents = new_cache.contents().<span class="kw">await</span>;
+                            stored_pieces.reserve(new_cache.max_num_elements());
 
-                            <span class="kw">for </span>(offset, maybe_piece_index) <span class="kw">in </span>contents {
+                            <span class="kw">while let </span><span class="prelude-val">Some</span>((offset, maybe_piece_index)) = contents.next().<span class="kw">await </span>{
                                 <span class="kw">match </span>maybe_piece_index {
                                     <span class="prelude-val">Some</span>(piece_index) =&gt; {
                                         stored_pieces.insert(
@@ -1239,7 +1249,9 @@
                                 </span>yield_now().<span class="kw">await</span>;
                             }
 
-                            DiskPieceCacheState {
+                            drop(contents);
+
+                            PieceCacheState {
                                 stored_pieces,
                                 free_offsets,
                                 backend: new_cache,
@@ -1305,7 +1317,7 @@
                     </span>);
 
                     <span class="comment">// Not the latest, but at least something
-                    </span><span class="kw-2">*</span><span class="self">self</span>.caches.write() = caches;
+                    </span><span class="kw-2">*</span><span class="self">self</span>.caches.write().<span class="kw">await </span>= caches;
                     <span class="kw">return</span>;
                 }
             }
@@ -1354,7 +1366,7 @@
         });
 
         <span class="comment">// Store whatever correct pieces are immediately available after restart
-        </span><span class="kw-2">*</span><span class="self">self</span>.caches.write() = caches.clone();
+        </span><span class="kw-2">*</span><span class="self">self</span>.caches.write().<span class="kw">await </span>= caches.clone();
 
         <span class="macro">debug!</span>(
             count = %piece_indices_to_store.len(),
@@ -1404,7 +1416,7 @@
                 downloading_pieces.push(download_piece(piece_index_to_download));
             }
 
-            <span class="kw">let </span><span class="prelude-val">Some</span>((piece_index, piece)) = maybe_piece <span class="kw">else </span>{
+            <span class="kw">let </span><span class="prelude-val">Some</span>((piece_index, piece)) = <span class="kw-2">&amp;</span>maybe_piece <span class="kw">else </span>{
                 <span class="kw">continue</span>;
             };
 
@@ -1413,26 +1425,30 @@
             <span class="comment">// Sort piece caches by number of stored pieces to fill those that are less
             // populated first
             </span>sorted_caches.sort_by_key(|(<span class="kw">_</span>, cache)| cache.stored_pieces.len());
-            <span class="kw">if </span>!sorted_caches.into_iter().any(|(disk_farm_index, cache)| {
-                <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.free_offsets.pop_front() <span class="kw">else </span>{
-                    <span class="kw">return </span><span class="bool-val">false</span>;
-                };
+            <span class="kw">if </span>!stream::iter(sorted_caches)
+                .any(|(farm_index, cache)| <span class="kw">async move </span>{
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.free_offsets.pop_front() <span class="kw">else </span>{
+                        <span class="kw">return </span><span class="bool-val">false</span>;
+                    };
 
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece) {
-                    <span class="macro">error!</span>(
-                        %error,
-                        %disk_farm_index,
-                        %piece_index,
-                        %offset,
-                        <span class="string">"Failed to write piece into cache"
-                    </span>);
-                    <span class="kw">return </span><span class="bool-val">false</span>;
-                }
-                cache
-                    .stored_pieces
-                    .insert(RecordKey::from(piece_index.to_multihash()), offset);
-                <span class="bool-val">true
-            </span>}) {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, <span class="kw-2">*</span>piece_index, piece).<span class="kw">await
+                    </span>{
+                        <span class="macro">error!</span>(
+                            %error,
+                            %farm_index,
+                            %piece_index,
+                            %offset,
+                            <span class="string">"Failed to write piece into cache"
+                        </span>);
+                        <span class="kw">return </span><span class="bool-val">false</span>;
+                    }
+                    cache
+                        .stored_pieces
+                        .insert(RecordKey::from(piece_index.to_multihash()), offset);
+                    <span class="bool-val">true
+                </span>})
+                .<span class="kw">await
+            </span>{
                 <span class="macro">error!</span>(
                     %piece_index,
                     <span class="string">"Failed to store piece in cache, there was no space"
@@ -1442,14 +1458,14 @@
             downloaded_pieces_count += <span class="number">1</span>;
             <span class="kw">let </span>progress = downloaded_pieces_count <span class="kw">as </span>f32 / pieces_to_download_total <span class="kw">as </span>f32 * <span class="number">100.0</span>;
             <span class="kw">if </span>downloaded_pieces_count % INTERMEDIATE_CACHE_UPDATE_INTERVAL == <span class="number">0 </span>{
-                <span class="kw-2">*</span><span class="self">self</span>.caches.write() = caches.clone();
+                <span class="kw-2">*</span><span class="self">self</span>.caches.write().<span class="kw">await </span>= caches.clone();
 
                 <span class="macro">info!</span>(<span class="string">"Piece cache sync {progress:.2}% complete"</span>);
             }
             <span class="self">self</span>.handlers.progress.call_simple(<span class="kw-2">&amp;</span>progress);
         }
 
-        <span class="kw-2">*</span><span class="self">self</span>.caches.write() = caches;
+        <span class="kw-2">*</span><span class="self">self</span>.caches.write().<span class="kw">await </span>= caches;
         <span class="self">self</span>.handlers.progress.call_simple(<span class="kw-2">&amp;</span><span class="number">100.0</span>);
         worker_state.last_segment_index = last_segment_index;
 
@@ -1536,7 +1552,8 @@
 
                 <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece needs to be cached #1"</span>);
 
-                <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state);
+                <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state)
+                    .<span class="kw">await</span>;
             }
 
             worker_state.last_segment_index = segment_index;
@@ -1624,7 +1641,8 @@
                 }
             };
 
-            <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state);
+            <span class="self">self</span>.persist_piece_in_cache(piece_index, piece, worker_state)
+                .<span class="kw">await</span>;
         }
 
         <span class="macro">info!</span>(<span class="string">"Finished syncing piece cache to the latest history size"</span>);
@@ -1634,7 +1652,7 @@
 
     <span class="doccomment">/// This assumes it was already checked that piece needs to be stored, no verification for this
     /// is done internally and invariants will break if this assumption doesn't hold true
-    </span><span class="kw">fn </span>persist_piece_in_cache(
+    </span><span class="kw">async fn </span>persist_piece_in_cache(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
         piece: Piece,
@@ -1643,28 +1661,29 @@
         <span class="kw">let </span>record_key = RecordKey::from(piece_index.to_multihash());
         <span class="kw">let </span>heap_key = KeyWrapper(piece_index);
 
-        <span class="kw">let </span><span class="kw-2">mut </span>caches = <span class="self">self</span>.caches.write();
+        <span class="kw">let </span><span class="kw-2">mut </span>caches = <span class="self">self</span>.caches.write().<span class="kw">await</span>;
         <span class="kw">match </span>worker_state.heap.insert(heap_key) {
             <span class="comment">// Entry is already occupied, we need to find and replace old piece with new one
             </span><span class="prelude-val">Some</span>(KeyWrapper(old_piece_index)) =&gt; {
-                <span class="kw">for </span>(disk_farm_index, cache) <span class="kw">in </span>caches.iter_mut().enumerate() {
+                <span class="kw">for </span>(farm_index, cache) <span class="kw">in </span>caches.iter_mut().enumerate() {
                     <span class="kw">let </span>old_record_key = RecordKey::from(old_piece_index.to_multihash());
                     <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.stored_pieces.remove(<span class="kw-2">&amp;</span>old_record_key) <span class="kw">else </span>{
                         <span class="comment">// Not this disk farm
                         </span><span class="kw">continue</span>;
                     };
 
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece) {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece).<span class="kw">await
+                    </span>{
                         <span class="macro">error!</span>(
                             %error,
-                            %disk_farm_index,
+                            %farm_index,
                             %piece_index,
                             %offset,
                             <span class="string">"Failed to write piece into cache"
                         </span>);
                     } <span class="kw">else </span>{
                         <span class="macro">trace!</span>(
-                            %disk_farm_index,
+                            %farm_index,
                             %old_piece_index,
                             %piece_index,
                             %offset,
@@ -1688,23 +1707,24 @@
                 <span class="comment">// Sort piece caches by number of stored pieces to fill those that are less
                 // populated first
                 </span>sorted_caches.sort_by_key(|(<span class="kw">_</span>, cache)| cache.stored_pieces.len());
-                <span class="kw">for </span>(disk_farm_index, cache) <span class="kw">in </span>sorted_caches {
+                <span class="kw">for </span>(farm_index, cache) <span class="kw">in </span>sorted_caches {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(offset) = cache.free_offsets.pop_front() <span class="kw">else </span>{
                         <span class="comment">// Not this disk farm
                         </span><span class="kw">continue</span>;
                     };
 
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece) {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache.backend.write_piece(offset, piece_index, <span class="kw-2">&amp;</span>piece).<span class="kw">await
+                    </span>{
                         <span class="macro">error!</span>(
                             %error,
-                            %disk_farm_index,
+                            %farm_index,
                             %piece_index,
                             %offset,
                             <span class="string">"Failed to write piece into cache"
                         </span>);
                     } <span class="kw">else </span>{
                         <span class="macro">trace!</span>(
-                            %disk_farm_index,
+                            %farm_index,
                             %piece_index,
                             %offset,
                             <span class="string">"Successfully stored piece in cache"
@@ -1729,9 +1749,9 @@
 </span><span class="kw">pub struct </span>FarmerCache {
     peer_id: PeerId,
     <span class="doccomment">/// Individual dedicated piece caches
-    </span>piece_caches: Arc&lt;RwLock&lt;Vec&lt;DiskPieceCacheState&gt;&gt;&gt;,
+    </span>piece_caches: Arc&lt;AsyncRwLock&lt;Vec&lt;PieceCacheState&gt;&gt;&gt;,
     <span class="doccomment">/// Additional piece caches
-    </span>plot_caches: Arc&lt;RwLock&lt;Vec&lt;DiskPlotCache&gt;&gt;&gt;,
+    </span>plot_caches: Arc&lt;AsyncRwLock&lt;Vec&lt;Arc&lt;<span class="kw">dyn </span>PlotCache&gt;&gt;&gt;&gt;,
     <span class="doccomment">/// Next plot cache to use for storing pieces
     </span>next_plot_cache: Arc&lt;AtomicUsize&gt;,
     handlers: Arc&lt;Handlers&gt;,
@@ -1773,83 +1793,77 @@
 
     <span class="doccomment">/// Get piece from cache
     </span><span class="kw">pub async fn </span>get_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, key: RecordKey) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">let </span>maybe_piece_fut = tokio::task::spawn_blocking({
-            <span class="kw">let </span>key = key.clone();
-            <span class="kw">let </span>piece_caches = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.piece_caches);
-            <span class="kw">let </span>plot_caches = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.plot_caches);
-            <span class="kw">let </span>worker_sender = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.worker_sender);
-
-            <span class="kw">move </span>|| {
-                {
-                    <span class="kw">let </span>piece_caches = piece_caches.read();
-                    <span class="kw">for </span>(disk_farm_index, cache) <span class="kw">in </span>piece_caches.iter().enumerate() {
-                        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>offset) = cache.stored_pieces.get(<span class="kw-2">&amp;</span>key) <span class="kw">else </span>{
-                            <span class="kw">continue</span>;
-                        };
-                        <span class="kw">match </span>cache.backend.read_piece(offset) {
-                            <span class="prelude-val">Ok</span>(maybe_piece) =&gt; {
-                                <span class="kw">return </span>maybe_piece;
-                            }
-                            <span class="prelude-val">Err</span>(error) =&gt; {
-                                <span class="macro">error!</span>(
-                                    %error,
-                                    %disk_farm_index,
-                                    <span class="question-mark">?</span>key,
-                                    %offset,
-                                    <span class="string">"Error while reading piece from cache, might be a disk corruption"
-                                </span>);
-
-                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                                    worker_sender.blocking_send(WorkerCommand::ForgetKey { key })
-                                {
-                                    <span class="macro">trace!</span>(%error, <span class="string">"Failed to send ForgetKey command to worker"</span>);
-                                }
-
-                                <span class="kw">return </span><span class="prelude-val">None</span>;
-                            }
-                        }
-                    }
+        <span class="kw">for </span>(farm_index, cache) <span class="kw">in </span><span class="self">self</span>.piece_caches.read().<span class="kw">await</span>.iter().enumerate() {
+            <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>offset) = cache.stored_pieces.get(<span class="kw-2">&amp;</span>key) <span class="kw">else </span>{
+                <span class="kw">continue</span>;
+            };
+            <span class="kw">match </span>cache.backend.read_piece(offset).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(maybe_piece) =&gt; {
+                    <span class="kw">return </span>maybe_piece;
                 }
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">error!</span>(
+                        %error,
+                        %farm_index,
+                        <span class="question-mark">?</span>key,
+                        %offset,
+                        <span class="string">"Error while reading piece from cache, might be a disk corruption"
+                    </span>);
 
-                {
-                    <span class="kw">let </span>plot_caches = plot_caches.read();
-                    <span class="kw">for </span>cache <span class="kw">in </span>plot_caches.iter() {
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = cache.read_piece(<span class="kw-2">&amp;</span>key) {
-                            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
-                        }
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self
+                        </span>.worker_sender
+                        .send(WorkerCommand::ForgetKey { key })
+                        .<span class="kw">await
+                    </span>{
+                        <span class="macro">trace!</span>(%error, <span class="string">"Failed to send ForgetKey command to worker"</span>);
                     }
+
+                    <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
-
-                <span class="prelude-val">None
-            </span>}
-        });
-
-        <span class="kw">match </span>AsyncJoinOnDrop::new(maybe_piece_fut, <span class="bool-val">false</span>).<span class="kw">await </span>{
-            <span class="prelude-val">Ok</span>(maybe_piece) =&gt; maybe_piece,
-            <span class="prelude-val">Err</span>(error) =&gt; {
-                <span class="macro">error!</span>(%error, <span class="question-mark">?</span>key, <span class="string">"Piece reading task failed"</span>);
-                <span class="prelude-val">None
-            </span>}
+            }
         }
-    }
+
+        <span class="kw">for </span>cache <span class="kw">in </span><span class="self">self</span>.plot_caches.read().<span class="kw">await</span>.iter() {
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece)) = cache.read_piece(<span class="kw-2">&amp;</span>key).<span class="kw">await </span>{
+                <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+            }
+        }
+
+        <span class="prelude-val">None
+    </span>}
 
     <span class="doccomment">/// Try to store a piece in additional downloaded pieces, if there is space for them
     </span><span class="kw">pub async fn </span>maybe_store_additional_piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex, piece: <span class="kw-2">&amp;</span>Piece) {
         <span class="kw">let </span>key = RecordKey::from(piece_index.to_multihash());
 
+        <span class="kw">for </span>cache <span class="kw">in </span><span class="self">self</span>.piece_caches.read().<span class="kw">await</span>.iter() {
+            <span class="kw">if </span>cache.stored_pieces.contains_key(<span class="kw-2">&amp;</span>key) {
+                <span class="comment">// Already stored in normal piece cache, no need to store it again
+                </span><span class="kw">return</span>;
+            }
+        }
+
         <span class="kw">let </span><span class="kw-2">mut </span>should_store = <span class="bool-val">false</span>;
-        <span class="kw">for </span>cache <span class="kw">in </span><span class="self">self</span>.plot_caches.read().iter() {
-            <span class="kw">match </span>cache.is_piece_maybe_stored(<span class="kw-2">&amp;</span>key) {
-                MaybePieceStoredResult::No =&gt; {
+        <span class="kw">for </span>(farm_index, cache) <span class="kw">in </span><span class="self">self</span>.plot_caches.read().<span class="kw">await</span>.iter().enumerate() {
+            <span class="kw">match </span>cache.is_piece_maybe_stored(<span class="kw-2">&amp;</span>key).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(MaybePieceStoredResult::No) =&gt; {
                     <span class="comment">// Try another one if there is any
                 </span>}
-                MaybePieceStoredResult::Vacant =&gt; {
+                <span class="prelude-val">Ok</span>(MaybePieceStoredResult::Vacant) =&gt; {
                     should_store = <span class="bool-val">true</span>;
                     <span class="kw">break</span>;
                 }
-                MaybePieceStoredResult::Yes =&gt; {
+                <span class="prelude-val">Ok</span>(MaybePieceStoredResult::Yes) =&gt; {
                     <span class="comment">// Already stored, nothing else left to do
                     </span><span class="kw">return</span>;
+                }
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">warn!</span>(
+                        %farm_index,
+                        %piece_index,
+                        %error,
+                        <span class="string">"Failed to check piece stored in cache"
+                    </span>);
                 }
             }
         }
@@ -1858,59 +1872,42 @@
             <span class="kw">return</span>;
         }
 
-        <span class="kw">let </span>should_store_fut = tokio::task::spawn_blocking({
-            <span class="kw">let </span>plot_caches = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.plot_caches);
-            <span class="kw">let </span>piece_caches = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.piece_caches);
-            <span class="kw">let </span>next_plot_cache = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.next_plot_cache);
-            <span class="kw">let </span>piece = piece.clone();
+        <span class="kw">let </span>plot_caches = <span class="self">self</span>.plot_caches.read().<span class="kw">await</span>;
+        <span class="kw">let </span>plot_caches_len = plot_caches.len();
 
-            <span class="kw">move </span>|| {
-                <span class="kw">for </span>cache <span class="kw">in </span>piece_caches.read().iter() {
-                    <span class="kw">if </span>cache.stored_pieces.contains_key(<span class="kw-2">&amp;</span>key) {
-                        <span class="comment">// Already stored in normal piece cache, no need to store it again
-                        </span><span class="kw">return</span>;
-                    }
+        <span class="comment">// Store pieces in plots using round-robin distribution
+        </span><span class="kw">for _ in </span><span class="number">0</span>..plot_caches_len {
+            <span class="kw">let </span>plot_cache_index =
+                <span class="self">self</span>.next_plot_cache.fetch_add(<span class="number">1</span>, Ordering::Relaxed) % plot_caches_len;
+
+            <span class="kw">match </span>plot_caches[plot_cache_index]
+                .try_store_piece(piece_index, piece)
+                .<span class="kw">await
+            </span>{
+                <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>) =&gt; {
+                    <span class="kw">return</span>;
                 }
-
-                <span class="kw">let </span>plot_caches = plot_caches.read();
-                <span class="kw">let </span>plot_caches_len = plot_caches.len();
-
-                <span class="comment">// Store pieces in plots using round-robin distribution
-                </span><span class="kw">for _ in </span><span class="number">0</span>..plot_caches_len {
-                    <span class="kw">let </span>plot_cache_index =
-                        next_plot_cache.fetch_add(<span class="number">1</span>, Ordering::Relaxed) % plot_caches_len;
-
-                    <span class="kw">match </span>plot_caches[plot_cache_index].try_store_piece(piece_index, <span class="kw-2">&amp;</span>piece) {
-                        <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>) =&gt; {
-                            <span class="kw">return</span>;
-                        }
-                        <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>) =&gt; {
-                            <span class="kw">continue</span>;
-                        }
-                        <span class="prelude-val">Err</span>(error) =&gt; {
-                            <span class="macro">error!</span>(
-                                %error,
-                                %piece_index,
-                                %plot_cache_index,
-                                <span class="string">"Failed to store additional piece in cache"
-                            </span>);
-                            <span class="kw">continue</span>;
-                        }
-                    }
+                <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>) =&gt; {
+                    <span class="kw">continue</span>;
+                }
+                <span class="prelude-val">Err</span>(error) =&gt; {
+                    <span class="macro">error!</span>(
+                        %error,
+                        %piece_index,
+                        %plot_cache_index,
+                        <span class="string">"Failed to store additional piece in cache"
+                    </span>);
+                    <span class="kw">continue</span>;
                 }
             }
-        });
-
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = AsyncJoinOnDrop::new(should_store_fut, <span class="bool-val">true</span>).<span class="kw">await </span>{
-            <span class="macro">error!</span>(%error, %piece_index, <span class="string">"Failed to store additional piece in cache"</span>);
         }
     }
 
     <span class="doccomment">/// Initialize replacement of backing caches
     </span><span class="kw">pub async fn </span>replace_backing_caches(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        new_piece_caches: Vec&lt;DiskPieceCache&gt;,
-        new_plot_caches: Vec&lt;DiskPlotCache&gt;,
+        new_piece_caches: Vec&lt;Arc&lt;<span class="kw">dyn </span>PieceCache&gt;&gt;,
+        new_plot_caches: Vec&lt;Arc&lt;<span class="kw">dyn </span>PlotCache&gt;&gt;,
     ) {
         <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self
             </span>.worker_sender
@@ -1920,7 +1917,7 @@
             <span class="macro">warn!</span>(%error, <span class="string">"Failed to replace backing caches, worker exited"</span>);
         }
 
-        <span class="kw-2">*</span><span class="self">self</span>.plot_caches.write() = new_plot_caches;
+        <span class="kw-2">*</span><span class="self">self</span>.plot_caches.write().<span class="kw">await </span>= new_plot_caches;
     }
 
     <span class="doccomment">/// Subscribe to cache sync notifications
@@ -1931,8 +1928,7 @@
 
 <span class="kw">impl </span>LocalRecordProvider <span class="kw">for </span>FarmerCache {
     <span class="kw">fn </span>record(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>RecordKey) -&gt; <span class="prelude-ty">Option</span>&lt;ProviderRecord&gt; {
-        <span class="comment">// It is okay to take read lock here, writes locks are very infrequent and very short
-        </span><span class="kw">for </span>piece_cache <span class="kw">in </span><span class="self">self</span>.piece_caches.read().iter() {
+        <span class="kw">for </span>piece_cache <span class="kw">in </span><span class="self">self</span>.piece_caches.try_read()<span class="question-mark">?</span>.iter() {
             <span class="kw">if </span>piece_cache.stored_pieces.contains_key(key) {
                 <span class="comment">// Note: We store our own provider records locally without local addresses
                 // to avoid redundant storage and outdated addresses. Instead, these are
@@ -1945,25 +1941,43 @@
                 });
             };
         }
-        <span class="comment">// It is okay to take read lock here, writes locks almost never happen
-        </span><span class="kw">for </span>plot_cache <span class="kw">in </span><span class="self">self</span>.plot_caches.read().iter() {
-            <span class="kw">if </span><span class="macro">matches!</span>(
-                plot_cache.is_piece_maybe_stored(key),
-                MaybePieceStoredResult::Yes
-            ) {
-                <span class="comment">// Note: We store our own provider records locally without local addresses
-                // to avoid redundant storage and outdated addresses. Instead, these are
-                // acquired on demand when returning a `ProviderRecord` for the local node.
-                </span><span class="kw">return </span><span class="prelude-val">Some</span>(ProviderRecord {
-                    key: key.clone(),
-                    provider: <span class="self">self</span>.peer_id,
-                    expires: <span class="prelude-val">None</span>,
-                    addresses: Vec::new(),
-                });
-            };
-        }
 
-        <span class="prelude-val">None
-    </span>}
+        <span class="kw">let </span>found_fut = <span class="self">self
+            </span>.plot_caches
+            .try_read()<span class="question-mark">?
+            </span>.iter()
+            .map(|plot_cache| {
+                <span class="kw">let </span>plot_cache = Arc::clone(plot_cache);
+
+                <span class="kw">async move </span>{
+                    <span class="macro">matches!</span>(
+                        plot_cache.is_piece_maybe_stored(key).<span class="kw">await</span>,
+                        <span class="prelude-val">Ok</span>(MaybePieceStoredResult::Yes)
+                    )
+                }
+            })
+            .collect::&lt;FuturesOrdered&lt;<span class="kw">_</span>&gt;&gt;()
+            .any(|found| <span class="kw">async move </span>{ found });
+
+        <span class="comment">// TODO: Ideally libp2p would have an async API record store API,
+        </span><span class="kw">let </span>found = block_in_place(|| {
+            Handle::current()
+                .block_on(tokio::time::timeout(
+                    IS_PIECE_MAYBE_STORED_TIMEOUT,
+                    found_fut,
+                ))
+                .unwrap_or_default()
+        });
+
+        <span class="comment">// Note: We store our own provider records locally without local addresses
+        // to avoid redundant storage and outdated addresses. Instead, these are
+        // acquired on demand when returning a `ProviderRecord` for the local node.
+        </span>found.then_some(ProviderRecord {
+            key: key.clone(),
+            provider: <span class="self">self</span>.peer_id,
+            expires: <span class="prelude-val">None</span>,
+            addresses: Vec::new(),
+        })
+    }
 }
 </code></pre></div></section></main></body></html>
