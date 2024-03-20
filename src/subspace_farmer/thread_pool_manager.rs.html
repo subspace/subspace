@@ -109,7 +109,15 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>parking_lot::{Condvar, Mutex};
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>event_listener::Event;
+<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::{ThreadPool, ThreadPoolBuildError};
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::ops::Deref;
@@ -130,8 +138,9 @@
 <span class="doccomment">/// Wrapper around [`PlottingThreadPoolPair`] that on `Drop` will return thread pool back into corresponding
 /// [`PlottingThreadPoolManager`].
 </span><span class="attr">#[derive(Debug)]
+#[must_use]
 </span><span class="kw">pub struct </span>PlottingThreadPoolsGuard {
-    inner: Arc&lt;(Mutex&lt;Inner&gt;, Condvar)&gt;,
+    inner: Arc&lt;(Mutex&lt;Inner&gt;, Event)&gt;,
     thread_pool_pair: <span class="prelude-ty">Option</span>&lt;PlottingThreadPoolPair&gt;,
 }
 
@@ -147,14 +156,13 @@
 
 <span class="kw">impl </span>Drop <span class="kw">for </span>PlottingThreadPoolsGuard {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">let </span>(mutex, cvar) = <span class="kw-2">&amp;*</span><span class="self">self</span>.inner;
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = mutex.lock();
-        inner.thread_pool_pairs.push(
+        <span class="kw">let </span>(mutex, event) = <span class="kw-2">&amp;*</span><span class="self">self</span>.inner;
+        mutex.lock().thread_pool_pairs.push(
             <span class="self">self</span>.thread_pool_pair
                 .take()
                 .expect(<span class="string">"Happens only once in `Drop`; qed"</span>),
         );
-        cvar.notify_one();
+        event.notify_additional(<span class="number">1</span>);
     }
 }
 
@@ -172,7 +180,7 @@
 /// thread pool.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>PlottingThreadPoolManager {
-    inner: Arc&lt;(Mutex&lt;Inner&gt;, Condvar)&gt;,
+    inner: Arc&lt;(Mutex&lt;Inner&gt;, Event)&gt;,
 }
 
 <span class="kw">impl </span>PlottingThreadPoolManager {
@@ -194,23 +202,29 @@
         };
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            inner: Arc::new((Mutex::new(inner), Condvar::new())),
+            inner: Arc::new((Mutex::new(inner), Event::new())),
         })
     }
 
-    <span class="doccomment">/// Get one of inner thread pool pairs, will block until one is available if needed
-    </span><span class="attr">#[must_use]
-    </span><span class="kw">pub fn </span>get_thread_pools(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlottingThreadPoolsGuard {
-        <span class="kw">let </span>(mutex, cvar) = <span class="kw-2">&amp;*</span><span class="self">self</span>.inner;
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = mutex.lock();
+    <span class="doccomment">/// Get one of inner thread pool pairs, will wait until one is available if needed
+    </span><span class="kw">pub async fn </span>get_thread_pools(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PlottingThreadPoolsGuard {
+        <span class="kw">let </span>(mutex, event) = <span class="kw-2">&amp;*</span><span class="self">self</span>.inner;
 
-        <span class="kw">let </span>thread_pool_pair = inner.thread_pool_pairs.pop().unwrap_or_else(|| {
-            cvar.wait(<span class="kw-2">&amp;mut </span>inner);
+        <span class="kw">let </span>thread_pool_pair = <span class="kw">loop </span>{
+            <span class="kw">let </span>listener = event.listen();
 
-            inner.thread_pool_pairs.pop().expect(
-                <span class="string">"Guaranteed by parking_lot's API to happen when thread pool is inserted; qed"</span>,
-            )
-        });
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(thread_pool_pair) = mutex.lock().thread_pool_pairs.pop() {
+                drop(listener);
+                <span class="comment">// It is possible that we got here because there was the last free pair available
+                // and in the meantime listener received notification. Just in case that was the
+                // case, notify one more listener (if there is any) to make sure all available
+                // thread pools are utilized when there is demand for them.
+                </span>event.notify(<span class="number">1</span>);
+                <span class="kw">break </span>thread_pool_pair;
+            }
+
+            listener.<span class="kw">await</span>;
+        };
 
         PlottingThreadPoolsGuard {
             inner: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
