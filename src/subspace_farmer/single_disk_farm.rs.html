@@ -2279,6 +2279,9 @@
 <a href="#2277" id="2277">2277</a>
 <a href="#2278" id="2278">2278</a>
 <a href="#2279" id="2279">2279</a>
+<a href="#2280" id="2280">2280</a>
+<a href="#2281" id="2281">2281</a>
+<a href="#2282" id="2282">2282</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -2367,7 +2370,7 @@
 <span class="doccomment">/// Limit for reads in internal benchmark.
 ///
 /// 4 seconds is proving time, hence 3 seconds for reads.
-</span><span class="kw">const </span>INTERNAL_BENCHMARK_READ_TIMEOUT: Duration = Duration::from_secs(<span class="number">3</span>);
+</span><span class="kw">const </span>INTERNAL_BENCHMARK_READ_TIMEOUT: Duration = Duration::from_millis(<span class="number">3500</span>);
 
 <span class="doccomment">/// Exclusive lock for single disk farm info file, ensuring no concurrent edits by cooperating processes is done
 </span><span class="attr">#[must_use = <span class="string">"Lock file must be kept around or as long as farm is used"</span>]
@@ -4514,6 +4517,30 @@
             sector_size <span class="kw">as </span>u64 * thread_rng().gen_range(<span class="number">0</span>..plotted_sector_count) <span class="kw">as </span>u64;
         <span class="kw">let </span>farming_plot = farming_plot.offset(sector_offset);
 
+        <span class="comment">// Reading the whole sector at once
+        </span>{
+            <span class="kw">let </span>start = Instant::now();
+            farming_plot.read_at(<span class="kw-2">&amp;mut </span>sector_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>elapsed = start.elapsed();
+
+            <span class="macro">debug!</span>(<span class="question-mark">?</span>elapsed, <span class="string">"Whole sector"</span>);
+
+            <span class="kw">if </span>elapsed &gt;= INTERNAL_BENCHMARK_READ_TIMEOUT {
+                <span class="macro">debug!</span>(
+                    <span class="question-mark">?</span>elapsed,
+                    <span class="string">"Reading whole sector is too slow, using chunks instead"
+                </span>);
+
+                fastest_mode = ReadSectorRecordChunksMode::ConcurrentChunks;
+                <span class="kw">break</span>;
+            }
+
+            <span class="kw">if </span>fastest_time &gt; elapsed {
+                fastest_mode = ReadSectorRecordChunksMode::WholeSector;
+                fastest_time = elapsed;
+            }
+        }
+
         <span class="comment">// A lot simplified version of concurrent chunks
         </span>{
             <span class="kw">let </span>start = Instant::now();
@@ -4524,31 +4551,10 @@
             })<span class="question-mark">?</span>;
             <span class="kw">let </span>elapsed = start.elapsed();
 
-            <span class="kw">if </span>elapsed &gt;= INTERNAL_BENCHMARK_READ_TIMEOUT {
-                <span class="macro">info!</span>(
-                    <span class="question-mark">?</span>elapsed,
-                    <span class="string">"Proving method with chunks reading is too slow, using whole sector"
-                </span>);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(ReadSectorRecordChunksMode::WholeSector);
-            }
-
             <span class="macro">debug!</span>(<span class="question-mark">?</span>elapsed, <span class="string">"Chunks"</span>);
 
             <span class="kw">if </span>fastest_time &gt; elapsed {
                 fastest_mode = ReadSectorRecordChunksMode::ConcurrentChunks;
-                fastest_time = elapsed;
-            }
-        }
-        <span class="comment">// Reading the whole sector at once
-        </span>{
-            <span class="kw">let </span>start = Instant::now();
-            farming_plot.read_at(<span class="kw-2">&amp;mut </span>sector_bytes, <span class="number">0</span>)<span class="question-mark">?</span>;
-            <span class="kw">let </span>elapsed = start.elapsed();
-
-            <span class="macro">debug!</span>(<span class="question-mark">?</span>elapsed, <span class="string">"Whole sector"</span>);
-
-            <span class="kw">if </span>fastest_time &gt; elapsed {
-                fastest_mode = ReadSectorRecordChunksMode::WholeSector;
                 fastest_time = elapsed;
             }
         }
