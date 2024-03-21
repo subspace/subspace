@@ -178,12 +178,11 @@ where
 
         api.initialize_block(parent_hash, &header)?;
 
-        if let Some((inherent_data, consensus_runtime_version)) = maybe_inherent_data {
+        if let Some((inherent_data, _consensus_runtime_version)) = maybe_inherent_data {
             let inherent_extrinsics = Self::create_inherents(parent_hash, &api, inherent_data)?;
 
             // TODO: This is used to keep compatible with gemini-3h, remove before next network
-            let maintain_runtime_inherent_extrinsic_order =
-                consensus_runtime_version.spec_version >= 3u32;
+            let maintain_runtime_inherent_extrinsic_order = parent_number >= 168430u32.into();
 
             if maintain_runtime_inherent_extrinsic_order {
                 // reverse and push the inherents so that order is maintained
