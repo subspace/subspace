@@ -12,7 +12,7 @@ use sc_consensus::{
     StorageChanges,
 };
 use sc_transaction_pool_api::OffchainTransactionPoolFactory;
-use sp_api::{ApiExt, ProvideRuntimeApi};
+use sp_api::{ApiExt, Core, ProvideRuntimeApi};
 use sp_blockchain::{HashAndNumber, HeaderBackend, HeaderMetadata};
 use sp_consensus::{BlockOrigin, SyncOracle};
 use sp_core::traits::CodeExecutor;
@@ -25,6 +25,7 @@ use sp_domains_fraud_proof::FraudProofApi;
 use sp_messenger::MessengerApi;
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor, One, Zero};
 use sp_runtime::{Digest, Saturating};
+use sp_version::RuntimeVersion;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -120,7 +121,8 @@ where
         + BlockBackend<CBlock>
         + ProvideRuntimeApi<CBlock>
         + 'static,
-    CClient::Api: DomainsApi<CBlock, Block::Header> + MessengerApi<CBlock> + 'static,
+    CClient::Api:
+        sp_api::Core<CBlock> + DomainsApi<CBlock, Block::Header> + MessengerApi<CBlock> + 'static,
     Backend: sc_client_api::Backend<Block> + 'static,
 {
     /// Returns a list of consensus blocks waiting to be processed if any.
@@ -296,6 +298,11 @@ where
         )
         .await?;
 
+        let consensus_runtime_version = self
+            .consensus_client
+            .runtime_api()
+            .version(consensus_block_hash)?;
+
         let DomainBlockBuildResult {
             extrinsics_root,
             state_root,
@@ -309,6 +316,7 @@ where
                 fork_choice,
                 inherent_digests,
                 inherent_data,
+                consensus_runtime_version,
             )
             .await?;
 
@@ -410,6 +418,7 @@ where
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn build_and_import_block(
         &self,
         parent_hash: Block::Hash,
@@ -418,6 +427,7 @@ where
         fork_choice: ForkChoiceStrategy,
         inherent_digests: Digest,
         inherent_data: sp_inherents::InherentData,
+        consensus_runtime_version: RuntimeVersion,
     ) -> Result<DomainBlockBuildResult<Block>, sp_blockchain::Error> {
         let block_builder = BlockBuilder::new(
             &*self.client,
@@ -427,7 +437,7 @@ where
             inherent_digests,
             &*self.backend,
             extrinsics,
-            Some(inherent_data),
+            Some((inherent_data, consensus_runtime_version)),
         )?;
 
         let BuiltBlock {

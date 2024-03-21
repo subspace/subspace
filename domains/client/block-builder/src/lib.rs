@@ -36,6 +36,7 @@ use sp_blockchain::{ApplyExtrinsicFailed, Error};
 use sp_runtime::generic::BlockId;
 use sp_runtime::traits::{Block as BlockT, Hash, HashingFor, Header as HeaderT, NumberFor, One};
 use sp_runtime::Digest;
+use sp_version::RuntimeVersion;
 use std::collections::VecDeque;
 
 /// Used as parameter to [`BlockBuilderProvider`] to express if proof recording should be enabled.
@@ -157,7 +158,7 @@ where
         inherent_digests: Digest,
         backend: &'a B,
         mut extrinsics: VecDeque<Block::Extrinsic>,
-        maybe_inherent_data: Option<sp_inherents::InherentData>,
+        maybe_inherent_data: Option<(sp_inherents::InherentData, RuntimeVersion)>,
     ) -> Result<Self, Error> {
         let header = <<Block as BlockT>::Header as HeaderT>::new(
             parent_number + One::one(),
@@ -177,11 +178,22 @@ where
 
         api.initialize_block(parent_hash, &header)?;
 
-        if let Some(inherent_data) = maybe_inherent_data {
+        if let Some((inherent_data, consensus_runtime_version)) = maybe_inherent_data {
             let inherent_extrinsics = Self::create_inherents(parent_hash, &api, inherent_data)?;
-            // reverse and push the inherents so that order is maintained
-            for inherent_extrinsic in inherent_extrinsics.into_iter().rev() {
-                extrinsics.push_front(inherent_extrinsic)
+
+            // TODO: This is used to keep compatible with gemini-3h, remove before next network
+            let maintain_runtime_inherent_extrinsic_order =
+                consensus_runtime_version.spec_version >= 3u32;
+
+            if maintain_runtime_inherent_extrinsic_order {
+                // reverse and push the inherents so that order is maintained
+                for inherent_extrinsic in inherent_extrinsics.into_iter().rev() {
+                    extrinsics.push_front(inherent_extrinsic)
+                }
+            } else {
+                for inherent_extrinsic in inherent_extrinsics {
+                    extrinsics.push_front(inherent_extrinsic)
+                }
             }
         }
 
