@@ -338,6 +338,14 @@
 <a href="#336" id="336">336</a>
 <a href="#337" id="337">337</a>
 <a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -365,6 +373,10 @@
 <span class="kw">use </span>tokio::runtime::Handle;
 <span class="kw">use </span>tokio::task;
 <span class="kw">use </span>tracing::{debug, info, warn};
+
+<span class="doccomment">/// How many pieces should be skipped before stopping to check the rest of contents, this allows to
+/// not miss most of the pieces after one or two corrupted pieces
+</span><span class="kw">const </span>CONTENTS_READ_SKIP_LIMIT: usize = <span class="number">3</span>;
 
 <span class="doccomment">/// Disk piece cache open error
 </span><span class="attr">#[derive(Debug, Error)]
@@ -520,25 +532,29 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (PieceCacheOffset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">'_ </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
-        <span class="kw">let </span><span class="kw-2">mut </span>early_exit = <span class="bool-val">false</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>current_skip = <span class="number">0</span>;
 
         <span class="comment">// TODO: Parallelize or read in larger batches
         </span>(<span class="number">0</span>..<span class="self">self</span>.inner.num_elements).map(<span class="kw">move </span>|offset| {
-            <span class="kw">if </span>early_exit {
+            <span class="kw">if </span>current_skip &gt; CONTENTS_READ_SKIP_LIMIT {
                 <span class="kw">return </span>(PieceCacheOffset(offset), <span class="prelude-val">None</span>);
             }
 
             <span class="kw">match </span><span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span>element) {
                 <span class="prelude-val">Ok</span>(maybe_piece_index) =&gt; {
                     <span class="kw">if </span>maybe_piece_index.is_none() {
-                        <span class="comment">// End of stored pieces, no need to read further
-                        </span>early_exit = <span class="bool-val">true</span>;
+                        current_skip += <span class="number">1</span>;
+                    } <span class="kw">else </span>{
+                        current_skip = <span class="number">0</span>;
                     }
 
                     (PieceCacheOffset(offset), maybe_piece_index)
                 }
                 <span class="prelude-val">Err</span>(error) =&gt; {
                     <span class="macro">warn!</span>(%error, %offset, <span class="string">"Failed to read cache element"</span>);
+
+                    current_skip += <span class="number">1</span>;
+
                     (PieceCacheOffset(offset), <span class="prelude-val">None</span>)
                 }
             }
