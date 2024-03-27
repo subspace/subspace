@@ -858,15 +858,6 @@
 <a href="#856" id="856">856</a>
 <a href="#857" id="857">857</a>
 <a href="#858" id="858">858</a>
-<a href="#859" id="859">859</a>
-<a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a>
-<a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
@@ -877,7 +868,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use crate</span>::{node_client, NodeClient};
 <span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
-<span class="kw">use </span>atomic::Atomic;
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
 <span class="kw">use </span>lru::LruCache;
@@ -906,7 +896,7 @@
 <span class="kw">use </span>subspace_farmer_components::{plotting, PieceGetter};
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>thiserror::Error;
-<span class="kw">use </span>tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
+<span class="kw">use </span>tokio::sync::{broadcast, watch, OwnedSemaphorePermit, Semaphore};
 <span class="kw">use </span>tokio::task::yield_now;
 <span class="kw">use </span>tracing::{debug, info, trace, warn, Instrument};
 
@@ -1399,26 +1389,22 @@
     <span class="comment">// Create a proxy channel with atomically updatable last archived segment that
     // allows to not buffer messages from RPC subscription, but also access the most
     // recent value at any time
-    </span><span class="kw">let </span>last_archived_segment = Atomic::new(
-        node_client
-            .segment_headers(<span class="macro">vec!</span>[last_archived_segment_index])
-            .<span class="kw">await
-            </span>.map_err(|error| PlottingError::FailedToGetSegmentHeader { error })<span class="question-mark">?
-            </span>.into_iter()
-            .next()
-            .flatten()
-            .ok_or(PlottingError::MissingArchivedSegmentHeader {
-                segment_index: last_archived_segment_index,
-            })<span class="question-mark">?</span>,
-    );
-    <span class="kw">let </span>(<span class="kw-2">mut </span>archived_segments_sender, archived_segments_receiver) = mpsc::channel(<span class="number">0</span>);
-    archived_segments_sender
-        .try_send(())
-        .expect(<span class="string">"No messages were sent yet, there is capacity for one message; qed"</span>);
+    </span><span class="kw">let </span>last_archived_segment = node_client
+        .segment_headers(<span class="macro">vec!</span>[last_archived_segment_index])
+        .<span class="kw">await
+        </span>.map_err(|error| PlottingError::FailedToGetSegmentHeader { error })<span class="question-mark">?
+        </span>.into_iter()
+        .next()
+        .flatten()
+        .ok_or(PlottingError::MissingArchivedSegmentHeader {
+            segment_index: last_archived_segment_index,
+        })<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>(archived_segments_sender, archived_segments_receiver) =
+        watch::channel(last_archived_segment);
 
     <span class="kw">let </span>read_archived_segments_notifications_fut = read_archived_segments_notifications(
         <span class="kw-2">&amp;</span>node_client,
-        <span class="kw-2">&amp;</span>last_archived_segment,
         archived_segments_sender,
         new_segment_processing_delay,
     );
@@ -1431,7 +1417,6 @@
         <span class="kw-2">&amp;</span>node_client,
         <span class="kw-2">&amp;</span>handlers,
         sectors_metadata,
-        <span class="kw-2">&amp;</span>last_archived_segment,
         archived_segments_receiver,
         sectors_to_plot_sender,
         initial_plotting_finished,
@@ -1449,8 +1434,7 @@
 
 <span class="kw">async fn </span>read_archived_segments_notifications&lt;NC&gt;(
     node_client: <span class="kw-2">&amp;</span>NC,
-    last_archived_segment: <span class="kw-2">&amp;</span>Atomic&lt;SegmentHeader&gt;,
-    <span class="kw-2">mut </span>archived_segments_sender: mpsc::Sender&lt;()&gt;,
+    archived_segments_sender: watch::Sender&lt;SegmentHeader&gt;,
     new_segment_processing_delay: Duration,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;
 <span class="kw">where
@@ -1476,13 +1460,8 @@
         // newly archived pieces to be both cached locally and on other farmers on the network
         </span>tokio::time::sleep(new_segment_processing_delay).<span class="kw">await</span>;
 
-        last_archived_segment.store(segment_header, Ordering::SeqCst);
-        <span class="comment">// Just a notification such that receiving side can read updated
-        // `last_archived_segment` (whatever it happens to be right now)
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = archived_segments_sender.try_send(()) {
-            <span class="kw">if </span>error.is_disconnected() {
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-            }
+        <span class="kw">if </span>archived_segments_sender.send(segment_header).is_err() {
+            <span class="kw">break</span>;
         }
     }
 
@@ -1503,8 +1482,7 @@
     node_client: <span class="kw-2">&amp;</span>NC,
     handlers: <span class="kw-2">&amp;</span>Handlers,
     sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
-    last_archived_segment: <span class="kw-2">&amp;</span>Atomic&lt;SegmentHeader&gt;,
-    <span class="kw-2">mut </span>archived_segments_receiver: mpsc::Receiver&lt;()&gt;,
+    <span class="kw-2">mut </span>archived_segments_receiver: watch::Receiver&lt;SegmentHeader&gt;,
     <span class="kw-2">mut </span>sectors_to_plot_sender: mpsc::Sender&lt;SectorToPlot&gt;,
     initial_plotting_finished: <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;
@@ -1545,8 +1523,8 @@
     <span class="kw">let </span><span class="kw-2">mut </span>sectors_to_check = Vec::with_capacity(usize::from(target_sector_count));
     <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_commitments_cache = LruCache::new(ARCHIVED_SEGMENTS_CACHE_SIZE);
 
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(()) = archived_segments_receiver.next().<span class="kw">await </span>{
-        <span class="kw">let </span>archived_segment_header = last_archived_segment.load(Ordering::SeqCst);
+    <span class="kw">loop </span>{
+        <span class="kw">let </span>archived_segment_header = <span class="kw-2">*</span>archived_segments_receiver.borrow_and_update();
         <span class="macro">trace!</span>(
             segment_index = %archived_segment_header.segment_index(),
             <span class="string">"New archived segment received"</span>,
@@ -1729,6 +1707,10 @@
             </span><span class="kw">let _ </span>= acknowledgement_receiver.<span class="kw">await</span>;
 
             sectors_expire_at.remove(<span class="kw-2">&amp;</span>sector_index);
+        }
+
+        <span class="kw">if </span>archived_segments_receiver.changed().<span class="kw">await</span>.is_err() {
+            <span class="kw">break</span>;
         }
     }
 
