@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Call","Certificate","CertificateActionType","Error","Event","RegisterAutoId","RegisterAutoIdX509"],"mod":["dispatchables","storage_types"],"struct":["AutoId","CertificateAction","Pallet","Signature","X509Certificate"],"trait":["Config"],"type":["Identifier","Module"]};

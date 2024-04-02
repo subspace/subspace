@@ -14,6 +14,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["evm_domain_runtime",["",[],["lib.rs","precompiles.rs"]]],\
 ["evm_domain_test_runtime",["",[],["lib.rs","precompiles.rs"]]],\
 ["orml_vesting",["",[],["lib.rs","weights.rs"]]],\
+["pallet_auto_id",["",[],["lib.rs"]]],\
 ["pallet_block_fees",["",[],["fees.rs","lib.rs"]]],\
 ["pallet_domain_id",["",[],["lib.rs"]]],\
 ["pallet_domains",["",[],["block_tree.rs","bundle_storage_fund.rs","domain_registry.rs","lib.rs","runtime_registry.rs","staking.rs","staking_epoch.rs","weights.rs"]]],\
@@ -34,6 +35,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["sc_proof_of_time",["",[["source",[],["gossip.rs","state.rs","timekeeper.rs"]]],["lib.rs","slots.rs","source.rs","verifier.rs"]]],\
 ["sc_subspace_block_relay",["",[["consensus",[],["relay.rs","types.rs"]],["protocol",[],["compact_block.rs"]]],["consensus.rs","lib.rs","protocol.rs","types.rs","utils.rs"]]],\
 ["sc_subspace_chain_specs",["",[],["lib.rs"]]],\
+["sp_auto_id",["",[],["host_functions.rs","lib.rs","runtime_interface.rs"]]],\
 ["sp_block_fees",["",[],["lib.rs"]]],\
 ["sp_consensus_subspace",["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]]],\
 ["sp_domain_digests",["",[],["lib.rs"]]],\
