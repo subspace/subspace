@@ -1,4 +1,5 @@
 (function() {var implementors = {
+"auto_id_domain_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"auto_id_domain_runtime/enum.RuntimeCall.html\" title=\"enum auto_id_domain_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "domain_pallet_executive":[["impl&lt;T: <a class=\"trait\" href=\"domain_pallet_executive/trait.Config.html\" title=\"trait domain_pallet_executive::Config\">Config</a>&gt; UnfilteredDispatchable for <a class=\"enum\" href=\"domain_pallet_executive/enum.Call.html\" title=\"enum domain_pallet_executive::Call\">Call</a>&lt;T&gt;"]],
 "evm_domain_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"evm_domain_runtime/enum.RuntimeCall.html\" title=\"enum evm_domain_runtime::RuntimeCall\">RuntimeCall</a>"]],
 "evm_domain_test_runtime":[["impl UnfilteredDispatchable for <a class=\"enum\" href=\"evm_domain_test_runtime/enum.RuntimeCall.html\" title=\"enum evm_domain_test_runtime::RuntimeCall\">RuntimeCall</a>"]],
