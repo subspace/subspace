@@ -1,6 +1,8 @@
 use core::num::NonZeroU32;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use methods::AES_VERIFY_ELF;
 use rand::{thread_rng, Rng};
+use risc0_zkvm::{default_prover, ExecutorEnv};
 use subspace_core_primitives::PotSeed;
 use subspace_proof_of_time::{prove, verify};
 
@@ -26,6 +28,25 @@ fn criterion_benchmark(c: &mut Criterion) {
                 black_box(&*checkpoints),
             ))
             .unwrap();
+        })
+    });
+
+    let prover = default_prover();
+
+    c.bench_function("zk", |b| {
+        b.iter(|| {
+            let env = ExecutorEnv::builder()
+                .write(&*seed)
+                .unwrap()
+                .write(&*seed.key())
+                .unwrap()
+                .write(&100u32)
+                .unwrap()
+                .build()
+                .unwrap();
+
+            let receipt = prover.prove(black_box(env), AES_VERIFY_ELF).unwrap();
+            assert!(black_box(receipt.receipt.journal.decode().unwrap()));
         })
     });
 }
