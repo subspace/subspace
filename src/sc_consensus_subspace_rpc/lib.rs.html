@@ -785,6 +785,23 @@
 <a href="#783" id="783">783</a>
 <a href="#784" id="784">784</a>
 <a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -808,10 +825,10 @@
 
 </span><span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{future, FutureExt, StreamExt};
-<span class="kw">use </span>jsonrpsee::core::{async_trait, Error <span class="kw">as </span>JsonRpseeError, RpcResult};
+<span class="kw">use </span>jsonrpsee::core::async_trait;
 <span class="kw">use </span>jsonrpsee::proc_macros::rpc;
-<span class="kw">use </span>jsonrpsee::types::{SubscriptionEmptyError, SubscriptionResult};
-<span class="kw">use </span>jsonrpsee::SubscriptionSink;
+<span class="kw">use </span>jsonrpsee::types::{ErrorObject, ErrorObjectOwned};
+<span class="kw">use </span>jsonrpsee::PendingSubscriptionSink;
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
@@ -823,7 +840,9 @@
 <span class="kw">use </span>sc_consensus_subspace::slot_worker::{
     NewSlotNotification, RewardSigningNotification, SubspaceSyncOracle,
 };
-<span class="kw">use </span>sc_rpc::{DenyUnsafe, SubscriptionTaskExecutor};
+<span class="kw">use </span>sc_rpc::utils::pipe_from_stream;
+<span class="kw">use </span>sc_rpc::SubscriptionTaskExecutor;
+<span class="kw">use </span>sc_rpc_api::{DenyUnsafe, UnsafeRpcError};
 <span class="kw">use </span>sc_utils::mpsc::TracingUnboundedSender;
 <span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
@@ -856,20 +875,42 @@
 };
 <span class="kw">use </span>tracing::{debug, error, warn};
 
+<span class="kw">const </span>SUBSPACE_ERROR: i32 = <span class="number">9000</span>;
 <span class="doccomment">/// This is essentially equal to expected number of votes per block, one more is added implicitly by
 /// the fact that channel sender exists
 </span><span class="kw">const </span>SOLUTION_SENDER_CHANNEL_CAPACITY: usize = <span class="number">9</span>;
 <span class="kw">const </span>REWARD_SIGNING_TIMEOUT: Duration = Duration::from_millis(<span class="number">500</span>);
+
+<span class="comment">// TODO: More specific errors instead of `StringError`
+</span><span class="doccomment">/// Top-level error type for the RPC handler.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub enum </span>Error {
+    <span class="doccomment">/// Errors that can be formatted as a String
+    </span><span class="attr">#[error(<span class="string">"{0}"</span>)]
+    </span>StringError(String),
+    <span class="doccomment">/// Call to an unsafe RPC was denied.
+    </span><span class="attr">#[error(transparent)]
+    </span>UnsafeRpcCalled(<span class="attr">#[from] </span>UnsafeRpcError),
+}
+
+<span class="kw">impl </span>From&lt;Error&gt; <span class="kw">for </span>ErrorObjectOwned {
+    <span class="kw">fn </span>from(error: Error) -&gt; <span class="self">Self </span>{
+        <span class="kw">match </span>error {
+            Error::StringError(e) =&gt; ErrorObject::owned(SUBSPACE_ERROR + <span class="number">1</span>, e, <span class="prelude-val">None</span>::&lt;()&gt;),
+            Error::UnsafeRpcCalled(e) =&gt; e.into(),
+        }
+    }
+}
 
 <span class="doccomment">/// Provides rpc methods for interacting with Subspace.
 </span><span class="attr">#[rpc(client, server)]
 </span><span class="kw">pub trait </span>SubspaceRpcApi {
     <span class="doccomment">/// Get metadata necessary for farmer operation
     </span><span class="attr">#[method(name = <span class="string">"subspace_getFarmerAppInfo"</span>)]
-    </span><span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt;;
+    </span><span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;FarmerAppInfo, Error&gt;;
 
     <span class="attr">#[method(name = <span class="string">"subspace_submitSolutionResponse"</span>)]
-    </span><span class="kw">fn </span>submit_solution_response(<span class="kw-2">&amp;</span><span class="self">self</span>, solution_response: SolutionResponse) -&gt; RpcResult&lt;()&gt;;
+    </span><span class="kw">fn </span>submit_solution_response(<span class="kw-2">&amp;</span><span class="self">self</span>, solution_response: SolutionResponse) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;;
 
     <span class="doccomment">/// Slot info subscription
     </span><span class="attr">#[subscription(
@@ -888,7 +929,10 @@
     </span><span class="kw">fn </span>subscribe_reward_signing(<span class="kw-2">&amp;</span><span class="self">self</span>);
 
     <span class="attr">#[method(name = <span class="string">"subspace_submitRewardSignature"</span>)]
-    </span><span class="kw">fn </span>submit_reward_signature(<span class="kw-2">&amp;</span><span class="self">self</span>, reward_signature: RewardSignatureResponse) -&gt; RpcResult&lt;()&gt;;
+    </span><span class="kw">fn </span>submit_reward_signature(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        reward_signature: RewardSignatureResponse,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;;
 
     <span class="doccomment">/// Archived segment header subscription
     </span><span class="attr">#[subscription(
@@ -902,19 +946,19 @@
     </span><span class="kw">async fn </span>segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
-    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;&gt;;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, Error&gt;;
 
     <span class="attr">#[method(name = <span class="string">"subspace_piece"</span>, blocking)]
-    </span><span class="kw">fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; RpcResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt;;
+    </span><span class="kw">fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;, Error&gt;;
 
     <span class="attr">#[method(name = <span class="string">"subspace_acknowledgeArchivedSegmentHeader"</span>)]
     </span><span class="kw">async fn </span>acknowledge_archived_segment_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_index: SegmentIndex,
-    ) -&gt; RpcResult&lt;()&gt;;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;;
 
     <span class="attr">#[method(name = <span class="string">"subspace_lastSegmentHeaders"</span>)]
-    </span><span class="kw">async fn </span>last_segment_headers(<span class="kw-2">&amp;</span><span class="self">self</span>, limit: u64) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;&gt;;
+    </span><span class="kw">async fn </span>last_segment_headers(<span class="kw-2">&amp;</span><span class="self">self</span>, limit: u64) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, Error&gt;;
 }
 
 <span class="attr">#[derive(Default)]
@@ -1081,7 +1125,7 @@
     SO: SyncOracle + Send + Sync + Clone + <span class="lifetime">'static</span>,
     AS: AuxStore + Send + Sync + <span class="lifetime">'static</span>,
 {
-    <span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcResult&lt;FarmerAppInfo&gt; {
+    <span class="kw">fn </span>get_farmer_app_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;FarmerAppInfo, Error&gt; {
         <span class="kw">let </span>last_segment_index = <span class="self">self
             </span>.segment_headers_store
             .max_segment_index()
@@ -1111,11 +1155,11 @@
 
         farmer_app_info.map_err(|error| {
             <span class="macro">error!</span>(<span class="string">"Failed to get data from runtime API: {}"</span>, error);
-            JsonRpseeError::Custom(<span class="string">"Internal error"</span>.to_string())
+            Error::StringError(<span class="string">"Internal error"</span>.to_string())
         })
     }
 
-    <span class="kw">fn </span>submit_solution_response(<span class="kw-2">&amp;</span><span class="self">self</span>, solution_response: SolutionResponse) -&gt; RpcResult&lt;()&gt; {
+    <span class="kw">fn </span>submit_solution_response(<span class="kw-2">&amp;</span><span class="self">self</span>, solution_response: SolutionResponse) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="self">self</span>.deny_unsafe.check_if_safe()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>slot = solution_response.slot_number;
@@ -1132,13 +1176,13 @@
                 <span class="string">"Solution was ignored, likely because farmer was too slow"
             </span>);
 
-            <span class="kw">return </span><span class="prelude-val">Err</span>(JsonRpseeError::Custom(<span class="string">"Solution was ignored"</span>.to_string()));
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::StringError(<span class="string">"Solution was ignored"</span>.to_string()));
         }
 
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>subscribe_slot_info(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>sink: SubscriptionSink) -&gt; SubscriptionResult {
+    <span class="kw">fn </span>subscribe_slot_info(<span class="kw-2">&amp;</span><span class="self">self</span>, pending: PendingSubscriptionSink) {
         <span class="kw">let </span>executor = <span class="self">self</span>.subscription_executor.clone();
         <span class="kw">let </span>solution_response_senders = <span class="self">self</span>.solution_response_senders.clone();
         <span class="kw">let </span>allow_solutions = <span class="self">self</span>.deny_unsafe.check_if_safe().is_ok();
@@ -1225,23 +1269,18 @@
             .subscribe()
             .map(handle_slot_notification);
 
-        <span class="kw">let </span>fut = <span class="kw">async move </span>{
-            sink.pipe_from_stream(stream).<span class="kw">await</span>;
-        };
-
         <span class="self">self</span>.subscription_executor.spawn(
             <span class="string">"subspace-slot-info-subscription"</span>,
             <span class="prelude-val">Some</span>(<span class="string">"rpc"</span>),
-            fut.boxed(),
+            pipe_from_stream(pending, stream).boxed(),
         );
-
-        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>subscribe_reward_signing(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>sink: SubscriptionSink) -&gt; SubscriptionResult {
-        <span class="self">self</span>.deny_unsafe
-            .check_if_safe()
-            .map_err(|_error| SubscriptionEmptyError)<span class="question-mark">?</span>;
+    <span class="kw">fn </span>subscribe_reward_signing(<span class="kw-2">&amp;</span><span class="self">self</span>, pending: PendingSubscriptionSink) {
+        <span class="kw">if </span><span class="self">self</span>.deny_unsafe.check_if_safe().is_err() {
+            <span class="macro">debug!</span>(<span class="string">"Unsafe subscribe_reward_signing ignored"</span>);
+            <span class="kw">return</span>;
+        }
 
         <span class="kw">let </span>executor = <span class="self">self</span>.subscription_executor.clone();
         <span class="kw">let </span>reward_signature_senders = <span class="self">self</span>.reward_signature_senders.clone();
@@ -1313,20 +1352,17 @@
             },
         );
 
-        <span class="kw">let </span>fut = <span class="kw">async move </span>{
-            sink.pipe_from_stream(stream).<span class="kw">await</span>;
-        };
-
         <span class="self">self</span>.subscription_executor.spawn(
             <span class="string">"subspace-block-signing-subscription"</span>,
             <span class="prelude-val">Some</span>(<span class="string">"rpc"</span>),
-            fut.boxed(),
+            pipe_from_stream(pending, stream).boxed(),
         );
-
-        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>submit_reward_signature(<span class="kw-2">&amp;</span><span class="self">self</span>, reward_signature: RewardSignatureResponse) -&gt; RpcResult&lt;()&gt; {
+    <span class="kw">fn </span>submit_reward_signature(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        reward_signature: RewardSignatureResponse,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="self">self</span>.deny_unsafe.check_if_safe()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>reward_signature_senders = <span class="self">self</span>.reward_signature_senders.clone();
@@ -1344,7 +1380,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>subscribe_archived_segment_header(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>sink: SubscriptionSink) -&gt; SubscriptionResult {
+    <span class="kw">fn </span>subscribe_archived_segment_header(<span class="kw-2">&amp;</span><span class="self">self</span>, pending: PendingSubscriptionSink) {
         <span class="kw">let </span>archived_segment_acknowledgement_senders =
             <span class="self">self</span>.archived_segment_acknowledgement_senders.clone();
 
@@ -1410,7 +1446,7 @@
         <span class="kw">let </span>archived_segment_acknowledgement_senders =
             <span class="self">self</span>.archived_segment_acknowledgement_senders.clone();
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
-            sink.pipe_from_stream(stream).<span class="kw">await</span>;
+            pipe_from_stream(pending, stream).<span class="kw">await</span>;
 
             <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_acknowledgement_senders =
                 archived_segment_acknowledgement_senders.lock();
@@ -1425,14 +1461,12 @@
             <span class="prelude-val">Some</span>(<span class="string">"rpc"</span>),
             fut.boxed(),
         );
-
-        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>acknowledge_archived_segment_header(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_index: SegmentIndex,
-    ) -&gt; RpcResult&lt;()&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="self">self</span>.deny_unsafe.check_if_safe()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>archived_segment_acknowledgement_senders =
@@ -1469,7 +1503,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, requested_piece_index: PieceIndex) -&gt; RpcResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+    <span class="kw">fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, requested_piece_index: PieceIndex) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;, Error&gt; {
         <span class="self">self</span>.deny_unsafe.check_if_safe()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>archived_segment = {
@@ -1502,7 +1536,7 @@
                         <span class="prelude-val">Err</span>(error) =&gt; {
                             <span class="macro">error!</span>(%error, <span class="string">"Failed to re-create genesis segment"</span>);
 
-                            <span class="kw">return </span><span class="prelude-val">Err</span>(JsonRpseeError::Custom(
+                            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::StringError(
                                 <span class="string">"Failed to re-create genesis segment"</span>.to_string(),
                             ));
                         }
@@ -1525,14 +1559,14 @@
     <span class="kw">async fn </span>segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indexes: Vec&lt;SegmentIndex&gt;,
-    ) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, Error&gt; {
         <span class="kw">if </span>segment_indexes.len() &gt; MAX_SEGMENT_HEADERS_PER_REQUEST {
             <span class="macro">error!</span>(
                 <span class="string">"segment_indexes length exceed the limit: {} "</span>,
                 segment_indexes.len()
             );
 
-            <span class="kw">return </span><span class="prelude-val">Err</span>(JsonRpseeError::Custom(<span class="macro">format!</span>(
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::StringError(<span class="macro">format!</span>(
                 <span class="string">"segment_indexes length exceed the limit {MAX_SEGMENT_HEADERS_PER_REQUEST}"
             </span>)));
         };
@@ -1543,14 +1577,14 @@
             .collect())
     }
 
-    <span class="kw">async fn </span>last_segment_headers(<span class="kw-2">&amp;</span><span class="self">self</span>, limit: u64) -&gt; RpcResult&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;&gt; {
+    <span class="kw">async fn </span>last_segment_headers(<span class="kw-2">&amp;</span><span class="self">self</span>, limit: u64) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, Error&gt; {
         <span class="kw">if </span>limit <span class="kw">as </span>usize &gt; MAX_SEGMENT_HEADERS_PER_REQUEST {
             <span class="macro">error!</span>(
                 <span class="string">"Request limit ({}) exceed the server limit: {} "</span>,
                 limit, MAX_SEGMENT_HEADERS_PER_REQUEST
             );
 
-            <span class="kw">return </span><span class="prelude-val">Err</span>(JsonRpseeError::Custom(<span class="macro">format!</span>(
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::StringError(<span class="macro">format!</span>(
                 <span class="string">"Request limit ({}) exceed the server limit: {} "</span>,
                 limit, MAX_SEGMENT_HEADERS_PER_REQUEST
             )));
