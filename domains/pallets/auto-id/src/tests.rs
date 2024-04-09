@@ -83,7 +83,8 @@ pub(crate) fn new_test_ext() -> sp_io::TestExternalities {
 }
 
 /// Converts Algorithm identifier to Der since x509 does not implement the ToDer :(.
-fn algorithm_to_der(algorithm_identifier: AlgorithmIdentifier) -> DerVec {
+#[cfg(any(test, feature = "runtime-benchmarks"))]
+pub fn algorithm_to_der(algorithm_identifier: AlgorithmIdentifier) -> DerVec {
     let sequence_tag: u8 = 0x30;
     let sequence_content = {
         let mut temp = Vec::new();
