@@ -520,7 +520,7 @@ impl MockConsensusNode {
         task_manager.spawn_essential_handle().spawn_blocking(
             "mmr-gadget",
             None,
-            mmr_gadget::MmrGadget::start(
+            subspace_mmr_gadget::MmrGadget::start(
                 client.clone(),
                 backend.clone(),
                 sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
