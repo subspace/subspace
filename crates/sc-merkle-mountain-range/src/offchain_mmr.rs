@@ -37,12 +37,12 @@ use std::sync::Arc;
 
 /// `OffchainMMR` exposes MMR offchain canonicalization and pruning logic.
 pub struct OffchainMmr<B: Block, BE: Backend<B>, C> {
-    backend: Arc<BE>,
-    client: Arc<C>,
+    pub backend: Arc<BE>,
+    pub client: Arc<C>,
     offchain_db: OffchainDb<BE::OffchainStorage>,
     indexing_prefix: Vec<u8>,
     first_mmr_block: NumberFor<B>,
-    best_canonicalized: NumberFor<B>,
+    pub best_canonicalized: NumberFor<B>,
 }
 
 impl<B, BE, C> OffchainMmr<B, BE, C>
@@ -58,20 +58,16 @@ where
         offchain_db: OffchainDb<BE::OffchainStorage>,
         indexing_prefix: Vec<u8>,
         first_mmr_block: NumberFor<B>,
-    ) -> Option<Self> {
-        let mut best_canonicalized = first_mmr_block.saturating_sub(One::one());
-        best_canonicalized = aux_schema::load_or_init_state::<B, BE>(&*backend, best_canonicalized)
-            .map_err(|e| error!(target: LOG_TARGET, "Error loading state from aux db: {:?}", e))
-            .ok()?;
-
-        Some(Self {
+        best_canonicalized: NumberFor<B>,
+    ) -> Self {
+        Self {
             backend,
             client,
             offchain_db,
             indexing_prefix,
             first_mmr_block,
             best_canonicalized,
-        })
+        }
     }
 
     fn node_temp_offchain_key(&self, pos: NodeIndex, parent_hash: B::Hash) -> Vec<u8> {
@@ -251,7 +247,10 @@ where
     }
 
     fn handle_potential_pallet_reset(&mut self, notification: &FinalityNotification<B>) {
-        if let Some(first_mmr_block_num) = self.client.first_mmr_block_num(&notification) {
+        let block_hash = notification.header.hash();
+        let block_number = *notification.header.number();
+        if let Some(first_mmr_block_num) = self.client.first_mmr_block_num(block_hash, block_number)
+        {
             if first_mmr_block_num != self.first_mmr_block {
                 info!(
                     target: LOG_TARGET,

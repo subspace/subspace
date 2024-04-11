@@ -2,6 +2,7 @@ use crate::{BlockT, Error, GossipMessageSink, HeaderBackend, HeaderT, Relayer, L
 use futures::StreamExt;
 use sc_client_api::{AuxStore, BlockchainEvents, ProofProvider};
 use sc_state_db::PruningMode;
+use sc_utils::mpsc::TracingUnboundedReceiver;
 use sp_api::{ApiError, ApiExt, ProvideRuntimeApi};
 use sp_consensus::SyncOracle;
 use sp_domains::{DomainId, DomainsApi};
@@ -18,6 +19,7 @@ pub async fn relay_consensus_chain_messages<Client, Block, SO>(
     state_pruning_mode: PruningMode,
     sync_oracle: SO,
     gossip_message_sink: GossipMessageSink,
+    mmr_canonicalized_block_stream: TracingUnboundedReceiver<<Block as BlockT>::Header>,
 ) where
     Block: BlockT,
     Client: BlockchainEvents<Block>
@@ -51,6 +53,7 @@ pub async fn relay_consensus_chain_messages<Client, Block, SO>(
                     .then_some(())
                 }))
         },
+        mmr_canonicalized_block_stream,
     )
     .await;
 
@@ -75,6 +78,7 @@ pub async fn relay_domain_messages<CClient, Client, CBlock, Block, SO>(
     domain_state_pruning: PruningMode,
     sync_oracle: SO,
     gossip_message_sink: GossipMessageSink,
+    mmr_canonicalized_block_stream: TracingUnboundedReceiver<<CBlock as BlockT>::Header>,
 ) where
     Block: BlockT,
     CBlock: BlockT,
@@ -182,6 +186,7 @@ pub async fn relay_domain_messages<CClient, Client, CBlock, Block, SO>(
                 Ok(None)
             }
         },
+        mmr_canonicalized_block_stream,
     )
         .await;
     if let Err(err) = result {
@@ -225,6 +230,7 @@ async fn start_relaying_messages<CClient, CBlock, MP, SO, CRM, ExtraData>(
     message_processor: MP,
     sync_oracle: SO,
     can_relay_message_from_block: CRM,
+    mut mmr_canonicalized_block_stream: TracingUnboundedReceiver<<CBlock as BlockT>::Header>,
 ) -> Result<(), Error>
 where
     CBlock: BlockT,
@@ -242,21 +248,23 @@ where
         "Starting relayer for chain: {:?}",
         chain_id,
     );
-    let mut chain_block_finalization = consensus_client.finality_notification_stream();
 
     // from the start block, start processing all the messages assigned
     // wait for new block finalization of the chain,
     // then fetch new messages in the block
     // construct proof of each message to be relayed
     // submit XDM as unsigned extrinsic.
-    while let Some(block) = chain_block_finalization.next().await {
+    while let Some(canonicalized_block_header) = mmr_canonicalized_block_stream.next().await {
         // if the client is in major sync, wait until sync is complete
         if sync_oracle.is_major_syncing() {
             tracing::debug!(target: LOG_TARGET, "Client is in major sync. Skipping...");
             continue;
         }
 
-        let (number, hash) = (*block.header.number(), block.header.hash());
+        let (number, hash) = (
+            *canonicalized_block_header.number(),
+            canonicalized_block_header.hash(),
+        );
         let blocks_to_process: Vec<(NumberFor<CBlock>, CBlock::Hash)> =
             Relayer::fetch_unprocessed_consensus_blocks_until(
                 &consensus_client,

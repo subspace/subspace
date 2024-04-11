@@ -230,6 +230,8 @@ where
             skip_out_of_order_slot: true,
             maybe_operator_id,
             consensus_state_pruning: PruningMode::ArchiveCanonical,
+            mmr_canonicalized_block_stream: mock_consensus_node
+                .new_mmr_canonicalized_block_stream(),
         };
 
         let domain_node =

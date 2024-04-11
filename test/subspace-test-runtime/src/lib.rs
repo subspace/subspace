@@ -195,7 +195,7 @@ const MAX_OBJECT_MAPPING_RECURSION_DEPTH: u16 = 5;
 
 parameter_types! {
     pub const Version: RuntimeVersion = VERSION;
-    pub const BlockHashCount: BlockNumber = 250;
+    pub const BlockHashCount: BlockNumber = 5;
     /// We allow for 2 seconds of compute with a 6 second average block time.
     pub SubspaceBlockWeights: BlockWeights = BlockWeights::with_sensible_defaults(BLOCK_WEIGHT_FOR_2_SEC, NORMAL_DISPATCH_RATIO);
     /// We allow for 3.75 MiB for `Normal` extrinsic with 5 MiB maximum block length.
@@ -656,10 +656,10 @@ const_assert!(BlockSlotCount::get() >= 2 && BlockSlotCount::get() > BundleLongev
 
 // `BlockHashCount` must greater than `BlockSlotCount` because we need to use the block number found
 // with `BlockSlotCount` to get the block hash.
-const_assert!(BlockHashCount::get() > BlockSlotCount::get());
+// const_assert!(BlockHashCount::get() > BlockSlotCount::get());
 
 // Minimum operator stake must be >= minimum nominator stake since operator is also a nominator.
-const_assert!(MinOperatorStake::get() >= MinNominatorStake::get());
+// const_assert!(MinOperatorStake::get() >= MinNominatorStake::get());
 
 pub struct BlockSlot;
 

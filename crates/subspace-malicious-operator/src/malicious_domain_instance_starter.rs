@@ -19,6 +19,7 @@ use sc_utils::mpsc::{TracingUnboundedReceiver, TracingUnboundedSender};
 use sp_core::traits::SpawnEssentialNamed;
 use sp_domains::{DomainInstanceData, RuntimeType};
 use sp_keystore::KeystorePtr;
+use sp_runtime::traits::Block as BlockT;
 use std::path::PathBuf;
 use std::sync::Arc;
 use subspace_runtime::RuntimeApi as CRuntimeApi;
@@ -43,6 +44,7 @@ pub struct DomainInstanceStarter<CNetwork> {
     pub gossip_message_sink: TracingUnboundedSender<Message>,
     pub consensus_network: Arc<CNetwork>,
     pub consensus_state_pruning: PruningMode,
+    pub mmr_canonicalized_block_stream: TracingUnboundedReceiver<<CBlock as BlockT>::Header>,
 }
 
 impl<CNetwork> DomainInstanceStarter<CNetwork>
@@ -79,6 +81,7 @@ where
             gossip_message_sink,
             consensus_network,
             consensus_state_pruning,
+            mmr_canonicalized_block_stream,
         } = self;
 
         let domain_id = domain_cli.domain_id.into();
@@ -157,6 +160,7 @@ where
                     // Always set it to `None` to not running the normal bundle producer
                     maybe_operator_id: None,
                     consensus_state_pruning,
+                    mmr_canonicalized_block_stream,
                 };
 
                 let mut domain_node = domain_service::new_full::<

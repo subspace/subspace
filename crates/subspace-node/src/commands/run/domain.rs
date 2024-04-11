@@ -30,6 +30,7 @@ use sc_transaction_pool_api::OffchainTransactionPoolFactory;
 use sc_utils::mpsc::{TracingUnboundedReceiver, TracingUnboundedSender};
 use sp_core::crypto::SecretString;
 use sp_domains::{DomainId, DomainInstanceData, OperatorId, RuntimeType};
+use sp_runtime::traits::Block as BlockT;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -393,6 +394,7 @@ pub(super) struct DomainStartOptions<CNetwork> {
         TracingUnboundedReceiver<cross_domain_message_gossip::ChainTxPoolMsg>,
     pub(super) gossip_message_sink: TracingUnboundedSender<cross_domain_message_gossip::Message>,
     pub(super) consensus_state_pruning: PruningMode,
+    pub(super) mmr_canonicalized_block_stream: TracingUnboundedReceiver<<CBlock as BlockT>::Header>,
 }
 
 pub(super) async fn run_evm_domain<CNetwork>(
@@ -436,6 +438,7 @@ where
         domain_message_receiver,
         gossip_message_sink,
         consensus_state_pruning,
+        mmr_canonicalized_block_stream,
     } = domain_start_options;
 
     let block_importing_notification_stream = block_importing_notification_stream.subscribe().then(
@@ -502,6 +505,7 @@ where
                 skip_out_of_order_slot: false,
                 maybe_operator_id: operator_id,
                 consensus_state_pruning,
+                mmr_canonicalized_block_stream,
             };
 
             let mut domain_node = domain_service::new_full::<

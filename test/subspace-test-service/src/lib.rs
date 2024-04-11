@@ -35,6 +35,7 @@ use sc_consensus::block_import::{
 use sc_consensus::{
     BasicQueue, BlockImport, SharedBlockImport, StateAction, Verifier as VerifierT,
 };
+use sc_consensus_subspace::notification::SubspaceNotificationStream;
 use sc_domains::ExtensionsFactory as DomainsExtensionFactory;
 use sc_network::config::{NetworkConfiguration, TransportConfig};
 use sc_network::{multiaddr, NotificationService};
@@ -361,6 +362,7 @@ pub struct MockConsensusNode {
     /// Ferdie key
     pub key: Sr25519Keyring,
     finalize_block_depth: Option<NumberFor<Block>>,
+    mmr_canonicalized_block_stream: SubspaceNotificationStream<<Block as BlockT>::Header>,
 }
 
 impl MockConsensusNode {
@@ -479,6 +481,15 @@ impl MockConsensusNode {
             key.to_account_id(),
         );
 
+        let (mmr_gadget, mmr_canonicalized_block_stream) = subspace_mmr_gadget::MmrGadget::new(
+            client.clone(),
+            backend.clone(),
+            sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
+        );
+        task_manager
+            .spawn_essential_handle()
+            .spawn_blocking("mmr-gadget", None, mmr_gadget.run());
+
         let mut gossip_builder = GossipWorkerBuilder::new();
         task_manager
             .spawn_essential_handle()
@@ -491,6 +502,7 @@ impl MockConsensusNode {
                         state_pruning.clone(),
                         sync_service.clone(),
                         gossip_builder.gossip_msg_sink(),
+                        mmr_canonicalized_block_stream.subscribe(),
                     ),
                 ),
             );
@@ -517,16 +529,6 @@ impl MockConsensusNode {
 
         gossip_builder.push_chain_tx_pool_sink(ChainId::Consensus, consensus_msg_sink);
 
-        task_manager.spawn_essential_handle().spawn_blocking(
-            "mmr-gadget",
-            None,
-            subspace_mmr_gadget::MmrGadget::start(
-                client.clone(),
-                backend.clone(),
-                sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
-            ),
-        );
-
         MockConsensusNode {
             task_manager,
             client,
@@ -549,6 +551,7 @@ impl MockConsensusNode {
             log_prefix,
             key,
             finalize_block_depth,
+            mmr_canonicalized_block_stream,
         }
     }
 
@@ -654,6 +657,12 @@ impl MockConsensusNode {
         let (tx, rx) = tracing_unbounded("subspace_acknowledgement_sender_stream", 100);
         self.acknowledgement_sender_subscribers.push(tx);
         rx
+    }
+
+    pub fn new_mmr_canonicalized_block_stream(
+        &self,
+    ) -> TracingUnboundedReceiver<<Block as BlockT>::Header> {
+        self.mmr_canonicalized_block_stream.subscribe()
     }
 
     /// Wait for all the acknowledgements before return

@@ -272,6 +272,9 @@ fn main() -> Result<(), Error> {
                         consensus_state_pruning.clone(),
                         consensus_chain_node.sync_service.clone(),
                         xdm_gossip_worker_builder.gossip_msg_sink(),
+                        consensus_chain_node
+                            .mmr_canonicalized_block_stream
+                            .subscribe(),
                     );
 
                 consensus_chain_node
@@ -335,6 +338,9 @@ fn main() -> Result<(), Error> {
                 domain_message_receiver,
                 gossip_message_sink: xdm_gossip_worker_builder.gossip_msg_sink(),
                 consensus_state_pruning,
+                mmr_canonicalized_block_stream: consensus_chain_node
+                    .mmr_canonicalized_block_stream
+                    .subscribe(),
             };
 
             consensus_chain_node

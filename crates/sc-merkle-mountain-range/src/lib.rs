@@ -44,17 +44,22 @@ mod offchain_mmr;
 
 use crate::offchain_mmr::OffchainMmr;
 use futures::StreamExt;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use sc_client_api::{
-    Backend, BlockImportNotification, BlockchainEvents, FinalityNotification,
-    FinalityNotifications, ImportNotifications,
+    Backend, BlockchainEvents, FinalityNotification, FinalizeSummary, ImportNotifications,
+};
+use sc_consensus_subspace::notification::{
+    self, SubspaceNotificationSender, SubspaceNotificationStream,
 };
 use sc_offchain::OffchainDb;
+use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
 use sp_api::ProvideRuntimeApi;
-use sp_blockchain::{HeaderBackend, HeaderMetadata};
+use sp_blockchain::{Backend as BackendT, HeaderBackend, HeaderMetadata};
 use sp_core::H256 as MmrRootHash;
 use sp_mmr_primitives::{utils, LeafIndex, MmrApi};
-use sp_runtime::traits::{Block, Header, NumberFor};
+use sp_runtime::traits::{Block, CheckedSub, Header, NumberFor, One};
+use sp_runtime::Saturating;
+use std::error::Error;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -71,17 +76,19 @@ where
     Self::Api: MmrApi<B, MmrRootHash, NumberFor<B>>,
 {
     /// Get the block number where the mmr pallet was added to the runtime.
-    fn first_mmr_block_num(&self, notification: &FinalityNotification<B>) -> Option<NumberFor<B>> {
-        let best_block_hash = notification.header.hash();
-        let best_block_number = *notification.header.number();
-        match self.runtime_api().mmr_leaf_count(best_block_hash) {
+    fn first_mmr_block_num(
+        &self,
+        block_hash: B::Hash,
+        block_number: NumberFor<B>,
+    ) -> Option<NumberFor<B>> {
+        match self.runtime_api().mmr_leaf_count(block_hash) {
             Ok(Ok(mmr_leaf_count)) => {
-                match utils::first_mmr_block_num::<B::Header>(best_block_number, mmr_leaf_count) {
+                match utils::first_mmr_block_num::<B::Header>(block_number, mmr_leaf_count) {
                     Ok(first_mmr_block) => {
                         debug!(
                             target: LOG_TARGET,
                             "pallet-mmr detected at block {:?} with genesis at block {:?}",
-                            best_block_number,
+                            block_number,
                             first_mmr_block
                         );
                         Some(first_mmr_block)
@@ -98,9 +105,8 @@ where
             _ => {
                 trace!(
                     target: LOG_TARGET,
-                    "pallet-mmr not detected at block {:?} ... (best finalized {:?})",
-                    best_block_number,
-                    notification.header.number()
+                    "pallet-mmr not detected at block {:?} ...",
+                    block_number,
                 );
                 None
             }
@@ -127,50 +133,11 @@ struct OffchainMmrBuilder<B: Block, BE: Backend<B>, C> {
     _phantom: PhantomData<B>,
 }
 
-impl<B, BE, C> OffchainMmrBuilder<B, BE, C>
-where
-    B: Block,
-    BE: Backend<B>,
-    C: MmrClient<B, BE>,
-    C::Api: MmrApi<B, MmrRootHash, NumberFor<B>>,
-{
-    async fn try_build(
-        self,
-        finality_notifications: &mut FinalityNotifications<B>,
-    ) -> Option<OffchainMmr<B, BE, C>> {
-        while let Some(notification) = finality_notifications.next().await {
-            if let Some(first_mmr_block_num) = self.client.first_mmr_block_num(&notification) {
-                let mut offchain_mmr = OffchainMmr::new(
-                    self.backend,
-                    self.client,
-                    self.offchain_db,
-                    self.indexing_prefix,
-                    first_mmr_block_num,
-                )?;
-                // We need to make sure all blocks leading up to current notification
-                // have also been canonicalized.
-                offchain_mmr.canonicalize_catch_up(&notification);
-                // We have to canonicalize and prune the blocks in the finality
-                // notification that lead to building the offchain-mmr as well.
-                offchain_mmr.canonicalize_and_prune(notification);
-                return Some(offchain_mmr);
-            }
-        }
-
-        error!(
-            target: LOG_TARGET,
-            "Finality notifications stream closed unexpectedly. \
-            Couldn't build the canonicalization engine",
-        );
-        None
-    }
-}
-
 /// A MMR Gadget.
 pub struct MmrGadget<B: Block, BE: Backend<B>, C> {
-    finality_notifications: FinalityNotifications<B>,
-
-    _phantom: PhantomData<(B, BE, C)>,
+    import_notifications: ImportNotifications<B>,
+    canonicalized_block_sender: SubspaceNotificationSender<B::Header>,
+    offchain_mmr_builder: Option<OffchainMmrBuilder<B, BE, C>>,
 }
 
 impl<B, BE, C> MmrGadget<B, BE, C>
@@ -181,44 +148,183 @@ where
     C: MmrClient<B, BE>,
     C::Api: MmrApi<B, MmrRootHash, NumberFor<B>>,
 {
-    async fn run(mut self, builder: OffchainMmrBuilder<B, BE, C>) {
-        let mut offchain_mmr = match builder.try_build(&mut self.finality_notifications).await {
-            Some(offchain_mmr) => offchain_mmr,
+    pub async fn run(mut self) {
+        let OffchainMmrBuilder {
+            backend,
+            client,
+            offchain_db,
+            indexing_prefix,
+            ..
+        } = self.offchain_mmr_builder.take().expect("");
+        let (first_mmr_block_num, best_canonicalized) = match Self::init_block_number(
+            &client,
+            &backend,
+            &mut self.import_notifications,
+        )
+        .await
+        {
+            Some(n) => n,
             None => return,
         };
+        let mut offchain_mmr = OffchainMmr::new(
+            backend,
+            client,
+            offchain_db,
+            indexing_prefix,
+            first_mmr_block_num,
+            best_canonicalized,
+        );
 
-        while let Some(notification) = self.finality_notifications.next().await {
-            offchain_mmr.canonicalize_and_prune(notification);
+        let mut first = true;
+        loop {
+            match self.next_block(&offchain_mmr).await {
+                Ok(Some(notification)) => {
+                    let header = notification.header.clone();
+                    if first {
+                        // We need to make sure all blocks leading up to current notification
+                        // have also been canonicalized.
+                        offchain_mmr.canonicalize_catch_up(&notification);
+                        first = false;
+                    }
+                    offchain_mmr.canonicalize_and_prune(notification);
+                    self.canonicalized_block_sender.notify(|| header.clone());
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    error!(
+                        target: LOG_TARGET,
+                        "MmrGadget met unexpected error {err:?}",
+                    );
+                    break;
+                }
+            }
         }
     }
 
+    async fn init_block_number(
+        client: &Arc<C>,
+        backend: &Arc<BE>,
+        import_notification_stream: &mut ImportNotifications<B>,
+    ) -> Option<(NumberFor<B>, NumberFor<B>)> {
+        while let Some(import_notification) = import_notification_stream.next().await {
+            let block_hash = import_notification.header.hash();
+            let block_number = *import_notification.header.number();
+            if let Some(first_mmr_block_num) = client.first_mmr_block_num(block_hash, block_number)
+            {
+                let mut best_canonicalized = first_mmr_block_num.saturating_sub(One::one());
+                best_canonicalized = aux_schema::load_or_init_state::<B, BE>(
+                    &*backend,
+                    best_canonicalized,
+                )
+                .map_err(|e| error!(target: LOG_TARGET, "Error loading state from aux db: {:?}", e))
+                .ok()?;
+                return Some((first_mmr_block_num, best_canonicalized));
+            }
+        }
+        error!(
+            target: LOG_TARGET,
+            "Block import notifications stream closed unexpectedly. \
+            Couldn't build the canonicalization engine",
+        );
+        None
+    }
+
+    async fn next_block(
+        &mut self,
+        offchain_mmr: &OffchainMmr<B, BE, C>,
+    ) -> Result<Option<FinalityNotification<B>>, Box<dyn Error>> {
+        let best_canonicalized = offchain_mmr.best_canonicalized;
+        while let Some(import_notification) = self.import_notifications.next().await {
+            if !import_notification.is_new_best {
+                continue;
+            }
+            let block_number = match import_notification
+                .header
+                .number()
+                .checked_sub(&10u32.into())
+            {
+                Some(n) => n,
+                None => continue,
+            };
+            if best_canonicalized >= block_number {
+                continue;
+            }
+            let best_canonicalized_hash = offchain_mmr
+                .client
+                .hash(best_canonicalized)?
+                .ok_or_else(|| {
+                    sp_blockchain::Error::Backend(format!(
+                        "Consensus block hash for #{best_canonicalized:?} not found"
+                    ))
+                })?;
+            let block_hash = offchain_mmr.client.hash(block_number)?.ok_or_else(|| {
+                sp_blockchain::Error::Backend(format!(
+                    "Consensus block hash for #{block_number:?} not found"
+                ))
+            })?;
+            let block_header = offchain_mmr.client.header(block_hash)?.ok_or_else(|| {
+                sp_blockchain::Error::Backend(format!(
+                    "Consensus block header for #{block_hash:?} not found"
+                ))
+            })?;
+
+            let route_from_finalized = sp_blockchain::tree_route(
+                offchain_mmr.backend.blockchain(),
+                best_canonicalized_hash,
+                block_hash,
+            )?;
+            let finalized = route_from_finalized
+                .enacted()
+                .iter()
+                .map(|elem| elem.hash)
+                .collect::<Vec<_>>();
+            let stale_heads = offchain_mmr
+                .backend
+                .blockchain()
+                .displaced_leaves_after_finalizing(block_number)?;
+            let summary = FinalizeSummary {
+                header: block_header,
+                finalized,
+                stale_heads,
+            };
+            let (sender, _) = tracing_unbounded("empty", 0);
+            return Ok(Some(FinalityNotification::from_summary(summary, sender)));
+        }
+        Ok(None)
+    }
+
     /// Create and run the MMR gadget.
-    pub async fn start(client: Arc<C>, backend: Arc<BE>, indexing_prefix: Vec<u8>) {
+    pub fn new(
+        client: Arc<C>,
+        backend: Arc<BE>,
+        indexing_prefix: Vec<u8>,
+    ) -> (Self, SubspaceNotificationStream<B::Header>) {
         let offchain_db = match backend.offchain_storage() {
             Some(offchain_storage) => OffchainDb::new(offchain_storage),
             None => {
-                warn!(
-                    target: LOG_TARGET,
-                    "Can't spawn a MmrGadget for a node without offchain storage."
-                );
-                return;
+                panic!("Can't spawn a MmrGadget for a node without offchain storage.");
             }
+        };
+        let import_notifications = client.import_notification_stream();
+
+        let (canonicalized_block_sender, canonicalized_block_receiver) =
+            notification::channel("mmr_canonicalized_block_channel");
+
+        let offchain_mmr_builder = OffchainMmrBuilder {
+            backend,
+            client,
+            offchain_db,
+            indexing_prefix,
+            _phantom: Default::default(),
         };
 
         let mmr_gadget = MmrGadget::<B, BE, C> {
-            finality_notifications: client.finality_notification_stream(),
-
-            _phantom: Default::default(),
+            import_notifications,
+            canonicalized_block_sender,
+            offchain_mmr_builder: Some(offchain_mmr_builder),
         };
-        mmr_gadget
-            .run(OffchainMmrBuilder {
-                backend,
-                client,
-                offchain_db,
-                indexing_prefix,
-                _phantom: Default::default(),
-            })
-            .await
+
+        (mmr_gadget, canonicalized_block_receiver)
     }
 }
 

@@ -232,6 +232,7 @@ where
     pub skip_empty_bundle_production: bool,
     pub consensus_state_pruning: PruningMode,
     pub skip_out_of_order_slot: bool,
+    pub mmr_canonicalized_block_stream: TracingUnboundedReceiver<CBlock::Header>,
 }
 
 /// Builds service for a domain full node.
@@ -332,6 +333,7 @@ where
         skip_empty_bundle_production,
         consensus_state_pruning,
         skip_out_of_order_slot,
+        mmr_canonicalized_block_stream,
     } = domain_params;
 
     // TODO: Do we even need block announcement on domain node?
@@ -466,6 +468,7 @@ where
             // since domain sync oracle will always return `synced` due to force sync being set.
             consensus_network_sync_oracle,
             gossip_message_sink,
+            mmr_canonicalized_block_stream,
         );
 
         spawn_essential.spawn_essential_blocking("domain-relayer", None, Box::pin(relayer_worker));

@@ -79,6 +79,7 @@ use sc_subspace_block_relay::{
 };
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sc_transaction_pool_api::OffchainTransactionPoolFactory;
+use sc_utils::mpsc::TracingUnboundedReceiver;
 use sp_api::{ApiExt, ConstructRuntimeApi, Metadata, ProvideRuntimeApi};
 use sp_block_builder::BlockBuilder;
 use sp_blockchain::HeaderMetadata;
@@ -655,6 +656,7 @@ where
     pub network_starter: NetworkStarter,
     /// Transaction pool.
     pub transaction_pool: Arc<FullPool<Client, Block, DomainHeader>>,
+    pub mmr_canonicalized_block_stream: SubspaceNotificationStream<<Block as BlockT>::Header>,
 }
 
 type FullNode<RuntimeApi> = NewFull<FullClient<RuntimeApi>>;
@@ -969,17 +971,14 @@ where
     }
 
     // mmr offchain indexer
-    if offchain_indexing_enabled {
-        task_manager.spawn_essential_handle().spawn_blocking(
-            "mmr-gadget",
-            None,
-            subspace_mmr_gadget::MmrGadget::start(
-                client.clone(),
-                backend.clone(),
-                sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
-            ),
-        );
-    }
+    let (mmr_gadget, mmr_canonicalized_block_stream) = subspace_mmr_gadget::MmrGadget::new(
+        client.clone(),
+        backend.clone(),
+        sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
+    );
+    task_manager
+        .spawn_essential_handle()
+        .spawn_blocking("mmr-gadget", None, mmr_gadget.run());
 
     let backoff_authoring_blocks: Option<()> = None;
 
@@ -1148,5 +1147,6 @@ where
         archived_segment_notification_stream,
         network_starter,
         transaction_pool,
+        mmr_canonicalized_block_stream,
     })
 }
