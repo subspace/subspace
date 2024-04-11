@@ -6,7 +6,7 @@ use crate::commands::run::consensus::{
     create_consensus_chain_configuration, ConsensusChainConfiguration, ConsensusChainOptions,
 };
 use crate::commands::run::domain::{
-    create_domain_configuration, run_evm_domain, DomainOptions, DomainStartOptions,
+    create_domain_configuration, run_domain, DomainOptions, DomainStartOptions,
 };
 use crate::commands::shared::init_logger;
 use crate::{set_default_ss58_version, Error, PosTable};
@@ -238,7 +238,7 @@ pub async fn run(run_options: RunOptions) -> Result<(), Error> {
                 consensus_network: consensus_chain_node.network_service,
                 block_importing_notification_stream: consensus_chain_node
                     .block_importing_notification_stream,
-                new_slot_notification_stream: consensus_chain_node.new_slot_notification_stream,
+                pot_slot_info_stream: consensus_chain_node.pot_slot_info_stream,
                 consensus_network_sync_oracle: consensus_chain_node.sync_service,
                 domain_message_receiver,
                 gossip_message_sink,
@@ -267,13 +267,13 @@ pub async fn run(run_options: RunOptions) -> Result<(), Error> {
                             }
                         };
 
-                        let start_evm_domain = run_evm_domain(
+                        let start_domain = run_domain(
                             bootstrap_result,
                             domain_configuration,
                             domain_start_options,
                         );
 
-                        if let Err(error) = start_evm_domain.await {
+                        if let Err(error) = start_domain.await {
                             error!(%error, "Domain starter exited with an error");
                         }
                     }),
