@@ -22,7 +22,7 @@ mod benchmarking;
 #[cfg(test)]
 mod tests;
 #[cfg(any(test, feature = "runtime-benchmarks"))]
-pub use tests::algorithm_to_der;
+mod utils;
 
 extern crate alloc;
 

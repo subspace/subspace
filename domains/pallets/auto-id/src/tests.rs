@@ -1,4 +1,5 @@
 use crate::pallet::{AutoIds, NextAutoIdIdentifier};
+use crate::utils::algorithm_to_der;
 use crate::{
     self as pallet_auto_id, CertificateAction, CertificateActionType, Identifier, Pallet,
     RegisterAutoId, RegisterAutoIdX509, Signature,
@@ -9,13 +10,11 @@ use frame_support::traits::{ConstU16, ConstU32, ConstU64, Time};
 use pem::parse;
 use ring::rand::SystemRandom;
 use ring::signature::RsaKeyPair;
-use sp_auto_id::DerVec;
 use sp_core::{H256, U256};
 use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
 use sp_runtime::BuildStorage;
 use std::sync::Arc;
 use subspace_runtime_primitives::Moment;
-use x509_parser::der_parser::asn1_rs::ToDer;
 use x509_parser::oid_registry::OID_PKCS1_SHA256WITHRSA;
 use x509_parser::prelude::{AlgorithmIdentifier, FromDer};
 
@@ -80,41 +79,6 @@ pub(crate) fn new_test_ext() -> sp_io::TestExternalities {
         Arc::new(sp_auto_id::host_functions::HostFunctionsImpl),
     ));
     ext
-}
-
-/// Converts Algorithm identifier to Der since x509 does not implement the ToDer :(.
-#[cfg(any(test, feature = "runtime-benchmarks"))]
-pub fn algorithm_to_der(algorithm_identifier: AlgorithmIdentifier) -> DerVec {
-    let sequence_tag: u8 = 0x30;
-    let sequence_content = {
-        let mut temp = Vec::new();
-        temp.extend(algorithm_identifier.algorithm.to_der_vec().unwrap());
-        temp.extend(algorithm_identifier.parameters.to_der_vec().unwrap());
-        temp
-    };
-    let encoded_sequence_length = {
-        let content_length = sequence_content.len();
-        if content_length > 127 {
-            // This is long form length encoding
-            let length_as_bytes = content_length.to_be_bytes();
-            let mut encoded = Vec::with_capacity(length_as_bytes.len() + 1);
-            // Set first bit to 1 and store number of length-bytes.
-            encoded.push(0x80 | (length_as_bytes.len() as u8));
-            encoded.extend_from_slice(&length_as_bytes);
-            encoded
-        } else {
-            // The short form (single-byte length) can be used.
-            vec![content_length as u8]
-        }
-    };
-
-    let mut d = Vec::new();
-    d.push(sequence_tag);
-    d.extend(encoded_sequence_length);
-    d.extend(sequence_content);
-    let (_, derived) = AlgorithmIdentifier::from_der(&d).unwrap();
-    assert_eq!(algorithm_identifier, derived);
-    d.into()
 }
 
 fn register_issuer_auto_id() -> Identifier {
