@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["get_mmr_leaf_data"],"struct":["HostFunctions"]};
+window.SIDEBAR_ITEMS = {"fn":["consensus_block_hash","get_mmr_leaf_data"],"struct":["HostFunctions"]};
