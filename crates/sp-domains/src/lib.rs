@@ -54,6 +54,7 @@ use sp_core::sr25519::vrf::VrfSignature;
 #[cfg(any(feature = "std", feature = "runtime-benchmarks"))]
 use sp_core::sr25519::vrf::{VrfPreOutput, VrfProof};
 use sp_core::H256;
+use sp_mmr_primitives::{EncodableOpaqueLeaf, Proof as MmrProof};
 use sp_runtime::generic::OpaqueDigestItemId;
 use sp_runtime::traits::{
     BlakeTwo256, Block as BlockT, CheckedAdd, Hash as HashT, Header as HeaderT, NumberFor, Zero,

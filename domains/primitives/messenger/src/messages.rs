@@ -10,6 +10,7 @@ pub use sp_domains::{ChainId, ChannelId};
 use sp_mmr_primitives::{EncodableOpaqueLeaf, Proof as MmrProof};
 use sp_runtime::app_crypto::sp_core::U256;
 use sp_runtime::DispatchError;
+use sp_subspace_mmr::ConsensusChainMmrLeafProof;
 use sp_trie::StorageProof;
 
 /// Nonce used as an identifier and ordering of messages within a channel.
@@ -135,43 +136,17 @@ pub struct Message<Balance> {
     pub last_delivered_message_response_nonce: Option<Nonce>,
 }
 
-/// Consensus chain MMR leaf and its Proof at specific block
-#[derive(Debug, Encode, Decode, Eq, PartialEq, TypeInfo)]
-pub struct ConsensusChainMmrLeafProof<BlockHash, MmrHash> {
-    /// Consensus block info from which this proof was generated.
-    pub consensus_block_hash: BlockHash,
-    /// Encoded MMR leaf
-    pub opaque_mmr_leaf: EncodableOpaqueLeaf,
-    /// MMR proof for the leaf above.
-    pub proof: MmrProof<MmrHash>,
-}
-
-// TODO: update upstream `EncodableOpaqueLeaf` to derive clone.
-impl<BlockHash, MmrHash> Clone for ConsensusChainMmrLeafProof<BlockHash, MmrHash>
-where
-    BlockHash: Clone,
-    MmrHash: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            consensus_block_hash: self.consensus_block_hash.clone(),
-            opaque_mmr_leaf: EncodableOpaqueLeaf(self.opaque_mmr_leaf.0.clone()),
-            proof: self.proof.clone(),
-        }
-    }
-}
-
 #[derive(Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
-pub enum Proof<CBlockHash, MmrHash> {
+pub enum Proof<CBlockNumber, CBlockHash, MmrHash> {
     Consensus {
         /// Consensus chain MMR leaf proof.
-        consensus_chain_mmr_proof: ConsensusChainMmrLeafProof<CBlockHash, MmrHash>,
+        consensus_chain_mmr_proof: ConsensusChainMmrLeafProof<CBlockNumber, CBlockHash, MmrHash>,
         /// Storage proof that message is processed on src_chain.
         message_proof: StorageProof,
     },
     Domain {
         /// Consensus chain MMR leaf proof.
-        consensus_chain_mmr_proof: ConsensusChainMmrLeafProof<CBlockHash, MmrHash>,
+        consensus_chain_mmr_proof: ConsensusChainMmrLeafProof<CBlockNumber, CBlockHash, MmrHash>,
         /// Storage proof that src domain chain's block is out of the challenge period on Consensus chain.
         domain_proof: StorageProof,
         /// Storage proof that message is processed on src_chain.
@@ -179,7 +154,7 @@ pub enum Proof<CBlockHash, MmrHash> {
     },
 }
 
-impl<CBlockHash, MmrHash> Proof<CBlockHash, MmrHash> {
+impl<CBlockNumber, CBlockHash, MmrHash> Proof<CBlockNumber, CBlockHash, MmrHash> {
     pub fn message_proof(&self) -> StorageProof {
         match self {
             Proof::Consensus { message_proof, .. } => message_proof.clone(),
@@ -187,8 +162,11 @@ impl<CBlockHash, MmrHash> Proof<CBlockHash, MmrHash> {
         }
     }
 
-    pub fn consensus_mmr_proof(&self) -> ConsensusChainMmrLeafProof<CBlockHash, MmrHash>
+    pub fn consensus_mmr_proof(
+        &self,
+    ) -> ConsensusChainMmrLeafProof<CBlockNumber, CBlockHash, MmrHash>
     where
+        CBlockNumber: Clone,
         CBlockHash: Clone,
         MmrHash: Clone,
     {
@@ -214,7 +192,7 @@ impl<CBlockHash, MmrHash> Proof<CBlockHash, MmrHash> {
 
 /// Cross Domain message contains Message and its proof on src_chain.
 #[derive(Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
-pub struct CrossDomainMessage<CBlockHash, MmrHash> {
+pub struct CrossDomainMessage<CBlockNumber, CBlockHash, MmrHash> {
     /// Chain which initiated this message.
     pub src_chain_id: ChainId,
     /// Chain this message is intended for.
@@ -224,7 +202,7 @@ pub struct CrossDomainMessage<CBlockHash, MmrHash> {
     /// Message nonce within the channel.
     pub nonce: Nonce,
     /// Proof of message processed on src_chain.
-    pub proof: Proof<CBlockHash, MmrHash>,
+    pub proof: Proof<CBlockNumber, CBlockHash, MmrHash>,
     /// The message weight tag
     pub weight_tag: MessageWeightTag,
 }
@@ -253,10 +231,10 @@ pub struct BlockMessagesWithStorageKey {
     pub inbox_responses: Vec<BlockMessageWithStorageKey>,
 }
 
-impl<BlockHash, MmrHash> CrossDomainMessage<BlockHash, MmrHash> {
+impl<BlockNumber, BlockHash, MmrHash> CrossDomainMessage<BlockNumber, BlockHash, MmrHash> {
     pub fn from_relayer_msg_with_proof(
         r_msg: BlockMessageWithStorageKey,
-        proof: Proof<BlockHash, MmrHash>,
+        proof: Proof<BlockNumber, BlockHash, MmrHash>,
     ) -> Self {
         CrossDomainMessage {
             src_chain_id: r_msg.src_chain_id,

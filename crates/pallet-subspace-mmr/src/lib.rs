@@ -20,6 +20,7 @@
 
 use frame_system::pallet_prelude::BlockNumberFor;
 pub use pallet::*;
+use sp_core::Get;
 use sp_mmr_primitives::{LeafDataProvider, OnNewRoot};
 use sp_runtime::traits::{CheckedSub, One};
 use sp_runtime::DigestItem;
@@ -28,7 +29,9 @@ use sp_subspace_mmr::{LeafDataV0, MmrDigest, MmrLeaf};
 
 #[frame_support::pallet]
 mod pallet {
+    use frame_support::pallet_prelude::*;
     use frame_support::Parameter;
+    use frame_system::pallet_prelude::BlockNumberFor;
     use sp_core::H256;
 
     #[pallet::pallet]
@@ -36,14 +39,28 @@ mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config<Hash: Into<H256> + From<H256>> {
-        type MmrRootHash: Parameter + Copy;
+        type MmrRootHash: Parameter + Copy + MaxEncodedLen;
+        type MmrRootHashCount: Get<u32>;
     }
+
+    /// Map of block numbers to mmr root hashes.
+    #[pallet::storage]
+    #[pallet::getter(fn mmr_root_hash)]
+    pub type MmrRootHashes<T: Config> =
+        StorageMap<_, Twox64Concat, BlockNumberFor<T>, T::MmrRootHash, OptionQuery>;
 }
 
 impl<T: Config> OnNewRoot<T::MmrRootHash> for Pallet<T> {
     fn on_new_root(root: &T::MmrRootHash) {
         let digest = DigestItem::new_mmr_root(*root);
         <frame_system::Pallet<T>>::deposit_log(digest);
+
+        // TODO: move to `on_initialize` or `on_finalize` instead?
+        let block_number = frame_system::Pallet::<T>::block_number();
+        <MmrRootHashes<T>>::insert(block_number, *root);
+        if let Some(to_prune) = block_number.checked_sub(&T::MmrRootHashCount::get().into()) {
+            <MmrRootHashes<T>>::remove(to_prune);
+        }
     }
 }
 

@@ -66,18 +66,18 @@ where
 
     fn verify_mmr_proof(&self, leaves: Vec<EncodableOpaqueLeaf>, encoded_proof: Vec<u8>) -> bool {
         // always use the parent hash in case there is a re-org happening
-        let parent_hash = *self
-            .consensus_client
-            .header(self.consensus_client.info().best_hash)
-            .expect("Database error is fatal in host function, there is no recovery from this; qed")
-            .expect("Header must be available. There is no recovery if not available; qed.")
-            .parent_hash();
+        // let parent_hash = *self
+        //     .consensus_client
+        //     .header(self.consensus_client.info().best_hash)
+        //     .expect("Database error is fatal in host function, there is no recovery from this; qed")
+        //     .expect("Header must be available. There is no recovery if not available; qed.")
+        //     .parent_hash();
         let api = self.consensus_client.runtime_api();
         let proof = match Proof::<H256>::decode(&mut encoded_proof.as_ref()) {
             Ok(proof) => proof,
             Err(_) => return false,
         };
-        api.verify_proof(parent_hash, leaves, proof).expect(
+        api.verify_proof(self.consensus_client.info().best_hash, leaves, proof).expect(
             "Runtime Api should not fail in host function, there is no recovery from this; qed.",
         ).is_ok()
     }

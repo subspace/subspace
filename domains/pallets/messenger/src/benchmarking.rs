@@ -8,10 +8,11 @@ use frame_support::traits::Get;
 use frame_system::RawOrigin;
 use sp_messenger::endpoint::{Endpoint, EndpointRequest};
 use sp_messenger::messages::{
-    ConsensusChainMmrLeafProof, CrossDomainMessage, InitiateChannelParams, Message,
-    MessageWeightTag, Payload, Proof, RequestResponse, VersionedPayload,
+    CrossDomainMessage, InitiateChannelParams, Message, MessageWeightTag, Payload, Proof,
+    RequestResponse, VersionedPayload,
 };
 use sp_mmr_primitives::{EncodableOpaqueLeaf, Proof as MmrProof};
+use sp_subspace_mmr::ConsensusChainMmrLeafProof;
 use sp_trie::StorageProof;
 
 #[benchmarks]

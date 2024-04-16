@@ -13,13 +13,13 @@ use sp_api::ProvideRuntimeApi;
 use sp_core::H256;
 use sp_domains::{DomainId, DomainsApi};
 use sp_messenger::messages::{
-    BlockMessageWithStorageKey, BlockMessagesWithStorageKey, ChainId, ConsensusChainMmrLeafProof,
-    CrossDomainMessage, Proof,
+    BlockMessageWithStorageKey, BlockMessagesWithStorageKey, ChainId, CrossDomainMessage, Proof,
 };
 use sp_messenger::{MessengerApi, RelayerApi};
 use sp_mmr_primitives::{EncodableOpaqueLeaf, MmrApi};
 use sp_runtime::traits::{Block as BlockT, CheckedSub, Header as HeaderT, NumberFor, One, Zero};
 use sp_runtime::ArithmeticError;
+use sp_subspace_mmr::ConsensusChainMmrLeafProof;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -88,13 +88,13 @@ impl From<sp_api::ApiError> for Error {
     }
 }
 
-type ProofOf<Block> = Proof<<Block as BlockT>::Hash, H256>;
+type ProofOf<Block> = Proof<NumberFor<Block>, <Block as BlockT>::Hash, H256>;
 type UnProcessedBlocks<Block> = Vec<(NumberFor<Block>, <Block as BlockT>::Hash)>;
 
 fn construct_consensus_mmr_proof<Client, Block>(
     consensus_chain_client: &Arc<Client>,
-    block_number: NumberFor<Block>,
-) -> Result<(EncodableOpaqueLeaf, sp_mmr_primitives::Proof<H256>), Error>
+    (block_number, block_hash): (NumberFor<Block>, Block::Hash),
+) -> Result<ConsensusChainMmrLeafProof<NumberFor<Block>, Block::Hash, H256>, Error>
 where
     Block: BlockT,
     Client: ProvideRuntimeApi<Block> + HeaderBackend<Block>,
@@ -108,17 +108,23 @@ where
         .map_err(Error::MmrProof)?;
     debug_assert!(leaves.len() == 1, "should always be of length 1");
     let leaf = leaves.pop().ok_or(Error::MmrLeafMissing)?;
-    Ok((leaf, proof))
+
+    Ok(ConsensusChainMmrLeafProof {
+        consensus_block_number: block_number,
+        consensus_block_hash: block_hash,
+        opaque_mmr_leaf: leaf,
+        proof,
+    })
 }
 
-fn construct_cross_chain_message_and_submit<CHash, Submitter, ProofConstructor>(
+fn construct_cross_chain_message_and_submit<CNumber, CHash, Submitter, ProofConstructor>(
     msgs: Vec<BlockMessageWithStorageKey>,
     proof_constructor: ProofConstructor,
     submitter: Submitter,
 ) -> Result<(), Error>
 where
-    Submitter: Fn(CrossDomainMessage<CHash, H256>) -> Result<(), Error>,
-    ProofConstructor: Fn(&[u8]) -> Result<Proof<CHash, H256>, Error>,
+    Submitter: Fn(CrossDomainMessage<CNumber, CHash, H256>) -> Result<(), Error>,
+    ProofConstructor: Fn(&[u8]) -> Result<Proof<CNumber, CHash, H256>, Error>,
 {
     for msg in msgs {
         let proof = match proof_constructor(&msg.storage_key) {
@@ -149,16 +155,17 @@ where
 }
 
 /// Sends an Outbox message from src_domain to dst_domain.
-fn gossip_outbox_message<Block, Client, CHash>(
+fn gossip_outbox_message<Block, Client, CNumber, CHash>(
     client: &Arc<Client>,
-    msg: CrossDomainMessage<CHash, H256>,
+    msg: CrossDomainMessage<CNumber, CHash, H256>,
     sink: &GossipMessageSink,
 ) -> Result<(), Error>
 where
     Block: BlockT,
+    CNumber: Codec,
     CHash: Codec,
     Client: ProvideRuntimeApi<Block> + HeaderBackend<Block>,
-    Client::Api: RelayerApi<Block, NumberFor<Block>, CHash>,
+    Client::Api: RelayerApi<Block, NumberFor<Block>, CNumber, CHash>,
 {
     let best_hash = client.info().best_hash;
     let dst_chain_id = msg.dst_chain_id;
@@ -177,16 +184,17 @@ where
 /// Sends an Inbox message response from src_domain to dst_domain
 /// Inbox message was earlier sent by dst_domain to src_domain and
 /// this message is the response of the Inbox message execution.
-fn gossip_inbox_message_response<Block, Client, CHash>(
+fn gossip_inbox_message_response<Block, Client, CNumber, CHash>(
     client: &Arc<Client>,
-    msg: CrossDomainMessage<CHash, H256>,
+    msg: CrossDomainMessage<CNumber, CHash, H256>,
     sink: &GossipMessageSink,
 ) -> Result<(), Error>
 where
     Block: BlockT,
+    CNumber: Codec,
     CHash: Codec,
     Client: ProvideRuntimeApi<Block> + HeaderBackend<Block>,
-    Client::Api: RelayerApi<Block, NumberFor<Block>, CHash>,
+    Client::Api: RelayerApi<Block, NumberFor<Block>, CNumber, CHash>,
 {
     let best_hash = client.info().best_hash;
     let dst_chain_id = msg.dst_chain_id;
@@ -211,36 +219,32 @@ where
     fn construct_consensus_chain_xdm_proof_for_key_at(
         consensus_chain_client: &Arc<Client>,
         finalized_block: (NumberFor<Block>, Block::Hash),
-        block_hash_to_process: Block::Hash,
         key: &[u8],
     ) -> Result<ProofOf<Block>, Error>
     where
         Client::Api: MmrApi<Block, H256, NumberFor<Block>>,
     {
         let proof = consensus_chain_client
-            .read_proof(block_hash_to_process, &mut [key].into_iter())
+            .read_proof(finalized_block.1, &mut [key].into_iter())
             .map_err(|_| Error::ConstructStorageProof)?;
 
-        let (mmr_leaf, mmr_proof) =
-            construct_consensus_mmr_proof(consensus_chain_client, finalized_block.0)?;
+        let consensus_chain_mmr_proof =
+            sc_domains::generate_mmr_proof(&consensus_chain_client, finalized_block.0)?;
 
         Ok(Proof::Consensus {
-            consensus_chain_mmr_proof: ConsensusChainMmrLeafProof {
-                consensus_block_hash: finalized_block.1,
-                opaque_mmr_leaf: mmr_leaf,
-                proof: mmr_proof,
-            },
+            consensus_chain_mmr_proof,
             message_proof: proof,
         })
     }
 
-    fn filter_messages<CHash>(
+    fn filter_messages<CNumber, CHash>(
         client: &Arc<Client>,
         mut msgs: BlockMessagesWithStorageKey,
     ) -> Result<BlockMessagesWithStorageKey, Error>
     where
         CHash: Codec,
-        Client::Api: RelayerApi<Block, NumberFor<Block>, CHash>,
+        CNumber: Codec,
+        Client::Api: RelayerApi<Block, NumberFor<Block>, CNumber, CHash>,
     {
         let api = client.runtime_api();
         let best_hash = client.info().best_hash;
@@ -286,22 +290,22 @@ where
     ) -> Result<(), Error>
     where
         Client::Api: MmrApi<Block, H256, NumberFor<Block>>
-            + RelayerApi<Block, NumberFor<Block>, Block::Hash>,
+            + RelayerApi<Block, NumberFor<Block>, NumberFor<Block>, Block::Hash>,
     {
-        // since the `finalized_block_number - 1` block MMR leaf is included in `finalized_block_number`,
-        // we process that block instead while using the finalized block number to generate the MMR
-        // proof `finalized_block_number -1`
-        let block_number_to_process = match finalized_block.0.checked_sub(&One::one()) {
-            None => return Ok(()),
-            Some(number) => number,
-        };
-        let block_hash_to_process = consensus_chain_client
-            .hash(block_number_to_process)?
-            .ok_or(Error::MissingBlockHeader)?;
+        // // since the `finalized_block_number - 1` block MMR leaf is included in `finalized_block_number`,
+        // // we process that block instead while using the finalized block number to generate the MMR
+        // // proof `finalized_block_number -1`
+        // let block_number_to_process = match finalized_block.0.checked_sub(&One::one()) {
+        //     None => return Ok(()),
+        //     Some(number) => number,
+        // };
+        // let block_hash_to_process = consensus_chain_client
+        //     .hash(block_number_to_process)?
+        //     .ok_or(Error::MissingBlockHeader)?;
 
         let api = consensus_chain_client.runtime_api();
         let block_messages: BlockMessagesWithStorageKey = api
-            .block_messages(block_hash_to_process)
+            .block_messages(finalized_block.1)
             .map_err(|_| Error::FetchAssignedMessages)?;
         let filtered_messages = Self::filter_messages(consensus_chain_client, block_messages)?;
 
@@ -310,26 +314,24 @@ where
             return Ok(());
         }
 
-        construct_cross_chain_message_and_submit::<Block::Hash, _, _>(
+        construct_cross_chain_message_and_submit::<NumberFor<Block>, Block::Hash, _, _>(
             filtered_messages.outbox,
             |key| {
                 Self::construct_consensus_chain_xdm_proof_for_key_at(
                     consensus_chain_client,
                     finalized_block,
-                    block_hash_to_process,
                     key,
                 )
             },
             |msg| gossip_outbox_message(consensus_chain_client, msg, gossip_message_sink),
         )?;
 
-        construct_cross_chain_message_and_submit::<Block::Hash, _, _>(
+        construct_cross_chain_message_and_submit::<NumberFor<Block>, Block::Hash, _, _>(
             filtered_messages.inbox_responses,
             |key| {
                 Self::construct_consensus_chain_xdm_proof_for_key_at(
                     consensus_chain_client,
                     finalized_block,
-                    block_hash_to_process,
                     key,
                 )
             },
@@ -353,7 +355,7 @@ where
         CClient::Api: DomainsApi<CBlock, Block::Header>
             + MessengerApi<CBlock>
             + MmrApi<CBlock, H256, NumberFor<CBlock>>,
-        Client::Api: RelayerApi<Block, NumberFor<Block>, CBlock::Hash>,
+        Client::Api: RelayerApi<Block, NumberFor<Block>, NumberFor<CBlock>, CBlock::Hash>,
     {
         // fetch messages to be relayed
         let domain_api = domain_client.runtime_api();
@@ -390,7 +392,7 @@ where
             &mut [storage_key.as_ref()].into_iter(),
         )?;
 
-        construct_cross_chain_message_and_submit::<CBlock::Hash, _, _>(
+        construct_cross_chain_message_and_submit::<NumberFor<CBlock>, CBlock::Hash, _, _>(
             filtered_messages.outbox,
             |key| {
                 Self::construct_domain_chain_xdm_proof_for_key_at(
@@ -405,7 +407,7 @@ where
             |msg| gossip_outbox_message(domain_client, msg, gossip_message_sink),
         )?;
 
-        construct_cross_chain_message_and_submit::<CBlock::Hash, _, _>(
+        construct_cross_chain_message_and_submit::<NumberFor<CBlock>, CBlock::Hash, _, _>(
             filtered_messages.inbox_responses,
             |key| {
                 Self::construct_domain_chain_xdm_proof_for_key_at(
@@ -439,21 +441,15 @@ where
             + MessengerApi<CBlock>
             + MmrApi<CBlock, H256, NumberFor<CBlock>>,
     {
-        let (mmr_leaf, mmr_proof) = construct_consensus_mmr_proof(
-            consensus_chain_client,
-            consensus_chain_finalized_block.0,
-        )?;
+        let consensus_chain_mmr_proof =
+            construct_consensus_mmr_proof(consensus_chain_client, consensus_chain_finalized_block)?;
 
         let proof = domain_client
             .read_proof(block_hash, &mut [key].into_iter())
             .map_err(|_| Error::ConstructStorageProof)?;
 
         Ok(Proof::Domain {
-            consensus_chain_mmr_proof: ConsensusChainMmrLeafProof {
-                consensus_block_hash: consensus_chain_finalized_block.1,
-                opaque_mmr_leaf: mmr_leaf,
-                proof: mmr_proof,
-            },
+            consensus_chain_mmr_proof,
             domain_proof,
             message_proof: proof,
         })
