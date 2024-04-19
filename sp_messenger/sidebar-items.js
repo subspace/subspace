@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["INHERENT_IDENTIFIER"],"enum":["InherentError"],"mod":["endpoint","messages"],"struct":["InherentDataProvider","InherentType"],"trait":["MessengerApi","MmrProofVerifier","OnXDMRewards","RelayerApi","StorageKeys"]};
+window.SIDEBAR_ITEMS = {"constant":["INHERENT_IDENTIFIER"],"enum":["InherentError"],"mod":["endpoint","messages"],"struct":["InherentDataProvider","InherentType"],"trait":["MessengerApi","OnXDMRewards","RelayerApi","StorageKeys"]};

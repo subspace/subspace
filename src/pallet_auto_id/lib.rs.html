@@ -462,6 +462,32 @@
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2023 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -498,13 +524,13 @@
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_auto_id::auto_id_runtime_interface::{decode_tbs_certificate, verify_signature};
 <span class="kw">use </span>sp_auto_id::{DerVec, SignatureVerificationRequest, Validity};
-<span class="kw">use </span>sp_core::U256;
+<span class="kw">use </span>sp_core::{blake2_256, H256, U256};
 <span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
 </span><span class="kw">use </span>std::collections::BTreeSet;
 <span class="kw">use </span>subspace_runtime_primitives::Moment;
 
 <span class="doccomment">/// Unique AutoId identifier.
-</span><span class="kw">pub type </span>Identifier = U256;
+</span><span class="kw">pub type </span>Identifier = H256;
 
 <span class="doccomment">/// X509 certificate.
 </span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
@@ -513,8 +539,8 @@
     </span><span class="kw">pub </span>issuer_id: <span class="prelude-ty">Option</span>&lt;Identifier&gt;,
     <span class="doccomment">/// Serial number for this certificate
     </span><span class="kw">pub </span>serial: U256,
-    <span class="doccomment">/// Der encoded certificate's subject.
-    </span><span class="kw">pub </span>subject: DerVec,
+    <span class="doccomment">/// Subject common name of the certificate.
+    </span><span class="kw">pub </span>subject_common_name: DerVec,
     <span class="doccomment">/// Der encoded certificate's subject's public key info
     </span><span class="kw">pub </span>subject_public_key_info: DerVec,
     <span class="doccomment">/// Validity of the certificate
@@ -537,6 +563,14 @@
 }
 
 <span class="kw">impl </span>Certificate {
+    <span class="doccomment">/// Returns the subject distinguished name.
+    </span><span class="attr">#[cfg(test)]
+    </span><span class="kw">fn </span>subject_common_name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DerVec {
+        <span class="kw">match </span><span class="self">self </span>{
+            Certificate::X509(cert) =&gt; cert.subject_common_name.clone(),
+        }
+    }
+
     <span class="doccomment">/// Returns the subject public key info.
     </span><span class="kw">fn </span>subject_public_key_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DerVec {
         <span class="kw">match </span><span class="self">self </span>{
@@ -602,6 +636,29 @@
     </span><span class="kw">pub </span>certificate: Certificate,
 }
 
+<span class="kw">impl </span>AutoId {
+    <span class="doccomment">/// Deterministically derives an identifier for the `AutoId`.
+    ///
+    /// The identifier is derived by hashing the subject common name of the certificate.
+    /// If the certificate is a leaf certificate, the issuer identifier is combined with the subject common name.
+    </span><span class="kw">fn </span>derive_identifier(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Identifier {
+        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.certificate {
+            Certificate::X509(cert) =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(issuer_id) = cert.issuer_id {
+                    <span class="kw">let </span><span class="kw-2">mut </span>data = issuer_id.to_fixed_bytes().to_vec();
+
+                    data.extend_from_slice(cert.subject_common_name.as_ref());
+
+                    blake2_256(<span class="kw-2">&amp;</span>data).into()
+                } <span class="kw">else </span>{
+                    <span class="comment">// Root certificate
+                    </span>blake2_256(cert.subject_common_name.as_ref()).into()
+                }
+            }
+        }
+    }
+}
+
 <span class="doccomment">/// Type holds X509 certificate details used to register an AutoId.
 </span><span class="attr">#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
 </span><span class="kw">pub enum </span>RegisterAutoIdX509 {
@@ -663,10 +720,6 @@
     #[pallet::without_storage_info]
     </span><span class="kw">pub struct </span>Pallet&lt;T&gt;(<span class="kw">_</span>);
 
-    <span class="doccomment">/// Stores the next auto id identifier.
-    </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>NextAutoIdIdentifier&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, Identifier, ValueQuery&gt;;
-
     <span class="doccomment">/// Stores the auto id identifier against an AutoId.
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>AutoIds&lt;T&gt; = StorageMap&lt;<span class="kw">_</span>, Identity, Identifier, AutoId, OptionQuery&gt;;
@@ -679,8 +732,6 @@
         </span>InvalidCertificate,
         <span class="doccomment">/// Invalid signature.
         </span>InvalidSignature,
-        <span class="doccomment">/// AutoId identifier overflow.
-        </span>IdentifierOverflow,
         <span class="doccomment">/// Certificate serial already issued.
         </span>CertificateSerialAlreadyIssued,
         <span class="doccomment">/// Certificate expired.
@@ -689,6 +740,8 @@
         </span>CertificateRevoked,
         <span class="doccomment">/// Nonce overflow.
         </span>NonceOverflow,
+        <span class="doccomment">/// Identifier already exists.
+        </span>AutoIdIdentifierAlreadyExists,
     }
 
     <span class="attr">#[pallet::event]
@@ -756,7 +809,6 @@
                 } =&gt; {
                     <span class="kw">let </span>tbs_certificate = decode_tbs_certificate(certificate.clone())
                         .ok_or(Error::&lt;T&gt;::InvalidCertificate)<span class="question-mark">?</span>;
-
                     <span class="kw">let </span>req = SignatureVerificationRequest {
                         public_key_info: tbs_certificate.subject_public_key_info.clone(),
                         signature_algorithm,
@@ -773,7 +825,7 @@
                     Certificate::X509(X509Certificate {
                         issuer_id: <span class="prelude-val">None</span>,
                         serial: tbs_certificate.serial,
-                        subject: tbs_certificate.subject,
+                        subject_common_name: tbs_certificate.subject_common_name,
                         subject_public_key_info: tbs_certificate.subject_public_key_info,
                         validity: tbs_certificate.validity,
                         raw: certificate,
@@ -827,7 +879,7 @@
                     Certificate::X509(X509Certificate {
                         issuer_id: <span class="prelude-val">Some</span>(issuer_id),
                         serial: tbs_certificate.serial,
-                        subject: tbs_certificate.subject,
+                        subject_common_name: tbs_certificate.subject_common_name,
                         subject_public_key_info: tbs_certificate.subject_public_key_info,
                         validity: tbs_certificate.validity,
                         raw: certificate,
@@ -839,13 +891,13 @@
             },
         };
 
-        <span class="kw">let </span>auto_id_identifier = NextAutoIdIdentifier::&lt;T&gt;::get();
-        <span class="kw">let </span>next_auto_id_identifier = auto_id_identifier
-            .checked_add(Identifier::one())
-            .ok_or(Error::&lt;T&gt;::IdentifierOverflow)<span class="question-mark">?</span>;
-        NextAutoIdIdentifier::&lt;T&gt;::put(next_auto_id_identifier);
-
         <span class="kw">let </span>auto_id = AutoId { certificate };
+        <span class="kw">let </span>auto_id_identifier = auto_id.derive_identifier();
+
+        <span class="macro">ensure!</span>(
+            !AutoIds::&lt;T&gt;::contains_key(auto_id_identifier),
+            Error::&lt;T&gt;::AutoIdIdentifierAlreadyExists
+        );
 
         AutoIds::&lt;T&gt;::insert(auto_id_identifier, auto_id);
 

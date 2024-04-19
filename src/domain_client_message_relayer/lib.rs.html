@@ -593,6 +593,30 @@
 <a href="#591" id="591">591</a>
 <a href="#592" id="592">592</a>
 <a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
 </pre></div><pre class="rust"><code><span class="attr">#![warn(rust_2018_idioms)]
 </span><span class="comment">// TODO: Restore once https://github.com/rust-lang/rust/issues/122105 is resolved
 // #![deny(unused_crate_dependencies)]
@@ -608,13 +632,13 @@
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::{DomainId, DomainsApi};
 <span class="kw">use </span>sp_messenger::messages::{
-    BlockMessageWithStorageKey, BlockMessagesWithStorageKey, ChainId, ConsensusChainMmrLeafProof,
-    CrossDomainMessage, Proof,
+    BlockMessageWithStorageKey, BlockMessagesWithStorageKey, ChainId, CrossDomainMessage, Proof,
 };
 <span class="kw">use </span>sp_messenger::{MessengerApi, RelayerApi};
-<span class="kw">use </span>sp_mmr_primitives::{EncodableOpaqueLeaf, MmrApi};
+<span class="kw">use </span>sp_mmr_primitives::MmrApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedSub, Header <span class="kw">as </span>HeaderT, NumberFor, One, Zero};
 <span class="kw">use </span>sp_runtime::ArithmeticError;
+<span class="kw">use </span>sp_subspace_mmr::ConsensusChainMmrLeafProof;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
 
@@ -683,13 +707,14 @@
     }
 }
 
-<span class="kw">type </span>ProofOf&lt;Block&gt; = Proof&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Hash, H256&gt;;
+<span class="kw">type </span>ProofOf&lt;Block&gt; = Proof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, H256&gt;;
 <span class="kw">type </span>UnProcessedBlocks&lt;Block&gt; = Vec&lt;(NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash)&gt;;
 
 <span class="kw">fn </span>construct_consensus_mmr_proof&lt;Client, Block&gt;(
     consensus_chain_client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
-    block_number: NumberFor&lt;Block&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(EncodableOpaqueLeaf, sp_mmr_primitives::Proof&lt;H256&gt;), Error&gt;
+    dst_chain_id: ChainId,
+    (block_number, block_hash): (NumberFor&lt;Block&gt;, Block::Hash),
+) -&gt; <span class="prelude-ty">Result</span>&lt;ConsensusChainMmrLeafProof&lt;NumberFor&lt;Block&gt;, Block::Hash, H256&gt;, Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
     Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
@@ -697,26 +722,47 @@
 {
     <span class="kw">let </span>api = consensus_chain_client.runtime_api();
     <span class="kw">let </span>best_hash = consensus_chain_client.info().best_hash;
+    <span class="kw">let </span>best_number = consensus_chain_client.info().best_number;
+
+    <span class="kw">let </span>(prove_at_number, prove_at_hash) = <span class="kw">match </span>dst_chain_id {
+        <span class="comment">// The consensus chain will verify the MMR proof statelessly with the MMR root
+        // stored in the runtime, we need to generate the proof with the best block
+        // with the latest MMR root in the runtime so the proof will be valid as long
+        // as the MMR root is available when verifying the proof.
+        </span>ChainId::Consensus =&gt; (best_number, best_hash),
+        <span class="comment">// The domain chain will verify the MMR proof with the offchain MMR leaf data
+        // in the consensus client, we need to generate the proof with the proving block
+        // (i.e. finalized block) to avoid potential consensus fork and ensure the verification
+        // result is deterministic.
+        </span>ChainId::Domain(<span class="kw">_</span>) =&gt; (block_number, block_hash),
+    };
+
     <span class="kw">let </span>(<span class="kw-2">mut </span>leaves, proof) = api
-        .generate_proof(best_hash, <span class="macro">vec!</span>[block_number], <span class="prelude-val">Some</span>(block_number))
+        .generate_proof(best_hash, <span class="macro">vec!</span>[block_number], <span class="prelude-val">Some</span>(prove_at_number))
         .map_err(Error::ApiError)<span class="question-mark">?
         </span>.map_err(Error::MmrProof)<span class="question-mark">?</span>;
     <span class="macro">debug_assert!</span>(leaves.len() == <span class="number">1</span>, <span class="string">"should always be of length 1"</span>);
     <span class="kw">let </span>leaf = leaves.pop().ok_or(Error::MmrLeafMissing)<span class="question-mark">?</span>;
-    <span class="prelude-val">Ok</span>((leaf, proof))
+
+    <span class="prelude-val">Ok</span>(ConsensusChainMmrLeafProof {
+        consensus_block_number: prove_at_number,
+        consensus_block_hash: prove_at_hash,
+        opaque_mmr_leaf: leaf,
+        proof,
+    })
 }
 
-<span class="kw">fn </span>construct_cross_chain_message_and_submit&lt;CHash, Submitter, ProofConstructor&gt;(
+<span class="kw">fn </span>construct_cross_chain_message_and_submit&lt;CNumber, CHash, Submitter, ProofConstructor&gt;(
     msgs: Vec&lt;BlockMessageWithStorageKey&gt;,
     proof_constructor: ProofConstructor,
     submitter: Submitter,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
 <span class="kw">where
-    </span>Submitter: Fn(CrossDomainMessage&lt;CHash, H256&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;,
-    ProofConstructor: Fn(<span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Proof&lt;CHash, H256&gt;, Error&gt;,
+    </span>Submitter: Fn(CrossDomainMessage&lt;CNumber, CHash, H256&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;,
+    ProofConstructor: Fn(<span class="kw-2">&amp;</span>[u8], ChainId) -&gt; <span class="prelude-ty">Result</span>&lt;Proof&lt;CNumber, CHash, H256&gt;, Error&gt;,
 {
     <span class="kw">for </span>msg <span class="kw">in </span>msgs {
-        <span class="kw">let </span>proof = <span class="kw">match </span>proof_constructor(<span class="kw-2">&amp;</span>msg.storage_key) {
+        <span class="kw">let </span>proof = <span class="kw">match </span>proof_constructor(<span class="kw-2">&amp;</span>msg.storage_key, msg.dst_chain_id) {
             <span class="prelude-val">Ok</span>(proof) =&gt; proof,
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="macro">tracing::error!</span>(
@@ -744,16 +790,17 @@
 }
 
 <span class="doccomment">/// Sends an Outbox message from src_domain to dst_domain.
-</span><span class="kw">fn </span>gossip_outbox_message&lt;Block, Client, CHash&gt;(
+</span><span class="kw">fn </span>gossip_outbox_message&lt;Block, Client, CNumber, CHash&gt;(
     client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
-    msg: CrossDomainMessage&lt;CHash, H256&gt;,
+    msg: CrossDomainMessage&lt;CNumber, CHash, H256&gt;,
     sink: <span class="kw-2">&amp;</span>GossipMessageSink,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
+    CNumber: Codec,
     CHash: Codec,
     Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
-    Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CHash&gt;,
+    Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CNumber, CHash&gt;,
 {
     <span class="kw">let </span>best_hash = client.info().best_hash;
     <span class="kw">let </span>dst_chain_id = msg.dst_chain_id;
@@ -772,16 +819,17 @@
 <span class="doccomment">/// Sends an Inbox message response from src_domain to dst_domain
 /// Inbox message was earlier sent by dst_domain to src_domain and
 /// this message is the response of the Inbox message execution.
-</span><span class="kw">fn </span>gossip_inbox_message_response&lt;Block, Client, CHash&gt;(
+</span><span class="kw">fn </span>gossip_inbox_message_response&lt;Block, Client, CNumber, CHash&gt;(
     client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
-    msg: CrossDomainMessage&lt;CHash, H256&gt;,
+    msg: CrossDomainMessage&lt;CNumber, CHash, H256&gt;,
     sink: <span class="kw-2">&amp;</span>GossipMessageSink,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
 <span class="kw">where
     </span>Block: BlockT,
+    CNumber: Codec,
     CHash: Codec,
     Client: ProvideRuntimeApi&lt;Block&gt; + HeaderBackend&lt;Block&gt;,
-    Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CHash&gt;,
+    Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CNumber, CHash&gt;,
 {
     <span class="kw">let </span>best_hash = client.info().best_hash;
     <span class="kw">let </span>dst_chain_id = msg.dst_chain_id;
@@ -808,6 +856,7 @@
         finalized_block: (NumberFor&lt;Block&gt;, Block::Hash),
         block_hash_to_process: Block::Hash,
         key: <span class="kw-2">&amp;</span>[u8],
+        dst_chain_id: ChainId,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ProofOf&lt;Block&gt;, Error&gt;
     <span class="kw">where
         </span>Client::Api: MmrApi&lt;Block, H256, NumberFor&lt;Block&gt;&gt;,
@@ -816,26 +865,23 @@
             .read_proof(block_hash_to_process, <span class="kw-2">&amp;mut </span>[key].into_iter())
             .map_err(|<span class="kw">_</span>| Error::ConstructStorageProof)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(mmr_leaf, mmr_proof) =
-            construct_consensus_mmr_proof(consensus_chain_client, finalized_block.<span class="number">0</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>consensus_chain_mmr_proof =
+            construct_consensus_mmr_proof(consensus_chain_client, dst_chain_id, finalized_block)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(Proof::Consensus {
-            consensus_chain_mmr_proof: ConsensusChainMmrLeafProof {
-                consensus_block_hash: finalized_block.<span class="number">1</span>,
-                opaque_mmr_leaf: mmr_leaf,
-                proof: mmr_proof,
-            },
+            consensus_chain_mmr_proof,
             message_proof: proof,
         })
     }
 
-    <span class="kw">fn </span>filter_messages&lt;CHash&gt;(
+    <span class="kw">fn </span>filter_messages&lt;CNumber, CHash&gt;(
         client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
         <span class="kw-2">mut </span>msgs: BlockMessagesWithStorageKey,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;BlockMessagesWithStorageKey, Error&gt;
     <span class="kw">where
         </span>CHash: Codec,
-        Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CHash&gt;,
+        CNumber: Codec,
+        Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CNumber, CHash&gt;,
     {
         <span class="kw">let </span>api = client.runtime_api();
         <span class="kw">let </span>best_hash = client.info().best_hash;
@@ -881,7 +927,7 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
     <span class="kw">where
         </span>Client::Api: MmrApi&lt;Block, H256, NumberFor&lt;Block&gt;&gt;
-            + RelayerApi&lt;Block, NumberFor&lt;Block&gt;, Block::Hash&gt;,
+            + RelayerApi&lt;Block, NumberFor&lt;Block&gt;, NumberFor&lt;Block&gt;, Block::Hash&gt;,
     {
         <span class="comment">// since the `finalized_block_number - 1` block MMR leaf is included in `finalized_block_number`,
         // we process that block instead while using the finalized block number to generate the MMR
@@ -905,27 +951,29 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
-        construct_cross_chain_message_and_submit::&lt;Block::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+        construct_cross_chain_message_and_submit::&lt;NumberFor&lt;Block&gt;, Block::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             filtered_messages.outbox,
-            |key| {
+            |key, dst_chain_id| {
                 <span class="self">Self</span>::construct_consensus_chain_xdm_proof_for_key_at(
                     consensus_chain_client,
                     finalized_block,
                     block_hash_to_process,
                     key,
+                    dst_chain_id,
                 )
             },
             |msg| gossip_outbox_message(consensus_chain_client, msg, gossip_message_sink),
         )<span class="question-mark">?</span>;
 
-        construct_cross_chain_message_and_submit::&lt;Block::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+        construct_cross_chain_message_and_submit::&lt;NumberFor&lt;Block&gt;, Block::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             filtered_messages.inbox_responses,
-            |key| {
+            |key, dst_chain_id| {
                 <span class="self">Self</span>::construct_consensus_chain_xdm_proof_for_key_at(
                     consensus_chain_client,
                     finalized_block,
                     block_hash_to_process,
                     key,
+                    dst_chain_id,
                 )
             },
             |msg| gossip_inbox_message_response(consensus_chain_client, msg, gossip_message_sink),
@@ -948,7 +996,7 @@
         CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;
             + MessengerApi&lt;CBlock&gt;
             + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
-        Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CBlock::Hash&gt;,
+        Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;,
     {
         <span class="comment">// fetch messages to be relayed
         </span><span class="kw">let </span>domain_api = domain_client.runtime_api();
@@ -985,9 +1033,9 @@
             <span class="kw-2">&amp;mut </span>[storage_key.as_ref()].into_iter(),
         )<span class="question-mark">?</span>;
 
-        construct_cross_chain_message_and_submit::&lt;CBlock::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+        construct_cross_chain_message_and_submit::&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             filtered_messages.outbox,
-            |key| {
+            |key, dst_chain_id| {
                 <span class="self">Self</span>::construct_domain_chain_xdm_proof_for_key_at(
                     finalized_consensus_block,
                     consensus_chain_client,
@@ -995,14 +1043,15 @@
                     confirmed_domain_block_hash,
                     key,
                     domain_proof.clone(),
+                    dst_chain_id,
                 )
             },
             |msg| gossip_outbox_message(domain_client, msg, gossip_message_sink),
         )<span class="question-mark">?</span>;
 
-        construct_cross_chain_message_and_submit::&lt;CBlock::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+        construct_cross_chain_message_and_submit::&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             filtered_messages.inbox_responses,
-            |key| {
+            |key, dst_chain_id| {
                 <span class="self">Self</span>::construct_domain_chain_xdm_proof_for_key_at(
                     finalized_consensus_block,
                     consensus_chain_client,
@@ -1010,6 +1059,7 @@
                     confirmed_domain_block_hash,
                     key,
                     domain_proof.clone(),
+                    dst_chain_id,
                 )
             },
             |msg| gossip_inbox_message_response(domain_client, msg, gossip_message_sink),
@@ -1026,6 +1076,7 @@
         block_hash: Block::Hash,
         key: <span class="kw-2">&amp;</span>[u8],
         domain_proof: StorageProof,
+        dst_chain_id: ChainId,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ProofOf&lt;CBlock&gt;, Error&gt;
     <span class="kw">where
         </span>CBlock: BlockT,
@@ -1034,9 +1085,10 @@
             + MessengerApi&lt;CBlock&gt;
             + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
     {
-        <span class="kw">let </span>(mmr_leaf, mmr_proof) = construct_consensus_mmr_proof(
+        <span class="kw">let </span>consensus_chain_mmr_proof = construct_consensus_mmr_proof(
             consensus_chain_client,
-            consensus_chain_finalized_block.<span class="number">0</span>,
+            dst_chain_id,
+            consensus_chain_finalized_block,
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>proof = domain_client
@@ -1044,11 +1096,7 @@
             .map_err(|<span class="kw">_</span>| Error::ConstructStorageProof)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(Proof::Domain {
-            consensus_chain_mmr_proof: ConsensusChainMmrLeafProof {
-                consensus_block_hash: consensus_chain_finalized_block.<span class="number">1</span>,
-                opaque_mmr_leaf: mmr_leaf,
-                proof: mmr_proof,
-            },
+            consensus_chain_mmr_proof,
             domain_proof,
             message_proof: proof,
         })

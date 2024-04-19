@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AutoIds","NextAutoIdIdentifier"]};
+window.SIDEBAR_ITEMS = {"struct":["AutoIds"]};
