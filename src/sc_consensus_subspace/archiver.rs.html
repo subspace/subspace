@@ -925,6 +925,37 @@
 <a href="#923" id="923">923</a>
 <a href="#924" id="924">924</a>
 <a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -973,7 +1004,10 @@
 //! [`encode_block`] and [`decode_block`] are symmetric encoding/decoding functions turning
 //! [`SignedBlock`]s into bytes and back.
 
-</span><span class="kw">use </span><span class="kw">crate</span>::block_import::BlockImportingNotification;
+</span><span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests;
+
+<span class="kw">use </span><span class="kw">crate</span>::block_import::BlockImportingNotification;
 <span class="kw">use </span><span class="kw">crate</span>::slot_worker::SubspaceSyncOracle;
 <span class="kw">use crate</span>::{SubspaceLink, SubspaceNotificationSender};
 <span class="kw">use </span>codec::{Decode, Encode};
@@ -992,7 +1026,7 @@
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi, SubspaceJustification};
 <span class="kw">use </span>sp_objects::ObjectsApi;
 <span class="kw">use </span>sp_runtime::generic::SignedBlock;
-<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedSub, Header, NumberFor, One, Zero};
+<span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedSub, Header, NumberFor, Zero};
 <span class="kw">use </span>sp_runtime::{Justifications, Saturating};
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::Future;
@@ -1039,12 +1073,14 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SegmentHeadersStore&lt;AS&gt; {
     inner: Arc&lt;SegmentHeadersStoreInner&lt;AS&gt;&gt;,
+    confirmation_depth_k: BlockNumber,
 }
 
 <span class="kw">impl</span>&lt;AS&gt; Clone <span class="kw">for </span>SegmentHeadersStore&lt;AS&gt; {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
+            confirmation_depth_k: <span class="self">self</span>.confirmation_depth_k,
         }
     }
 }
@@ -1057,7 +1093,10 @@
     <span class="kw">const </span>INITIAL_CACHE_CAPACITY: usize = <span class="number">1_000</span>;
 
     <span class="doccomment">/// Create new instance
-    </span><span class="kw">pub fn </span>new(aux_store: Arc&lt;AS&gt;) -&gt; sp_blockchain::Result&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>new(
+        aux_store: Arc&lt;AS&gt;,
+        confirmation_depth_k: BlockNumber,
+    ) -&gt; sp_blockchain::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>cache = Vec::with_capacity(<span class="self">Self</span>::INITIAL_CACHE_CAPACITY);
 
         <span class="macro">debug!</span>(<span class="string">"Started loading segment headers into cache"</span>);
@@ -1084,6 +1123,7 @@
                 next_key_index: AtomicU16::new(next_key_index),
                 cache: Mutex::new(cache),
             }),
+            confirmation_depth_k,
         })
     }
 
@@ -1170,6 +1210,69 @@
     <span class="kw">fn </span>key(key_index: u16) -&gt; Vec&lt;u8&gt; {
         (<span class="self">Self</span>::KEY_PREFIX, key_index.to_le_bytes()).encode()
     }
+
+    <span class="doccomment">/// Get segment headers that are expected to be included at specified block number.
+    </span><span class="kw">pub fn </span>segment_headers_for_block(<span class="kw-2">&amp;</span><span class="self">self</span>, block_number: BlockNumber) -&gt; Vec&lt;SegmentHeader&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(last_segment_index) = <span class="self">self</span>.max_segment_index() <span class="kw">else </span>{
+            <span class="comment">// Not initialized
+            </span><span class="kw">return </span>Vec::new();
+        };
+
+        <span class="comment">// Special case for the initial segment (for genesis block).
+        </span><span class="kw">if </span>block_number == <span class="number">1 </span>{
+            <span class="comment">// If there is a segment index present and we store monotonically increasing segment headers,
+            // then the first header exists.
+            </span><span class="kw">return </span><span class="macro">vec!</span>[<span class="self">self
+                </span>.get_segment_header(SegmentIndex::ZERO)
+                .expect(<span class="string">"Segment headers are stored in monotonically increasing order; qed"</span>)];
+        }
+
+        <span class="kw">let </span><span class="kw-2">mut </span>current_segment_index = last_segment_index;
+        <span class="kw">loop </span>{
+            <span class="comment">// If the current segment index present and we store monotonically increasing segment headers,
+            // then the current segment header exists as well.
+            </span><span class="kw">let </span>current_segment_header = <span class="self">self
+                </span>.get_segment_header(current_segment_index)
+                .expect(<span class="string">"Segment headers are stored in monotonically increasing order; qed"</span>);
+
+            <span class="comment">// The block immediately after the archived segment adding the confirmation depth
+            </span><span class="kw">let </span>target_block_number =
+                current_segment_header.last_archived_block().number + <span class="number">1 </span>+ <span class="self">self</span>.confirmation_depth_k;
+            <span class="kw">if </span>target_block_number == block_number {
+                <span class="kw">let </span><span class="kw-2">mut </span>headers_for_block = <span class="macro">vec!</span>[current_segment_header];
+
+                <span class="comment">// Check block spanning multiple segments
+                </span><span class="kw">let </span>last_archived_block_number =
+                    current_segment_header.last_archived_block().number;
+                <span class="kw">let </span><span class="kw-2">mut </span>segment_index = current_segment_index - SegmentIndex::ONE;
+
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(segment_header) = <span class="self">self</span>.get_segment_header(segment_index) {
+                    <span class="kw">if </span>segment_header.last_archived_block().number == last_archived_block_number {
+                        headers_for_block.insert(<span class="number">0</span>, segment_header);
+                        segment_index -= SegmentIndex::ONE;
+                    } <span class="kw">else </span>{
+                        <span class="kw">break</span>;
+                    }
+                }
+
+                <span class="kw">return </span>headers_for_block;
+            }
+
+            <span class="comment">// iterate segments further
+            </span><span class="kw">if </span>target_block_number &gt; block_number {
+                <span class="comment">// no need to check the initial segment
+                </span><span class="kw">if </span>current_segment_index &gt; SegmentIndex::ONE {
+                    current_segment_index -= SegmentIndex::ONE
+                } <span class="kw">else </span>{
+                    <span class="kw">break</span>;
+                }
+            } <span class="kw">else </span>{
+                <span class="kw">return </span>Vec::new(); <span class="comment">// no segment headers required
+            </span>}
+        }
+
+        Vec::new() <span class="comment">// no segment headers required
+    </span>}
 }
 
 <span class="doccomment">/// Notification with block header hash that needs to be signed and sender for signature.
@@ -1422,30 +1525,6 @@
             )
             .expect(<span class="string">"Incorrect parameters for archiver"</span>);
 
-            <span class="kw">if </span>last_segment_header.segment_index() == SegmentIndex::ZERO {
-                <span class="comment">// Due to sync from DSN it is possible that the very first segment header is known
-                // even though only genesis block exists, in this case there is nothing else left to
-                // archive and we need to insert segment header to be included in the block 1
-                // explicitly here or else it'll be missing and block import will fail.
-                //
-                // Checking for segment index instead of best block number ensures we support
-                // hypothetical reorgs of the early blocks within confirmation depth distance from
-                // genesis.
-                </span>subspace_link
-                    .segment_headers
-                    .lock()
-                    .put(One::one(), <span class="macro">vec!</span>[last_segment_header]);
-            } <span class="kw">else </span>{
-                <span class="comment">// Otherwise segment header is expected to be included in
-                // `+ confirmation_depth_k + 1`'s block (+1 because we will archive it in when
-                // processing block `+ confirmation_depth_k` and corresponding segment header will
-                // be included in the next block after that
-                </span>subspace_link.segment_headers.lock().put(
-                    (last_archived_block_number + confirmation_depth_k + <span class="number">1</span>).into(),
-                    <span class="macro">vec!</span>[last_segment_header],
-                );
-            }
-
             archiver
         } <span class="kw">else </span>{
             <span class="macro">info!</span>(<span class="string">"Starting archiving from genesis"</span>);
@@ -1554,18 +1633,6 @@
 
                 <span class="kw">if </span>!new_segment_headers.is_empty() {
                     segment_headers_store.add_segment_headers(<span class="kw-2">&amp;</span>new_segment_headers)<span class="question-mark">?</span>;
-                    <span class="comment">// Set list of expected segment headers for the block where we expect segment
-                    // header extrinsic to be included
-                    </span>subspace_link.segment_headers.lock().put(
-                        <span class="kw">if </span>block_number_to_archive.is_zero() {
-                            <span class="comment">// Special case for genesis block whose segment header should be included in
-                            // the first block in order for further validation to work properly.
-                            </span>One::one()
-                        } <span class="kw">else </span>{
-                            block_number_to_archive + confirmation_depth_k.into() + One::one()
-                        },
-                        new_segment_headers,
-                    );
                 }
             }
         }
@@ -1681,7 +1748,6 @@
         .subscribe();
     <span class="kw">let </span>archived_segment_notification_sender =
         subspace_link.archived_segment_notification_sender.clone();
-    <span class="kw">let </span>segment_headers = Arc::clone(<span class="kw-2">&amp;</span>subspace_link.segment_headers);
 
     <span class="prelude-val">Ok</span>(<span class="kw">async move </span>{
         <span class="comment">// Farmers may have not received all previous segments, send them now.
@@ -1788,10 +1854,6 @@
             }
 
             <span class="kw">if </span>!new_segment_headers.is_empty() {
-                segment_headers
-                    .lock()
-                    .put(block_number + One::one(), new_segment_headers);
-
                 <span class="kw">let </span>maybe_block_number_to_finalize = segment_headers_store
                     .max_segment_index()
                     <span class="comment">// Skip last `FINALIZATION_DEPTH_IN_SEGMENTS` archived segments
