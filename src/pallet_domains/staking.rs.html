@@ -2936,6 +2936,36 @@
 <a href="#2934" id="2934">2934</a>
 <a href="#2935" id="2935">2935</a>
 <a href="#2936" id="2936">2936</a>
+<a href="#2937" id="2937">2937</a>
+<a href="#2938" id="2938">2938</a>
+<a href="#2939" id="2939">2939</a>
+<a href="#2940" id="2940">2940</a>
+<a href="#2941" id="2941">2941</a>
+<a href="#2942" id="2942">2942</a>
+<a href="#2943" id="2943">2943</a>
+<a href="#2944" id="2944">2944</a>
+<a href="#2945" id="2945">2945</a>
+<a href="#2946" id="2946">2946</a>
+<a href="#2947" id="2947">2947</a>
+<a href="#2948" id="2948">2948</a>
+<a href="#2949" id="2949">2949</a>
+<a href="#2950" id="2950">2950</a>
+<a href="#2951" id="2951">2951</a>
+<a href="#2952" id="2952">2952</a>
+<a href="#2953" id="2953">2953</a>
+<a href="#2954" id="2954">2954</a>
+<a href="#2955" id="2955">2955</a>
+<a href="#2956" id="2956">2956</a>
+<a href="#2957" id="2957">2957</a>
+<a href="#2958" id="2958">2958</a>
+<a href="#2959" id="2959">2959</a>
+<a href="#2960" id="2960">2960</a>
+<a href="#2961" id="2961">2961</a>
+<a href="#2962" id="2962">2962</a>
+<a href="#2963" id="2963">2963</a>
+<a href="#2964" id="2964">2964</a>
+<a href="#2965" id="2965">2965</a>
+<a href="#2966" id="2966">2966</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking for domains
 
 </span><span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
@@ -2959,8 +2989,8 @@
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::{sr25519, Get};
 <span class="kw">use </span>sp_domains::{DomainId, EpochIndex, OperatorId, OperatorPublicKey};
-<span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, One, Zero};
-<span class="kw">use </span>sp_runtime::{Perbill, Percent, Saturating};
+<span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, Zero};
+<span class="kw">use </span>sp_runtime::{Perbill, Percent, Perquintill, Saturating};
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
 <span class="kw">use </span>sp_std::collections::vec_deque::VecDeque;
@@ -4141,20 +4171,44 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_reward_operators&lt;T: Config&gt;(
     domain_id: DomainId,
     operators: IntoIter&lt;OperatorId&gt;,
-    <span class="kw-2">mut </span>rewards: BalanceOf&lt;T&gt;,
+    rewards: BalanceOf&lt;T&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
     DomainStakingSummary::&lt;T&gt;::mutate(domain_id, |maybe_stake_summary| {
         <span class="kw">let </span>stake_summary = maybe_stake_summary
             .as_mut()
             .ok_or(Error::DomainNotInitialized)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>distribution = Perbill::from_rational(One::one(), operators.len() <span class="kw">as </span>u32);
-        <span class="kw">let </span>reward_per_operator = distribution.mul_floor(rewards);
-        <span class="kw">for </span>operator_id <span class="kw">in </span>operators {
+        <span class="kw">let </span>total_count = operators.len() <span class="kw">as </span>u64;
+        <span class="comment">// calculate the operator weights based on the number of times they are repeated in the original list.
+        </span><span class="kw">let </span>operator_weights = operators.into_iter().fold(
+            BTreeMap::&lt;OperatorId, u64&gt;::new(),
+            |<span class="kw-2">mut </span>acc, operator_id| {
+                <span class="kw">let </span>total_weight = <span class="kw">match </span>acc.get(<span class="kw-2">&amp;</span>operator_id) {
+                    <span class="prelude-val">None </span>=&gt; <span class="number">1</span>,
+                    <span class="prelude-val">Some</span>(weight) =&gt; weight + <span class="number">1</span>,
+                };
+                acc.insert(operator_id, total_weight);
+                acc
+            },
+        );
+
+        <span class="kw">let </span><span class="kw-2">mut </span>allocated_rewards = BalanceOf::&lt;T&gt;::zero();
+        <span class="kw">let </span><span class="kw-2">mut </span>weight_balance_cache = BTreeMap::&lt;u64, BalanceOf&lt;T&gt;&gt;::new();
+        <span class="kw">for </span>(operator_id, weight) <span class="kw">in </span>operator_weights {
+            <span class="kw">let </span>operator_reward = <span class="kw">match </span>weight_balance_cache.get(<span class="kw-2">&amp;</span>weight) {
+                <span class="prelude-val">None </span>=&gt; {
+                    <span class="kw">let </span>distribution = Perquintill::from_rational(weight, total_count);
+                    <span class="kw">let </span>operator_reward = distribution.mul_floor(rewards);
+                    weight_balance_cache.insert(weight, operator_reward);
+                    operator_reward
+                }
+                <span class="prelude-val">Some</span>(operator_reward) =&gt; <span class="kw-2">*</span>operator_reward,
+            };
+
             <span class="kw">let </span>total_reward = <span class="kw">match </span>stake_summary.current_epoch_rewards.get(<span class="kw-2">&amp;</span>operator_id) {
-                <span class="prelude-val">None </span>=&gt; reward_per_operator,
+                <span class="prelude-val">None </span>=&gt; operator_reward,
                 <span class="prelude-val">Some</span>(rewards) =&gt; rewards
-                    .checked_add(<span class="kw-2">&amp;</span>reward_per_operator)
+                    .checked_add(<span class="kw-2">&amp;</span>operator_reward)
                     .ok_or(Error::BalanceOverflow)<span class="question-mark">?</span>,
             };
 
@@ -4164,15 +4218,21 @@
 
             Pallet::&lt;T&gt;::deposit_event(Event::OperatorRewarded {
                 operator_id,
-                reward: reward_per_operator,
+                reward: operator_reward,
             });
 
-            rewards = rewards
-                .checked_sub(<span class="kw-2">&amp;</span>reward_per_operator)
-                .ok_or(Error::BalanceUnderflow)<span class="question-mark">?</span>;
+            allocated_rewards = allocated_rewards
+                .checked_add(<span class="kw-2">&amp;</span>operator_reward)
+                .ok_or(Error::BalanceOverflow)<span class="question-mark">?</span>;
         }
 
-        mint_into_treasury::&lt;T&gt;(rewards).ok_or(Error::MintBalance)
+        <span class="comment">// mint remaining funds to treasury
+        </span>mint_into_treasury::&lt;T&gt;(
+            rewards
+                .checked_sub(<span class="kw-2">&amp;</span>allocated_rewards)
+                .ok_or(Error::BalanceUnderflow)<span class="question-mark">?</span>,
+        )
+        .ok_or(Error::MintBalance)
     })
 }
 
