@@ -402,6 +402,7 @@
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rayon::ThreadPool;
+<span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::Instant;
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
@@ -450,7 +451,7 @@
 
 <span class="doccomment">/// Plot audit options
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>PlotAuditOptions&lt;<span class="lifetime">'a</span>, PosTable&gt;
+</span><span class="kw">pub struct </span>PlotAuditOptions&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>, PosTable&gt;
 <span class="kw">where
     </span>PosTable: Table,
 {
@@ -468,14 +469,14 @@
     </span><span class="kw">pub </span>erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ErasureCoding,
     <span class="doccomment">/// Optional sector that is currently being modified (for example replotted) and should not be
     /// audited
-    </span><span class="kw">pub </span>maybe_sector_being_modified: <span class="prelude-ty">Option</span>&lt;SectorIndex&gt;,
+    </span><span class="kw">pub </span>sectors_being_modified: <span class="kw-2">&amp;</span><span class="lifetime">'b </span>HashSet&lt;SectorIndex&gt;,
     <span class="doccomment">/// Mode of reading chunks during proving
     </span><span class="kw">pub </span>read_sector_record_chunks_mode: ReadSectorRecordChunksMode,
     <span class="doccomment">/// Proof of space table generator
     </span><span class="kw">pub </span>table_generator: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Mutex&lt;PosTable::Generator&gt;,
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, PosTable&gt; Clone <span class="kw">for </span>PlotAuditOptions&lt;<span class="lifetime">'a</span>, PosTable&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>, PosTable&gt; Clone <span class="kw">for </span>PlotAuditOptions&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>, PosTable&gt;
 <span class="kw">where
     </span>PosTable: Table,
 {
@@ -484,7 +485,7 @@
     </span>}
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, PosTable&gt; Copy <span class="kw">for </span>PlotAuditOptions&lt;<span class="lifetime">'a</span>, PosTable&gt; <span class="kw">where </span>PosTable: Table {}
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>, PosTable&gt; Copy <span class="kw">for </span>PlotAuditOptions&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>, PosTable&gt; <span class="kw">where </span>PosTable: Table {}
 
 <span class="doccomment">/// Plot auditing implementation
 </span><span class="kw">pub struct </span>PlotAudit&lt;Plot&gt;(Plot)
@@ -500,9 +501,9 @@
         <span class="self">Self</span>(plot)
     }
 
-    <span class="kw">pub fn </span>audit&lt;PosTable&gt;(
+    <span class="kw">pub fn </span>audit&lt;<span class="lifetime">'b</span>, PosTable&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
-        options: PlotAuditOptions&lt;<span class="lifetime">'a</span>, PosTable&gt;,
+        options: PlotAuditOptions&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>, PosTable&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;
         Vec&lt;(
             SectorIndex,
@@ -520,7 +521,7 @@
             sectors_metadata,
             kzg,
             erasure_coding,
-            maybe_sector_being_modified,
+            sectors_being_modified,
             read_sector_record_chunks_mode: mode,
             table_generator,
         } = options;
@@ -531,7 +532,7 @@
             slot_info.voting_solution_range,
             <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>,
             sectors_metadata,
-            maybe_sector_being_modified,
+            sectors_being_modified,
         )<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(audit_results
@@ -579,7 +580,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) kzg: Kzg,
     <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: ErasureCoding,
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_being_modified: Arc&lt;AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) slot_info_notifications: mpsc::Receiver&lt;SlotInfo&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) thread_pool: ThreadPool,
     <span class="kw">pub</span>(<span class="kw">super</span>) read_sector_record_chunks_mode: ReadSectorRecordChunksMode,
@@ -607,7 +608,7 @@
         kzg,
         erasure_coding,
         handlers,
-        modifying_sector_index,
+        sectors_being_modified,
         <span class="kw-2">mut </span>slot_info_notifications,
         thread_pool,
         read_sector_record_chunks_mode,
@@ -640,8 +641,7 @@
             <span class="macro">debug!</span>(%slot, sector_count = %sectors_metadata.len(), <span class="string">"Reading sectors"</span>);
 
             <span class="kw">let </span><span class="kw-2">mut </span>sectors_solutions = {
-                <span class="kw">let </span>modifying_sector_guard = modifying_sector_index.read().<span class="kw">await</span>;
-                <span class="kw">let </span>maybe_sector_being_modified = modifying_sector_guard.as_ref().copied();
+                <span class="kw">let </span>sectors_being_modified = <span class="kw-2">&amp;*</span>sectors_being_modified.read().<span class="kw">await</span>;
 
                 thread_pool.install(|| {
                     <span class="kw">let </span>_span_guard = span.enter();
@@ -653,7 +653,7 @@
                         sectors_metadata: <span class="kw-2">&amp;</span>sectors_metadata,
                         kzg: <span class="kw-2">&amp;</span>kzg,
                         erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
-                        maybe_sector_being_modified,
+                        sectors_being_modified,
                         read_sector_record_chunks_mode,
                         table_generator: <span class="kw-2">&amp;</span>table_generator,
                     })

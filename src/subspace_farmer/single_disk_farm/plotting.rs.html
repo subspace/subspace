@@ -821,84 +821,40 @@
 <a href="#819" id="819">819</a>
 <a href="#820" id="820">820</a>
 <a href="#821" id="821">821</a>
-<a href="#822" id="822">822</a>
-<a href="#823" id="823">823</a>
-<a href="#824" id="824">824</a>
-<a href="#825" id="825">825</a>
-<a href="#826" id="826">826</a>
-<a href="#827" id="827">827</a>
-<a href="#828" id="828">828</a>
-<a href="#829" id="829">829</a>
-<a href="#830" id="830">830</a>
-<a href="#831" id="831">831</a>
-<a href="#832" id="832">832</a>
-<a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a>
-<a href="#835" id="835">835</a>
-<a href="#836" id="836">836</a>
-<a href="#837" id="837">837</a>
-<a href="#838" id="838">838</a>
-<a href="#839" id="839">839</a>
-<a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
-<a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a>
-<a href="#850" id="850">850</a>
-<a href="#851" id="851">851</a>
-<a href="#852" id="852">852</a>
-<a href="#853" id="853">853</a>
-<a href="#854" id="854">854</a>
-<a href="#855" id="855">855</a>
-<a href="#856" id="856">856</a>
-<a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
+<span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::{
     BackgroundTaskError, Handlers, PlotMetadataHeader, RESERVED_PLOT_METADATA,
 };
-<span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::PlottingThreadPoolManager;
-<span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use crate</span>::{node_client, NodeClient};
 <span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
+<span class="kw">use </span>futures::stream::FuturesOrdered;
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parity_scale_codec::Encode;
-<span class="kw">use </span>std::collections::HashMap;
+<span class="kw">use </span>std::collections::{HashMap, HashSet};
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>std::fs::File;
+<span class="kw">use </span>std::future::{pending, Future};
 <span class="kw">use </span>std::io;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::ops::Range;
-<span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
+<span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
-<span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::{
     Blake3Hash, HistorySize, PieceOffset, PublicKey, SectorId, SectorIndex, SegmentHeader,
     SegmentIndex,
 };
-<span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_farmer_components::file_ext::FileExt;
-<span class="kw">use </span>subspace_farmer_components::plotting::{
-    download_sector, encode_sector, DownloadSectorOptions, DownloadedSector, EncodeSectorOptions,
-    PlottedSector,
-};
+<span class="kw">use </span>subspace_farmer_components::plotting::PlottedSector;
 <span class="kw">use </span>subspace_farmer_components::sector::SectorMetadataChecksummed;
-<span class="kw">use </span>subspace_farmer_components::{plotting, PieceGetter};
-<span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>thiserror::Error;
-<span class="kw">use </span>tokio::sync::{broadcast, watch, OwnedSemaphorePermit, Semaphore};
-<span class="kw">use </span>tokio::task::yield_now;
-<span class="kw">use </span>tracing::{debug, info, trace, warn, Instrument};
+<span class="kw">use </span>tokio::sync::watch;
+<span class="kw">use </span>tracing::{debug, info, trace, warn};
 
 <span class="kw">const </span>FARMER_APP_INFO_RETRY_INTERVAL: Duration = Duration::from_millis(<span class="number">500</span>);
 <span class="doccomment">/// Size of the cache of archived segments for the purposes of faster sector expiration checks.
@@ -911,7 +867,6 @@
     <span class="doccomment">/// Whether this is the last sector queued so far
     </span>last_queued: bool,
     acknowledgement_sender: oneshot::Sender&lt;()&gt;,
-    next_segment_index_hint: <span class="prelude-ty">Option</span>&lt;SectorIndex&gt;,
 }
 
 <span class="doccomment">/// Errors that happen during plotting
@@ -943,7 +898,7 @@
     },
     <span class="doccomment">/// Low-level plotting error
     </span><span class="attr">#[error(<span class="string">"Low-level plotting error: {0}"</span>)]
-    </span>LowLevel(<span class="attr">#[from] </span>plotting::PlottingError),
+    </span>LowLevel(String),
     <span class="doccomment">/// I/O error occurred
     </span><span class="attr">#[error(<span class="string">"Plotting I/O error: {0}"</span>)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
@@ -952,311 +907,295 @@
     </span>BackgroundDownloadingPanicked,
 }
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PlottingOptions&lt;<span class="lifetime">'a</span>, NC, PG&gt; {
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SectorPlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt; {
     <span class="kw">pub</span>(<span class="kw">super</span>) public_key: PublicKey,
     <span class="kw">pub</span>(<span class="kw">super</span>) node_client: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>NC,
     <span class="kw">pub</span>(<span class="kw">super</span>) pieces_in_sector: u16,
     <span class="kw">pub</span>(<span class="kw">super</span>) sector_size: usize,
     <span class="kw">pub</span>(<span class="kw">super</span>) sector_metadata_size: usize,
-    <span class="kw">pub</span>(<span class="kw">super</span>) metadata_header: PlotMetadataHeader,
     <span class="attr">#[cfg(not(windows))]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) plot_file: Arc&lt;File&gt;,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) plot_file: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>File,
     <span class="attr">#[cfg(windows)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) plot_file: Arc&lt;UnbufferedIoFileWindows&gt;,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) plot_file: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>UnbufferedIoFileWindows,
     <span class="attr">#[cfg(not(windows))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) metadata_file: File,
     <span class="attr">#[cfg(windows)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) metadata_file: UnbufferedIoFileWindows,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) piece_getter: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PG,
-    <span class="kw">pub</span>(<span class="kw">super</span>) kzg: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Kzg,
-    <span class="kw">pub</span>(<span class="kw">super</span>) erasure_coding: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ErasureCoding,
-    <span class="kw">pub</span>(<span class="kw">super</span>) handlers: Arc&lt;Handlers&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) modifying_sector_index: Arc&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
-    <span class="doccomment">/// Semaphore for part of the plotting when farmer downloads new sector, allows to limit memory
-    /// usage of the plotting process, permit will be held until the end of the plotting process
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) downloading_semaphore: Arc&lt;Semaphore&gt;,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) record_encoding_concurrency: NonZeroUsize,
-    <span class="kw">pub</span>(<span class="kw">super</span>) plotting_thread_pool_manager: PlottingThreadPoolManager,
-    <span class="kw">pub</span>(<span class="kw">super</span>) stop_receiver: broadcast::Receiver&lt;()&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) handlers: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Handlers,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_being_modified: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) global_mutex: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncMutex&lt;()&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) plotter: P,
+}
+
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) metadata_header: PlotMetadataHeader,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sector_plotting_options: SectorPlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt;,
 }
 
 <span class="doccomment">/// Starts plotting process.
 ///
 /// NOTE: Returned future is async, but does blocking operations and should be running in dedicated
 /// thread.
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>plotting&lt;NC, PG, PosTable&gt;(
-    plotting_options: PlottingOptions&lt;<span class="lifetime">'_</span>, NC, PG&gt;,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>plotting&lt;NC, P&gt;(
+    plotting_options: PlottingOptions&lt;<span class="lifetime">'_</span>, NC, P&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt;
 <span class="kw">where
     </span>NC: NodeClient,
-    PG: PieceGetter + Clone + Send + Sync + <span class="lifetime">'static</span>,
-    PosTable: Table,
+    P: Plotter,
 {
     <span class="kw">let </span>PlottingOptions {
+        <span class="kw-2">mut </span>metadata_header,
+        <span class="kw-2">mut </span>sectors_to_plot_receiver,
+        sector_plotting_options,
+    } = plotting_options;
+
+    <span class="kw">let </span><span class="kw-2">mut </span>sectors_being_plotted = FuturesOrdered::new();
+
+    <span class="comment">// Wait for new sectors to plot from `sectors_to_plot_receiver` and wait for sectors that
+    // already started plotting to finish plotting and then update metadata header
+    </span><span class="kw">loop </span>{
+        <span class="macro">select! </span>{
+            maybe_sector_to_plot = sectors_to_plot_receiver.next() =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(sector_to_plot) = maybe_sector_to_plot {
+                    <span class="kw">let </span>sector_plotting_init_fut = plot_single_sector(sector_to_plot, <span class="kw-2">&amp;</span>sector_plotting_options).fuse();
+                    <span class="kw">let </span><span class="kw-2">mut </span>sector_plotting_init_fut = <span class="macro">pin!</span>(sector_plotting_init_fut);
+
+                    <span class="comment">// Wait for plotting of new sector to start (backpressure), while also waiting
+                    // for sectors that already started plotting to finish plotting and then update
+                    // metadata header
+                    </span><span class="kw">loop </span>{
+                        <span class="macro">select! </span>{
+                            sector_plotting_init_result = sector_plotting_init_fut =&gt; {
+                                sectors_being_plotted.push_back(sector_plotting_init_result<span class="question-mark">?</span>);
+                                <span class="kw">break</span>;
+                            }
+                            maybe_sector_plotting_result = maybe_wait_futures_ordered(<span class="kw-2">&amp;mut </span>sectors_being_plotted).fuse() =&gt; {
+                                process_plotting_result(
+                                    maybe_sector_plotting_result<span class="question-mark">?</span>,
+                                    <span class="kw-2">&amp;mut </span>metadata_header,
+                                    <span class="kw-2">&amp;</span>sector_plotting_options.metadata_file
+                                )<span class="question-mark">?</span>;
+                            }
+                        }
+                    }
+                } <span class="kw">else </span>{
+                    <span class="kw">break</span>;
+                }
+            }
+            maybe_sector_plotting_result = maybe_wait_futures_ordered(<span class="kw-2">&amp;mut </span>sectors_being_plotted).fuse() =&gt; {
+                process_plotting_result(
+                    maybe_sector_plotting_result<span class="question-mark">?</span>,
+                    <span class="kw-2">&amp;mut </span>metadata_header,
+                    <span class="kw-2">&amp;</span>sector_plotting_options.metadata_file
+                )<span class="question-mark">?</span>;
+            }
+        }
+    }
+
+    <span class="prelude-val">Ok</span>(())
+}
+
+<span class="kw">fn </span>process_plotting_result(
+    sector_plotting_result: SectorPlottingResult,
+    metadata_header: <span class="kw-2">&amp;mut </span>PlotMetadataHeader,
+    <span class="attr">#[cfg(not(windows))] </span>metadata_file: <span class="kw-2">&amp;</span>File,
+    <span class="attr">#[cfg(windows)] </span>metadata_file: <span class="kw-2">&amp;</span>UnbufferedIoFileWindows,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt; {
+    <span class="kw">let </span>SectorPlottingResult {
+        sector_index,
+        replotting,
+        last_queued,
+    } = sector_plotting_result;
+
+    <span class="kw">if </span>sector_index + <span class="number">1 </span>&gt; metadata_header.plotted_sector_count {
+        metadata_header.plotted_sector_count = sector_index + <span class="number">1</span>;
+        metadata_file.write_all_at(<span class="kw-2">&amp;</span>metadata_header.encode(), <span class="number">0</span>)<span class="question-mark">?</span>;
+    }
+
+    <span class="kw">if </span>last_queued {
+        <span class="kw">if </span>replotting {
+            <span class="macro">info!</span>(<span class="string">"Replotting complete"</span>);
+        } <span class="kw">else </span>{
+            <span class="macro">info!</span>(<span class="string">"Initial plotting complete"</span>);
+        }
+    }
+
+    <span class="prelude-val">Ok</span>(())
+}
+
+<span class="doccomment">/// Wait for next element in `FuturesOrdered`, but only if it is not empty. This avoids calling
+/// `.poll_next()` if `FuturesOrdered` is already empty, so it can be reused indefinitely
+</span><span class="kw">async fn </span>maybe_wait_futures_ordered&lt;F&gt;(stream: <span class="kw-2">&amp;mut </span>FuturesOrdered&lt;F&gt;) -&gt; F::Output
+<span class="kw">where
+    </span>F: Future,
+{
+    <span class="kw">if </span>stream.is_empty() {
+        pending().<span class="kw">await
+    </span>} <span class="kw">else </span>{
+        stream.next().<span class="kw">await</span>.expect(<span class="string">"Not empty; qed"</span>)
+    }
+}
+
+<span class="kw">struct </span>SectorPlottingResult {
+    sector_index: SectorIndex,
+    replotting: bool,
+    last_queued: bool,
+}
+
+<span class="kw">async fn </span>plot_single_sector&lt;<span class="lifetime">'a</span>, NC, P&gt;(
+    sector_to_plot: SectorToPlot,
+    sector_plotting_options: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SectorPlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;SectorPlottingResult, PlottingError&gt;&gt; + <span class="lifetime">'a</span>, PlottingError&gt;
+<span class="kw">where
+    </span>NC: NodeClient,
+    P: Plotter,
+{
+    <span class="kw">let </span>SectorPlottingOptions {
         public_key,
         node_client,
         pieces_in_sector,
         sector_size,
         sector_metadata_size,
-        <span class="kw-2">mut </span>metadata_header,
         plot_file,
         metadata_file,
         sectors_metadata,
-        piece_getter,
-        kzg,
-        erasure_coding,
         handlers,
-        modifying_sector_index,
-        <span class="kw-2">mut </span>sectors_to_plot_receiver,
-        downloading_semaphore,
-        record_encoding_concurrency,
-        plotting_thread_pool_manager,
-        <span class="kw-2">mut </span>stop_receiver,
+        sectors_being_modified,
         global_mutex,
-    } = plotting_options;
+        plotter,
+    } = sector_plotting_options;
 
-    <span class="kw">let </span>abort_early = Arc::new(AtomicBool::new(<span class="bool-val">false</span>));
+    <span class="kw">let </span>SectorToPlot {
+        sector_index,
+        progress,
+        last_queued,
+        acknowledgement_sender: _acknowledgement_sender,
+    } = sector_to_plot;
+    <span class="macro">trace!</span>(%sector_index, <span class="string">"Preparing to plot sector"</span>);
 
-    <span class="kw">let </span>_abort_early_task = AsyncJoinOnDrop::new(
-        tokio::spawn({
-            <span class="kw">let </span>abort_early = Arc::clone(<span class="kw-2">&amp;</span>abort_early);
+    <span class="kw">let </span>maybe_old_sector_metadata = sectors_metadata
+        .read()
+        .<span class="kw">await
+        </span>.get(sector_index <span class="kw">as </span>usize)
+        .cloned();
+    <span class="kw">let </span>replotting = maybe_old_sector_metadata.is_some();
 
-            <span class="kw">async move </span>{
-                <span class="comment">// Error doesn't matter here
-                </span><span class="kw">let _ </span>= stop_receiver.recv().<span class="kw">await</span>;
+    <span class="kw">let </span>sector_state = SectorUpdate::Plotting(SectorPlottingDetails::Starting {
+        progress,
+        replotting,
+        last_queued,
+    });
+    handlers
+        .sector_update
+        .call_simple(<span class="kw-2">&amp;</span>(sector_index, sector_state));
 
-                abort_early.store(<span class="bool-val">true</span>, Ordering::Release);
-            }
-        }),
-        <span class="bool-val">true</span>,
-    );
+    <span class="kw">let </span>start = Instant::now();
 
-    <span class="kw">let </span><span class="kw-2">mut </span>table_generators = (<span class="number">0</span>..record_encoding_concurrency.get())
-        .map(|<span class="kw">_</span>| PosTable::generator())
-        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-
-    <span class="kw">let </span><span class="kw-2">mut </span>maybe_next_downloaded_sector_fut = <span class="prelude-val">None</span>::&lt;
-        AsyncJoinOnDrop&lt;<span class="prelude-ty">Result</span>&lt;(OwnedSemaphorePermit, DownloadedSector), plotting::PlottingError&gt;&gt;,
-    &gt;;
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(sector_to_plot) = sectors_to_plot_receiver.next().<span class="kw">await </span>{
-        <span class="kw">let </span>SectorToPlot {
-            sector_index,
-            progress,
-            last_queued,
-            acknowledgement_sender: _acknowledgement_sender,
-            <span class="comment">// TODO: Remove this hint once we have
-            //  https://github.com/rust-lang/futures-rs/issues/2793 and can
-            //  `sectors_to_plot_receiver.try_peek()` instead
-            </span>next_segment_index_hint,
-        } = sector_to_plot;
-        <span class="macro">trace!</span>(%sector_index, <span class="string">"Preparing to plot sector"</span>);
-
-        <span class="kw">let </span>maybe_old_sector_metadata = sectors_metadata
-            .read()
+    <span class="comment">// This `loop` is a workaround for edge-case in local setup if expiration is configured to 1.
+    // In that scenario we get replotting notification essentially straight from block import
+    // pipeline of the node, before block is imported. This can result in subsequent request for
+    // farmer app info to return old data, meaning we're replotting exactly the same sector that
+    // just expired.
+    </span><span class="kw">let </span>farmer_app_info = <span class="kw">loop </span>{
+        <span class="kw">let </span>farmer_app_info = node_client
+            .farmer_app_info()
             .<span class="kw">await
-            </span>.get(sector_index <span class="kw">as </span>usize)
-            .cloned();
-        <span class="kw">let </span>replotting = maybe_old_sector_metadata.is_some();
+            </span>.map_err(|error| PlottingError::FailedToGetFarmerInfo { error })<span class="question-mark">?</span>;
 
-        <span class="kw">if </span>replotting {
-            <span class="macro">info!</span>(%sector_index, <span class="string">"Replotting sector ({progress:.2}% complete)"</span>);
-        } <span class="kw">else </span>{
-            <span class="macro">info!</span>(%sector_index, <span class="string">"Plotting sector ({progress:.2}% complete)"</span>);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_sector_metadata) = <span class="kw-2">&amp;</span>maybe_old_sector_metadata {
+            <span class="kw">if </span>farmer_app_info.protocol_info.history_size &lt;= old_sector_metadata.history_size {
+                <span class="macro">debug!</span>(
+                    current_history_size = %farmer_app_info.protocol_info.history_size,
+                    old_sector_history_size = %old_sector_metadata.history_size,
+                    <span class="string">"Latest protocol history size is not yet newer than old sector history \
+                    size, wait for a bit and try again"
+                </span>);
+                tokio::time::sleep(FARMER_APP_INFO_RETRY_INTERVAL).<span class="kw">await</span>;
+                <span class="kw">continue</span>;
+            }
         }
 
-        <span class="kw">let </span>sector_state = SectorUpdate::Plotting(SectorPlottingDetails::Starting {
-            progress,
+        <span class="kw">break </span>farmer_app_info;
+    };
+
+    <span class="kw">let </span>(progress_sender, <span class="kw-2">mut </span>progress_receiver) = mpsc::channel(<span class="number">0</span>);
+
+    <span class="comment">// Initiate plotting
+    </span>plotter
+        .plot_sector(
+            <span class="kw-2">*</span>public_key,
+            sector_index,
+            farmer_app_info.protocol_info,
+            <span class="kw-2">*</span>pieces_in_sector,
             replotting,
-            last_queued,
-        });
-        handlers
-            .sector_update
-            .call_simple(<span class="kw-2">&amp;</span>(sector_index, sector_state));
+            progress_sender,
+        )
+        .<span class="kw">await</span>;
 
-        <span class="kw">let </span>start = Instant::now();
+    <span class="kw">if </span>replotting {
+        <span class="macro">info!</span>(%sector_index, <span class="string">"Replotting sector ({progress:.2}% complete)"</span>);
+    } <span class="kw">else </span>{
+        <span class="macro">info!</span>(%sector_index, <span class="string">"Plotting sector ({progress:.2}% complete)"</span>);
+    }
 
-        <span class="comment">// This `loop` is a workaround for edge-case in local setup if expiration is configured to
-        // 1. In that scenario we get replotting notification essentially straight from block import
-        // pipeline of the node, before block is imported. This can result in subsequent request for
-        // farmer app info to return old data, meaning we're replotting exactly the same sector that
-        // just expired.
-        </span><span class="kw">let </span>farmer_app_info = <span class="kw">loop </span>{
-            <span class="kw">let </span>farmer_app_info = node_client
-                .farmer_app_info()
-                .<span class="kw">await
-                </span>.map_err(|error| PlottingError::FailedToGetFarmerInfo { error })<span class="question-mark">?</span>;
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(old_sector_metadata) = <span class="kw-2">&amp;</span>maybe_old_sector_metadata {
-                <span class="kw">if </span>farmer_app_info.protocol_info.history_size &lt;= old_sector_metadata.history_size {
-                    <span class="macro">debug!</span>(
-                        current_history_size = %farmer_app_info.protocol_info.history_size,
-                        old_sector_history_size = %old_sector_metadata.history_size,
-                        <span class="string">"Latest protocol history size is not yet newer than old sector history \
-                        size, wait for a bit and try again"
-                    </span>);
-                    tokio::time::sleep(FARMER_APP_INFO_RETRY_INTERVAL).<span class="kw">await</span>;
-                    <span class="kw">continue</span>;
-                }
-            }
-
-            <span class="kw">break </span>farmer_app_info;
-        };
-
-        <span class="comment">// Take mutex briefly to make sure plotting is allowed right now
-        </span>global_mutex.lock().<span class="kw">await</span>;
-
-        <span class="kw">let </span>(_downloading_permit, downloaded_sector) =
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(downloaded_sector_fut) = maybe_next_downloaded_sector_fut.take() {
-                downloaded_sector_fut
-                    .<span class="kw">await
-                    </span>.map_err(|_error| PlottingError::BackgroundDownloadingPanicked)<span class="question-mark">??
-            </span>} <span class="kw">else </span>{
-                <span class="kw">let </span>downloading_permit = Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore)
-                    .acquire_owned()
-                    .<span class="kw">await
-                    </span>.map_err(plotting::PlottingError::from)<span class="question-mark">?</span>;
-
-                handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
-                    sector_index,
-                    SectorUpdate::Plotting(SectorPlottingDetails::Downloading),
-                ));
-
-                <span class="kw">let </span>start = Instant::now();
-
-                <span class="kw">let </span>downloaded_sector_fut = download_sector(DownloadSectorOptions {
-                    public_key: <span class="kw-2">&amp;</span>public_key,
-                    sector_index,
-                    piece_getter,
-                    farmer_protocol_info: farmer_app_info.protocol_info,
-                    kzg,
-                    pieces_in_sector,
-                });
-
-                <span class="kw">let </span>downloaded_sector = downloaded_sector_fut.<span class="kw">await</span><span class="question-mark">?</span>;
-
-                handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
-                    sector_index,
-                    SectorUpdate::Plotting(SectorPlottingDetails::Downloaded(start.elapsed())),
-                ));
-
-                (downloading_permit, downloaded_sector)
-            };
-
-        <span class="comment">// Initiate downloading of pieces for the next segment index if already known
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(sector_index) = next_segment_index_hint {
-            <span class="kw">let </span>piece_getter = piece_getter.clone();
-            <span class="kw">let </span>downloading_semaphore = Arc::clone(<span class="kw-2">&amp;</span>downloading_semaphore);
-            <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
-            <span class="kw">let </span>kzg = kzg.clone();
-
-            maybe_next_downloaded_sector_fut.replace(AsyncJoinOnDrop::new(
-                tokio::spawn(
-                    <span class="kw">async move </span>{
-                        <span class="kw">let </span>downloading_permit = downloading_semaphore
-                            .acquire_owned()
-                            .<span class="kw">await
-                            </span>.map_err(plotting::PlottingError::from)<span class="question-mark">?</span>;
-
+    <span class="prelude-val">Ok</span>(<span class="kw">async move </span>{
+        <span class="comment">// Process plotting progress notifications
+        </span><span class="kw">let </span>progress_processor_fut = <span class="kw">async </span>{
+            <span class="kw">while let </span><span class="prelude-val">Some</span>(progress) = progress_receiver.next().<span class="kw">await </span>{
+                <span class="kw">match </span>progress {
+                    SectorPlottingProgress::Downloading =&gt; {
                         handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                             sector_index,
                             SectorUpdate::Plotting(SectorPlottingDetails::Downloading),
                         ));
-
-                        <span class="kw">let </span>start = Instant::now();
-
-                        <span class="kw">let </span>downloaded_sector_fut = download_sector(DownloadSectorOptions {
-                            public_key: <span class="kw-2">&amp;</span>public_key,
-                            sector_index,
-                            piece_getter: <span class="kw-2">&amp;</span>piece_getter,
-                            farmer_protocol_info: farmer_app_info.protocol_info,
-                            kzg: <span class="kw-2">&amp;</span>kzg,
-                            pieces_in_sector,
-                        });
-
-                        <span class="kw">let </span>downloaded_sector = downloaded_sector_fut.<span class="kw">await</span><span class="question-mark">?</span>;
-
+                    }
+                    SectorPlottingProgress::Downloaded(time) =&gt; {
                         handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                             sector_index,
-                            SectorUpdate::Plotting(SectorPlottingDetails::Downloaded(
-                                start.elapsed(),
-                            )),
+                            SectorUpdate::Plotting(SectorPlottingDetails::Downloaded(time)),
                         ));
-
-                        <span class="prelude-val">Ok</span>((downloading_permit, downloaded_sector))
                     }
-                    .in_current_span(),
-                ),
-                <span class="bool-val">true</span>,
-            ));
-        }
-
-        <span class="kw">let </span>sector;
-        <span class="kw">let </span>sector_metadata;
-        <span class="kw">let </span>plotted_sector;
-
-        (sector, sector_metadata, table_generators, plotted_sector) = {
-            <span class="kw">let </span>plotting_fn = || {
-                tokio::task::block_in_place(|| {
-                    <span class="kw">let </span><span class="kw-2">mut </span>sector = Vec::new();
-                    <span class="kw">let </span><span class="kw-2">mut </span>sector_metadata = Vec::new();
-
-                    handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
-                        sector_index,
-                        SectorUpdate::Plotting(SectorPlottingDetails::Encoding),
-                    ));
-
-                    <span class="kw">let </span>start = Instant::now();
-
-                    <span class="kw">let </span>plotted_sector = encode_sector::&lt;PosTable&gt;(
-                        downloaded_sector,
-                        EncodeSectorOptions {
+                    SectorPlottingProgress::Encoding =&gt; {
+                        handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                             sector_index,
-                            erasure_coding,
-                            pieces_in_sector,
-                            sector_output: <span class="kw-2">&amp;mut </span>sector,
-                            sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
-                            table_generators: <span class="kw-2">&amp;mut </span>table_generators,
-                            abort_early: <span class="kw-2">&amp;</span>abort_early,
-                            global_mutex,
-                        },
-                    )<span class="question-mark">?</span>;
-
-                    handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
-                        sector_index,
-                        SectorUpdate::Plotting(SectorPlottingDetails::Encoded(start.elapsed())),
-                    ));
-
-                    <span class="prelude-val">Ok</span>((sector, sector_metadata, table_generators, plotted_sector))
-                })
-            };
-
-            <span class="kw">let </span>thread_pools = plotting_thread_pool_manager.get_thread_pools().<span class="kw">await</span>;
-            <span class="kw">let </span>thread_pool = <span class="kw">if </span>replotting {
-                <span class="kw-2">&amp;</span>thread_pools.replotting
-            } <span class="kw">else </span>{
-                <span class="kw-2">&amp;</span>thread_pools.plotting
-            };
-
-            <span class="comment">// Give a chance to interrupt plotting if necessary
-            </span>yield_now().<span class="kw">await</span>;
-
-            <span class="kw">let </span>plotting_result = thread_pool.install(plotting_fn);
-
-            <span class="kw">if </span><span class="macro">matches!</span>(
-                plotting_result,
-                <span class="prelude-val">Err</span>(PlottingError::LowLevel(plotting::PlottingError::AbortEarly))
-            ) {
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                            SectorUpdate::Plotting(SectorPlottingDetails::Encoding),
+                        ));
+                    }
+                    SectorPlottingProgress::Encoded(time) =&gt; {
+                        handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
+                            sector_index,
+                            SectorUpdate::Plotting(SectorPlottingDetails::Encoded(time)),
+                        ));
+                    }
+                    SectorPlottingProgress::Finished {
+                        plotted_sector,
+                        time: <span class="kw">_</span>,
+                        sector,
+                        sector_metadata,
+                    } =&gt; {
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>((plotted_sector, sector, sector_metadata));
+                    }
+                    SectorPlottingProgress::Error { error } =&gt; {
+                        handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
+                            sector_index,
+                            SectorUpdate::Plotting(SectorPlottingDetails::Error(error.clone())),
+                        ));
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(error);
+                    }
+                }
             }
 
-            plotting_result<span class="question-mark">?
-        </span>};
+            <span class="prelude-val">Err</span>(<span class="string">"Plotting progress stream ended before plotting finished"</span>.to_string())
+        };
+
+        <span class="kw">let </span>(plotted_sector, sector, sector_metadata) = progress_processor_fut
+            .<span class="kw">await
+            </span>.map_err(PlottingError::LowLevel)<span class="question-mark">?</span>;
 
         <span class="comment">// Inform others that this sector is being modified
-        </span>modifying_sector_index.write().<span class="kw">await</span>.replace(sector_index);
+        </span>sectors_being_modified.write().<span class="kw">await</span>.insert(sector_index);
 
         {
             <span class="comment">// Take mutex briefly to make sure writing is allowed right now
@@ -1272,7 +1211,7 @@
             plot_file.write_all_at(<span class="kw-2">&amp;</span>sector, (sector_index <span class="kw">as </span>usize * sector_size) <span class="kw">as </span>u64)<span class="question-mark">?</span>;
             metadata_file.write_all_at(
                 <span class="kw-2">&amp;</span>sector_metadata,
-                RESERVED_PLOT_METADATA + (u64::from(sector_index) * sector_metadata_size <span class="kw">as </span>u64),
+                RESERVED_PLOT_METADATA + (u64::from(sector_index) * <span class="kw-2">*</span>sector_metadata_size <span class="kw">as </span>u64),
             )<span class="question-mark">?</span>;
 
             handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
@@ -1281,10 +1220,6 @@
             ));
         }
 
-        <span class="kw">if </span>sector_index + <span class="number">1 </span>&gt; metadata_header.plotted_sector_count {
-            metadata_header.plotted_sector_count = sector_index + <span class="number">1</span>;
-            metadata_file.write_all_at(<span class="kw-2">&amp;</span>metadata_header.encode(), <span class="number">0</span>)<span class="question-mark">?</span>;
-        }
         {
             <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata = sectors_metadata.write().<span class="kw">await</span>;
             <span class="comment">// If exists then we're replotting, otherwise we create sector for the first time
@@ -1304,9 +1239,9 @@
                 sector_index: plotted_sector.sector_index,
                 sector_metadata: old_sector_metadata,
                 piece_indexes: {
-                    <span class="kw">let </span><span class="kw-2">mut </span>piece_indexes = Vec::with_capacity(usize::from(pieces_in_sector));
+                    <span class="kw">let </span><span class="kw-2">mut </span>piece_indexes = Vec::with_capacity(usize::from(<span class="kw-2">*</span>pieces_in_sector));
                     (PieceOffset::ZERO..)
-                        .take(usize::from(pieces_in_sector))
+                        .take(usize::from(<span class="kw-2">*</span>pieces_in_sector))
                         .map(|piece_offset| {
                             plotted_sector.sector_id.derive_piece_index(
                                 piece_offset,
@@ -1323,18 +1258,12 @@
         });
 
         <span class="comment">// Inform others that this sector is no longer being modified
-        </span>modifying_sector_index.write().<span class="kw">await</span>.take();
+        </span>sectors_being_modified.write().<span class="kw">await</span>.remove(<span class="kw-2">&amp;</span>sector_index);
 
         <span class="kw">if </span>replotting {
             <span class="macro">debug!</span>(%sector_index, <span class="string">"Sector replotted successfully"</span>);
-            <span class="kw">if </span>last_queued {
-                <span class="macro">info!</span>(<span class="string">"Replotting complete"</span>);
-            }
         } <span class="kw">else </span>{
             <span class="macro">debug!</span>(%sector_index, <span class="string">"Sector plotted successfully"</span>);
-            <span class="kw">if </span>last_queued {
-                <span class="macro">info!</span>(<span class="string">"Initial plotting complete"</span>);
-            }
         }
 
         <span class="kw">let </span>sector_state = SectorUpdate::Plotting(SectorPlottingDetails::Finished {
@@ -1345,9 +1274,13 @@
         handlers
             .sector_update
             .call_simple(<span class="kw-2">&amp;</span>(sector_index, sector_state));
-    }
 
-    <span class="prelude-val">Ok</span>(())
+        <span class="prelude-val">Ok</span>(SectorPlottingResult {
+            sector_index,
+            replotting,
+            last_queued,
+        })
+    })
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PlottingSchedulerOptions&lt;NC&gt; {
@@ -1490,8 +1423,7 @@
     </span>NC: NodeClient,
 {
     <span class="comment">// Finish initial plotting if some sectors were not plotted fully yet
-    </span><span class="kw">let </span><span class="kw-2">mut </span>sectors_indices_left_to_plot = sectors_indices_left_to_plot.into_iter().peekable();
-    <span class="kw">while let </span><span class="prelude-val">Some</span>(sector_index) = sectors_indices_left_to_plot.next() {
+    </span><span class="kw">for </span>sector_index <span class="kw">in </span>sectors_indices_left_to_plot {
         <span class="kw">let </span>(acknowledgement_sender, acknowledgement_receiver) = oneshot::channel();
         <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = sectors_to_plot_sender
             .send(SectorToPlot {
@@ -1499,7 +1431,6 @@
                 progress: sector_index <span class="kw">as </span>f32 / target_sector_count <span class="kw">as </span>f32 * <span class="number">100.0</span>,
                 last_queued: sector_index + <span class="number">1 </span>== target_sector_count,
                 acknowledgement_sender,
-                next_segment_index_hint: sectors_indices_left_to_plot.peek().copied(),
             })
             .<span class="kw">await
         </span>{
@@ -1682,9 +1613,7 @@
 
         <span class="kw">let </span>sectors_queued = sectors_to_replot.len();
         sectors_to_replot.sort_by_key(|sector_to_replot| sector_to_replot.expires_at);
-        <span class="kw">let </span><span class="kw-2">mut </span>sector_indices_to_replot = sectors_to_replot.drain(..).enumerate().peekable();
-        <span class="kw">while let </span><span class="prelude-val">Some</span>((index, SectorToReplot { sector_index, .. })) =
-            sector_indices_to_replot.next()
+        <span class="kw">for </span>(index, SectorToReplot { sector_index, .. }) <span class="kw">in </span>sectors_to_replot.drain(..).enumerate()
         {
             <span class="kw">let </span>(acknowledgement_sender, acknowledgement_receiver) = oneshot::channel();
             <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = sectors_to_plot_sender
@@ -1693,9 +1622,6 @@
                     progress: index <span class="kw">as </span>f32 / sectors_queued <span class="kw">as </span>f32 * <span class="number">100.0</span>,
                     last_queued: index + <span class="number">1 </span>== sectors_queued,
                     acknowledgement_sender,
-                    next_segment_index_hint: sector_indices_to_replot
-                        .peek()
-                        .map(|(_index, SectorToReplot { sector_index, .. })| <span class="kw-2">*</span>sector_index),
                 })
                 .<span class="kw">await
             </span>{

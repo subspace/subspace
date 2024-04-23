@@ -2317,21 +2317,6 @@
 <a href="#2315" id="2315">2315</a>
 <a href="#2316" id="2316">2316</a>
 <a href="#2317" id="2317">2317</a>
-<a href="#2318" id="2318">2318</a>
-<a href="#2319" id="2319">2319</a>
-<a href="#2320" id="2320">2320</a>
-<a href="#2321" id="2321">2321</a>
-<a href="#2322" id="2322">2322</a>
-<a href="#2323" id="2323">2323</a>
-<a href="#2324" id="2324">2324</a>
-<a href="#2325" id="2325">2325</a>
-<a href="#2326" id="2326">2326</a>
-<a href="#2327" id="2327">2327</a>
-<a href="#2328" id="2328">2328</a>
-<a href="#2329" id="2329">2329</a>
-<a href="#2330" id="2330">2330</a>
-<a href="#2331" id="2331">2331</a>
-<a href="#2332" id="2332">2332</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
@@ -2345,6 +2330,7 @@
 <span class="kw">pub use </span><span class="kw">crate</span>::farm::{FarmingError, FarmingNotification};
 <span class="kw">use </span><span class="kw">crate</span>::identity::{Identity, IdentityError};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
+<span class="kw">use </span><span class="kw">crate</span>::plotter::Plotter;
 <span class="kw">use </span><span class="kw">crate</span>::reward_signing::reward_signing;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::rayon_files::RayonFiles;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::{
@@ -2355,12 +2341,11 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plot_cache::DiskPlotCache;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::plotting::PlottingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
-    plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions,
+    plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions, SectorPlottingOptions,
 };
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::DISK_SECTOR_SIZE;
-<span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::PlottingThreadPoolManager;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{tokio_rayon_spawn_handler, AsyncJoinOnDrop};
 <span class="kw">use </span><span class="kw">crate</span>::KNOWN_PEERS_CACHE_SIZE;
 <span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
@@ -2376,10 +2361,11 @@
 <span class="kw">use </span>rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>static_assertions::const_assert;
+<span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::fs::{File, OpenOptions};
 <span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::num::{NonZeroU8, NonZeroUsize};
+<span class="kw">use </span>std::num::NonZeroU8;
 <span class="kw">use </span>std::path::{Path, PathBuf};
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::atomic::{AtomicUsize, Ordering};
@@ -2398,7 +2384,7 @@
 <span class="kw">use </span>subspace_farmer_components::plotting::PlottedSector;
 <span class="kw">use </span>subspace_farmer_components::reading::ReadSectorRecordChunksMode;
 <span class="kw">use </span>subspace_farmer_components::sector::{sector_size, SectorMetadata, SectorMetadataChecksummed};
-<span class="kw">use </span>subspace_farmer_components::{FarmerProtocolInfo, PieceGetter, ReadAtSync};
+<span class="kw">use </span>subspace_farmer_components::{FarmerProtocolInfo, ReadAtSync};
 <span class="kw">use </span>subspace_networking::KnownPeersManager;
 <span class="kw">use </span>subspace_proof_of_space::Table;
 <span class="kw">use </span>subspace_rpc_primitives::{FarmerAppInfo, SolutionResponse};
@@ -2581,7 +2567,7 @@
 }
 
 <span class="doccomment">/// Options used to open single disk farm
-</span><span class="kw">pub struct </span>SingleDiskFarmOptions&lt;NC, PG&gt; {
+</span><span class="kw">pub struct </span>SingleDiskFarmOptions&lt;NC, P&gt; {
     <span class="doccomment">/// Path to directory where farm is stored.
     </span><span class="kw">pub </span>directory: PathBuf,
     <span class="doccomment">/// Information necessary for farmer application
@@ -2594,26 +2580,19 @@
     </span><span class="kw">pub </span>node_client: NC,
     <span class="doccomment">/// Address where farming rewards should go
     </span><span class="kw">pub </span>reward_address: PublicKey,
-    <span class="doccomment">/// Piece receiver implementation for plotting purposes.
-    </span><span class="kw">pub </span>piece_getter: PG,
+    <span class="doccomment">/// Plotter
+    </span><span class="kw">pub </span>plotter: P,
     <span class="doccomment">/// Kzg instance to use.
     </span><span class="kw">pub </span>kzg: Kzg,
     <span class="doccomment">/// Erasure coding instance to use.
     </span><span class="kw">pub </span>erasure_coding: ErasureCoding,
     <span class="doccomment">/// Percentage of allocated space dedicated for caching purposes
     </span><span class="kw">pub </span>cache_percentage: NonZeroU8,
-    <span class="doccomment">/// Semaphore for part of the plotting when farmer downloads new sector, allows to limit memory
-    /// usage of the plotting process, permit will be held until the end of the plotting process
-    </span><span class="kw">pub </span>downloading_semaphore: Arc&lt;Semaphore&gt;,
-    <span class="doccomment">/// Defines how many record farmer will encode in a single sector concurrently
-    </span><span class="kw">pub </span>record_encoding_concurrency: NonZeroUsize,
     <span class="doccomment">/// Whether to farm during initial plotting
     </span><span class="kw">pub </span>farm_during_initial_plotting: bool,
     <span class="doccomment">/// Thread pool size used for farming (mostly for blocking I/O, but also for some
     /// compute-intensive operations during proving)
     </span><span class="kw">pub </span>farming_thread_pool_size: usize,
-    <span class="doccomment">/// Thread pool manager used for plotting
-    </span><span class="kw">pub </span>plotting_thread_pool_manager: PlottingThreadPoolManager,
     <span class="doccomment">/// Notification for plotter to start, can be used to delay plotting until some initialization
     /// has happened externally
     </span><span class="kw">pub </span>plotting_delay: <span class="prelude-ty">Option</span>&lt;oneshot::Receiver&lt;()&gt;&gt;,
@@ -3005,13 +2984,13 @@
     <span class="kw">const </span>SUPPORTED_PLOT_VERSION: u8 = <span class="number">0</span>;
 
     <span class="doccomment">/// Create new single disk farm instance
-    </span><span class="kw">pub async fn </span>new&lt;NC, PG, PosTable&gt;(
-        options: SingleDiskFarmOptions&lt;NC, PG&gt;,
+    </span><span class="kw">pub async fn </span>new&lt;NC, P, PosTable&gt;(
+        options: SingleDiskFarmOptions&lt;NC, P&gt;,
         farm_index: usize,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, SingleDiskFarmError&gt;
     <span class="kw">where
         </span>NC: NodeClient,
-        PG: PieceGetter + Clone + Send + Sync + <span class="lifetime">'static</span>,
+        P: Plotter + Send + <span class="lifetime">'static</span>,
         PosTable: Table,
     {
         <span class="kw">let </span>span = Span::current();
@@ -3051,13 +3030,10 @@
             farmer_app_info,
             node_client,
             reward_address,
-            piece_getter,
+            plotter,
             kzg,
             erasure_coding,
-            downloading_semaphore,
-            record_encoding_concurrency,
             farming_thread_pool_size,
-            plotting_thread_pool_manager,
             plotting_delay,
             farm_during_initial_plotting,
             global_mutex,
@@ -3082,7 +3058,7 @@
         <span class="kw">let </span>handlers = Arc::&lt;Handlers&gt;::default();
         <span class="kw">let </span>(start_sender, <span class="kw-2">mut </span>start_receiver) = broadcast::channel::&lt;()&gt;(<span class="number">1</span>);
         <span class="kw">let </span>(stop_sender, <span class="kw-2">mut </span>stop_receiver) = broadcast::channel::&lt;()&gt;(<span class="number">1</span>);
-        <span class="kw">let </span>modifying_sector_index = Arc::&lt;AsyncRwLock&lt;<span class="prelude-ty">Option</span>&lt;SectorIndex&gt;&gt;&gt;::default();
+        <span class="kw">let </span>sectors_being_modified = Arc::&lt;AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;&gt;::default();
         <span class="kw">let </span>(sectors_to_plot_sender, sectors_to_plot_receiver) = mpsc::channel(<span class="number">1</span>);
         <span class="comment">// Some sectors may already be plotted, skip them
         </span><span class="kw">let </span>sectors_indices_left_to_plot =
@@ -3155,10 +3131,8 @@
 
         <span class="kw">let </span>plotting_join_handle = tokio::task::spawn_blocking({
             <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
-            <span class="kw">let </span>kzg = kzg.clone();
-            <span class="kw">let </span>erasure_coding = erasure_coding.clone();
             <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
-            <span class="kw">let </span>modifying_sector_index = Arc::clone(<span class="kw-2">&amp;</span>modifying_sector_index);
+            <span class="kw">let </span>sectors_being_modified = Arc::clone(<span class="kw-2">&amp;</span>sectors_being_modified);
             <span class="kw">let </span>node_client = node_client.clone();
             <span class="kw">let </span>plot_file = Arc::clone(<span class="kw-2">&amp;</span>plot_file);
             <span class="kw">let </span>error_sender = Arc::clone(<span class="kw-2">&amp;</span>error_sender);
@@ -3169,26 +3143,22 @@
                 <span class="kw">let </span>_span_guard = span.enter();
 
                 <span class="kw">let </span>plotting_options = PlottingOptions {
-                    public_key,
-                    node_client: <span class="kw-2">&amp;</span>node_client,
-                    pieces_in_sector,
-                    sector_size,
-                    sector_metadata_size,
                     metadata_header,
-                    plot_file,
-                    metadata_file,
-                    sectors_metadata,
-                    piece_getter: <span class="kw-2">&amp;</span>piece_getter,
-                    kzg: <span class="kw-2">&amp;</span>kzg,
-                    erasure_coding: <span class="kw-2">&amp;</span>erasure_coding,
-                    handlers,
-                    modifying_sector_index,
                     sectors_to_plot_receiver,
-                    downloading_semaphore,
-                    record_encoding_concurrency,
-                    plotting_thread_pool_manager,
-                    stop_receiver: stop_receiver.resubscribe(),
-                    global_mutex: <span class="kw-2">&amp;</span>global_mutex,
+                    sector_plotting_options: SectorPlottingOptions {
+                        public_key,
+                        node_client: <span class="kw-2">&amp;</span>node_client,
+                        pieces_in_sector,
+                        sector_size,
+                        sector_metadata_size,
+                        plot_file: <span class="kw-2">&amp;</span>plot_file,
+                        metadata_file,
+                        sectors_metadata: <span class="kw-2">&amp;</span>sectors_metadata,
+                        handlers: <span class="kw-2">&amp;</span>handlers,
+                        sectors_being_modified: <span class="kw-2">&amp;</span>sectors_being_modified,
+                        global_mutex: <span class="kw-2">&amp;</span>global_mutex,
+                        plotter,
+                    },
                 };
 
                 <span class="kw">let </span>plotting_fut = <span class="kw">async </span>{
@@ -3204,7 +3174,7 @@
                         }
                     }
 
-                    plotting::&lt;<span class="kw">_</span>, <span class="kw">_</span>, PosTable&gt;(plotting_options).<span class="kw">await
+                    plotting::&lt;<span class="kw">_</span>, P&gt;(plotting_options).<span class="kw">await
                 </span>};
 
                 Handle::current().block_on(<span class="kw">async </span>{
@@ -3268,7 +3238,7 @@
         <span class="kw">let </span>farming_join_handle = tokio::task::spawn_blocking({
             <span class="kw">let </span>erasure_coding = erasure_coding.clone();
             <span class="kw">let </span>handlers = Arc::clone(<span class="kw-2">&amp;</span>handlers);
-            <span class="kw">let </span>modifying_sector_index = Arc::clone(<span class="kw-2">&amp;</span>modifying_sector_index);
+            <span class="kw">let </span>sectors_being_modified = Arc::clone(<span class="kw-2">&amp;</span>sectors_being_modified);
             <span class="kw">let </span>sectors_metadata = Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata);
             <span class="kw">let </span><span class="kw-2">mut </span>start_receiver = start_sender.subscribe();
             <span class="kw">let </span><span class="kw-2">mut </span>stop_receiver = stop_sender.subscribe();
@@ -3303,7 +3273,7 @@
                         kzg,
                         erasure_coding,
                         handlers,
-                        modifying_sector_index,
+                        sectors_being_modified,
                         slot_info_notifications: slot_info_forwarder_receiver,
                         thread_pool: farming_thread_pool,
                         read_sector_record_chunks_mode,
@@ -3349,7 +3319,7 @@
             plot_file,
             Arc::clone(<span class="kw-2">&amp;</span>sectors_metadata),
             erasure_coding,
-            modifying_sector_index,
+            sectors_being_modified,
             read_sector_record_chunks_mode,
             global_mutex,
         );
@@ -3418,8 +3388,8 @@
         <span class="prelude-val">Ok</span>(farm)
     }
 
-    <span class="kw">fn </span>init&lt;NC, PG&gt;(
-        options: <span class="kw-2">&amp;</span>SingleDiskFarmOptions&lt;NC, PG&gt;,
+    <span class="kw">fn </span>init&lt;NC, P&gt;(
+        options: <span class="kw-2">&amp;</span>SingleDiskFarmOptions&lt;NC, P&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;SingleDiskFarmInit, SingleDiskFarmError&gt; {
         <span class="kw">let </span>SingleDiskFarmOptions {
             directory,
