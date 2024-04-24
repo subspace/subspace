@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DiskPieceCacheError"],"struct":["DiskPieceCache"]};
+window.SIDEBAR_ITEMS = {"struct":["DiskPieceCache"]};
