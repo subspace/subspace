@@ -398,10 +398,13 @@
 <a href="#398" id="398">398</a>
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farmer_cache::FarmerCache;
 <span class="kw">use </span><span class="kw">crate</span>::utils::plotted_pieces::PlottedPieces;
 <span class="kw">use </span><span class="kw">crate</span>::NodeClient;
-<span class="kw">use </span>async_lock::Mutex <span class="kw">as </span>AsyncMutex;
+<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>backoff::backoff::Backoff;
 <span class="kw">use </span>backoff::future::retry;
@@ -410,6 +413,7 @@
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::fmt;
+<span class="kw">use </span>std::hash::Hash;
 <span class="kw">use </span>std::sync::atomic::{AtomicU32, Ordering};
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
@@ -429,27 +433,27 @@
     </span><span class="kw">pub </span>backoff: ExponentialBackoff,
 }
 
-<span class="kw">struct </span>Inner&lt;PV, NC&gt; {
+<span class="kw">struct </span>Inner&lt;FarmIndex, PV, NC&gt; {
     piece_provider: PieceProvider&lt;PV&gt;,
     farmer_cache: FarmerCache,
     node_client: NC,
-    plotted_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;PlottedPieces&gt;&gt;&gt;,
+    plotted_pieces: Arc&lt;AsyncRwLock&lt;PlottedPieces&lt;FarmIndex&gt;&gt;&gt;,
     dsn_cache_retry_policy: DsnCacheRetryPolicy,
     in_progress_pieces: Mutex&lt;HashMap&lt;PieceIndex, Arc&lt;AsyncMutex&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;&gt;&gt;&gt;,
 }
 
-<span class="kw">pub struct </span>FarmerPieceGetter&lt;PV, NC&gt; {
-    inner: Arc&lt;Inner&lt;PV, NC&gt;&gt;,
+<span class="kw">pub struct </span>FarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
+    inner: Arc&lt;Inner&lt;FarmIndex, PV, NC&gt;&gt;,
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; fmt::Debug <span class="kw">for </span>FarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; fmt::Debug <span class="kw">for </span>FarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
     <span class="attr">#[inline]
     </span><span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter) -&gt; fmt::Result {
         f.debug_struct(<span class="string">"FarmerPieceGetter"</span>).finish_non_exhaustive()
     }
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; Clone <span class="kw">for </span>FarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; Clone <span class="kw">for </span>FarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
@@ -457,16 +461,18 @@
     }
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; FarmerPieceGetter&lt;PV, NC&gt;
+<span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; FarmerPieceGetter&lt;FarmIndex, PV, NC&gt;
 <span class="kw">where
-    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
+    </span>FarmIndex: Hash + Eq + Copy + fmt::Debug + Send + Sync + <span class="lifetime">'static</span>,
+    usize: From&lt;FarmIndex&gt;,
+    PV: PieceValidator + Send + <span class="lifetime">'static</span>,
     NC: NodeClient,
 {
     <span class="kw">pub fn </span>new(
         piece_provider: PieceProvider&lt;PV&gt;,
         farmer_cache: FarmerCache,
         node_client: NC,
-        plotted_pieces: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;PlottedPieces&gt;&gt;&gt;,
+        plotted_pieces: Arc&lt;AsyncRwLock&lt;PlottedPieces&lt;FarmIndex&gt;&gt;&gt;,
         dsn_cache_retry_policy: DsnCacheRetryPolicy,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -609,11 +615,7 @@
         <span class="kw">let </span>inner = <span class="kw-2">&amp;</span><span class="self">self</span>.inner;
 
         <span class="macro">trace!</span>(%piece_index, <span class="string">"Getting piece from local plot"</span>);
-        <span class="kw">let </span>maybe_read_piece_fut = inner
-            .plotted_pieces
-            .lock()
-            .as_ref()
-            .and_then(|plotted_pieces| plotted_pieces.read_piece(piece_index));
+        <span class="kw">let </span>maybe_read_piece_fut = inner.plotted_pieces.read().<span class="kw">await</span>.read_piece(piece_index);
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(read_piece_fut) = maybe_read_piece_fut {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = read_piece_fut.<span class="kw">await </span>{
@@ -648,7 +650,7 @@
 
     <span class="doccomment">/// Downgrade to [`WeakFarmerPieceGetter`] in order to break reference cycles with internally
     /// used [`Arc`]
-    </span><span class="kw">pub fn </span>downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeakFarmerPieceGetter&lt;PV, NC&gt; {
+    </span><span class="kw">pub fn </span>downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
         WeakFarmerPieceGetter {
             inner: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.inner),
         }
@@ -656,9 +658,11 @@
 }
 
 <span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;PV, NC&gt; PieceGetter <span class="kw">for </span>FarmerPieceGetter&lt;PV, NC&gt;
+</span><span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; PieceGetter <span class="kw">for </span>FarmerPieceGetter&lt;FarmIndex, PV, NC&gt;
 <span class="kw">where
-    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
+    </span>FarmIndex: Hash + Eq + Copy + fmt::Debug + Send + Sync + <span class="lifetime">'static</span>,
+    usize: From&lt;FarmIndex&gt;,
+    PV: PieceValidator + Send + <span class="lifetime">'static</span>,
     NC: NodeClient,
 {
     <span class="kw">async fn </span>get_piece(
@@ -751,11 +755,11 @@
 }
 
 <span class="doccomment">/// Weak farmer piece getter, can be upgraded to [`FarmerPieceGetter`]
-</span><span class="kw">pub struct </span>WeakFarmerPieceGetter&lt;PV, NC&gt; {
-    inner: Weak&lt;Inner&lt;PV, NC&gt;&gt;,
+</span><span class="kw">pub struct </span>WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
+    inner: Weak&lt;Inner&lt;FarmIndex, PV, NC&gt;&gt;,
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; fmt::Debug <span class="kw">for </span>WeakFarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; fmt::Debug <span class="kw">for </span>WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
     <span class="attr">#[inline]
     </span><span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter) -&gt; fmt::Result {
         f.debug_struct(<span class="string">"WeakFarmerPieceGetter"</span>)
@@ -763,7 +767,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; Clone <span class="kw">for </span>WeakFarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; Clone <span class="kw">for </span>WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner: <span class="self">self</span>.inner.clone(),
@@ -772,9 +776,11 @@
 }
 
 <span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;PV, NC&gt; PieceGetter <span class="kw">for </span>WeakFarmerPieceGetter&lt;PV, NC&gt;
+</span><span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; PieceGetter <span class="kw">for </span>WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt;
 <span class="kw">where
-    </span>PV: PieceValidator + Send + <span class="lifetime">'static</span>,
+    </span>FarmIndex: Hash + Eq + Copy + fmt::Debug + Send + Sync + <span class="lifetime">'static</span>,
+    usize: From&lt;FarmIndex&gt;,
+    PV: PieceValidator + Send + <span class="lifetime">'static</span>,
     NC: NodeClient,
 {
     <span class="kw">async fn </span>get_piece(
@@ -790,9 +796,9 @@
     </span>}
 }
 
-<span class="kw">impl</span>&lt;PV, NC&gt; WeakFarmerPieceGetter&lt;PV, NC&gt; {
+<span class="kw">impl</span>&lt;FarmIndex, PV, NC&gt; WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
     <span class="doccomment">/// Try to upgrade to [`FarmerPieceGetter`] if there is at least one other instance of it alive
-    </span><span class="kw">pub fn </span>upgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;FarmerPieceGetter&lt;PV, NC&gt;&gt; {
+    </span><span class="kw">pub fn </span>upgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;FarmerPieceGetter&lt;FarmIndex, PV, NC&gt;&gt; {
         <span class="prelude-val">Some</span>(FarmerPieceGetter {
             inner: <span class="self">self</span>.inner.upgrade()<span class="question-mark">?</span>,
         })
