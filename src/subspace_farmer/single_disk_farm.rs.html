@@ -2269,46 +2269,17 @@
 <a href="#2269" id="2269">2269</a>
 <a href="#2270" id="2270">2270</a>
 <a href="#2271" id="2271">2271</a>
-<a href="#2272" id="2272">2272</a>
-<a href="#2273" id="2273">2273</a>
-<a href="#2274" id="2274">2274</a>
-<a href="#2275" id="2275">2275</a>
-<a href="#2276" id="2276">2276</a>
-<a href="#2277" id="2277">2277</a>
-<a href="#2278" id="2278">2278</a>
-<a href="#2279" id="2279">2279</a>
-<a href="#2280" id="2280">2280</a>
-<a href="#2281" id="2281">2281</a>
-<a href="#2282" id="2282">2282</a>
-<a href="#2283" id="2283">2283</a>
-<a href="#2284" id="2284">2284</a>
-<a href="#2285" id="2285">2285</a>
-<a href="#2286" id="2286">2286</a>
-<a href="#2287" id="2287">2287</a>
-<a href="#2288" id="2288">2288</a>
-<a href="#2289" id="2289">2289</a>
-<a href="#2290" id="2290">2290</a>
-<a href="#2291" id="2291">2291</a>
-<a href="#2292" id="2292">2292</a>
-<a href="#2293" id="2293">2293</a>
-<a href="#2294" id="2294">2294</a>
-<a href="#2295" id="2295">2295</a>
-<a href="#2296" id="2296">2296</a>
-<a href="#2297" id="2297">2297</a>
-<a href="#2298" id="2298">2298</a>
-<a href="#2299" id="2299">2299</a>
-<a href="#2300" id="2300">2300</a>
-<a href="#2301" id="2301">2301</a>
-<a href="#2302" id="2302">2302</a>
-<a href="#2303" id="2303">2303</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
 <span class="kw">pub mod </span>plot_cache;
+<span class="kw">mod </span>plotted_sectors;
 <span class="kw">mod </span>plotting;
 <span class="kw">pub mod </span>unbuffered_io_file_windows;
 
-<span class="kw">use </span><span class="kw">crate</span>::farm::{Farm, FarmError, FarmId, HandlerFn, PieceReader, PlotCache, SectorUpdate};
+<span class="kw">use </span><span class="kw">crate</span>::farm::{
+    Farm, FarmError, FarmId, HandlerFn, PieceReader, PlotCache, PlottedSectors, SectorUpdate,
+};
 <span class="kw">pub use </span><span class="kw">crate</span>::farm::{FarmingError, FarmingNotification};
 <span class="kw">use </span><span class="kw">crate</span>::identity::{Identity, IdentityError};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
@@ -2322,6 +2293,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::DiskPieceCache;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_reader::DiskPieceReader;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plot_cache::DiskPlotCache;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotted_sectors::SingleDiskPlottedSectors;
 <span class="kw">pub use </span><span class="kw">crate</span>::single_disk_farm::plotting::PlottingError;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions, SectorPlottingOptions,
@@ -2336,7 +2308,7 @@
 <span class="kw">use </span>event_listener_primitives::{Bag, HandlerId};
 <span class="kw">use </span>futures::channel::{mpsc, oneshot};
 <span class="kw">use </span>futures::stream::FuturesUnordered;
-<span class="kw">use </span>futures::{select, stream, FutureExt, Stream, StreamExt};
+<span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
@@ -2358,13 +2330,12 @@
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::crypto::{blake3_hash, Scalar};
 <span class="kw">use </span>subspace_core_primitives::{
-    Blake3Hash, HistorySize, PieceOffset, PublicKey, Record, SectorId, SectorIndex, SegmentIndex,
+    Blake3Hash, HistorySize, PublicKey, Record, SectorIndex, SegmentIndex,
 };
 <span class="kw">use </span>subspace_erasure_coding::ErasureCoding;
 <span class="kw">use </span>subspace_farmer_components::file_ext::FileExt;
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>subspace_farmer_components::file_ext::OpenOptionsExt;
-<span class="kw">use </span>subspace_farmer_components::plotting::PlottedSector;
 <span class="kw">use </span>subspace_farmer_components::reading::ReadSectorRecordChunksMode;
 <span class="kw">use </span>subspace_farmer_components::sector::{sector_size, SectorMetadata, SectorMetadataChecksummed};
 <span class="kw">use </span>subspace_farmer_components::{FarmerProtocolInfo, ReadAtSync};
@@ -2919,15 +2890,8 @@
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.plotted_sectors_count().<span class="kw">await</span>)
     }
 
-    <span class="kw">async fn </span>plotted_sectors(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;PlottedSector, FarmError&gt;&gt; + Unpin + <span class="lifetime">'_</span>&gt;, FarmError&gt;
-    {
-        <span class="prelude-val">Ok</span>(Box::new(stream::iter(
-            <span class="self">self</span>.plotted_sectors()
-                .<span class="kw">await
-                </span>.map(|result| result.map_err(Into::into)),
-        )))
+    <span class="kw">fn </span>plotted_sectors(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;<span class="kw">dyn </span>PlottedSectors + <span class="lifetime">'static</span>&gt; {
+        Arc::new(<span class="self">self</span>.plotted_sectors())
     }
 
     <span class="kw">fn </span>piece_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;<span class="kw">dyn </span>farm::PieceCache + <span class="lifetime">'static</span>&gt; {
@@ -2945,21 +2909,18 @@
     <span class="kw">fn </span>on_sector_update(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         callback: HandlerFn&lt;(SectorIndex, SectorUpdate)&gt;,
-    ) -&gt; Box&lt;<span class="kw">dyn </span><span class="kw">crate</span>::farm::HandlerId&gt; {
+    ) -&gt; Box&lt;<span class="kw">dyn </span>farm::HandlerId&gt; {
         Box::new(<span class="self">self</span>.on_sector_update(callback))
     }
 
     <span class="kw">fn </span>on_farming_notification(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         callback: HandlerFn&lt;FarmingNotification&gt;,
-    ) -&gt; Box&lt;<span class="kw">dyn </span><span class="kw">crate</span>::farm::HandlerId&gt; {
+    ) -&gt; Box&lt;<span class="kw">dyn </span>farm::HandlerId&gt; {
         Box::new(<span class="self">self</span>.on_farming_notification(callback))
     }
 
-    <span class="kw">fn </span>on_solution(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        callback: HandlerFn&lt;SolutionResponse&gt;,
-    ) -&gt; Box&lt;<span class="kw">dyn </span><span class="kw">crate</span>::farm::HandlerId&gt; {
+    <span class="kw">fn </span>on_solution(<span class="kw-2">&amp;</span><span class="self">self</span>, callback: HandlerFn&lt;SolutionResponse&gt;) -&gt; Box&lt;<span class="kw">dyn </span>farm::HandlerId&gt; {
         Box::new(<span class="self">self</span>.on_solution(callback))
     }
 
@@ -3790,38 +3751,13 @@
     }
 
     <span class="doccomment">/// Read information about sectors plotted so far
-    </span><span class="kw">pub async fn </span>plotted_sectors(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;PlottedSector, parity_scale_codec::Error&gt;&gt; + <span class="lifetime">'_ </span>{
-        <span class="kw">let </span>public_key = <span class="self">self</span>.single_disk_farm_info.public_key();
-        <span class="kw">let </span>sectors_metadata = <span class="self">self</span>.sectors_metadata.read().<span class="kw">await</span>.clone();
-
-        (<span class="number">0</span>..)
-            .zip(sectors_metadata)
-            .map(<span class="kw">move </span>|(sector_index, sector_metadata)| {
-                <span class="kw">let </span>sector_id = SectorId::new(public_key.hash(), sector_index);
-
-                <span class="kw">let </span><span class="kw-2">mut </span>piece_indexes = Vec::with_capacity(usize::from(<span class="self">self</span>.pieces_in_sector));
-                (PieceOffset::ZERO..)
-                    .take(usize::from(<span class="self">self</span>.pieces_in_sector))
-                    .map(|piece_offset| {
-                        sector_id.derive_piece_index(
-                            piece_offset,
-                            sector_metadata.history_size,
-                            <span class="self">self</span>.farmer_protocol_info.max_pieces_in_sector,
-                            <span class="self">self</span>.farmer_protocol_info.recent_segments,
-                            <span class="self">self</span>.farmer_protocol_info.recent_history_fraction,
-                        )
-                    })
-                    .collect_into(<span class="kw-2">&amp;mut </span>piece_indexes);
-
-                <span class="prelude-val">Ok</span>(PlottedSector {
-                    sector_id,
-                    sector_index,
-                    sector_metadata,
-                    piece_indexes,
-                })
-            })
+    </span><span class="kw">pub fn </span>plotted_sectors(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SingleDiskPlottedSectors {
+        SingleDiskPlottedSectors {
+            public_key: <span class="kw-2">*</span><span class="self">self</span>.single_disk_farm_info.public_key(),
+            pieces_in_sector: <span class="self">self</span>.pieces_in_sector,
+            farmer_protocol_info: <span class="self">self</span>.farmer_protocol_info,
+            sectors_metadata: Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.sectors_metadata),
+        }
     }
 
     <span class="doccomment">/// Get piece cache instance
