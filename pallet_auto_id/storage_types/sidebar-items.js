@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AutoIds"]};
+window.SIDEBAR_ITEMS = {"struct":["AutoIds","CertificateRevocationList"]};
