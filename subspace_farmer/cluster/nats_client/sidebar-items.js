@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["APPROXIMATE_MAX_MESSAGE_SIZE"],"enum":["GenericStreamResponses","StreamRequestError"],"struct":["NatsClient","StreamRequest","StreamResponseSubscriber","SubscriberWrapper"],"trait":["GenericBroadcast","GenericNotification","GenericRequest","GenericStreamRequest"]};
