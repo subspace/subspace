@@ -392,24 +392,6 @@
 <a href="#392" id="392">392</a>
 <a href="#393" id="393">393</a>
 <a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
 <span class="kw">use </span><span class="kw">crate</span>::thread_pool_manager::PlottingThreadPoolManager;
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
@@ -419,9 +401,9 @@
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::{select, FutureExt, Sink, SinkExt, StreamExt};
-<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::future::pending;
+<span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, Ordering};
@@ -448,16 +430,11 @@
 }
 
 <span class="doccomment">/// CPU plotter
-</span><span class="kw">pub struct </span>CpuPlotter&lt;PG, PosTable&gt;
-<span class="kw">where
-    </span>PosTable: Table,
-{
+</span><span class="kw">pub struct </span>CpuPlotter&lt;PG, PosTable&gt; {
     piece_getter: PG,
     downloading_semaphore: Arc&lt;Semaphore&gt;,
-    <span class="comment">// TODO: It is ugly that thread pool manager and table generators are both having independent
-    //  mutexes, they should be combined
-    </span>plotting_thread_pool_manager: PlottingThreadPoolManager,
-    table_generators: Arc&lt;Mutex&lt;Vec&lt;Vec&lt;&lt;PosTable <span class="kw">as </span>Table&gt;::Generator&gt;&gt;&gt;&gt;,
+    plotting_thread_pool_manager: PlottingThreadPoolManager,
+    record_encoding_concurrency: NonZeroUsize,
     global_mutex: Arc&lt;AsyncMutex&lt;()&gt;&gt;,
     kzg: Kzg,
     erasure_coding: ErasureCoding,
@@ -465,12 +442,10 @@
     tasks_sender: mpsc::Sender&lt;AsyncJoinOnDrop&lt;()&gt;&gt;,
     _background_tasks: AsyncJoinOnDrop&lt;()&gt;,
     abort_early: Arc&lt;AtomicBool&gt;,
+    _phantom: PhantomData&lt;PosTable&gt;,
 }
 
-<span class="kw">impl</span>&lt;PG, PosTable&gt; Drop <span class="kw">for </span>CpuPlotter&lt;PG, PosTable&gt;
-<span class="kw">where
-    </span>PosTable: Table,
-{
+<span class="kw">impl</span>&lt;PG, PosTable&gt; Drop <span class="kw">for </span>CpuPlotter&lt;PG, PosTable&gt; {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.abort_early.store(<span class="bool-val">true</span>, Ordering::Release);
         <span class="self">self</span>.tasks_sender.close_channel();
@@ -529,7 +504,7 @@
         <span class="kw">let </span>plotting_fut = {
             <span class="kw">let </span>piece_getter = <span class="self">self</span>.piece_getter.clone();
             <span class="kw">let </span>plotting_thread_pool_manager = <span class="self">self</span>.plotting_thread_pool_manager.clone();
-            <span class="kw">let </span>table_generators = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.table_generators);
+            <span class="kw">let </span>record_encoding_concurrency = <span class="self">self</span>.record_encoding_concurrency;
             <span class="kw">let </span>global_mutex = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.global_mutex);
             <span class="kw">let </span>kzg = <span class="self">self</span>.kzg.clone();
             <span class="kw">let </span>erasure_coding = <span class="self">self</span>.erasure_coding.clone();
@@ -597,10 +572,6 @@
                 </span><span class="kw">let </span>(sector, sector_metadata, plotted_sector) = {
                     <span class="kw">let </span>thread_pools = plotting_thread_pool_manager.get_thread_pools().<span class="kw">await</span>;
 
-                    <span class="kw">let </span><span class="kw-2">mut </span>local_table_generators = table_generators.lock().pop().expect(
-                        <span class="string">"Number of table generators is the same as number of thread pools; qed"</span>,
-                    );
-
                     <span class="kw">let </span>plotting_fn = || {
                         tokio::task::block_in_place(|| {
                             <span class="kw">let </span><span class="kw-2">mut </span>sector = Vec::new();
@@ -614,7 +585,9 @@
                                     pieces_in_sector,
                                     sector_output: <span class="kw-2">&amp;mut </span>sector,
                                     sector_metadata_output: <span class="kw-2">&amp;mut </span>sector_metadata,
-                                    table_generators: <span class="kw-2">&amp;mut </span>local_table_generators,
+                                    table_generators: <span class="kw-2">&amp;mut </span>(<span class="number">0</span>..record_encoding_concurrency.get())
+                                        .map(|<span class="kw">_</span>| PosTable::generator())
+                                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
                                     abort_early: <span class="kw-2">&amp;</span>abort_early,
                                     global_mutex: <span class="kw-2">&amp;</span>global_mutex,
                                 },
@@ -646,8 +619,6 @@
                     <span class="kw">let </span>start = Instant::now();
 
                     <span class="kw">let </span>plotting_result = thread_pool.install(plotting_fn);
-
-                    table_generators.lock().push(local_table_generators);
 
                     <span class="kw">match </span>plotting_result {
                         <span class="prelude-val">Ok</span>(plotting_result) =&gt; {
@@ -728,14 +699,6 @@
         kzg: Kzg,
         erasure_coding: ErasureCoding,
     ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>table_generators = (<span class="number">0</span>..plotting_thread_pool_manager.thread_pool_pairs().get())
-            .map(|<span class="kw">_</span>| {
-                (<span class="number">0</span>..record_encoding_concurrency.get())
-                    .map(|<span class="kw">_</span>| PosTable::generator())
-                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-            })
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-
         <span class="kw">let </span>(tasks_sender, <span class="kw-2">mut </span>tasks_receiver) = mpsc::channel(<span class="number">1</span>);
 
         <span class="comment">// Basically runs plotting tasks in the background and allows to abort on drop
@@ -770,7 +733,7 @@
             piece_getter,
             downloading_semaphore,
             plotting_thread_pool_manager,
-            table_generators: Arc::new(Mutex::new(table_generators)),
+            record_encoding_concurrency,
             global_mutex,
             kzg,
             erasure_coding,
@@ -778,6 +741,7 @@
             tasks_sender,
             _background_tasks: background_tasks,
             abort_early,
+            _phantom: PhantomData,
         }
     }
 
