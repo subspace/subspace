@@ -810,6 +810,17 @@
 <a href="#810" id="810">810</a>
 <a href="#811" id="811">811</a>
 <a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
 <span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
 <span class="attr">#[cfg(windows)]
@@ -901,7 +912,6 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) node_client: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>NC,
     <span class="kw">pub</span>(<span class="kw">super</span>) pieces_in_sector: u16,
     <span class="kw">pub</span>(<span class="kw">super</span>) sector_size: usize,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sector_metadata_size: usize,
     <span class="attr">#[cfg(not(windows))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) plot_file: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>File,
     <span class="attr">#[cfg(windows)]
@@ -1046,7 +1056,6 @@
         node_client,
         pieces_in_sector,
         sector_size,
-        sector_metadata_size,
         plot_file,
         metadata_file,
         sectors_metadata,
@@ -1162,9 +1171,8 @@
                         plotted_sector,
                         time: <span class="kw">_</span>,
                         sector,
-                        sector_metadata,
                     } =&gt; {
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>((plotted_sector, sector, sector_metadata));
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>((plotted_sector, sector));
                     }
                     SectorPlottingProgress::Error { error } =&gt; {
                         handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
@@ -1179,7 +1187,7 @@
             <span class="prelude-val">Err</span>(<span class="string">"Plotting progress stream ended before plotting finished"</span>.to_string())
         };
 
-        <span class="kw">let </span>(plotted_sector, sector, sector_metadata) = progress_processor_fut
+        <span class="kw">let </span>(plotted_sector, <span class="kw-2">mut </span>sector) = progress_processor_fut
             .<span class="kw">await
             </span>.map_err(PlottingError::LowLevel)<span class="question-mark">?</span>;
 
@@ -1197,11 +1205,25 @@
 
             <span class="kw">let </span>start = Instant::now();
 
-            plot_file.write_all_at(<span class="kw-2">&amp;</span>sector, (sector_index <span class="kw">as </span>usize * sector_size) <span class="kw">as </span>u64)<span class="question-mark">?</span>;
-            metadata_file.write_all_at(
-                <span class="kw-2">&amp;</span>sector_metadata,
-                RESERVED_PLOT_METADATA + (u64::from(sector_index) * <span class="kw-2">*</span>sector_metadata_size <span class="kw">as </span>u64),
-            )<span class="question-mark">?</span>;
+            {
+                <span class="kw">let </span><span class="kw-2">mut </span>sector_write_offset = u64::from(sector_index) * <span class="kw-2">*</span>sector_size <span class="kw">as </span>u64;
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(maybe_sector_chunk) = sector.next().<span class="kw">await </span>{
+                    <span class="kw">let </span>sector_chunk = maybe_sector_chunk.map_err(|error| {
+                        PlottingError::LowLevel(<span class="macro">format!</span>(<span class="string">"Sector chunk receive error: {error}"</span>))
+                    })<span class="question-mark">?</span>;
+                    plot_file.write_all_at(<span class="kw-2">&amp;</span>sector_chunk, sector_write_offset)<span class="question-mark">?</span>;
+                    sector_write_offset += sector_chunk.len() <span class="kw">as </span>u64;
+                }
+                drop(sector);
+            }
+            {
+                <span class="kw">let </span>encoded_sector_metadata = plotted_sector.sector_metadata.encode();
+                metadata_file.write_all_at(
+                    <span class="kw-2">&amp;</span>encoded_sector_metadata,
+                    RESERVED_PLOT_METADATA
+                        + (u64::from(sector_index) * encoded_sector_metadata.len() <span class="kw">as </span>u64),
+                )<span class="question-mark">?</span>;
+            }
 
             handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                 sector_index,
