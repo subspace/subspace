@@ -84,6 +84,14 @@ mod app {
     app_crypto!(sr25519, KEY_TYPE);
 }
 
+// TODO: this runtime constant is not support to update, see https://github.com/subspace/subspace/issues/2712
+// for more detail about the problem and what we need to do to support it.
+//
+// The domain storage fee multiplier used to charge a higher storage fee to the domain
+// transaction to even out the duplicated/illegal domain transaction storage cost, which
+// can not be eliminated right now.
+pub const DOMAIN_STORAGE_FEE_MULTIPLIER: Balance = 3;
+
 /// An operator authority signature.
 pub type OperatorSignature = app::Signature;
 
@@ -318,6 +326,12 @@ impl<Balance> Transfers<Balance> {
             && !self.rejected_transfers_claimed.contains_key(&chain_id)
     }
 }
+
+// TODO: this runtime constant is not support to update, see https://github.com/subspace/subspace/issues/2712
+// for more detail about the problem and what we need to do to support it.
+//
+/// Initial tx range = U256::MAX / INITIAL_DOMAIN_TX_RANGE.
+pub const INITIAL_DOMAIN_TX_RANGE: u64 = 3;
 
 #[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
 pub struct BundleHeader<Number, Hash, DomainHeader: HeaderT, Balance> {
@@ -1243,12 +1257,43 @@ pub type ExecutionReceiptFor<DomainHeader, CBlock, Balance> = ExecutionReceipt<
 >;
 
 /// Domain chains allowlist updates.
-#[derive(Default, Debug, Encode, Decode, PartialEq, Clone, TypeInfo)]
+#[derive(Default, Debug, Encode, Decode, PartialEq, Eq, Clone, TypeInfo)]
 pub struct DomainAllowlistUpdates {
     /// Chains that are allowed to open channel with this chain.
     pub allow_chains: BTreeSet<ChainId>,
     /// Chains that are not allowed to open channel with this chain.
     pub remove_chains: BTreeSet<ChainId>,
+}
+
+impl DomainAllowlistUpdates {
+    pub fn is_empty(&self) -> bool {
+        self.allow_chains.is_empty() && self.remove_chains.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.allow_chains.clear();
+        self.remove_chains.clear();
+    }
+}
+
+#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+pub struct RuntimeObject<Number, Hash> {
+    pub runtime_name: String,
+    pub runtime_type: RuntimeType,
+    pub runtime_upgrades: u32,
+    pub hash: Hash,
+    // The raw gensis storage that contains the runtime code.
+    // NOTE: don't use this field directly but `into_complete_raw_genesis` instead
+    pub raw_genesis: RawGenesis,
+    pub version: RuntimeVersion,
+    pub created_at: Number,
+    pub updated_at: Number,
+}
+
+/// Digest storage key in frame_system.
+/// Unfortunately, the digest storage is private and not possible to derive the key from it directly.
+pub fn system_digest_final_key() -> Vec<u8> {
+    frame_support::storage::storage_prefix("System".as_ref(), "Digest".as_ref()).to_vec()
 }
 
 sp_api::decl_runtime_apis! {
