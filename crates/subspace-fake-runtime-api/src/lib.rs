@@ -30,6 +30,7 @@ use sp_domains::{
     OperatorId, OperatorPublicKey,
 };
 use sp_domains_fraud_proof::fraud_proof::FraudProof;
+use sp_domains_fraud_proof::storage_proof::FraudProofStorageKeyRequest;
 use sp_messenger::messages::{
     BlockMessagesWithStorageKey, ChainId, CrossDomainMessage, MessageId, MessageKey,
 };

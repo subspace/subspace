@@ -16,6 +16,7 @@
 
 //! Subspace fraud proof primitives for consensus chain.
 #![cfg_attr(not(feature = "std"), no_std)]
+#![feature(associated_type_defaults)]
 
 #[cfg(feature = "std")]
 pub mod bundle_equivocation;
