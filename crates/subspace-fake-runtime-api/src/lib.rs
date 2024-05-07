@@ -407,6 +407,10 @@ sp_api::impl_runtime_apis! {
         ) -> Vec<FraudProof<NumberFor<Block>, <Block as BlockT>::Hash, DomainHeader>> {
             unreachable!()
         }
+
+        fn fraud_proof_storage_key(_req: FraudProofStorageKeyRequest) -> Vec<u8> {
+            unreachable!()
+        }
     }
 
     impl mmr::MmrApi<Block, mmr::Hash, BlockNumber> for Runtime {

@@ -25,6 +25,7 @@ pub mod fraud_proof;
 #[cfg(feature = "std")]
 mod host_functions;
 mod runtime_interface;
+pub mod storage_proof;
 #[cfg(test)]
 pub mod test_ethereum_tx;
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub mod verification;
 extern crate alloc;
 
 use crate::fraud_proof::FraudProof;
+use crate::storage_proof::FraudProofStorageKeyRequest;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
@@ -359,5 +361,8 @@ sp_api::decl_runtime_apis! {
             domain_id: DomainId,
             extrinsics: Vec<Block::Extrinsic>,
         ) -> Vec<FraudProof<NumberFor<Block>, Block::Hash, DomainHeader>>;
+
+        /// Reture the storage key used in fraud proof
+        fn fraud_proof_storage_key(req: FraudProofStorageKeyRequest) -> Vec<u8>;
     }
 }
