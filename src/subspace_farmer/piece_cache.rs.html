@@ -345,6 +345,15 @@
 <a href="#345" id="345">345</a>
 <a href="#346" id="346">346</a>
 <a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
@@ -395,8 +404,8 @@
         <span class="doccomment">/// Max offset
         </span>max: u32,
     },
-    <span class="doccomment">/// Cache size has zero capacity, this is not supported
-    </span><span class="attr">#[error(<span class="string">"Cache size has zero capacity, this is not supported"</span>)]
+    <span class="doccomment">/// Cache size has zero capacity, this is not supported, cache size needs to be larger
+    </span><span class="attr">#[error(<span class="string">"Cache size has zero capacity, this is not supported, cache size needs to be larger"</span>)]
     </span>ZeroCapacity,
     <span class="doccomment">/// Checksum mismatch
     </span><span class="attr">#[error(<span class="string">"Checksum mismatch"</span>)]
@@ -409,7 +418,7 @@
     </span>file: File,
     <span class="attr">#[cfg(windows)]
     </span>file: UnbufferedIoFileWindows,
-    num_elements: u32,
+    max_num_elements: u32,
 }
 
 <span class="doccomment">/// Dedicated piece cache stored on one disk, is used both to accelerate DSN queries and to plot
@@ -421,20 +430,28 @@
 
 <span class="attr">#[async_trait]
 </span><span class="kw">impl </span>farm::PieceCache <span class="kw">for </span>PieceCache {
-    <span class="kw">fn </span>max_num_elements(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.inner.num_elements <span class="kw">as </span>usize
+    <span class="kw">fn </span>max_num_elements(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
+        <span class="self">self</span>.inner.max_num_elements
     }
 
     <span class="kw">async fn </span>contents(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; Box&lt;<span class="kw">dyn </span>Stream&lt;Item = (PieceCacheOffset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + Unpin + Send + <span class="lifetime">'_</span>&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;
+        Box&lt;
+            <span class="kw">dyn </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;(PieceCacheOffset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;), FarmError&gt;&gt;
+                + Unpin
+                + Send
+                + <span class="lifetime">'_</span>,
+        &gt;,
+        FarmError,
+    &gt; {
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         <span class="kw">let </span>(<span class="kw-2">mut </span>sender, receiver) = mpsc::channel(<span class="number">1</span>);
         <span class="kw">let </span>read_contents = task::spawn_blocking(<span class="kw">move </span>|| {
             <span class="kw">let </span>contents = this.contents();
             <span class="kw">for </span>(piece_cache_offset, maybe_piece) <span class="kw">in </span>contents {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                    Handle::current().block_on(sender.send((piece_cache_offset, maybe_piece)))
+                    Handle::current().block_on(sender.send(<span class="prelude-val">Ok</span>((piece_cache_offset, maybe_piece))))
                 {
                     <span class="macro">debug!</span>(%error, <span class="string">"Aborting contents iteration due to receiver dropping"</span>);
                     <span class="kw">break</span>;
@@ -445,7 +462,7 @@
         <span class="comment">// Change order such that in closure below `receiver` is dropped before `read_contents`
         </span><span class="kw">let </span><span class="kw-2">mut </span>receiver = receiver;
 
-        Box::new(stream::poll_fn(<span class="kw">move </span>|ctx| {
+        <span class="prelude-val">Ok</span>(Box::new(stream::poll_fn(<span class="kw">move </span>|ctx| {
             <span class="kw">let </span>poll_result = receiver.poll_next_unpin(ctx);
 
             <span class="kw">if </span><span class="macro">matches!</span>(poll_result, Poll::Ready(<span class="prelude-val">None</span>)) {
@@ -453,7 +470,7 @@
             }
 
             poll_result
-        }))
+        })))
     }
 
     <span class="kw">async fn </span>write_piece(
@@ -480,7 +497,8 @@
 <span class="kw">impl </span>PieceCache {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>FILE_NAME: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"piece_cache.bin"</span>;
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>open(directory: <span class="kw-2">&amp;</span>Path, capacity: u32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PieceCacheError&gt; {
+    <span class="doccomment">/// Open cache, capacity is measured in elements of [`PieceCache::element_size()`] size
+    </span><span class="kw">pub fn </span>open(directory: <span class="kw-2">&amp;</span>Path, capacity: u32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PieceCacheError&gt; {
         <span class="kw">if </span>capacity == <span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(PieceCacheError::ZeroCapacity);
         }
@@ -515,12 +533,12 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             inner: Arc::new(Inner {
                 file,
-                num_elements: capacity,
+                max_num_elements: capacity,
             }),
         })
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>element_size() -&gt; u32 {
+    <span class="kw">pub const fn </span>element_size() -&gt; u32 {
         (PieceIndex::SIZE + Piece::SIZE + mem::size_of::&lt;Blake3Hash&gt;()) <span class="kw">as </span>u32
     }
 
@@ -535,7 +553,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>current_skip = <span class="number">0</span>;
 
         <span class="comment">// TODO: Parallelize or read in larger batches
-        </span>(<span class="number">0</span>..<span class="self">self</span>.inner.num_elements).map(<span class="kw">move </span>|offset| {
+        </span>(<span class="number">0</span>..<span class="self">self</span>.inner.max_num_elements).map(<span class="kw">move </span>|offset| {
             <span class="kw">if </span>current_skip &gt; CONTENTS_READ_SKIP_LIMIT {
                 <span class="kw">return </span>(PieceCacheOffset(offset), <span class="prelude-val">None</span>);
             }
@@ -572,10 +590,10 @@
         piece: <span class="kw-2">&amp;</span>Piece,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PieceCacheError&gt; {
         <span class="kw">let </span>PieceCacheOffset(offset) = offset;
-        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
+        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.max_num_elements {
             <span class="kw">return </span><span class="prelude-val">Err</span>(PieceCacheError::OffsetOutsideOfRange {
                 provided: offset,
-                max: <span class="self">self</span>.inner.num_elements - <span class="number">1</span>,
+                max: <span class="self">self</span>.inner.max_num_elements - <span class="number">1</span>,
             });
         }
 
@@ -607,11 +625,11 @@
         offset: PieceCacheOffset,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;PieceIndex&gt;, PieceCacheError&gt; {
         <span class="kw">let </span>PieceCacheOffset(offset) = offset;
-        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
+        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.max_num_elements {
             <span class="macro">warn!</span>(%offset, <span class="string">"Trying to read piece out of range, this must be an implementation bug"</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(PieceCacheError::OffsetOutsideOfRange {
                 provided: offset,
-                max: <span class="self">self</span>.inner.num_elements - <span class="number">1</span>,
+                max: <span class="self">self</span>.inner.max_num_elements - <span class="number">1</span>,
             });
         }
 
@@ -629,11 +647,11 @@
         offset: PieceCacheOffset,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, PieceCacheError&gt; {
         <span class="kw">let </span>PieceCacheOffset(offset) = offset;
-        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.num_elements {
+        <span class="kw">if </span>offset &gt;= <span class="self">self</span>.inner.max_num_elements {
             <span class="macro">warn!</span>(%offset, <span class="string">"Trying to read piece out of range, this must be an implementation bug"</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(PieceCacheError::OffsetOutsideOfRange {
                 provided: offset,
-                max: <span class="self">self</span>.inner.num_elements - <span class="number">1</span>,
+                max: <span class="self">self</span>.inner.max_num_elements - <span class="number">1</span>,
             });
         }
 
