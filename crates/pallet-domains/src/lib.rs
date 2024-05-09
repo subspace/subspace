@@ -531,6 +531,7 @@ mod pallet {
 
     /// Stores the next domain id.
     #[pallet::storage]
+    #[pallet::getter(fn next_domain_id)]
     pub(super) type NextDomainId<T> = StorageValue<_, DomainId, ValueQuery>;
 
     /// The domain registry

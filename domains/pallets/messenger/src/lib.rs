@@ -1263,7 +1263,6 @@ impl<T: Config> sp_domains::DomainBundleSubmitted for Pallet<T> {
     }
 }
 
-// TODO: runtime mitigation code for 3h
 impl<T: Config> sp_domains::OnDomainInstantiated for Pallet<T> {
     fn on_domain_instantiated(domain_id: DomainId) {
         DomainChainAllowlistUpdate::<T>::insert(domain_id, DomainAllowlistUpdates::default());
