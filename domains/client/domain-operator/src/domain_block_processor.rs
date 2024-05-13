@@ -12,7 +12,7 @@ use sc_consensus::{
     StorageChanges,
 };
 use sc_transaction_pool_api::OffchainTransactionPoolFactory;
-use sp_api::{ApiExt, ProvideRuntimeApi};
+use sp_api::{ApiError, ApiExt, ProvideRuntimeApi};
 use sp_blockchain::{HashAndNumber, HeaderBackend, HeaderMetadata};
 use sp_consensus::{BlockOrigin, SyncOracle};
 use sp_core::traits::CodeExecutor;
@@ -20,13 +20,12 @@ use sp_core::H256;
 use sp_domains::core_api::DomainCoreApi;
 use sp_domains::merkle_tree::MerkleTree;
 use sp_domains::{BundleValidity, DomainId, DomainsApi, ExecutionReceipt, HeaderHashingFor};
-use sp_domains_fraud_proof::fraud_proof::{FraudProof, ValidBundleProof};
+use sp_domains_fraud_proof::fraud_proof::FraudProofV2;
 use sp_domains_fraud_proof::FraudProofApi;
 use sp_messenger::MessengerApi;
 use sp_mmr_primitives::MmrApi;
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor, One, Zero};
 use sp_runtime::{Digest, Saturating};
-use sp_subspace_mmr::ConsensusChainMmrLeafProof;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::str::FromStr;
@@ -686,6 +685,7 @@ where
 
 pub(crate) struct ReceiptsChecker<Block, Client, CBlock, CClient, Backend, E>
 where
+    Block: BlockT,
     CBlock: BlockT,
 {
     pub(crate) domain_id: DomainId,
@@ -715,6 +715,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct MismatchedReceipts<Block, CBlock>
 where
     Block: BlockT,
@@ -744,7 +745,9 @@ where
         + ProofProvider<CBlock>
         + ProvideRuntimeApi<CBlock>
         + 'static,
-    CClient::Api: DomainsApi<CBlock, Block::Header> + FraudProofApi<CBlock, Block::Header>,
+    CClient::Api: DomainsApi<CBlock, Block::Header>
+        + FraudProofApi<CBlock, Block::Header>
+        + MmrApi<CBlock, H256, NumberFor<CBlock>>,
     Backend: sc_client_api::Backend<Block> + 'static,
     E: CodeExecutor,
 {
@@ -760,16 +763,39 @@ where
         }
 
         if let Some(mismatched_receipts) = self.find_mismatch_receipt(consensus_block_hash)? {
-            let fraud_proof = self.generate_fraud_proof(mismatched_receipts)?;
-
-            tracing::info!("Submit fraud proof: {fraud_proof:?}");
             let consensus_best_hash = self.consensus_client.info().best_hash;
-            let mut runtime_api = self.consensus_client.runtime_api();
-            runtime_api.register_extension(
-                self.consensus_offchain_tx_pool_factory
-                    .offchain_transaction_pool(consensus_best_hash),
-            );
-            runtime_api.submit_fraud_proof_unsigned(consensus_best_hash, fraud_proof)?;
+            let mut consensus_runtime_api = self.consensus_client.runtime_api();
+            let fraud_proof_api_version = consensus_runtime_api
+                .api_version::<dyn FraudProofApi<CBlock, Block::Header>>(consensus_best_hash)
+                .map_err(sp_blockchain::Error::RuntimeApiError)?
+                .ok_or_else(|| {
+                    sp_blockchain::Error::RuntimeApiError(ApiError::Application(
+                        format!("FraudProofApi not found at: {:?}", consensus_best_hash).into(),
+                    ))
+                })?;
+            let domains_api_version = consensus_runtime_api
+                .api_version::<dyn DomainsApi<CBlock, Block::Header>>(consensus_best_hash)
+                .map_err(sp_blockchain::Error::RuntimeApiError)?
+                .ok_or_else(|| {
+                    sp_blockchain::Error::RuntimeApiError(ApiError::Application(
+                        format!("DomainsApi not found at: {:?}", consensus_best_hash).into(),
+                    ))
+                })?;
+
+            // New `DomainsApi` introduced in version 4 is required for generating fraud proof and
+            // new `FraudProofApi` in version 2 is required for submitting fraud proof
+            // TODO: remove before next network
+            if domains_api_version >= 4 && fraud_proof_api_version >= 2 {
+                let fraud_proof_v2 = self.generate_fraud_proof(mismatched_receipts)?;
+
+                tracing::info!("Submit fraud proof: {fraud_proof_v2:?}");
+                consensus_runtime_api.register_extension(
+                    self.consensus_offchain_tx_pool_factory
+                        .offchain_transaction_pool(consensus_best_hash),
+                );
+                consensus_runtime_api
+                    .submit_fraud_proof_unsigned(consensus_best_hash, fraud_proof_v2)?;
+            }
         }
 
         Ok(())
@@ -850,10 +876,12 @@ where
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn generate_fraud_proof(
         &self,
         mismatched_receipts: MismatchedReceipts<Block, CBlock>,
-    ) -> sp_blockchain::Result<FraudProof<NumberFor<CBlock>, CBlock::Hash, Block::Header>> {
+    ) -> sp_blockchain::Result<FraudProofV2<NumberFor<CBlock>, CBlock::Hash, Block::Header, H256>>
+    {
         let MismatchedReceipts {
             local_receipt,
             bad_receipt,
@@ -869,14 +897,22 @@ where
         }) = find_inboxed_bundles_mismatch::<Block, CBlock>(&local_receipt, &bad_receipt)?
         {
             return match mismatch_type {
-                BundleMismatchType::Valid => Ok(FraudProof::ValidBundle(ValidBundleProof {
-                    domain_id: self.domain_id,
-                    bad_receipt_hash,
-                    bundle_index,
-                })),
+                BundleMismatchType::Valid => self
+                    .fraud_proof_generator
+                    .generate_valid_bundle_proof_v2(
+                        self.domain_id,
+                        &local_receipt,
+                        bundle_index as usize,
+                        bad_receipt_hash,
+                    )
+                    .map_err(|err| {
+                        sp_blockchain::Error::Application(Box::from(format!(
+                            "Failed to generate valid bundles fraud proof: {err}"
+                        )))
+                    }),
                 _ => self
                     .fraud_proof_generator
-                    .generate_invalid_bundle_field_proof(
+                    .generate_invalid_bundle_proof_v2(
                         self.domain_id,
                         &local_receipt,
                         mismatch_type,
@@ -885,7 +921,7 @@ where
                     )
                     .map_err(|err| {
                         sp_blockchain::Error::Application(Box::from(format!(
-                            "Failed to generate invalid bundles field fraud proof: {err}"
+                            "Failed to generate invalid bundles fraud proof: {err}"
                         )))
                     }),
             };
@@ -894,7 +930,7 @@ where
         if bad_receipt.domain_block_extrinsic_root != local_receipt.domain_block_extrinsic_root {
             return self
                 .fraud_proof_generator
-                .generate_invalid_domain_extrinsics_root_proof(
+                .generate_invalid_domain_extrinsics_root_proof_v2(
                     self.domain_id,
                     &local_receipt,
                     bad_receipt_hash,
@@ -921,7 +957,7 @@ where
         {
             return self
                 .fraud_proof_generator
-                .generate_invalid_state_transition_proof(
+                .generate_invalid_state_transition_proof_v2(
                     self.domain_id,
                     execution_phase,
                     &local_receipt,
@@ -938,7 +974,11 @@ where
         if bad_receipt.block_fees != local_receipt.block_fees {
             return self
                 .fraud_proof_generator
-                .generate_invalid_block_fees_proof(self.domain_id, &local_receipt, bad_receipt_hash)
+                .generate_invalid_block_fees_proof_v2(
+                    self.domain_id,
+                    &local_receipt,
+                    bad_receipt_hash,
+                )
                 .map_err(|err| {
                     sp_blockchain::Error::Application(Box::from(format!(
                         "Failed to generate invalid block rewards fraud proof: {err}"
@@ -949,7 +989,11 @@ where
         if bad_receipt.transfers != local_receipt.transfers {
             return self
                 .fraud_proof_generator
-                .generate_invalid_transfers_proof(self.domain_id, &local_receipt, bad_receipt_hash)
+                .generate_invalid_transfers_proof_v2(
+                    self.domain_id,
+                    &local_receipt,
+                    bad_receipt_hash,
+                )
                 .map_err(|err| {
                     sp_blockchain::Error::Application(Box::from(format!(
                         "Failed to generate invalid transfers fraud proof: {err}"
@@ -960,7 +1004,7 @@ where
         if bad_receipt.domain_block_hash != local_receipt.domain_block_hash {
             return self
                 .fraud_proof_generator
-                .generate_invalid_domain_block_hash_proof(
+                .generate_invalid_domain_block_hash_proof_v2(
                     self.domain_id,
                     &local_receipt,
                     bad_receipt_hash,
@@ -977,58 +1021,6 @@ where
             local_receipt {local_receipt:?}, bad_receipt {bad_receipt:?}"
         ))))
     }
-}
-
-/// Generate MMR proof for the block `to_prove` in the current best fork. The returned proof
-/// can be later used to verify stateless (without query offchain MMR leaf) and extract the state
-/// root at `to_prove`.
-// TODO: remove `dead_code` after it is used in fraud proof generation
-#[allow(dead_code)]
-pub(crate) fn generate_mmr_proof<CClient, CBlock>(
-    consensus_client: &Arc<CClient>,
-    to_prove: NumberFor<CBlock>,
-) -> sp_blockchain::Result<ConsensusChainMmrLeafProof<NumberFor<CBlock>, CBlock::Hash, H256>>
-where
-    CBlock: BlockT,
-    CClient: HeaderBackend<CBlock> + ProvideRuntimeApi<CBlock> + 'static,
-    CClient::Api: MmrApi<CBlock, H256, NumberFor<CBlock>>,
-{
-    let api = consensus_client.runtime_api();
-    let prove_at_hash = consensus_client.info().best_hash;
-    let prove_at_number = consensus_client.info().best_number;
-
-    if to_prove >= prove_at_number {
-        return Err(sp_blockchain::Error::Application(Box::from(format!(
-            "Can't generate MMR proof for block {to_prove:?} >= best block {prove_at_number:?}"
-        ))));
-    }
-
-    let (mut leaves, proof) = api
-        // NOTE: the mmr leaf data is added in the next block so to generate the MMR proof of
-        // block `to_prove` we need to use `to_prove + 1` here.
-        .generate_proof(
-            prove_at_hash,
-            vec![to_prove + One::one()],
-            Some(prove_at_number),
-        )?
-        .map_err(|err| {
-            sp_blockchain::Error::Application(Box::from(format!(
-                "Failed to generate MMR proof: {err}"
-            )))
-        })?;
-    debug_assert!(leaves.len() == 1, "should always be of length 1");
-    let leaf = leaves
-        .pop()
-        .ok_or(sp_blockchain::Error::Application(Box::from(
-            "Unexpected missing mmr leaf".to_string(),
-        )))?;
-
-    Ok(ConsensusChainMmrLeafProof {
-        consensus_block_number: prove_at_number,
-        consensus_block_hash: prove_at_hash,
-        opaque_mmr_leaf: leaf,
-        proof,
-    })
 }
 
 #[cfg(test)]
@@ -1172,12 +1164,17 @@ mod tests {
                 ]),
                 &create_test_execution_receipt(vec![
                     InboxedBundle::valid(Default::default(), Default::default()),
-                    InboxedBundle::invalid(InvalidBundleType::InvalidXDM(3), Default::default()),
+                    InboxedBundle::invalid(
+                        InvalidBundleType::InherentExtrinsic(3),
+                        Default::default()
+                    ),
                 ]),
             )
             .unwrap(),
             Some(InboxedBundleMismatchInfo {
-                mismatch_type: BundleMismatchType::FalseInvalid(InvalidBundleType::InvalidXDM(3)),
+                mismatch_type: BundleMismatchType::FalseInvalid(
+                    InvalidBundleType::InherentExtrinsic(3)
+                ),
                 bundle_index: 1,
             })
         );
@@ -1186,7 +1183,10 @@ mod tests {
             find_inboxed_bundles_mismatch::<Block, CBlock>(
                 &create_test_execution_receipt(vec![
                     InboxedBundle::valid(Default::default(), Default::default()),
-                    InboxedBundle::invalid(InvalidBundleType::InvalidXDM(3), Default::default()),
+                    InboxedBundle::invalid(
+                        InvalidBundleType::InherentExtrinsic(3),
+                        Default::default()
+                    ),
                 ]),
                 &create_test_execution_receipt(vec![
                     InboxedBundle::valid(Default::default(), Default::default()),
@@ -1195,7 +1195,9 @@ mod tests {
             )
             .unwrap(),
             Some(InboxedBundleMismatchInfo {
-                mismatch_type: BundleMismatchType::TrueInvalid(InvalidBundleType::InvalidXDM(3)),
+                mismatch_type: BundleMismatchType::TrueInvalid(
+                    InvalidBundleType::InherentExtrinsic(3)
+                ),
                 bundle_index: 1,
             })
         );
@@ -1205,7 +1207,10 @@ mod tests {
             find_inboxed_bundles_mismatch::<Block, CBlock>(
                 &create_test_execution_receipt(vec![
                     InboxedBundle::valid(H256::random(), Default::default()),
-                    InboxedBundle::invalid(InvalidBundleType::InvalidXDM(3), Default::default()),
+                    InboxedBundle::invalid(
+                        InvalidBundleType::InherentExtrinsic(3),
+                        Default::default()
+                    ),
                 ]),
                 &create_test_execution_receipt(vec![
                     InboxedBundle::valid(H256::random(), Default::default()),

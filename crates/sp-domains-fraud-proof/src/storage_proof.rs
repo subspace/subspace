@@ -1,3 +1,4 @@
+use crate::DomainInherentExtrinsicData;
 use codec::{Decode, Encode};
 use frame_support::PalletError;
 use scale_info::TypeInfo;
@@ -12,6 +13,7 @@ use sp_domains::{
 use sp_runtime::generic::Digest;
 use sp_runtime::traits::{Block as BlockT, HashingFor, Header as HeaderT, NumberFor};
 use sp_std::vec::Vec;
+use core::fmt;
 use sp_trie::StorageProof;
 use subspace_core_primitives::Randomness;
 use subspace_runtime_primitives::{Balance, BlockTransactionByteFee, Moment};
@@ -40,14 +42,6 @@ impl From<StorageProofVerificationError> for VerificationError {
     fn from(err: StorageProofVerificationError) -> Self {
         Self::StorageProof(err)
     }
-}
-
-#[derive(Debug, Decode, Encode, TypeInfo, PartialEq, Eq, Clone)]
-pub struct DomainInherentExtrinsicData {
-    pub timestamp: Moment,
-    pub maybe_domain_runtime_upgrade: Option<Vec<u8>>,
-    pub consensus_transaction_byte_fee: Balance,
-    pub domain_chain_allowlist: DomainAllowlistUpdates,
 }
 
 #[derive(Clone, Debug, Decode, Encode, Eq, PartialEq, TypeInfo)]

@@ -713,6 +713,9 @@ pub struct ProofOfElection<CHash> {
     pub vrf_signature: VrfSignature,
     /// Operator index in the OperatorRegistry.
     pub operator_id: OperatorId,
+    /// TODO: remove this field before the next network since it is only used
+    /// in the bundle equivocation fraud proof and which is deprecated.
+    ///
     /// Consensus block hash at which proof of election was derived.
     pub consensus_block_hash: CHash,
 }
@@ -1054,8 +1057,6 @@ pub enum InvalidBundleType {
     OutOfRangeTx(u32),
     /// Transaction is illegal (unable to pay the fee, etc).
     IllegalTx(u32),
-    /// Transaction is an invalid XDM
-    InvalidXDM(u32),
     /// Transaction is an inherent extrinsic.
     InherentExtrinsic(u32),
 }
@@ -1069,8 +1070,7 @@ impl InvalidBundleType {
             Self::UndecodableTx(_) => 1,
             Self::OutOfRangeTx(_) => 2,
             Self::InherentExtrinsic(_) => 3,
-            Self::InvalidXDM(_) => 4,
-            Self::IllegalTx(_) => 5,
+            Self::IllegalTx(_) => 4,
         }
     }
 
@@ -1079,7 +1079,6 @@ impl InvalidBundleType {
             Self::UndecodableTx(i) => *i,
             Self::OutOfRangeTx(i) => *i,
             Self::IllegalTx(i) => *i,
-            Self::InvalidXDM(i) => *i,
             Self::InherentExtrinsic(i) => *i,
         }
     }
@@ -1316,7 +1315,7 @@ pub fn operator_block_fees_final_key() -> Vec<u8> {
 
 sp_api::decl_runtime_apis! {
     /// API necessary for domains pallet.
-    #[api_version(3)]
+    #[api_version(4)]
     pub trait DomainsApi<DomainHeader: HeaderT> {
         /// Submits the transaction bundle via an unsigned extrinsic.
         fn submit_bundle_unsigned(opaque_bundle: OpaqueBundle<NumberFor<Block>, Block::Hash, DomainHeader, Balance>);
@@ -1399,6 +1398,9 @@ sp_api::decl_runtime_apis! {
 
         /// Return the balance of the storage fund account
         fn storage_fund_account_balance(operator_id: OperatorId) -> Balance;
+
+        /// Return if the domain runtime code is upgraded since `at`
+        fn is_domain_runtime_updraded_since(domain_id: DomainId, at: NumberFor<Block>) -> Option<bool>;
     }
 
     pub trait BundleProducerElectionApi<Balance: Encode + Decode> {

@@ -19,8 +19,6 @@
 #![feature(associated_type_defaults)]
 
 #[cfg(feature = "std")]
-pub mod bundle_equivocation;
-#[cfg(feature = "std")]
 pub mod execution_prover;
 pub mod fraud_proof;
 #[cfg(feature = "std")]
@@ -31,12 +29,12 @@ pub mod storage_proof;
 pub mod test_ethereum_tx;
 #[cfg(test)]
 mod tests;
-pub mod verification;
+pub mod verification_v2;
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
-use crate::fraud_proof::FraudProof;
+use crate::fraud_proof::FraudProofV2;
 use crate::storage_proof::FraudProofStorageKeyRequest;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
@@ -398,15 +396,10 @@ impl PassBy for StatelessDomainRuntimeCall {
 
 sp_api::decl_runtime_apis! {
     /// API necessary for fraud proof.
+    #[api_version(2)]
     pub trait FraudProofApi<DomainHeader: HeaderT> {
         /// Submit the fraud proof via an unsigned extrinsic.
-        fn submit_fraud_proof_unsigned(fraud_proof: FraudProof<NumberFor<Block>, Block::Hash, DomainHeader>);
-
-        /// Extract the fraud proof handled successfully from the given extrinsics.
-        fn extract_fraud_proofs(
-            domain_id: DomainId,
-            extrinsics: Vec<Block::Extrinsic>,
-        ) -> Vec<FraudProof<NumberFor<Block>, Block::Hash, DomainHeader>>;
+        fn submit_fraud_proof_unsigned(fraud_proof: FraudProofV2<NumberFor<Block>, Block::Hash, DomainHeader, H256>);
 
         /// Reture the storage key used in fraud proof
         fn fraud_proof_storage_key(req: FraudProofStorageKeyRequest) -> Vec<u8>;

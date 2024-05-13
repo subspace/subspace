@@ -51,6 +51,7 @@ use sc_basic_authorship::ProposerFactory;
 use sc_client_api::execution_extensions::ExtensionsFactory;
 use sc_client_api::{
     AuxStore, Backend, BlockBackend, BlockchainEvents, ExecutorProvider, HeaderBackend,
+    ProofProvider,
 };
 use sc_consensus::{
     BasicQueue, BlockCheckParams, BlockImport, BlockImportParams, DefaultImportQueue, ImportQueue,
@@ -249,6 +250,7 @@ where
     Client: BlockBackend<Block>
         + HeaderBackend<Block>
         + ProvideRuntimeApi<Block>
+        + ProofProvider<Block>
         + Send
         + Sync
         + 'static,
@@ -566,7 +568,6 @@ where
         config.prometheus_registry(),
         &task_manager,
         client.clone(),
-        sync_target_block_number.clone(),
     )?;
 
     let verifier = SubspaceVerifier::<PosTable, _, _, _>::new(SubspaceVerifierOptions {
@@ -621,6 +622,7 @@ where
         + BlockIdTo<Block>
         + HeaderBackend<Block>
         + HeaderMetadata<Block, Error = sp_blockchain::Error>
+        + ProofProvider<Block>
         + 'static,
     Client::Api: TaggedTransactionQueue<Block>
         + DomainsApi<Block, DomainHeader>

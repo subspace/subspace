@@ -63,7 +63,7 @@ use sp_core::offchain::OffchainDbExt;
 use sp_core::traits::{CodeExecutor, SpawnEssentialNamed};
 use sp_core::{Get, H256};
 use sp_domains::{BundleProducerElectionApi, ChainId, DomainsApi, OpaqueBundle};
-use sp_domains_fraud_proof::fraud_proof::FraudProof;
+use sp_domains_fraud_proof::fraud_proof::FraudProofV2;
 use sp_domains_fraud_proof::{FraudProofExtension, FraudProofHostFunctionsImpl};
 use sp_externalities::Extensions;
 use sp_inherents::{InherentData, InherentDataProvider};
@@ -82,7 +82,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time;
 use subspace_core_primitives::{PotOutput, Solution};
@@ -98,8 +97,8 @@ use subspace_test_runtime::{
 use substrate_frame_rpc_system::AccountNonceApi;
 use substrate_test_client::{RpcHandlersExt, RpcTransactionError, RpcTransactionOutput};
 
-type FraudProofFor<Block, DomainBlock> =
-    FraudProof<NumberFor<Block>, <Block as BlockT>::Hash, <DomainBlock as BlockT>::Header>;
+type FraudProofV2For<Block, DomainBlock> =
+    FraudProofV2<NumberFor<Block>, <Block as BlockT>::Hash, <DomainBlock as BlockT>::Header, H256>;
 
 const MAX_PRODUCE_BUNDLE_TRY: usize = 10;
 
@@ -423,14 +422,12 @@ impl MockConsensusNode {
             .state_pruning
             .clone()
             .unwrap_or(PruningMode::ArchiveCanonical);
-        let sync_target_block_number = Arc::new(AtomicU32::new(0));
         let transaction_pool = subspace_service::transaction_pool::new_full(
             config.transaction_pool.clone(),
             config.role.is_authority(),
             config.prometheus_registry(),
             &task_manager,
             client.clone(),
-            sync_target_block_number.clone(),
         )
         .expect("failed to create transaction pool");
 
@@ -800,7 +797,7 @@ impl MockConsensusNode {
         fraud_proof_predict: FP,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>>
     where
-        FP: Fn(&FraudProofFor<Block, DomainBlock>) -> bool + Send + 'static,
+        FP: Fn(&FraudProofV2For<Block, DomainBlock>) -> bool + Send + 'static,
     {
         let tx_pool = self.transaction_pool.clone();
         let mut import_tx_stream = self.transaction_pool.import_notification_stream();

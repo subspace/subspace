@@ -67,7 +67,7 @@ use sp_domains::{
     OperatorPublicKey, StakingHoldIdentifier, DOMAIN_STORAGE_FEE_MULTIPLIER,
     INITIAL_DOMAIN_TX_RANGE,
 };
-use sp_domains_fraud_proof::fraud_proof::FraudProof;
+use sp_domains_fraud_proof::fraud_proof::FraudProofV2;
 use sp_domains_fraud_proof::storage_proof::{
     FraudProofStorageKeyProvider, FraudProofStorageKeyRequest,
 };
@@ -501,9 +501,9 @@ impl sp_messenger::OnXDMRewards<Balance> for OnXDMRewards {
 pub struct MmrProofVerifier;
 
 impl sp_subspace_mmr::MmrProofVerifier<mmr::Hash, NumberFor<Block>, Hash> for MmrProofVerifier {
-    fn verify_proof_and_extract_consensus_state_root(
+    fn verify_proof_and_extract_leaf(
         mmr_leaf_proof: ConsensusChainMmrLeafProof<NumberFor<Block>, Hash, mmr::Hash>,
-    ) -> Option<Hash> {
+    ) -> Option<mmr::Leaf> {
         let ConsensusChainMmrLeafProof {
             consensus_block_number,
             opaque_mmr_leaf,
@@ -524,7 +524,7 @@ impl sp_subspace_mmr::MmrProofVerifier<mmr::Hash, NumberFor<Block>, Hash> for Mm
 
         let leaf: mmr::Leaf = opaque_mmr_leaf.into_opaque_leaf().try_decode()?;
 
-        Some(leaf.state_root())
+        Some(leaf)
     }
 }
 
@@ -711,6 +711,9 @@ impl pallet_domains::Config for Runtime {
     type DomainBundleSubmitted = Messenger;
     type OnDomainInstantiated = Messenger;
     type Balance = Balance;
+    type MmrHash = mmr::Hash;
+    type MmrProofVerifier = MmrProofVerifier;
+    type FraudProofStorageKeyProvider = StorageKeyProvider;
 }
 
 parameter_types! {
@@ -1257,6 +1260,10 @@ impl_runtime_apis! {
         fn storage_fund_account_balance(operator_id: OperatorId) -> Balance {
             Domains::storage_fund_account_balance(operator_id)
         }
+
+        fn is_domain_runtime_updraded_since(domain_id: DomainId, at: NumberFor<Block>) -> Option<bool> {
+            Domains::is_domain_runtime_updraded_since(domain_id, at)
+        }
     }
 
     impl sp_domains::BundleProducerElectionApi<Block, Balance> for Runtime {
@@ -1355,15 +1362,8 @@ impl_runtime_apis! {
     }
 
     impl sp_domains_fraud_proof::FraudProofApi<Block, DomainHeader> for Runtime {
-        fn submit_fraud_proof_unsigned(fraud_proof: FraudProof<NumberFor<Block>, <Block as BlockT>::Hash, DomainHeader>) {
+        fn submit_fraud_proof_unsigned(fraud_proof: FraudProofV2<NumberFor<Block>, <Block as BlockT>::Hash, DomainHeader, H256>) {
             Domains::submit_fraud_proof_unsigned(fraud_proof)
-        }
-
-        fn extract_fraud_proofs(
-            domain_id: DomainId,
-            extrinsics: Vec<<Block as BlockT>::Extrinsic>,
-        ) -> Vec<FraudProof<NumberFor<Block>, <Block as BlockT>::Hash, DomainHeader>> {
-            crate::domains::extract_fraud_proofs(domain_id, extrinsics)
         }
 
         fn fraud_proof_storage_key(req: FraudProofStorageKeyRequest) -> Vec<u8> {
