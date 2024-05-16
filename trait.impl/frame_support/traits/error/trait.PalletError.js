@@ -7,5 +7,6 @@
 "pallet_messenger":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_messenger/enum.Error.html\" title=\"enum pallet_messenger::Error\">Error</a>&lt;T&gt;"]],
 "pallet_subspace":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_subspace/pallet/enum.Error.html\" title=\"enum pallet_subspace::pallet::Error\">Error</a>&lt;T&gt;"]],
 "pallet_transporter":[["impl&lt;T&gt; PalletError for <a class=\"enum\" href=\"pallet_transporter/enum.Error.html\" title=\"enum pallet_transporter::Error\">Error</a>&lt;T&gt;"]],
-"sp_domains":[["impl PalletError for <a class=\"enum\" href=\"sp_domains/proof_provider_and_verifier/enum.VerificationError.html\" title=\"enum sp_domains::proof_provider_and_verifier::VerificationError\">VerificationError</a>"]]
+"sp_domains":[["impl PalletError for <a class=\"enum\" href=\"sp_domains/proof_provider_and_verifier/enum.VerificationError.html\" title=\"enum sp_domains::proof_provider_and_verifier::VerificationError\">VerificationError</a>"]],
+"sp_domains_fraud_proof":[["impl PalletError for <a class=\"enum\" href=\"sp_domains_fraud_proof/storage_proof/enum.VerificationError.html\" title=\"enum sp_domains_fraud_proof::storage_proof::VerificationError\">VerificationError</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

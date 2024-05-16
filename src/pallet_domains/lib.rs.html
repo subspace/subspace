@@ -2377,6 +2377,10 @@
 <a href="#2377" id="2377">2377</a>
 <a href="#2378" id="2378">2378</a>
 <a href="#2379" id="2379">2379</a>
+<a href="#2380" id="2380">2380</a>
+<a href="#2381" id="2381">2381</a>
+<a href="#2382" id="2382">2382</a>
+<a href="#2383" id="2383">2383</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2416,6 +2420,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::block_tree::verify_execution_receipt;
 <span class="kw">use </span><span class="kw">crate</span>::bundle_storage_fund::storage_fund_account;
 <span class="kw">use </span><span class="kw">crate</span>::domain_registry::Error <span class="kw">as </span>DomainRegistryError;
+<span class="kw">use </span><span class="kw">crate</span>::runtime_registry::into_complete_raw_genesis;
 <span class="kw">use </span><span class="kw">crate</span>::staking::OperatorStatus;
 <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::EpochTransitionResult;
 <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
@@ -2548,8 +2553,7 @@
     };
     <span class="kw">use </span><span class="kw">crate</span>::runtime_registry::{
         do_register_runtime, do_schedule_runtime_upgrade, do_upgrade_runtimes,
-        register_runtime_at_genesis, Error <span class="kw">as </span>RuntimeRegistryError, RuntimeObject,
-        ScheduledRuntimeUpgrade,
+        register_runtime_at_genesis, Error <span class="kw">as </span>RuntimeRegistryError, ScheduledRuntimeUpgrade,
     };
     <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
     </span><span class="kw">use </span><span class="kw">crate</span>::staking::do_reward_operators;
@@ -2586,8 +2590,8 @@
     <span class="kw">use </span>sp_domains::bundle_producer_election::ProofOfElectionError;
     <span class="kw">use </span>sp_domains::{
         BundleDigest, ConfirmedDomainBlock, DomainBundleSubmitted, DomainId,
-        DomainsTransfersTracker, EpochIndex, GenesisDomain, OperatorAllowList, OperatorId,
-        OperatorPublicKey, RuntimeId, RuntimeType,
+        DomainsTransfersTracker, EpochIndex, GenesisDomain, OnDomainInstantiated,
+        OperatorAllowList, OperatorId, OperatorPublicKey, RuntimeId, RuntimeObject, RuntimeType,
     };
     <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::FraudProof;
     <span class="kw">use </span>sp_domains_fraud_proof::InvalidTransactionCode;
@@ -2768,6 +2772,9 @@
 
         <span class="doccomment">/// Post hook to notify accepted domain bundles in previous block.
         </span><span class="kw">type </span>DomainBundleSubmitted: DomainBundleSubmitted;
+
+        <span class="doccomment">/// A hook to call after a domain is instantiated
+        </span><span class="kw">type </span>OnDomainInstantiated: OnDomainInstantiated;
     }
 
     <span class="attr">#[pallet::pallet]
@@ -2777,7 +2784,7 @@
 
     <span class="doccomment">/// Bundles submitted successfully in current block.
     </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>SuccessfulBundles&lt;T&gt; = StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, Vec&lt;H256&gt;, ValueQuery&gt;;
+    </span><span class="kw">pub type </span>SuccessfulBundles&lt;T&gt; = StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, Vec&lt;H256&gt;, ValueQuery&gt;;
 
     <span class="doccomment">/// Fraud proofs submitted successfully in current block.
     </span><span class="attr">#[pallet::storage]
@@ -2804,7 +2811,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>NextEVMChainId&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, EVMChainId, ValueQuery, StartingEVMChainId&gt;;
 
     <span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>RuntimeRegistry&lt;T: Config&gt; =
+    </span><span class="kw">pub type </span>RuntimeRegistry&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, RuntimeId, RuntimeObject&lt;BlockNumberFor&lt;T&gt;, T::Hash&gt;, OptionQuery&gt;;
 
     <span class="attr">#[pallet::storage]
@@ -2907,6 +2914,7 @@
 
     <span class="doccomment">/// Stores the next domain id.
     </span><span class="attr">#[pallet::storage]
+    #[pallet::getter(<span class="kw">fn </span>next_domain_id)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>NextDomainId&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, DomainId, ValueQuery&gt;;
 
     <span class="doccomment">/// The domain registry
@@ -4040,14 +4048,14 @@
         <span class="kw">let </span>runtime_object = RuntimeRegistry::&lt;T&gt;::get(domain_obj.domain_config.runtime_id)<span class="question-mark">?</span>;
         <span class="kw">let </span>runtime_type = runtime_object.runtime_type.clone();
         <span class="kw">let </span>total_issuance = domain_obj.domain_config.total_issuance()<span class="question-mark">?</span>;
-        <span class="kw">let </span>raw_genesis = runtime_object
-            .into_complete_raw_genesis::&lt;T&gt;(
-                domain_id,
-                domain_obj.domain_runtime_info,
-                total_issuance,
-                domain_obj.domain_config.initial_balances,
-            )
-            .ok()<span class="question-mark">?</span>;
+        <span class="kw">let </span>raw_genesis = into_complete_raw_genesis::&lt;T&gt;(
+            runtime_object,
+            domain_id,
+            domain_obj.domain_runtime_info,
+            total_issuance,
+            domain_obj.domain_config.initial_balances,
+        )
+        .ok()<span class="question-mark">?</span>;
         <span class="prelude-val">Some</span>((
             DomainInstanceData {
                 runtime_type,

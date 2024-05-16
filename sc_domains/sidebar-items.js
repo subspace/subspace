@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ExtensionsFactory"],"type":["HostFunctions","RuntimeExecutor"]};
+window.SIDEBAR_ITEMS = {"fn":["generate_mmr_proof"],"struct":["ExtensionsFactory","FPStorageKeyProvider"],"type":["HostFunctions","RuntimeExecutor"]};
