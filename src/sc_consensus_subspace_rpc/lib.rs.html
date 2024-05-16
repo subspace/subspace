@@ -799,7 +799,6 @@
 <a href="#799" id="799">799</a>
 <a href="#800" id="800">800</a>
 <a href="#801" id="801">801</a>
-<a href="#802" id="802">802</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2020-2021 Parity Technologies (UK) Ltd.
 // Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
@@ -827,7 +826,6 @@
 <span class="kw">use </span>jsonrpsee::proc_macros::rpc;
 <span class="kw">use </span>jsonrpsee::types::{ErrorObject, ErrorObjectOwned};
 <span class="kw">use </span>jsonrpsee::PendingSubscriptionSink;
-<span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend};
@@ -842,6 +840,7 @@
 <span class="kw">use </span>sc_rpc::SubscriptionTaskExecutor;
 <span class="kw">use </span>sc_rpc_api::{DenyUnsafe, UnsafeRpcError};
 <span class="kw">use </span>sc_utils::mpsc::TracingUnboundedSender;
+<span class="kw">use </span>schnellru::{ByLength, LruMap};
 <span class="kw">use </span>sp_api::{ApiError, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_consensus::SyncOracle;
@@ -855,7 +854,6 @@
 <span class="kw">use </span>std::collections::hash_map::Entry;
 <span class="kw">use </span>std::collections::HashMap;
 <span class="kw">use </span>std::marker::PhantomData;
-<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>std::time::Duration;
@@ -1033,7 +1031,7 @@
     archived_segment_notification_stream: SubspaceNotificationStream&lt;ArchivedSegmentNotification&gt;,
     <span class="attr">#[allow(clippy::type_complexity)]
     </span>solution_response_senders:
-        Arc&lt;Mutex&lt;LruCache&lt;SlotNumber, mpsc::Sender&lt;Solution&lt;PublicKey, PublicKey&gt;&gt;&gt;&gt;&gt;,
+        Arc&lt;Mutex&lt;LruMap&lt;SlotNumber, mpsc::Sender&lt;Solution&lt;PublicKey, PublicKey&gt;&gt;&gt;&gt;&gt;,
     reward_signature_senders: Arc&lt;Mutex&lt;BlockSignatureSenders&gt;&gt;,
     dsn_bootstrap_nodes: Vec&lt;Multiaddr&gt;,
     segment_headers_store: SegmentHeadersStore&lt;AS&gt;,
@@ -1080,8 +1078,8 @@
         <span class="kw">let </span>block_authoring_delay = u64::from(chain_constants.block_authoring_delay());
         <span class="kw">let </span>block_authoring_delay = usize::try_from(block_authoring_delay)
             .expect(<span class="string">"Block authoring delay will never exceed usize on any platform; qed"</span>);
-        <span class="kw">let </span>solution_response_senders_capacity =
-            NonZeroUsize::try_from(block_authoring_delay).unwrap_or(NonZeroUsize::MIN);
+        <span class="kw">let </span>solution_response_senders_capacity = u32::try_from(block_authoring_delay)
+            .expect(<span class="string">"Always a tiny constant in the protocol; qed"</span>);
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             client: config.client,
@@ -1089,9 +1087,9 @@
             new_slot_notification_stream: config.new_slot_notification_stream,
             reward_signing_notification_stream: config.reward_signing_notification_stream,
             archived_segment_notification_stream: config.archived_segment_notification_stream,
-            solution_response_senders: Arc::new(Mutex::new(LruCache::new(
+            solution_response_senders: Arc::new(Mutex::new(LruMap::new(ByLength::new(
                 solution_response_senders_capacity,
-            ))),
+            )))),
             reward_signature_senders: Arc::default(),
             dsn_bootstrap_nodes: config.dsn_bootstrap_nodes,
             segment_headers_store: config.segment_headers_store,
@@ -1202,7 +1200,7 @@
                     <span class="kw">let </span>(response_sender, <span class="kw-2">mut </span>response_receiver) =
                         mpsc::channel(SOLUTION_SENDER_CHANNEL_CAPACITY);
 
-                    solution_response_senders.push(slot_number, response_sender);
+                    solution_response_senders.insert(slot_number, response_sender);
 
                     <span class="comment">// Wait for solutions and transform proposed proof of space solutions
                     // into data structure `sc-consensus-subspace` expects

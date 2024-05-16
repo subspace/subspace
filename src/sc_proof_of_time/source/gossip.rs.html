@@ -672,7 +672,6 @@
 <span class="kw">use </span><span class="kw">crate</span>::verifier::PotVerifier;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{FutureExt, SinkExt, StreamExt};
-<span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>sc_network::config::NonDefaultSetConfig;
@@ -681,6 +680,7 @@
     GossipEngine, MessageIntent, Network <span class="kw">as </span>GossipNetwork, Syncing <span class="kw">as </span>GossipSyncing,
     ValidationResult, Validator, ValidatorContext,
 };
+<span class="kw">use </span>schnellru::{ByLength, LruMap};
 <span class="kw">use </span>sp_consensus::SyncOracle;
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_consensus_subspace::PotNextSlotInput;
@@ -688,7 +688,7 @@
 <span class="kw">use </span>std::cmp;
 <span class="kw">use </span>std::collections::{HashMap, VecDeque};
 <span class="kw">use </span>std::future::poll_fn;
-<span class="kw">use </span>std::num::{NonZeroU32, NonZeroUsize};
+<span class="kw">use </span>std::num::NonZeroU32;
 <span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::{atomic, Arc};
 <span class="kw">use </span>subspace_core_primitives::{PotCheckpoints, PotSeed};
@@ -698,7 +698,7 @@
 </span><span class="kw">const </span>MAX_SLOTS_IN_THE_FUTURE: u64 = <span class="number">10</span>;
 <span class="doccomment">/// How much faster PoT verification is expected to be comparing to PoT proving
 </span><span class="kw">const </span>EXPECTED_POT_VERIFICATION_SPEEDUP: usize = <span class="number">7</span>;
-<span class="kw">const </span>GOSSIP_CACHE_PEER_COUNT: NonZeroUsize = NonZeroUsize::new(<span class="number">1_000</span>).expect(<span class="string">"Not zero; qed"</span>);
+<span class="kw">const </span>GOSSIP_CACHE_PEER_COUNT: u32 = <span class="number">1_000</span>;
 <span class="kw">const </span>GOSSIP_CACHE_PER_PEER_SIZE: usize = <span class="number">20</span>;
 
 <span class="kw">mod </span>rep {
@@ -784,7 +784,7 @@
     topic: Block::Hash,
     state: Arc&lt;PotState&gt;,
     pot_verifier: PotVerifier,
-    gossip_cache: LruCache&lt;PeerId, VecDeque&lt;GossipProof&gt;&gt;,
+    gossip_cache: LruMap&lt;PeerId, VecDeque&lt;GossipProof&gt;&gt;,
     to_gossip_receiver: mpsc::Receiver&lt;ToGossipMessage&gt;,
     from_gossip_sender: mpsc::Sender&lt;(PeerId, GossipProof)&gt;,
 }
@@ -834,7 +834,7 @@
             topic,
             state,
             pot_verifier,
-            gossip_cache: LruCache::new(GOSSIP_CACHE_PEER_COUNT),
+            gossip_cache: LruMap::new(ByLength::new(GOSSIP_CACHE_PEER_COUNT)),
             to_gossip_receiver,
             from_gossip_sender,
         }
@@ -933,25 +933,24 @@
                     <span class="string">"Proof from the future"</span>,
                 );
 
-                <span class="kw">let </span>proofs = <span class="self">self
-                    </span>.gossip_cache
-                    .get_or_insert_mut(sender, Default::default);
-                <span class="kw">if </span>proofs.len() == GOSSIP_CACHE_PER_PEER_SIZE {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = proofs.pop_front() {
-                        <span class="macro">trace!</span>(
-                            %sender,
-                            slot = %proof.slot,
-                            next_slot = %next_slot_input.slot,
-                            <span class="string">"Too many proofs stored from peer"</span>,
-                        );
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(proofs) = <span class="self">self</span>.gossip_cache.get_or_insert(sender, Default::default) {
+                    <span class="kw">if </span>proofs.len() == GOSSIP_CACHE_PER_PEER_SIZE {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = proofs.pop_front() {
+                            <span class="macro">trace!</span>(
+                                %sender,
+                                slot = %proof.slot,
+                                next_slot = %next_slot_input.slot,
+                                <span class="string">"Too many proofs stored from peer"</span>,
+                            );
 
-                        <span class="self">self</span>.engine
-                            .lock()
-                            .report(sender, rep::GOSSIP_TOO_MANY_PROOFS);
+                            <span class="self">self</span>.engine
+                                .lock()
+                                .report(sender, rep::GOSSIP_TOO_MANY_PROOFS);
+                        }
                     }
+                    proofs.push_back(proof);
+                    <span class="kw">return</span>;
                 }
-                proofs.push_back(proof);
-                <span class="kw">return</span>;
             }
         }
 
@@ -992,7 +991,8 @@
     /// well as produce next proof if it was already received out of order before
     </span><span class="kw">async fn </span>handle_next_slot_input(<span class="kw-2">&amp;mut </span><span class="self">self</span>, next_slot_input: PotNextSlotInput) {
         <span class="kw">let </span><span class="kw-2">mut </span>old_proofs = HashMap::&lt;GossipProof, Vec&lt;PeerId&gt;&gt;::new();
-        <span class="kw">for </span>(sender, proofs) <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.gossip_cache {
+
+        <span class="kw">for </span>(sender, proofs) <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.gossip_cache.iter_mut() {
             proofs.retain(|proof| {
                 <span class="kw">if </span>proof.slot &gt; next_slot_input.slot {
                     <span class="bool-val">true

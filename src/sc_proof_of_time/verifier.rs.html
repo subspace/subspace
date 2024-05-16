@@ -304,11 +304,11 @@
 </span><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
-<span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>schnellru::{ByLength, LruMap};
 <span class="kw">use </span>sp_consensus_slots::Slot;
 <span class="kw">use </span>sp_consensus_subspace::{PotNextSlotInput, PotParametersChange};
-<span class="kw">use </span>std::num::{NonZeroU32, NonZeroUsize};
+<span class="kw">use </span>std::num::NonZeroU32;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_core_primitives::{PotCheckpoints, PotOutput, PotSeed};
 
@@ -327,14 +327,14 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>PotVerifier {
     genesis_seed: PotSeed,
-    cache: Arc&lt;Mutex&lt;LruCache&lt;CacheKey, CacheValue&gt;&gt;&gt;,
+    cache: Arc&lt;Mutex&lt;LruMap&lt;CacheKey, CacheValue&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>PotVerifier {
-    <span class="kw">pub fn </span>new(genesis_seed: PotSeed, cache_size: NonZeroUsize) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(genesis_seed: PotSeed, cache_size: u32) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             genesis_seed,
-            cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
+            cache: Arc::new(Mutex::new(LruMap::new(ByLength::new(cache_size)))),
         }
     }
 
@@ -345,7 +345,7 @@
         slot_iterations: NonZeroU32,
         checkpoints: PotCheckpoints,
     ) {
-        <span class="self">self</span>.cache.lock().push(
+        <span class="self">self</span>.cache.lock().insert(
             CacheKey {
                 seed,
                 slot_iterations,
@@ -497,7 +497,7 @@
                 .try_lock()
                 .expect(<span class="string">"No one can access this mutex yet; qed"</span>);
             <span class="comment">// Store pending verification entry in cache
-            </span>cache.push(cache_key, cache_value);
+            </span>cache.insert(cache_key, cache_value);
             <span class="comment">// Cache lock is no longer necessary, other callers should be able to access cache too
             </span>drop(cache);
 
@@ -508,13 +508,13 @@
                 </span>drop(checkpoints);
 
                 <span class="comment">// Proving failed, remove pending entry from cache such that retries can happen
-                </span><span class="kw">let </span>maybe_removed_cache_value = <span class="self">self</span>.cache.lock().pop(<span class="kw-2">&amp;</span>cache_key);
+                </span><span class="kw">let </span>maybe_removed_cache_value = <span class="self">self</span>.cache.lock().remove(<span class="kw-2">&amp;</span>cache_key);
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(removed_cache_value) = maybe_removed_cache_value {
                     <span class="comment">// It is possible that we have removed a verified value that we have not
                     // inserted, check for this and restore if that was the case
                     </span><span class="kw">let </span>removed_verified_value = removed_cache_value.checkpoints.lock().is_some();
                     <span class="kw">if </span>removed_verified_value {
-                        <span class="self">self</span>.cache.lock().push(cache_key, removed_cache_value);
+                        <span class="self">self</span>.cache.lock().insert(cache_key, removed_cache_value);
                     }
                 }
                 <span class="kw">return </span><span class="prelude-val">None</span>;
@@ -568,7 +568,7 @@
                 .try_lock()
                 .expect(<span class="string">"No one can access this mutex yet; qed"</span>);
             <span class="comment">// Store pending verification entry in cache
-            </span>cache.push(cache_key, cache_value);
+            </span>cache.insert(cache_key, cache_value);
             <span class="comment">// Cache lock is no longer necessary, other callers should be able to access cache too
             </span>drop(cache);
 
@@ -581,13 +581,13 @@
                 </span>drop(correct_checkpoints);
 
                 <span class="comment">// Verification failed, remove pending entry from cache such that retries can happen
-                </span><span class="kw">let </span>maybe_removed_cache_value = <span class="self">self</span>.cache.lock().pop(<span class="kw-2">&amp;</span>cache_key);
+                </span><span class="kw">let </span>maybe_removed_cache_value = <span class="self">self</span>.cache.lock().remove(<span class="kw-2">&amp;</span>cache_key);
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(removed_cache_value) = maybe_removed_cache_value {
                     <span class="comment">// It is possible that we have removed a verified value that we have not
                     // inserted, check for this and restore if that was the case
                     </span><span class="kw">let </span>removed_verified_value = removed_cache_value.checkpoints.lock().is_some();
                     <span class="kw">if </span>removed_verified_value {
-                        <span class="self">self</span>.cache.lock().push(cache_key, removed_cache_value);
+                        <span class="self">self</span>.cache.lock().insert(cache_key, removed_cache_value);
                     }
                 }
                 <span class="kw">return </span><span class="bool-val">false</span>;
