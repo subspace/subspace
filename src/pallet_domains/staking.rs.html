@@ -2880,14 +2880,6 @@
 <a href="#2880" id="2880">2880</a>
 <a href="#2881" id="2881">2881</a>
 <a href="#2882" id="2882">2882</a>
-<a href="#2883" id="2883">2883</a>
-<a href="#2884" id="2884">2884</a>
-<a href="#2885" id="2885">2885</a>
-<a href="#2886" id="2886">2886</a>
-<a href="#2887" id="2887">2887</a>
-<a href="#2888" id="2888">2888</a>
-<a href="#2889" id="2889">2889</a>
-<a href="#2890" id="2890">2890</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Staking for domains
 
 </span><span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
@@ -2910,9 +2902,12 @@
 <span class="kw">use </span>frame_support::{ensure, PalletError};
 <span class="kw">use </span>scale_info::TypeInfo;
 <span class="kw">use </span>sp_core::{sr25519, Get};
-<span class="kw">use </span>sp_domains::{DomainId, EpochIndex, OperatorId, OperatorPublicKey};
+<span class="kw">use </span>sp_domains::{
+    DomainId, EpochIndex, OperatorId, OperatorPublicKey, OperatorSignature,
+    OperatorSigningKeyProofOfOwnershipData,
+};
 <span class="kw">use </span>sp_runtime::traits::{CheckedAdd, CheckedSub, Zero};
-<span class="kw">use </span>sp_runtime::{Perbill, Percent, Perquintill, Saturating};
+<span class="kw">use </span>sp_runtime::{Perbill, Percent, Perquintill, RuntimeAppPublic, Saturating};
 <span class="kw">use </span>sp_std::collections::btree_map::BTreeMap;
 <span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
 <span class="kw">use </span>sp_std::collections::vec_deque::VecDeque;
@@ -3183,6 +3178,8 @@
     OperatorNotDeregistered,
     BundleStorageFund(bundle_storage_fund::Error),
     UnconfirmedER,
+    <span class="doccomment">/// Invalid signature from Signing key owner.
+    </span>InvalidSigningKeySignature,
 }
 
 <span class="comment">// Increase `PendingStakingOperationCount` by one and check if the `MaxPendingStakingOperation`
@@ -3200,11 +3197,12 @@
     <span class="prelude-val">Ok</span>(())
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_register_operator&lt;T: Config&gt;(
+<span class="kw">pub fn </span>do_register_operator&lt;T: Config&gt;(
     operator_owner: T::AccountId,
     domain_id: DomainId,
     amount: BalanceOf&lt;T&gt;,
     config: OperatorConfig&lt;BalanceOf&lt;T&gt;&gt;,
+    maybe_signing_key_proof_of_ownership: <span class="prelude-ty">Option</span>&lt;OperatorSignature&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(OperatorId, EpochIndex), Error&gt; {
     note_pending_staking_operation::&lt;T&gt;(domain_id)<span class="question-mark">?</span>;
 
@@ -3218,6 +3216,19 @@
             !OperatorSigningKey::&lt;T&gt;::contains_key(config.signing_key.clone()),
             Error::DuplicateOperatorSigningKey
         );
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(signing_key_proof_of_ownership) = maybe_signing_key_proof_of_ownership {
+            <span class="kw">let </span>signing_key_signature_data = OperatorSigningKeyProofOfOwnershipData {
+                operator_owner: operator_owner.clone(),
+            };
+            <span class="macro">ensure!</span>(
+                config.signing_key.verify(
+                    <span class="kw-2">&amp;</span>signing_key_signature_data.encode(),
+                    <span class="kw-2">&amp;</span>signing_key_proof_of_ownership,
+                ),
+                Error::InvalidSigningKeySignature
+            );
+        }
 
         <span class="macro">ensure!</span>(
             config.minimum_nominator_stake &gt;= T::MinNominatorStake::get(),
@@ -4150,19 +4161,21 @@
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
         do_convert_previous_epoch_withdrawal, do_nominate_operator, do_reward_operators,
         do_slash_operators, do_unlock_funds, do_withdraw_stake, Error <span class="kw">as </span>StakingError, Operator,
-        OperatorConfig, OperatorStatus, StakingSummary,
+        OperatorConfig, OperatorSigningKeyProofOfOwnershipData, OperatorStatus, StakingSummary,
     };
     <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::do_finalize_domain_current_epoch;
     <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, ExistentialDeposit, RuntimeOrigin, Test};
     <span class="kw">use crate</span>::{bundle_storage_fund, BalanceOf, Error, NominatorId, SlashedReason};
+    <span class="kw">use </span>codec::Encode;
     <span class="kw">use </span>frame_support::traits::fungible::Mutate;
     <span class="kw">use </span>frame_support::traits::Currency;
     <span class="kw">use </span>frame_support::weights::Weight;
     <span class="kw">use </span>frame_support::{assert_err, assert_ok};
+    <span class="kw">use </span>sp_core::crypto::UncheckedFrom;
     <span class="kw">use </span>sp_core::{sr25519, Pair, U256};
     <span class="kw">use </span>sp_domains::{
         ConfirmedDomainBlock, DomainId, OperatorAllowList, OperatorId, OperatorPair,
-        OperatorPublicKey,
+        OperatorPublicKey, OperatorSignature,
     };
     <span class="kw">use </span>sp_runtime::traits::Zero;
     <span class="kw">use </span>sp_runtime::{PerThing, Perbill};
@@ -4175,13 +4188,15 @@
 
     <span class="kw">const </span>STORAGE_FEE_RESERVE: Perbill = Perbill::from_percent(<span class="number">20</span>);
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>register_operator(
+    <span class="attr">#[allow(clippy::too_many_arguments)]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>register_operator(
         domain_id: DomainId,
         operator_account: &lt;Test <span class="kw">as </span>frame_system::Config&gt;::AccountId,
         operator_free_balance: BalanceOf&lt;Test&gt;,
         operator_stake: BalanceOf&lt;Test&gt;,
         minimum_nominator_stake: BalanceOf&lt;Test&gt;,
         signing_key: OperatorPublicKey,
+        signature: OperatorSignature,
         <span class="kw-2">mut </span>nominators: BTreeMap&lt;NominatorId&lt;Test&gt;, (BalanceOf&lt;Test&gt;, BalanceOf&lt;Test&gt;)&gt;,
     ) -&gt; (OperatorId, OperatorConfig&lt;BalanceOf&lt;Test&gt;&gt;) {
         nominators.insert(operator_account, (operator_free_balance, operator_stake));
@@ -4238,6 +4253,7 @@
             domain_id,
             operator_stake,
             operator_config.clone(),
+            signature,
         );
         <span class="macro">assert_ok!</span>(res);
 
@@ -4281,6 +4297,7 @@
                 domain_id,
                 Default::default(),
                 operator_config,
+                OperatorSignature::unchecked_from([<span class="number">1u8</span>; <span class="number">64</span>]),
             );
             <span class="macro">assert_err!</span>(
                 res,
@@ -4303,11 +4320,17 @@
                 nomination_tax: Default::default(),
             };
 
+            <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+                operator_owner: operator_account,
+            };
+            <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
+
             <span class="kw">let </span>res = Domains::register_operator(
                 RuntimeOrigin::signed(operator_account),
                 domain_id,
                 Default::default(),
                 operator_config,
+                signature,
             );
             <span class="macro">assert_err!</span>(
                 res,
@@ -4328,6 +4351,10 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
+            <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+                operator_owner: operator_account,
+            };
+            <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
             <span class="kw">let </span>(operator_id, <span class="kw-2">mut </span>operator_config) = register_operator(
                 domain_id,
                 operator_account,
@@ -4335,6 +4362,7 @@
                 operator_total_stake,
                 SSC,
                 pair.public(),
+                signature.clone(),
                 BTreeMap::new(),
             );
 
@@ -4377,6 +4405,7 @@
                 domain_id,
                 operator_stake,
                 operator_config.clone(),
+                signature.clone(),
             );
             <span class="macro">assert_err!</span>(
                 res,
@@ -4386,11 +4415,16 @@
             <span class="comment">// cannot use the locked funds to register a new operator
             </span><span class="kw">let </span>new_pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">1u32</span>).into());
             operator_config.signing_key = new_pair.public();
+            <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+                operator_owner: operator_account,
+            };
+            <span class="kw">let </span>signature = new_pair.sign(<span class="kw-2">&amp;</span>data.encode());
             <span class="kw">let </span>res = Domains::register_operator(
                 RuntimeOrigin::signed(operator_account),
                 domain_id,
                 operator_stake,
                 operator_config,
+                signature,
             );
             <span class="macro">assert_err!</span>(
                 res,
@@ -4411,6 +4445,10 @@
         <span class="kw">let </span>operator_stake = <span class="number">800 </span>* SSC;
         <span class="kw">let </span>operator_storage_fee_deposit = <span class="number">200 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account,
+        };
+        <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
 
         <span class="kw">let </span>nominator_account = <span class="number">2</span>;
         <span class="kw">let </span>nominator_free_balance = <span class="number">150 </span>* SSC;
@@ -4427,6 +4465,7 @@
                 operator_total_stake,
                 <span class="number">10 </span>* SSC,
                 pair.public(),
+                signature,
                 BTreeMap::from_iter(<span class="macro">vec!</span>[(
                     nominator_account,
                     (nominator_free_balance, nominator_total_stake),
@@ -4524,7 +4563,10 @@
         <span class="kw">let </span>operator_free_balance = <span class="number">1500 </span>* SSC;
         <span class="kw">let </span>operator_stake = <span class="number">1000 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
-
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account,
+        };
+        <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
         <span class="kw">let </span>nominator_account = <span class="number">7</span>;
         <span class="kw">let </span>nominator_free_balance = <span class="number">150 </span>* SSC;
         <span class="kw">let </span>nominator_stake = <span class="number">100 </span>* SSC;
@@ -4538,6 +4580,7 @@
                 operator_stake,
                 <span class="number">10 </span>* SSC,
                 pair.public(),
+                signature,
                 BTreeMap::from_iter(<span class="macro">vec!</span>[
                     (<span class="number">1</span>, (nominator_free_balance, nominator_stake)),
                     (<span class="number">2</span>, (nominator_free_balance, nominator_stake)),
@@ -4566,108 +4609,17 @@
         });
     }
 
-    <span class="comment">// TODO: `switch_domain` is not supported currently due to incompatible with lazily slashing
-    // enable this test when `switch_domain` is ready
-    // #[test]
-    // fn switch_domain_operator() {
-    //     let old_domain_id = DomainId::new(0);
-    //     let new_domain_id = DomainId::new(1);
-    //     let operator_account = 1;
-    //     let operator_free_balance = 250 * SSC;
-    //     let operator_stake = 200 * SSC;
-    //     let pair = OperatorPair::from_seed(&amp;U256::from(0u32).into());
-
-    //     let mut ext = new_test_ext();
-    //     ext.execute_with(|| {
-    //         let (operator_id, _) = register_operator(
-    //             old_domain_id,
-    //             operator_account,
-    //             operator_free_balance,
-    //             operator_stake,
-    //             SSC,
-    //             pair.public(),
-    //             BTreeMap::new(),
-    //         );
-
-    //         let domain_config = DomainConfig {
-    //             domain_name: String::from_utf8(vec![0; 1024]).unwrap(),
-    //             runtime_id: 0,
-    //             max_block_size: u32::MAX,
-    //             max_block_weight: Weight::MAX,
-    //             bundle_slot_probability: (0, 0),
-    //             target_bundles_per_block: 0,
-    //             operator_allow_list: OperatorAllowList::Anyone,
-    //             initial_balances: Default::default(),
-    //         };
-
-    //         let domain_obj = DomainObject {
-    //             owner_account_id: 0,
-    //             created_at: 0,
-    //             genesis_receipt_hash: Default::default(),
-    //             domain_config,
-    //             domain_runtime_info: Default::default(),
-    //         };
-
-    //         DomainRegistry::&lt;Test&gt;::insert(new_domain_id, domain_obj);
-
-    //         DomainStakingSummary::&lt;Test&gt;::insert(
-    //             new_domain_id,
-    //             StakingSummary {
-    //                 current_epoch_index: 0,
-    //                 current_total_stake: 0,
-    //                 current_operators: BTreeMap::new(),
-    //                 next_operators: BTreeSet::new(),
-    //                 current_epoch_rewards: BTreeMap::new(),
-    //             },
-    //         );
-
-    //         let res = Domains::switch_domain(
-    //             RuntimeOrigin::signed(operator_account),
-    //             operator_id,
-    //             new_domain_id,
-    //         );
-    //         assert_ok!(res);
-
-    //         let old_domain_stake_summary =
-    //             DomainStakingSummary::&lt;Test&gt;::get(old_domain_id).unwrap();
-    //         assert!(!old_domain_stake_summary
-    //             .next_operators
-    //             .contains(&amp;operator_id));
-
-    //         let new_domain_stake_summary =
-    //             DomainStakingSummary::&lt;Test&gt;::get(new_domain_id).unwrap();
-    //         assert!(!new_domain_stake_summary
-    //             .next_operators
-    //             .contains(&amp;operator_id));
-
-    //         let operator = Operators::&lt;Test&gt;::get(operator_id).unwrap();
-    //         assert_eq!(operator.current_domain_id, old_domain_id);
-    //         assert_eq!(operator.next_domain_id, new_domain_id);
-    //         assert_eq!(
-    //             PendingOperatorSwitches::&lt;Test&gt;::get(old_domain_id).unwrap(),
-    //             BTreeSet::from_iter(vec![operator_id])
-    //         );
-
-    //         let res = Domains::switch_domain(
-    //             RuntimeOrigin::signed(operator_account),
-    //             operator_id,
-    //             new_domain_id,
-    //         );
-    //         assert_err!(
-    //             res,
-    //             Error::&lt;Test&gt;::Staking(crate::staking::Error::PendingOperatorSwitch)
-    //         )
-    //     });
-    // }
-
-    </span><span class="attr">#[test]
+    <span class="attr">#[test]
     </span><span class="kw">fn </span>operator_deregistration() {
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>operator_account = <span class="number">1</span>;
         <span class="kw">let </span>operator_stake = <span class="number">200 </span>* SSC;
         <span class="kw">let </span>operator_free_balance = <span class="number">250 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
-
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account,
+        };
+        <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
             <span class="kw">let </span>(operator_id, <span class="kw">_</span>) = register_operator(
@@ -4677,6 +4629,7 @@
                 operator_stake,
                 SSC,
                 pair.public(),
+                signature,
                 BTreeMap::new(),
             );
 
@@ -4788,7 +4741,10 @@
         <span class="kw">let </span>domain_id = DomainId::new(<span class="number">0</span>);
         <span class="kw">let </span>operator_account = <span class="number">0</span>;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
-
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account,
+        };
+        <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
         <span class="kw">let </span><span class="kw-2">mut </span>total_balance = nominators.iter().map(|n| n.<span class="number">1</span>).sum::&lt;BalanceOf&lt;Test&gt;&gt;()
             + operator_reward
             + maybe_deposit.unwrap_or(<span class="number">0</span>);
@@ -4811,6 +4767,7 @@
                 operator_stake,
                 minimum_nominator_stake,
                 pair.public(),
+                signature,
                 nominators,
             );
 
@@ -5442,7 +5399,10 @@
         <span class="kw">let </span>operator_stake = <span class="number">200 </span>* SSC;
         <span class="kw">let </span>operator_extra_deposit = <span class="number">40 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
-
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account,
+        };
+        <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
         <span class="kw">let </span>nominator_account = <span class="number">2</span>;
         <span class="kw">let </span>nominator_free_balance = <span class="number">150 </span>* SSC;
         <span class="kw">let </span>nominator_stake = <span class="number">100 </span>* SSC;
@@ -5472,6 +5432,7 @@
                 operator_stake,
                 <span class="number">10 </span>* SSC,
                 pair.public(),
+                signature,
                 BTreeMap::from_iter(nominators),
             );
 
@@ -5590,6 +5551,21 @@
         <span class="kw">let </span>pair_2 = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">1u32</span>).into());
         <span class="kw">let </span>pair_3 = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">2u32</span>).into());
 
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account_1,
+        };
+        <span class="kw">let </span>signature_1 = pair_1.sign(<span class="kw-2">&amp;</span>data.encode());
+
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account_2,
+        };
+        <span class="kw">let </span>signature_2 = pair_2.sign(<span class="kw-2">&amp;</span>data.encode());
+
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account_3,
+        };
+        <span class="kw">let </span>signature_3 = pair_3.sign(<span class="kw-2">&amp;</span>data.encode());
+
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
         ext.execute_with(|| {
             <span class="kw">let </span>(operator_id_1, <span class="kw">_</span>) = register_operator(
@@ -5599,6 +5575,7 @@
                 operator_stake,
                 <span class="number">10 </span>* SSC,
                 pair_1.public(),
+                signature_1,
                 Default::default(),
             );
 
@@ -5609,6 +5586,7 @@
                 operator_stake,
                 <span class="number">10 </span>* SSC,
                 pair_2.public(),
+                signature_2,
                 Default::default(),
             );
 
@@ -5619,6 +5597,7 @@
                 operator_stake,
                 <span class="number">10 </span>* SSC,
                 pair_3.public(),
+                signature_3,
                 Default::default(),
             );
 
@@ -5706,6 +5685,10 @@
         <span class="kw">let </span>operator_stake = <span class="number">80 </span>* SSC;
         <span class="kw">let </span>operator_storage_fee_deposit = <span class="number">20 </span>* SSC;
         <span class="kw">let </span>pair = OperatorPair::from_seed(<span class="kw-2">&amp;</span>U256::from(<span class="number">0u32</span>).into());
+        <span class="kw">let </span>data = OperatorSigningKeyProofOfOwnershipData {
+            operator_owner: operator_account,
+        };
+        <span class="kw">let </span>signature = pair.sign(<span class="kw-2">&amp;</span>data.encode());
         <span class="kw">let </span>nominator_account = <span class="number">2</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>ext = new_test_ext();
@@ -5717,6 +5700,7 @@
                 operator_total_stake,
                 SSC,
                 pair.public(),
+                signature,
                 BTreeMap::default(),
             );
 
