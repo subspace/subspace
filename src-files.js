@@ -42,7 +42,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["sp_consensus_subspace",["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]]],\
 ["sp_domain_digests",["",[],["lib.rs"]]],\
 ["sp_domains",["",[],["bundle_producer_election.rs","core_api.rs","extrinsics.rs","lib.rs","merkle_tree.rs","proof_provider_and_verifier.rs","storage.rs","valued_trie.rs"]]],\
-["sp_domains_fraud_proof",["",[],["bundle_equivocation.rs","execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","storage_proof.rs","verification.rs"]]],\
+["sp_domains_fraud_proof",["",[],["execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","storage_proof.rs","verification.rs"]]],\
 ["sp_executive",["",[],["lib.rs"]]],\
 ["sp_messenger",["",[],["endpoint.rs","lib.rs","messages.rs"]]],\
 ["sp_messenger_host_functions",["",[],["host_functions.rs","lib.rs","runtime_interface.rs"]]],\
