@@ -108,6 +108,12 @@
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
 <a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::PieceGetter;
 <span class="kw">use </span>futures::stream::FuturesOrdered;
 <span class="kw">use </span>futures::StreamExt;
@@ -117,10 +123,8 @@
 <span class="kw">use </span>subspace_core_primitives::{ArchivedHistorySegment, Piece, PieceIndex, RecordedHistorySegment};
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::sync::Semaphore;
+<span class="kw">use </span>tokio::task::JoinError;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
-
-<span class="comment">// TODO: Probably should be made configurable
-</span><span class="kw">const </span>PARALLELISM_LEVEL: usize = <span class="number">20</span>;
 
 <span class="attr">#[derive(Debug, Error)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SegmentReconstructionError {
@@ -131,6 +135,10 @@
     <span class="doccomment">/// Internal piece retrieval process failed
     </span><span class="attr">#[error(<span class="string">"Pieces retrieval failed"</span>)]
     </span>PieceRetrievalFailed(<span class="attr">#[from] </span>ReconstructorError),
+
+    <span class="doccomment">/// Join error
+    </span><span class="attr">#[error(<span class="string">"Join error: {0}"</span>)]
+    </span>JoinError(<span class="attr">#[from] </span>JoinError),
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>recover_missing_piece&lt;PG: PieceGetter&gt;(
@@ -142,7 +150,7 @@
     <span class="kw">let </span>segment_index = missing_piece_index.segment_index();
     <span class="kw">let </span>position = missing_piece_index.position();
 
-    <span class="kw">let </span>semaphore = <span class="kw-2">&amp;</span>Semaphore::new(PARALLELISM_LEVEL);
+    <span class="kw">let </span>semaphore = <span class="kw-2">&amp;</span>Semaphore::new(RecordedHistorySegment::NUM_RAW_RECORDS);
     <span class="kw">let </span>acquired_pieces_counter = <span class="kw-2">&amp;</span>AtomicUsize::default();
     <span class="kw">let </span>required_pieces_number = RecordedHistorySegment::NUM_RAW_RECORDS;
 
@@ -210,9 +218,13 @@
         <span class="kw">return </span><span class="prelude-val">Err</span>(SegmentReconstructionError::NotEnoughPiecesAcquired);
     }
 
-    <span class="kw">let </span>archiver = PiecesReconstructor::new(kzg).expect(<span class="string">"Internal constructor call must succeed."</span>);
+    <span class="kw">let </span>result = tokio::task::spawn_blocking(<span class="kw">move </span>|| {
+        <span class="kw">let </span>reconstructor =
+            PiecesReconstructor::new(kzg).expect(<span class="string">"Internal constructor call must succeed."</span>);
 
-    <span class="kw">let </span>result = archiver.reconstruct_piece(<span class="kw-2">&amp;</span>segment_pieces, position <span class="kw">as </span>usize)<span class="question-mark">?</span>;
+        reconstructor.reconstruct_piece(<span class="kw-2">&amp;</span>segment_pieces, position <span class="kw">as </span>usize)
+    })
+    .<span class="kw">await</span><span class="question-mark">??</span>;
 
     <span class="macro">info!</span>(%missing_piece_index, <span class="string">"Recovering missing piece succeeded."</span>);
 

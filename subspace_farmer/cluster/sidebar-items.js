@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["nats_client"]};
+window.SIDEBAR_ITEMS = {"mod":["cache","controller","farmer","nats_client","plotter"]};
