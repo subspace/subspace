@@ -660,18 +660,34 @@
 <a href="#660" id="660">660</a>
 <a href="#661" id="661">661</a>
 <a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::fraud_proof::{
-    InvalidBundlesFraudProof, InvalidExtrinsicsRootProof, InvalidStateTransitionProof,
-    InvalidTransfersProof, ValidBundleProof, VerificationError,
+    InvalidBundlesProof, InvalidBundlesProofData, InvalidExtrinsicsRootProof,
+    InvalidStateTransitionProof, ValidBundleProof, VerificationError,
 };
-<span class="kw">use </span><span class="kw">crate</span>::fraud_proof_runtime_interface::get_fraud_proof_verification_info;
+<span class="kw">use </span><span class="kw">crate</span>::storage_proof::<span class="kw-2">*</span>;
 <span class="kw">use crate</span>::{
-    fraud_proof_runtime_interface, DomainChainAllowlistUpdateExtrinsic,
-    FraudProofVerificationInfoRequest, FraudProofVerificationInfoResponse, SetCodeExtrinsic,
-    StorageKeyRequest,
+    fraud_proof_runtime_interface, DomainInherentExtrinsic, DomainStorageKeyRequest,
+    StatelessDomainRuntimeCall,
 };
 <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">use </span>alloc::vec::Vec;
@@ -684,8 +700,9 @@
 <span class="kw">use </span>sp_domains::proof_provider_and_verifier::StorageProofVerifier;
 <span class="kw">use </span>sp_domains::valued_trie::valued_ordered_trie_root;
 <span class="kw">use </span>sp_domains::{
-    BlockFees, BundleValidity, ExecutionReceipt, ExtrinsicDigest, HeaderHashFor, HeaderHashingFor,
-    HeaderNumberFor, InboxedBundle, InvalidBundleType, Transfers,
+    BlockFees, BundleValidity, DomainId, ExecutionReceipt, ExtrinsicDigest, HeaderHashFor,
+    HeaderHashingFor, HeaderNumberFor, InboxedBundle, InvalidBundleType, RuntimeId, Transfers,
+    INITIAL_DOMAIN_TX_RANGE,
 };
 <span class="kw">use </span>sp_runtime::generic::Digest;
 <span class="kw">use </span>sp_runtime::traits::{
@@ -693,11 +710,17 @@
 };
 <span class="kw">use </span>sp_runtime::{OpaqueExtrinsic, SaturatedConversion};
 <span class="kw">use </span>sp_trie::{LayoutV1, StorageProof};
-<span class="kw">use </span>subspace_core_primitives::Randomness;
+<span class="kw">use </span>subspace_core_primitives::{Randomness, U256};
 <span class="kw">use </span>trie_db::node::Value;
 
 <span class="doccomment">/// Verifies invalid domain extrinsic root fraud proof.
-</span><span class="kw">pub fn </span>verify_invalid_domain_extrinsics_root_fraud_proof&lt;CBlock, Balance, Hashing, DomainHeader&gt;(
+</span><span class="kw">pub fn </span>verify_invalid_domain_extrinsics_root_fraud_proof&lt;
+    CBlock,
+    Balance,
+    DomainHeader,
+    Hashing,
+    SKP,
+&gt;(
     bad_receipt: ExecutionReceipt&lt;
         NumberFor&lt;CBlock&gt;,
         CBlock::Hash,
@@ -705,55 +728,45 @@
         HeaderHashFor&lt;DomainHeader&gt;,
         Balance,
     &gt;,
-    fraud_proof: <span class="kw-2">&amp;</span>InvalidExtrinsicsRootProof&lt;HeaderHashFor&lt;DomainHeader&gt;&gt;,
+    fraud_proof: <span class="kw-2">&amp;</span>InvalidExtrinsicsRootProof,
+    domain_id: DomainId,
+    runtime_id: RuntimeId,
+    state_root: CBlock::Hash,
+    domain_runtime_code: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHeader::Hash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
-    Hashing: Hasher&lt;Out = CBlock::Hash&gt;,
     DomainHeader: HeaderT,
     DomainHeader::Hash: Into&lt;H256&gt; + PartialEq + Copy,
+    Hashing: Hasher&lt;Out = CBlock::Hash&gt;,
+    SKP: FraudProofStorageKeyProvider,
 {
     <span class="kw">let </span>InvalidExtrinsicsRootProof {
         valid_bundle_digests,
-        domain_id,
+        block_randomness_proof,
+        domain_inherent_extrinsic_data_proof,
         ..
     } = fraud_proof;
 
-    <span class="kw">let </span>consensus_block_hash = bad_receipt.consensus_block_hash;
-    <span class="kw">let </span>block_randomness = get_fraud_proof_verification_info(
-        H256::from_slice(consensus_block_hash.as_ref()),
-        FraudProofVerificationInfoRequest::BlockRandomness,
-    )
-    .and_then(|resp| resp.into_block_randomness())
-    .ok_or(VerificationError::FailedToGetBlockRandomness)<span class="question-mark">?</span>;
+    <span class="kw">let </span>domain_inherent_extrinsic_data = domain_inherent_extrinsic_data_proof
+        .verify::&lt;CBlock, SKP&gt;(domain_id, runtime_id, <span class="kw-2">&amp;</span>state_root)<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>domain_timestamp_extrinsic = get_fraud_proof_verification_info(
-        H256::from_slice(consensus_block_hash.as_ref()),
-        FraudProofVerificationInfoRequest::DomainTimestampExtrinsic(<span class="kw-2">*</span>domain_id),
-    )
-    .and_then(|resp| resp.into_domain_timestamp_extrinsic())
-    .ok_or(VerificationError::FailedToDeriveDomainTimestampExtrinsic)<span class="question-mark">?</span>;
+    <span class="kw">let </span>block_randomness = &lt;BlockRandomnessProof <span class="kw">as </span>BasicStorageProof&lt;CBlock&gt;&gt;::verify::&lt;SKP&gt;(
+        block_randomness_proof.clone(),
+        (),
+        <span class="kw-2">&amp;</span>state_root,
+    )<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>maybe_domain_set_code_extrinsic = get_fraud_proof_verification_info(
-        H256::from_slice(consensus_block_hash.as_ref()),
-        FraudProofVerificationInfoRequest::DomainSetCodeExtrinsic(<span class="kw-2">*</span>domain_id),
+    <span class="kw">let </span>DomainInherentExtrinsic {
+        domain_timestamp_extrinsic,
+        maybe_domain_chain_allowlist_extrinsic,
+        consensus_chain_byte_fee_extrinsic,
+        maybe_domain_set_code_extrinsic,
+    } = fraud_proof_runtime_interface::construct_domain_inherent_extrinsic(
+        domain_runtime_code,
+        domain_inherent_extrinsic_data,
     )
-    .map(|resp| resp.into_domain_set_code_extrinsic())
-    .ok_or(VerificationError::FailedToDeriveDomainSetCodeExtrinsic)<span class="question-mark">?</span>;
-
-    <span class="kw">let </span>consensus_chain_byte_fee_extrinsic = get_fraud_proof_verification_info(
-        H256::from_slice(consensus_block_hash.as_ref()),
-        FraudProofVerificationInfoRequest::ConsensusChainByteFeeExtrinsic(<span class="kw-2">*</span>domain_id),
-    )
-    .and_then(|resp| resp.into_consensus_chain_byte_fee_extrinsic())
-    .ok_or(VerificationError::FailedToDeriveConsensusChainByteFeeExtrinsic)<span class="question-mark">?</span>;
-
-    <span class="kw">let </span>domain_chain_allowlist_extrinsic = get_fraud_proof_verification_info(
-        H256::from_slice(consensus_block_hash.as_ref()),
-        FraudProofVerificationInfoRequest::DomainChainsAllowlistUpdateExtrinsic(<span class="kw-2">*</span>domain_id),
-    )
-    .map(|resp| resp.into_domain_chain_allowlist_update_extrinsic())
-    .ok_or(VerificationError::FailedToDeriveDomainChainAllowlistExtrinsic)<span class="question-mark">?</span>;
+    .ok_or(VerificationError::FailedToDeriveDomainInherentExtrinsic)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>bad_receipt_valid_bundle_digests = bad_receipt.valid_bundle_digests();
     <span class="kw">if </span>valid_bundle_digests.len() != bad_receipt_valid_bundle_digests.len() {
@@ -799,18 +812,14 @@
     &gt;(consensus_chain_byte_fee_extrinsic);
     ordered_extrinsics.push_front(transaction_byte_fee_extrinsic);
 
-    <span class="kw">if let </span>DomainChainAllowlistUpdateExtrinsic::EncodedExtrinsic(domain_chain_allowlist_extrinsic) =
-        domain_chain_allowlist_extrinsic
-    {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(domain_chain_allowlist_extrinsic) = maybe_domain_chain_allowlist_extrinsic {
         <span class="kw">let </span>domain_set_code_extrinsic = ExtrinsicDigest::new::&lt;
             LayoutV1&lt;HeaderHashingFor&lt;DomainHeader&gt;&gt;,
         &gt;(domain_chain_allowlist_extrinsic);
         ordered_extrinsics.push_front(domain_set_code_extrinsic);
     }
 
-    <span class="kw">if let </span>SetCodeExtrinsic::EncodedExtrinsic(domain_set_code_extrinsic) =
-        maybe_domain_set_code_extrinsic
-    {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(domain_set_code_extrinsic) = maybe_domain_set_code_extrinsic {
         <span class="kw">let </span>domain_set_code_extrinsic = ExtrinsicDigest::new::&lt;
             LayoutV1&lt;HeaderHashingFor&lt;DomainHeader&gt;&gt;,
         &gt;(domain_set_code_extrinsic);
@@ -841,41 +850,40 @@
 }
 
 <span class="doccomment">/// Verifies valid bundle fraud proof.
-</span><span class="kw">pub fn </span>verify_valid_bundle_fraud_proof&lt;CBlock, DomainNumber, DomainHash, Balance&gt;(
+</span><span class="kw">pub fn </span>verify_valid_bundle_fraud_proof&lt;CBlock, DomainHeader, Balance, SKP&gt;(
     bad_receipt: ExecutionReceipt&lt;
         NumberFor&lt;CBlock&gt;,
         CBlock::Hash,
-        DomainNumber,
-        DomainHash,
+        HeaderNumberFor&lt;DomainHeader&gt;,
+        HeaderHashFor&lt;DomainHeader&gt;,
         Balance,
     &gt;,
-    fraud_proof: <span class="kw-2">&amp;</span>ValidBundleProof&lt;DomainHash&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHash&gt;&gt;
+    fraud_proof: <span class="kw-2">&amp;</span>ValidBundleProof&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, DomainHeader&gt;,
+    domain_id: DomainId,
+    state_root: CBlock::Hash,
+    domain_runtime_code: Vec&lt;u8&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHeader::Hash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
     CBlock::Hash: Into&lt;H256&gt;,
-    DomainHash: Copy + Into&lt;H256&gt;,
+    DomainHeader: HeaderT,
+    DomainHeader::Hash: Into&lt;H256&gt; + PartialEq + Copy,
+    SKP: FraudProofStorageKeyProvider,
 {
     <span class="kw">let </span>ValidBundleProof {
-        domain_id,
-        bundle_index,
-        ..
+        bundle_with_proof, ..
     } = fraud_proof;
 
-    <span class="kw">let </span>bundle_body = get_fraud_proof_verification_info(
-        bad_receipt.consensus_block_hash.into(),
-        FraudProofVerificationInfoRequest::DomainBundleBody {
-            domain_id: <span class="kw-2">*</span>domain_id,
-            bundle_index: <span class="kw-2">*</span>bundle_index,
-        },
-    )
-    .and_then(FraudProofVerificationInfoResponse::into_bundle_body)
-    .ok_or(VerificationError::FailedToGetDomainBundleBody)<span class="question-mark">?</span>;
+    bundle_with_proof.verify::&lt;CBlock, SKP&gt;(domain_id, <span class="kw-2">&amp;</span>state_root)<span class="question-mark">?</span>;
+    <span class="kw">let </span>OpaqueBundleWithProof {
+        bundle,
+        bundle_index,
+        ..
+    } = bundle_with_proof;
 
     <span class="kw">let </span>valid_bundle_digest = fraud_proof_runtime_interface::derive_bundle_digest(
-        bad_receipt.consensus_block_hash.into(),
-        <span class="kw-2">*</span>domain_id,
-        bundle_body,
+        domain_runtime_code,
+        bundle.extrinsics.clone(),
     )
     .ok_or(VerificationError::FailedToDeriveBundleDigest)<span class="question-mark">?</span>;
 
@@ -906,7 +914,8 @@
         DomainHeader::Hash,
         Balance,
     &gt;,
-    fraud_proof: <span class="kw-2">&amp;</span>InvalidStateTransitionProof&lt;HeaderHashFor&lt;DomainHeader&gt;&gt;,
+    fraud_proof: <span class="kw-2">&amp;</span>InvalidStateTransitionProof,
+    domain_runtime_code: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHeader::Hash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
@@ -916,18 +925,10 @@
     DomainHeader::Number: UniqueSaturatedInto&lt;BlockNumber&gt; + From&lt;BlockNumber&gt;,
 {
     <span class="kw">let </span>InvalidStateTransitionProof {
-        domain_id,
-        proof,
+        execution_proof,
         execution_phase,
         ..
     } = fraud_proof;
-
-    <span class="kw">let </span>domain_runtime_code = fraud_proof_runtime_interface::get_fraud_proof_verification_info(
-        bad_receipt.consensus_block_hash.into(),
-        FraudProofVerificationInfoRequest::DomainRuntimeCode(<span class="kw-2">*</span>domain_id),
-    )
-    .and_then(FraudProofVerificationInfoResponse::into_domain_runtime_code)
-    .ok_or(VerificationError::FailedToGetDomainRuntimeCode)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>(pre_state_root, post_state_root) = execution_phase
         .pre_post_state_root::&lt;CBlock, DomainHeader, Balance&gt;(<span class="kw-2">&amp;</span>bad_receipt, <span class="kw-2">&amp;</span>bad_receipt_parent)<span class="question-mark">?</span>;
@@ -941,7 +942,7 @@
             bad_receipt_parent.domain_block_hash.into(),
         ),
         pre_state_root,
-        proof.encode(),
+        execution_proof.encode(),
         execution_phase.execution_method(),
         call_data.as_ref(),
         domain_runtime_code,
@@ -1024,20 +1025,24 @@
         Balance,
     &gt;,
     storage_proof: <span class="kw-2">&amp;</span>StorageProof,
+    domain_runtime_code: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
     Balance: PartialEq + Decode,
     DomainHashing: Hasher&lt;Out = DomainHash&gt;,
 {
-    <span class="kw">let </span>storage_key = StorageKey(sp_domains::operator_block_fees_final_key());
-    <span class="kw">let </span>storage_proof = storage_proof.clone();
+    <span class="kw">let </span>storage_key = fraud_proof_runtime_interface::domain_storage_key(
+        domain_runtime_code,
+        DomainStorageKeyRequest::BlockFees,
+    )
+    .ok_or(VerificationError::FailedToGetDomainStorageKey)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>block_fees =
         StorageProofVerifier::&lt;DomainHashing&gt;::get_decoded_value::&lt;BlockFees&lt;Balance&gt;&gt;(
             <span class="kw-2">&amp;</span>bad_receipt.final_state_root,
-            storage_proof,
-            storage_key,
+            storage_proof.clone(),
+            StorageKey(storage_key),
         )
         .map_err(|<span class="kw">_</span>| VerificationError::InvalidStorageProof)<span class="question-mark">?</span>;
 
@@ -1064,7 +1069,8 @@
         DomainHash,
         Balance,
     &gt;,
-    proof: <span class="kw-2">&amp;</span>InvalidTransfersProof&lt;DomainHash&gt;,
+    storage_proof: <span class="kw-2">&amp;</span>StorageProof,
+    domain_runtime_code: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
@@ -1072,26 +1078,15 @@
     Balance: PartialEq + Decode,
     DomainHashing: Hasher&lt;Out = DomainHash&gt;,
 {
-    <span class="kw">let </span>InvalidTransfersProof {
-        domain_id,
-        storage_proof,
-        ..
-    } = proof;
-
-    <span class="kw">let </span>storage_key = get_fraud_proof_verification_info(
-        bad_receipt.consensus_block_hash.into(),
-        FraudProofVerificationInfoRequest::StorageKey {
-            domain_id: <span class="kw-2">*</span>domain_id,
-            req: StorageKeyRequest::Transfers,
-        },
+    <span class="kw">let </span>storage_key = fraud_proof_runtime_interface::domain_storage_key(
+        domain_runtime_code,
+        DomainStorageKeyRequest::Transfers,
     )
-    .and_then(FraudProofVerificationInfoResponse::into_storage_key)
-    .ok_or(VerificationError::FailedToGetDomainTransfersStorageKey)<span class="question-mark">?</span>;
-    <span class="kw">let </span>storage_proof = storage_proof.clone();
+    .ok_or(VerificationError::FailedToGetDomainStorageKey)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>transfers = StorageProofVerifier::&lt;DomainHashing&gt;::get_decoded_value::&lt;Transfers&lt;Balance&gt;&gt;(
         <span class="kw-2">&amp;</span>bad_receipt.final_state_root,
-        storage_proof,
+        storage_proof.clone(),
         StorageKey(storage_key),
     )
     .map_err(|<span class="kw">_</span>| VerificationError::InvalidStorageProof)<span class="question-mark">?</span>;
@@ -1115,7 +1110,9 @@
         HeaderHashFor&lt;DomainHeader&gt;,
         Balance,
     &gt;,
-    invalid_bundle_fraud_proof: <span class="kw-2">&amp;</span>InvalidBundlesFraudProof&lt;DomainHeader::Hash&gt;,
+    bundle_index: u32,
+    invalid_bundle_type: InvalidBundleType,
+    is_true_invalid_fraud_proof: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;InboxedBundle&lt;HeaderHashFor&lt;DomainHeader&gt;&gt;, VerificationError&lt;DomainHeader::Hash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
@@ -1123,11 +1120,10 @@
 {
     <span class="kw">let </span>targeted_invalid_bundle_entry = bad_receipt
         .inboxed_bundles
-        .get(invalid_bundle_fraud_proof.bundle_index <span class="kw">as </span>usize)
+        .get(bundle_index <span class="kw">as </span>usize)
         .ok_or(VerificationError::BundleNotFound)<span class="question-mark">?</span>;
 
-    <span class="kw">let </span>invalid_bundle_type = invalid_bundle_fraud_proof.invalid_bundle_type.clone();
-    <span class="kw">let </span>is_expected = <span class="kw">if </span>!invalid_bundle_fraud_proof.is_true_invalid_fraud_proof {
+    <span class="kw">let </span>is_expected = <span class="kw">if </span>!is_true_invalid_fraud_proof {
         <span class="comment">// `FalseInvalid`
         // The proof trying to prove `bad_receipt_bundle`'s `invalid_bundle_type` is wrong,
         // so the proof should contains the same `invalid_bundle_type`
@@ -1152,7 +1148,7 @@
 
     <span class="kw">if </span>!is_expected {
         <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::UnexpectedTargetedBundleEntry {
-            bundle_index: invalid_bundle_fraud_proof.bundle_index,
+            bundle_index,
             fraud_proof_invalid_type_of_proof: invalid_bundle_type,
             targeted_entry_bundle: targeted_invalid_bundle_entry.bundle.clone(),
         });
@@ -1178,7 +1174,7 @@
     .map_err(|_e| VerificationError::InvalidProof)
 }
 
-<span class="kw">pub fn </span>verify_invalid_bundles_fraud_proof&lt;CBlock, DomainHeader, Balance&gt;(
+<span class="kw">pub fn </span>verify_invalid_bundles_fraud_proof&lt;CBlock, DomainHeader, Balance, SKP&gt;(
     bad_receipt: ExecutionReceipt&lt;
         NumberFor&lt;CBlock&gt;,
         CBlock::Hash,
@@ -1193,129 +1189,167 @@
         HeaderHashFor&lt;DomainHeader&gt;,
         Balance,
     &gt;,
-    invalid_bundles_fraud_proof: <span class="kw-2">&amp;</span>InvalidBundlesFraudProof&lt;HeaderHashFor&lt;DomainHeader&gt;&gt;,
+    invalid_bundles_fraud_proof: <span class="kw-2">&amp;</span>InvalidBundlesProof&lt;
+        NumberFor&lt;CBlock&gt;,
+        &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash,
+        DomainHeader,
+    &gt;,
+    domain_id: DomainId,
+    state_root: CBlock::Hash,
+    domain_runtime_code: Vec&lt;u8&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), VerificationError&lt;DomainHeader::Hash&gt;&gt;
 <span class="kw">where
     </span>CBlock: BlockT,
     DomainHeader: HeaderT,
     CBlock::Hash: Into&lt;H256&gt;,
     DomainHeader::Hash: Into&lt;H256&gt;,
+    SKP: FraudProofStorageKeyProvider,
 {
+    <span class="kw">let </span>InvalidBundlesProof {
+        bundle_index,
+        invalid_bundle_type,
+        is_true_invalid_fraud_proof,
+        proof_data,
+        ..
+    } = invalid_bundles_fraud_proof;
+    <span class="kw">let </span>(bundle_index, is_true_invalid_fraud_proof) = (<span class="kw-2">*</span>bundle_index, <span class="kw-2">*</span>is_true_invalid_fraud_proof);
+
     <span class="kw">let </span>invalid_bundle_entry = check_expected_bundle_entry::&lt;CBlock, DomainHeader, Balance&gt;(
         <span class="kw-2">&amp;</span>bad_receipt,
-        invalid_bundles_fraud_proof,
+        bundle_index,
+        invalid_bundle_type.clone(),
+        is_true_invalid_fraud_proof,
     )<span class="question-mark">?</span>;
 
-    <span class="kw">match </span><span class="kw-2">&amp;</span>invalid_bundles_fraud_proof.invalid_bundle_type {
+    <span class="kw">match </span><span class="kw-2">&amp;</span>invalid_bundle_type {
         InvalidBundleType::OutOfRangeTx(extrinsic_index) =&gt; {
-            <span class="kw">let </span>extrinsic = get_extrinsic_from_proof::&lt;DomainHeader&gt;(
-                <span class="kw-2">*</span>extrinsic_index,
-                invalid_bundle_entry.extrinsics_root,
-                invalid_bundles_fraud_proof.proof_data.clone(),
-            )<span class="question-mark">?</span>;
-            <span class="kw">let </span>is_tx_in_range = get_fraud_proof_verification_info(
-                H256::from_slice(bad_receipt.consensus_block_hash.as_ref()),
-                FraudProofVerificationInfoRequest::TxRangeCheck {
-                    domain_id: invalid_bundles_fraud_proof.domain_id,
-                    bundle_index: invalid_bundles_fraud_proof.bundle_index,
-                    opaque_extrinsic: extrinsic,
+            <span class="kw">let </span>bundle = <span class="kw">match </span>proof_data {
+                InvalidBundlesProofData::Bundle(bundle_with_proof)
+                    <span class="kw">if </span>bundle_with_proof.bundle_index == bundle_index =&gt;
+                {
+                    bundle_with_proof.verify::&lt;CBlock, SKP&gt;(domain_id, <span class="kw-2">&amp;</span>state_root)<span class="question-mark">?</span>;
+                    bundle_with_proof.bundle.clone()
+                }
+                <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::UnexpectedInvalidBundleProofData),
+            };
+
+            <span class="kw">let </span>opaque_extrinsic = bundle
+                .extrinsics
+                .get(<span class="kw-2">*</span>extrinsic_index <span class="kw">as </span>usize)
+                .cloned()
+                .ok_or(VerificationError::ExtrinsicNotFound)<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>domain_tx_range = U256::MAX / INITIAL_DOMAIN_TX_RANGE;
+            <span class="kw">let </span>bundle_vrf_hash =
+                U256::from_be_bytes(bundle.sealed_header.header.proof_of_election.vrf_hash());
+
+            <span class="kw">let </span>is_tx_in_range = fraud_proof_runtime_interface::domain_runtime_call(
+                domain_runtime_code,
+                StatelessDomainRuntimeCall::IsTxInRange {
+                    opaque_extrinsic,
+                    domain_tx_range,
+                    bundle_vrf_hash,
                 },
             )
-            .and_then(FraudProofVerificationInfoResponse::into_tx_range_check)
-            .ok_or(VerificationError::FailedToGetResponseFromTxRangeHostFn)<span class="question-mark">?</span>;
+            .ok_or(VerificationError::FailedToGetDomainRuntimeCallResponse)<span class="question-mark">?</span>;
 
             <span class="comment">// If it is true invalid fraud proof then tx must not be in range and
             // if it is false invalid fraud proof then tx must be in range for fraud
             // proof to be considered valid.
-            </span><span class="kw">if </span>is_tx_in_range == invalid_bundles_fraud_proof.is_true_invalid_fraud_proof {
+            </span><span class="kw">if </span>is_tx_in_range == is_true_invalid_fraud_proof {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProof);
             }
             <span class="prelude-val">Ok</span>(())
         }
         InvalidBundleType::InherentExtrinsic(extrinsic_index) =&gt; {
-            <span class="kw">let </span>extrinsic = get_extrinsic_from_proof::&lt;DomainHeader&gt;(
-                <span class="kw-2">*</span>extrinsic_index,
-                invalid_bundle_entry.extrinsics_root,
-                invalid_bundles_fraud_proof.proof_data.clone(),
-            )<span class="question-mark">?</span>;
-            <span class="kw">let </span>is_inherent = get_fraud_proof_verification_info(
-                H256::from_slice(bad_receipt.consensus_block_hash.as_ref()),
-                FraudProofVerificationInfoRequest::InherentExtrinsicCheck {
-                    domain_id: invalid_bundles_fraud_proof.domain_id,
-                    opaque_extrinsic: extrinsic,
-                },
+            <span class="kw">let </span>opaque_extrinsic = {
+                <span class="kw">let </span>extrinsic_storage_proof = <span class="kw">match </span>proof_data {
+                    InvalidBundlesProofData::Extrinsic(p) =&gt; p.clone(),
+                    <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::UnexpectedInvalidBundleProofData),
+                };
+                get_extrinsic_from_proof::&lt;DomainHeader&gt;(
+                    <span class="kw-2">*</span>extrinsic_index,
+                    invalid_bundle_entry.extrinsics_root,
+                    extrinsic_storage_proof,
+                )<span class="question-mark">?
+            </span>};
+            <span class="kw">let </span>is_inherent = fraud_proof_runtime_interface::domain_runtime_call(
+                domain_runtime_code,
+                StatelessDomainRuntimeCall::IsInherentExtrinsic(opaque_extrinsic),
             )
-            .and_then(FraudProofVerificationInfoResponse::into_inherent_extrinsic_check)
-            .ok_or(VerificationError::FailedToCheckInherentExtrinsic)<span class="question-mark">?</span>;
+            .ok_or(VerificationError::FailedToGetDomainRuntimeCallResponse)<span class="question-mark">?</span>;
 
             <span class="comment">// Proof to be considered valid only,
             // If it is true invalid fraud proof then extrinsic must be an inherent and
             // If it is false invalid fraud proof then extrinsic must not be an inherent
-            </span><span class="kw">if </span>is_inherent == invalid_bundles_fraud_proof.is_true_invalid_fraud_proof {
+            </span><span class="kw">if </span>is_inherent == is_true_invalid_fraud_proof {
                 <span class="prelude-val">Ok</span>(())
             } <span class="kw">else </span>{
                 <span class="prelude-val">Err</span>(VerificationError::InvalidProof)
             }
         }
         InvalidBundleType::IllegalTx(extrinsic_index) =&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>bundle_body = get_fraud_proof_verification_info(
-                bad_receipt.consensus_block_hash.into(),
-                FraudProofVerificationInfoRequest::DomainBundleBody {
-                    domain_id: invalid_bundles_fraud_proof.domain_id,
-                    bundle_index: invalid_bundles_fraud_proof.bundle_index,
-                },
-            )
-            .and_then(FraudProofVerificationInfoResponse::into_bundle_body)
-            .ok_or(VerificationError::FailedToGetDomainBundleBody)<span class="question-mark">?</span>;
+            <span class="kw">let </span>(<span class="kw-2">mut </span>bundle, execution_proof) = <span class="kw">match </span>proof_data {
+                InvalidBundlesProofData::BundleAndExecution {
+                    bundle_with_proof,
+                    execution_proof,
+                } <span class="kw">if </span>bundle_with_proof.bundle_index == bundle_index =&gt; {
+                    bundle_with_proof.verify::&lt;CBlock, SKP&gt;(domain_id, <span class="kw-2">&amp;</span>state_root)<span class="question-mark">?</span>;
+                    (bundle_with_proof.bundle.clone(), execution_proof.clone())
+                }
+                <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::UnexpectedInvalidBundleProofData),
+            };
 
-            <span class="kw">let </span>extrinsics = bundle_body
+            <span class="kw">let </span>extrinsics = bundle
+                .extrinsics
                 .drain(..)
                 .take((<span class="kw-2">*</span>extrinsic_index + <span class="number">1</span>) <span class="kw">as </span>usize)
                 .collect();
 
             <span class="comment">// Make host call for check extrinsic in single context
-            </span><span class="kw">let </span>check_extrinsic_result = get_fraud_proof_verification_info(
-                bad_receipt.consensus_block_hash.into(),
-                FraudProofVerificationInfoRequest::CheckExtrinsicsInSingleContext {
-                    domain_id: invalid_bundles_fraud_proof.domain_id,
-                    domain_block_number: bad_receipt_parent.domain_block_number.saturated_into(),
-                    domain_block_hash: bad_receipt_parent.domain_block_hash.into(),
-                    domain_block_state_root: bad_receipt_parent.final_state_root.into(),
+            </span><span class="kw">let </span>check_extrinsic_result =
+                fraud_proof_runtime_interface::check_extrinsics_in_single_context(
+                    domain_runtime_code,
+                    (
+                        bad_receipt_parent.domain_block_number.saturated_into(),
+                        bad_receipt_parent.domain_block_hash.into(),
+                    ),
+                    bad_receipt_parent.final_state_root.into(),
                     extrinsics,
-                    storage_proof: invalid_bundles_fraud_proof.proof_data.clone(),
-                },
-            )
-            .and_then(FraudProofVerificationInfoResponse::into_single_context_extrinsic_check)
-            .ok_or(VerificationError::FailedToCheckExtrinsicsInSingleContext)<span class="question-mark">?</span>;
+                    execution_proof.encode(),
+                )
+                .ok_or(VerificationError::FailedToCheckExtrinsicsInSingleContext)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>is_extrinsic_invalid = check_extrinsic_result == <span class="prelude-val">Some</span>(<span class="kw-2">*</span>extrinsic_index);
 
             <span class="comment">// Proof to be considered valid only,
             // If it is true invalid fraud proof then extrinsic must be an invalid extrinsic and
             // If it is false invalid fraud proof then extrinsic must not be an invalid extrinsic
-            </span><span class="kw">if </span>is_extrinsic_invalid == invalid_bundles_fraud_proof.is_true_invalid_fraud_proof {
+            </span><span class="kw">if </span>is_extrinsic_invalid == is_true_invalid_fraud_proof {
                 <span class="prelude-val">Ok</span>(())
             } <span class="kw">else </span>{
                 <span class="prelude-val">Err</span>(VerificationError::InvalidProof)
             }
         }
         InvalidBundleType::UndecodableTx(extrinsic_index) =&gt; {
-            <span class="kw">let </span>extrinsic = get_extrinsic_from_proof::&lt;DomainHeader&gt;(
-                <span class="kw-2">*</span>extrinsic_index,
-                invalid_bundle_entry.extrinsics_root,
-                invalid_bundles_fraud_proof.proof_data.clone(),
-            )<span class="question-mark">?</span>;
-            <span class="kw">let </span>is_decodable = get_fraud_proof_verification_info(
-                H256::from_slice(bad_receipt.consensus_block_hash.as_ref()),
-                FraudProofVerificationInfoRequest::ExtrinsicDecodableCheck {
-                    domain_id: invalid_bundles_fraud_proof.domain_id,
-                    opaque_extrinsic: extrinsic,
-                },
+            <span class="kw">let </span>opaque_extrinsic = {
+                <span class="kw">let </span>extrinsic_storage_proof = <span class="kw">match </span>proof_data {
+                    InvalidBundlesProofData::Extrinsic(p) =&gt; p.clone(),
+                    <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::UnexpectedInvalidBundleProofData),
+                };
+                get_extrinsic_from_proof::&lt;DomainHeader&gt;(
+                    <span class="kw-2">*</span>extrinsic_index,
+                    invalid_bundle_entry.extrinsics_root,
+                    extrinsic_storage_proof,
+                )<span class="question-mark">?
+            </span>};
+            <span class="kw">let </span>is_decodable = fraud_proof_runtime_interface::domain_runtime_call(
+                domain_runtime_code,
+                StatelessDomainRuntimeCall::IsDecodableExtrinsic(opaque_extrinsic),
             )
-            .and_then(FraudProofVerificationInfoResponse::into_extrinsic_decodable_check)
-            .ok_or(VerificationError::FailedToCheckExtrinsicDecodable)<span class="question-mark">?</span>;
+            .ok_or(VerificationError::FailedToGetDomainRuntimeCallResponse)<span class="question-mark">?</span>;
 
-            <span class="kw">if </span>is_decodable == invalid_bundles_fraud_proof.is_true_invalid_fraud_proof {
+            <span class="kw">if </span>is_decodable == is_true_invalid_fraud_proof {
                 <span class="kw">return </span><span class="prelude-val">Err</span>(VerificationError::InvalidProof);
             }
             <span class="prelude-val">Ok</span>(())

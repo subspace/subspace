@@ -1590,25 +1590,6 @@
 <a href="#1590" id="1590">1590</a>
 <a href="#1591" id="1591">1591</a>
 <a href="#1592" id="1592">1592</a>
-<a href="#1593" id="1593">1593</a>
-<a href="#1594" id="1594">1594</a>
-<a href="#1595" id="1595">1595</a>
-<a href="#1596" id="1596">1596</a>
-<a href="#1597" id="1597">1597</a>
-<a href="#1598" id="1598">1598</a>
-<a href="#1599" id="1599">1599</a>
-<a href="#1600" id="1600">1600</a>
-<a href="#1601" id="1601">1601</a>
-<a href="#1602" id="1602">1602</a>
-<a href="#1603" id="1603">1603</a>
-<a href="#1604" id="1604">1604</a>
-<a href="#1605" id="1605">1605</a>
-<a href="#1606" id="1606">1606</a>
-<a href="#1607" id="1607">1607</a>
-<a href="#1608" id="1608">1608</a>
-<a href="#1609" id="1609">1609</a>
-<a href="#1610" id="1610">1610</a>
-<a href="#1611" id="1611">1611</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -2155,9 +2136,9 @@
 <span class="kw">pub struct </span>MmrProofVerifier;
 
 <span class="kw">impl </span>sp_subspace_mmr::MmrProofVerifier&lt;mmr::Hash, NumberFor&lt;Block&gt;, Hash&gt; <span class="kw">for </span>MmrProofVerifier {
-    <span class="kw">fn </span>verify_proof_and_extract_consensus_state_root(
+    <span class="kw">fn </span>verify_proof_and_extract_leaf(
         mmr_leaf_proof: ConsensusChainMmrLeafProof&lt;NumberFor&lt;Block&gt;, Hash, mmr::Hash&gt;,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;Hash&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;mmr::Leaf&gt; {
         <span class="kw">let </span>ConsensusChainMmrLeafProof {
             consensus_block_number,
             opaque_mmr_leaf,
@@ -2178,7 +2159,7 @@
 
         <span class="kw">let </span>leaf: mmr::Leaf = opaque_mmr_leaf.into_opaque_leaf().try_decode()<span class="question-mark">?</span>;
 
-        <span class="prelude-val">Some</span>(leaf.state_root())
+        <span class="prelude-val">Some</span>(leaf)
     }
 }
 
@@ -2354,6 +2335,9 @@
     <span class="kw">type </span>DomainBundleSubmitted = Messenger;
     <span class="kw">type </span>OnDomainInstantiated = Messenger;
     <span class="kw">type </span>Balance = Balance;
+    <span class="kw">type </span>MmrHash = mmr::Hash;
+    <span class="kw">type </span>MmrProofVerifier = MmrProofVerifier;
+    <span class="kw">type </span>FraudProofStorageKeyProvider = StorageKeyProvider;
 }
 
 <span class="macro">parameter_types!</span> {
@@ -2674,25 +2658,6 @@
         }
         <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
     }
-}
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>extract_fraud_proofs(
-    domain_id: DomainId,
-    extrinsics: Vec&lt;UncheckedExtrinsic&gt;,
-) -&gt; Vec&lt;FraudProof&lt;DomainHeader&gt;&gt; {
-    <span class="kw">let </span>successful_fraud_proofs = Domains::successful_fraud_proofs(domain_id);
-    extrinsics
-        .into_iter()
-        .filter_map(|uxt| <span class="kw">match </span>uxt.function {
-            RuntimeCall::Domains(pallet_domains::Call::submit_fraud_proof { fraud_proof })
-                <span class="kw">if </span>fraud_proof.domain_id() == domain_id
-                    &amp;&amp; successful_fraud_proofs.contains(<span class="kw-2">&amp;</span>fraud_proof.hash()) =&gt;
-            {
-                <span class="prelude-val">Some</span>(<span class="kw-2">*</span>fraud_proof)
-            }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-        })
-        .collect()
 }
 
 <span class="kw">struct </span>RewardAddress([u8; <span class="number">32</span>]);
@@ -3036,6 +3001,10 @@
         <span class="kw">fn </span>storage_fund_account_balance(operator_id: OperatorId) -&gt; Balance {
             Domains::storage_fund_account_balance(operator_id)
         }
+
+        <span class="kw">fn </span>is_domain_runtime_updraded_since(domain_id: DomainId, at: NumberFor&lt;Block&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;bool&gt; {
+            Domains::is_domain_runtime_updraded_since(domain_id, at)
+        }
     }
 
     <span class="kw">impl </span>sp_domains::BundleProducerElectionApi&lt;Block, Balance&gt; <span class="kw">for </span>Runtime {
@@ -3134,15 +3103,8 @@
     }
 
     <span class="kw">impl </span>sp_domains_fraud_proof::FraudProofApi&lt;Block, DomainHeader&gt; <span class="kw">for </span>Runtime {
-        <span class="kw">fn </span>submit_fraud_proof_unsigned(fraud_proof: FraudProof&lt;DomainHeader&gt;) {
+        <span class="kw">fn </span>submit_fraud_proof_unsigned(fraud_proof: FraudProof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, DomainHeader, H256&gt;) {
             Domains::submit_fraud_proof_unsigned(fraud_proof)
-        }
-
-        <span class="kw">fn </span>extract_fraud_proofs(
-            domain_id: DomainId,
-            extrinsics: Vec&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;,
-        ) -&gt; Vec&lt;FraudProof&lt;DomainHeader&gt;&gt; {
-            extract_fraud_proofs(domain_id, extrinsics)
         }
 
         <span class="kw">fn </span>fraud_proof_storage_key(req: FraudProofStorageKeyRequest) -&gt; Vec&lt;u8&gt; {
@@ -3205,8 +3167,8 @@
             Messenger::get_open_channel_for_chain(dst_chain_id).map(|(c, <span class="kw">_</span>)| c)
         }
 
-        <span class="kw">fn </span>verify_proof_and_extract_consensus_state_root(mmr_leaf_proof: ConsensusChainMmrLeafProof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, H256&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;H256&gt; {
-            &lt;MmrProofVerifier <span class="kw">as </span>sp_subspace_mmr::MmrProofVerifier&lt;<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>,&gt;&gt;::verify_proof_and_extract_consensus_state_root(mmr_leaf_proof)
+        <span class="kw">fn </span>verify_proof_and_extract_leaf(mmr_leaf_proof: ConsensusChainMmrLeafProof&lt;NumberFor&lt;Block&gt;, &lt;Block <span class="kw">as </span>BlockT&gt;::Hash, H256&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;mmr::Leaf&gt; {
+            &lt;MmrProofVerifier <span class="kw">as </span>sp_subspace_mmr::MmrProofVerifier&lt;<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>,&gt;&gt;::verify_proof_and_extract_leaf(mmr_leaf_proof)
         }
     }
 

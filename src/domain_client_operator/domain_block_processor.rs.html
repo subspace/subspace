@@ -1254,23 +1254,6 @@
 <a href="#1254" id="1254">1254</a>
 <a href="#1255" id="1255">1255</a>
 <a href="#1256" id="1256">1256</a>
-<a href="#1257" id="1257">1257</a>
-<a href="#1258" id="1258">1258</a>
-<a href="#1259" id="1259">1259</a>
-<a href="#1260" id="1260">1260</a>
-<a href="#1261" id="1261">1261</a>
-<a href="#1262" id="1262">1262</a>
-<a href="#1263" id="1263">1263</a>
-<a href="#1264" id="1264">1264</a>
-<a href="#1265" id="1265">1265</a>
-<a href="#1266" id="1266">1266</a>
-<a href="#1267" id="1267">1267</a>
-<a href="#1268" id="1268">1268</a>
-<a href="#1269" id="1269">1269</a>
-<a href="#1270" id="1270">1270</a>
-<a href="#1271" id="1271">1271</a>
-<a href="#1272" id="1272">1272</a>
-<a href="#1273" id="1273">1273</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::aux_schema::BundleMismatchType;
 <span class="kw">use </span><span class="kw">crate</span>::fraud_proof::FraudProofGenerator;
 <span class="kw">use </span><span class="kw">crate</span>::utils::{DomainBlockImportNotification, DomainImportNotificationSinks};
@@ -1285,7 +1268,7 @@
     StorageChanges,
 };
 <span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
-<span class="kw">use </span>sp_api::{ApiExt, ProvideRuntimeApi};
+<span class="kw">use </span>sp_api::{ApiError, ApiExt, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::{HashAndNumber, HeaderBackend, HeaderMetadata};
 <span class="kw">use </span>sp_consensus::{BlockOrigin, SyncOracle};
 <span class="kw">use </span>sp_core::traits::CodeExecutor;
@@ -1293,13 +1276,12 @@
 <span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
 <span class="kw">use </span>sp_domains::merkle_tree::MerkleTree;
 <span class="kw">use </span>sp_domains::{BundleValidity, DomainId, DomainsApi, ExecutionReceipt, HeaderHashingFor};
-<span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::{FraudProof, ValidBundleProof};
+<span class="kw">use </span>sp_domains_fraud_proof::fraud_proof::FraudProof;
 <span class="kw">use </span>sp_domains_fraud_proof::FraudProofApi;
 <span class="kw">use </span>sp_messenger::MessengerApi;
 <span class="kw">use </span>sp_mmr_primitives::MmrApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Header <span class="kw">as </span>HeaderT, NumberFor, One, Zero};
 <span class="kw">use </span>sp_runtime::{Digest, Saturating};
-<span class="kw">use </span>sp_subspace_mmr::ConsensusChainMmrLeafProof;
 <span class="kw">use </span>std::cmp::Ordering;
 <span class="kw">use </span>std::collections::VecDeque;
 <span class="kw">use </span>std::str::FromStr;
@@ -1959,7 +1941,8 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ReceiptsChecker&lt;Block, Client, CBlock, CClient, Backend, E&gt;
 <span class="kw">where
-    </span>CBlock: BlockT,
+    </span>Block: BlockT,
+    CBlock: BlockT,
 {
     <span class="kw">pub</span>(<span class="kw">crate</span>) domain_id: DomainId,
     <span class="kw">pub</span>(<span class="kw">crate</span>) client: Arc&lt;Client&gt;,
@@ -2017,7 +2000,9 @@
         + ProofProvider&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + <span class="lifetime">'static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt; + FraudProofApi&lt;CBlock, Block::Header&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;
+        + FraudProofApi&lt;CBlock, Block::Header&gt;
+        + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
     Backend: sc_client_api::Backend&lt;Block&gt; + <span class="lifetime">'static</span>,
     E: CodeExecutor,
 {
@@ -2033,16 +2018,39 @@
         }
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(mismatched_receipts) = <span class="self">self</span>.find_mismatch_receipt(consensus_block_hash)<span class="question-mark">? </span>{
-            <span class="kw">let </span>fraud_proof = <span class="self">self</span>.generate_fraud_proof(mismatched_receipts)<span class="question-mark">?</span>;
-
-            <span class="macro">tracing::info!</span>(<span class="string">"Submit fraud proof: {fraud_proof:?}"</span>);
             <span class="kw">let </span>consensus_best_hash = <span class="self">self</span>.consensus_client.info().best_hash;
-            <span class="kw">let </span><span class="kw-2">mut </span>runtime_api = <span class="self">self</span>.consensus_client.runtime_api();
-            runtime_api.register_extension(
-                <span class="self">self</span>.consensus_offchain_tx_pool_factory
-                    .offchain_transaction_pool(consensus_best_hash),
-            );
-            runtime_api.submit_fraud_proof_unsigned(consensus_best_hash, fraud_proof)<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>consensus_runtime_api = <span class="self">self</span>.consensus_client.runtime_api();
+            <span class="kw">let </span>fraud_proof_api_version = consensus_runtime_api
+                .api_version::&lt;<span class="kw">dyn </span>FraudProofApi&lt;CBlock, Block::Header&gt;&gt;(consensus_best_hash)
+                .map_err(sp_blockchain::Error::RuntimeApiError)<span class="question-mark">?
+                </span>.ok_or_else(|| {
+                    sp_blockchain::Error::RuntimeApiError(ApiError::Application(
+                        <span class="macro">format!</span>(<span class="string">"FraudProofApi not found at: {:?}"</span>, consensus_best_hash).into(),
+                    ))
+                })<span class="question-mark">?</span>;
+            <span class="kw">let </span>domains_api_version = consensus_runtime_api
+                .api_version::&lt;<span class="kw">dyn </span>DomainsApi&lt;CBlock, Block::Header&gt;&gt;(consensus_best_hash)
+                .map_err(sp_blockchain::Error::RuntimeApiError)<span class="question-mark">?
+                </span>.ok_or_else(|| {
+                    sp_blockchain::Error::RuntimeApiError(ApiError::Application(
+                        <span class="macro">format!</span>(<span class="string">"DomainsApi not found at: {:?}"</span>, consensus_best_hash).into(),
+                    ))
+                })<span class="question-mark">?</span>;
+
+            <span class="comment">// New `DomainsApi` introduced in version 4 is required for generating fraud proof and
+            // new `FraudProofApi` in version 2 is required for submitting fraud proof
+            // TODO: remove before next network
+            </span><span class="kw">if </span>domains_api_version &gt;= <span class="number">4 </span>&amp;&amp; fraud_proof_api_version &gt;= <span class="number">2 </span>{
+                <span class="kw">let </span>fraud_proof_v2 = <span class="self">self</span>.generate_fraud_proof(mismatched_receipts)<span class="question-mark">?</span>;
+
+                <span class="macro">tracing::info!</span>(<span class="string">"Submit fraud proof: {fraud_proof_v2:?}"</span>);
+                consensus_runtime_api.register_extension(
+                    <span class="self">self</span>.consensus_offchain_tx_pool_factory
+                        .offchain_transaction_pool(consensus_best_hash),
+                );
+                consensus_runtime_api
+                    .submit_fraud_proof_unsigned(consensus_best_hash, fraud_proof_v2)<span class="question-mark">?</span>;
+            }
         }
 
         <span class="prelude-val">Ok</span>(())
@@ -2123,10 +2131,12 @@
         }
     }
 
-    <span class="kw">pub fn </span>generate_fraud_proof(
+    <span class="attr">#[allow(clippy::type_complexity)]
+    </span><span class="kw">pub fn </span>generate_fraud_proof(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         mismatched_receipts: MismatchedReceipts&lt;Block, CBlock&gt;,
-    ) -&gt; sp_blockchain::Result&lt;FraudProof&lt;Block::Header&gt;&gt; {
+    ) -&gt; sp_blockchain::Result&lt;FraudProof&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, Block::Header, H256&gt;&gt;
+    {
         <span class="kw">let </span>MismatchedReceipts {
             local_receipt,
             bad_receipt,
@@ -2142,14 +2152,22 @@
         }) = find_inboxed_bundles_mismatch::&lt;Block, CBlock&gt;(<span class="kw-2">&amp;</span>local_receipt, <span class="kw-2">&amp;</span>bad_receipt)<span class="question-mark">?
         </span>{
             <span class="kw">return match </span>mismatch_type {
-                BundleMismatchType::Valid =&gt; <span class="prelude-val">Ok</span>(FraudProof::ValidBundle(ValidBundleProof {
-                    domain_id: <span class="self">self</span>.domain_id,
-                    bad_receipt_hash,
-                    bundle_index,
-                })),
+                BundleMismatchType::Valid =&gt; <span class="self">self
+                    </span>.fraud_proof_generator
+                    .generate_valid_bundle_proof(
+                        <span class="self">self</span>.domain_id,
+                        <span class="kw-2">&amp;</span>local_receipt,
+                        bundle_index <span class="kw">as </span>usize,
+                        bad_receipt_hash,
+                    )
+                    .map_err(|err| {
+                        sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
+                            <span class="string">"Failed to generate valid bundles fraud proof: {err}"
+                        </span>)))
+                    }),
                 <span class="kw">_ </span>=&gt; <span class="self">self
                     </span>.fraud_proof_generator
-                    .generate_invalid_bundle_field_proof(
+                    .generate_invalid_bundle_proof(
                         <span class="self">self</span>.domain_id,
                         <span class="kw-2">&amp;</span>local_receipt,
                         mismatch_type,
@@ -2158,7 +2176,7 @@
                     )
                     .map_err(|err| {
                         sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
-                            <span class="string">"Failed to generate invalid bundles field fraud proof: {err}"
+                            <span class="string">"Failed to generate invalid bundles fraud proof: {err}"
                         </span>)))
                     }),
             };
@@ -2250,58 +2268,6 @@
             local_receipt {local_receipt:?}, bad_receipt {bad_receipt:?}"
         </span>))))
     }
-}
-
-<span class="doccomment">/// Generate MMR proof for the block `to_prove` in the current best fork. The returned proof
-/// can be later used to verify stateless (without query offchain MMR leaf) and extract the state
-/// root at `to_prove`.
-</span><span class="comment">// TODO: remove `dead_code` after it is used in fraud proof generation
-</span><span class="attr">#[allow(dead_code)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>generate_mmr_proof&lt;CClient, CBlock&gt;(
-    consensus_client: <span class="kw-2">&amp;</span>Arc&lt;CClient&gt;,
-    to_prove: NumberFor&lt;CBlock&gt;,
-) -&gt; sp_blockchain::Result&lt;ConsensusChainMmrLeafProof&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, H256&gt;&gt;
-<span class="kw">where
-    </span>CBlock: BlockT,
-    CClient: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + <span class="lifetime">'static</span>,
-    CClient::Api: MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
-{
-    <span class="kw">let </span>api = consensus_client.runtime_api();
-    <span class="kw">let </span>prove_at_hash = consensus_client.info().best_hash;
-    <span class="kw">let </span>prove_at_number = consensus_client.info().best_number;
-
-    <span class="kw">if </span>to_prove &gt;= prove_at_number {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
-            <span class="string">"Can't generate MMR proof for block {to_prove:?} &gt;= best block {prove_at_number:?}"
-        </span>))));
-    }
-
-    <span class="kw">let </span>(<span class="kw-2">mut </span>leaves, proof) = api
-        <span class="comment">// NOTE: the mmr leaf data is added in the next block so to generate the MMR proof of
-        // block `to_prove` we need to use `to_prove + 1` here.
-        </span>.generate_proof(
-            prove_at_hash,
-            <span class="macro">vec!</span>[to_prove + One::one()],
-            <span class="prelude-val">Some</span>(prove_at_number),
-        )<span class="question-mark">?
-        </span>.map_err(|err| {
-            sp_blockchain::Error::Application(Box::from(<span class="macro">format!</span>(
-                <span class="string">"Failed to generate MMR proof: {err}"
-            </span>)))
-        })<span class="question-mark">?</span>;
-    <span class="macro">debug_assert!</span>(leaves.len() == <span class="number">1</span>, <span class="string">"should always be of length 1"</span>);
-    <span class="kw">let </span>leaf = leaves
-        .pop()
-        .ok_or(sp_blockchain::Error::Application(Box::from(
-            <span class="string">"Unexpected missing mmr leaf"</span>.to_string(),
-        )))<span class="question-mark">?</span>;
-
-    <span class="prelude-val">Ok</span>(ConsensusChainMmrLeafProof {
-        consensus_block_number: prove_at_number,
-        consensus_block_hash: prove_at_hash,
-        opaque_mmr_leaf: leaf,
-        proof,
-    })
 }
 
 <span class="attr">#[cfg(test)]
