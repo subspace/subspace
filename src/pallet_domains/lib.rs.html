@@ -2513,8 +2513,6 @@
 <a href="#2513" id="2513">2513</a>
 <a href="#2514" id="2514">2514</a>
 <a href="#2515" id="2515">2515</a>
-<a href="#2516" id="2516">2516</a>
-<a href="#2517" id="2517">2517</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2602,6 +2600,9 @@
 <span class="kw">use </span>sp_subspace_mmr::{ConsensusChainMmrLeafProof, MmrProofVerifier};
 <span class="kw">pub use </span>staking::OperatorConfig;
 <span class="kw">use </span>subspace_core_primitives::{BlockHash, PotOutput, SlotNumber, U256};
+
+<span class="doccomment">/// Maximum number of nominators to slash within a give operator at a time.
+</span><span class="kw">pub const </span>MAX_NOMINATORS_TO_SLASH: u32 = <span class="number">10</span>;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>BalanceOf&lt;T&gt; = &lt;T <span class="kw">as </span>Config&gt;::Balance;
 
@@ -2697,18 +2698,22 @@
         register_runtime_at_genesis, Error <span class="kw">as </span>RuntimeRegistryError, ScheduledRuntimeUpgrade,
     };
     <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
-    </span><span class="kw">use </span><span class="kw">crate</span>::staking::do_reward_operators;
+    </span><span class="kw">use </span><span class="kw">crate</span>::staking::do_mark_operators_as_slashed;
     <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
-    </span><span class="kw">use </span><span class="kw">crate</span>::staking::do_slash_operators;
+    </span><span class="kw">use </span><span class="kw">crate</span>::staking::do_reward_operators;
     <span class="kw">use </span><span class="kw">crate</span>::staking::{
         do_deregister_operator, do_nominate_operator, do_register_operator, do_unlock_funds,
-        do_unlock_operator, do_withdraw_stake, Deposit, DomainEpoch, Error <span class="kw">as </span>StakingError,
+        do_unlock_nominator, do_withdraw_stake, Deposit, DomainEpoch, Error <span class="kw">as </span>StakingError,
         Operator, OperatorConfig, SharePrice, StakingSummary, Withdrawal,
     };
+    <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
+    </span><span class="kw">use </span><span class="kw">crate</span>::staking_epoch::do_slash_operator;
     <span class="kw">use </span><span class="kw">crate</span>::staking_epoch::{do_finalize_domain_current_epoch, Error <span class="kw">as </span>StakingEpochError};
     <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
     <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
     </span><span class="kw">use </span><span class="kw">crate</span>::DomainHashingFor;
+    <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
+    </span><span class="kw">use </span><span class="kw">crate</span>::MAX_NOMINATORS_TO_SLASH;
     <span class="kw">use crate</span>::{
         BalanceOf, BlockSlot, BlockTreeNodeFor, DomainBlockNumberFor, ElectionVerificationParams,
         FraudProofFor, HoldIdentifier, NominatorId, OpaqueBundleOf, ReceiptHashFor, StateRootOf,
@@ -2884,10 +2889,6 @@
         </span><span class="attr">#[pallet::constant]
         </span><span class="kw">type </span>MaxPendingStakingOperation: Get&lt;u32&gt;;
 
-        <span class="doccomment">/// The maximum number of nominators for given operator.
-        </span><span class="attr">#[pallet::constant]
-        </span><span class="kw">type </span>MaxNominators: Get&lt;u32&gt;;
-
         <span class="doccomment">/// Randomness source.
         </span><span class="kw">type </span>Randomness: RandomnessT&lt;<span class="self">Self</span>::Hash, BlockNumberFor&lt;<span class="self">Self</span>&gt;&gt;;
 
@@ -3004,12 +3005,6 @@
         Operator&lt;BalanceOf&lt;T&gt;, T::Share, DomainBlockNumberFor&lt;T&gt;&gt;,
         OptionQuery,
     &gt;;
-
-    <span class="doccomment">/// Temporary hold of all the operators who decided to switch to another domain.
-    /// Once epoch is complete, these operators are added to new domains under next_operators.
-    </span><span class="attr">#[pallet::storage]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>PendingOperatorSwitches&lt;T: Config&gt; =
-        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, BTreeSet&lt;OperatorId&gt;, OptionQuery&gt;;
 
     <span class="doccomment">/// Share price for the operator pool at the end of Domain epoch.
     </span><span class="comment">// TODO: currently unbounded storage.
@@ -3526,7 +3521,7 @@
                             <span class="kw">let </span>bad_receipt_hash = block_tree_node
                                 .execution_receipt
                                 .hash::&lt;DomainHashingFor&lt;T&gt;&gt;();
-                            do_slash_operators::&lt;T&gt;(
+                            do_mark_operators_as_slashed::&lt;T&gt;(
                                 block_tree_node.operator_ids.into_iter(),
                                 SlashedReason::BadExecutionReceipt(bad_receipt_hash),
                             )
@@ -3569,7 +3564,7 @@
                         )
                         .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
-                        do_slash_operators::&lt;T&gt;(
+                        do_mark_operators_as_slashed::&lt;T&gt;(
                             confirmed_block_info.invalid_bundle_authors.into_iter(),
                             SlashedReason::InvalidBundle(confirmed_block_info.domain_block_number),
                         )
@@ -3620,6 +3615,16 @@
             InboxedBundleAuthor::&lt;T&gt;::insert(bundle_header_hash, operator_id);
 
             SuccessfulBundles::&lt;T&gt;::append(domain_id, bundle_hash);
+
+            <span class="comment">// slash operator who are in pending slash
+            </span><span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
+            </span>{
+                <span class="kw">let </span>slashed_nominator_count =
+                    do_slash_operator::&lt;T&gt;(domain_id, MAX_NOMINATORS_TO_SLASH)
+                        .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+                actual_weight = actual_weight
+                    .saturating_add(<span class="self">Self</span>::actual_slash_operator_weight(slashed_nominator_count));
+            }
 
             <span class="self">Self</span>::deposit_event(Event::BundleStored {
                 domain_id,
@@ -3683,7 +3688,7 @@
                     (block_tree_node.operator_ids.len() <span class="kw">as </span>u32).min(MAX_BUNLDE_PER_BLOCK),
                 ));
 
-                do_slash_operators::&lt;T&gt;(
+                do_mark_operators_as_slashed::&lt;T&gt;(
                     block_tree_node.operator_ids.into_iter(),
                     SlashedReason::BadExecutionReceipt(bad_receipt_hash),
                 )
@@ -3883,25 +3888,19 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="doccomment">/// Unlocks the operator given the unlocking period is complete.
-        /// Anyone can initiate the operator unlock.
+        <span class="doccomment">/// Unlocks the nominator under given operator given the unlocking period is complete.
+        /// A nominator can initiate their unlock given operator is already deregistered.
         </span><span class="attr">#[pallet::call_index(<span class="number">11</span>)]
-        #[pallet::weight(T::WeightInfo::unlock_operator(T::MaxNominators::get()))]
-        </span><span class="kw">pub fn </span>unlock_operator(
-            origin: OriginFor&lt;T&gt;,
-            operator_id: OperatorId,
-        ) -&gt; DispatchResultWithPostInfo {
-            ensure_signed(origin)<span class="question-mark">?</span>;
+        #[pallet::weight(T::WeightInfo::unlock_nominator())]
+        </span><span class="kw">pub fn </span>unlock_nominator(origin: OriginFor&lt;T&gt;, operator_id: OperatorId) -&gt; DispatchResult {
+            <span class="kw">let </span>nominator = ensure_signed(origin)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>nominator_count =
-                do_unlock_operator::&lt;T&gt;(operator_id).map_err(<span class="kw">crate</span>::pallet::Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+            do_unlock_nominator::&lt;T&gt;(operator_id, nominator)
+                .map_err(<span class="kw">crate</span>::pallet::Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
             <span class="self">Self</span>::deposit_event(Event::OperatorUnlocked { operator_id });
 
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(T::WeightInfo::unlock_operator(
-                (nominator_count <span class="kw">as </span>u32).min(T::MaxNominators::get()),
-            ))
-            .into())
+            <span class="prelude-val">Ok</span>(())
         }
 
         <span class="doccomment">/// Extrinsic to update domain's operator allow list.
@@ -4838,42 +4837,39 @@
             .saturating_add(
                 <span class="comment">// NOTE: within `submit_bundle`, only one of (or none) `handle_bad_receipt` and
                 // `confirm_domain_block` can happen, thus we use the `max` of them
-                </span>T::WeightInfo::handle_bad_receipt(T::MaxNominators::get()).max(
+
+                // We use `MAX_BUNLDE_PER_BLOCK` number to assume the number of slashed operators.
+                // We do not expect so many operators to be slashed but nontheless, if it did happen
+                // we will limit the weight to 100 operators.
+                </span>T::WeightInfo::handle_bad_receipt(MAX_BUNLDE_PER_BLOCK).max(
                     T::WeightInfo::confirm_domain_block(MAX_BUNLDE_PER_BLOCK, MAX_BUNLDE_PER_BLOCK),
                 ),
             )
             .saturating_add(<span class="self">Self</span>::max_staking_epoch_transition())
+            .saturating_add(T::WeightInfo::slash_operator(MAX_NOMINATORS_TO_SLASH))
     }
 
     <span class="kw">pub fn </span>max_staking_epoch_transition() -&gt; Weight {
-        T::WeightInfo::operator_reward_tax_and_restake(MAX_BUNLDE_PER_BLOCK)
-            .saturating_add(T::WeightInfo::finalize_slashed_operators(
-                <span class="comment">// FIXME: the actual value should be `N * T::MaxNominators` where `N` is the number of
-                // submitter of the bad ER, which is probabilistically bounded by `bundle_slot_probability`
-                // we use `N = 1` here because `finalize_slashed_operators` is expensive and can consume
-                // more weight than the max block weight
-                </span>T::MaxNominators::get(),
-            ))
-            .saturating_add(T::WeightInfo::finalize_domain_epoch_staking(
-                T::MaxPendingStakingOperation::get(),
-            ))
+        T::WeightInfo::operator_reward_tax_and_restake(MAX_BUNLDE_PER_BLOCK).saturating_add(
+            T::WeightInfo::finalize_domain_epoch_staking(T::MaxPendingStakingOperation::get()),
+        )
     }
 
     <span class="kw">fn </span>actual_epoch_transition_weight(epoch_transition_res: EpochTransitionResult) -&gt; Weight {
         <span class="kw">let </span>EpochTransitionResult {
             rewarded_operator_count,
-            slashed_nominator_count,
             finalized_operator_count,
-            ..
+            completed_epoch_index: <span class="kw">_</span>,
         } = epoch_transition_res;
 
-        T::WeightInfo::operator_reward_tax_and_restake(rewarded_operator_count)
-            .saturating_add(T::WeightInfo::finalize_slashed_operators(
-                slashed_nominator_count,
-            ))
-            .saturating_add(T::WeightInfo::finalize_domain_epoch_staking(
-                finalized_operator_count,
-            ))
+        T::WeightInfo::operator_reward_tax_and_restake(rewarded_operator_count).saturating_add(
+            T::WeightInfo::finalize_domain_epoch_staking(finalized_operator_count),
+        )
+    }
+
+    <span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
+    </span><span class="kw">fn </span>actual_slash_operator_weight(slashed_nominators: u32) -&gt; Weight {
+        T::WeightInfo::slash_operator(slashed_nominators)
     }
 
     <span class="kw">pub fn </span>storage_fund_account_balance(operator_id: OperatorId) -&gt; BalanceOf&lt;T&gt; {
