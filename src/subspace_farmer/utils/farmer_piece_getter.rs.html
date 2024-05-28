@@ -406,10 +406,41 @@
 <a href="#406" id="406">406</a>
 <a href="#407" id="407">407</a>
 <a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farmer_cache::FarmerCache;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::utils::plotted_pieces::PlottedPieces;
-<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
+<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, MutexGuardArc <span class="kw">as </span>AsyncMutexGuardArc, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>backoff::backoff::Backoff;
 <span class="kw">use </span>backoff::future::retry;
@@ -429,6 +460,71 @@
 <span class="kw">use </span>tracing::{debug, error, trace};
 
 <span class="kw">const </span>MAX_RANDOM_WALK_ROUNDS: usize = <span class="number">15</span>;
+
+<span class="kw">struct </span>InProgressPieceGetting&lt;<span class="lifetime">'a</span>&gt; {
+    piece_index: PieceIndex,
+    in_progress_piece: AsyncMutexGuardArc&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;,
+    in_progress_pieces: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Mutex&lt;HashMap&lt;PieceIndex, Arc&lt;AsyncMutex&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;&gt;&gt;&gt;,
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; Drop <span class="kw">for </span>InProgressPieceGetting&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.in_progress_pieces.lock().remove(<span class="kw-2">&amp;</span><span class="self">self</span>.piece_index);
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; InProgressPieceGetting&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="kw">fn </span>store_piece_getting_result(<span class="kw-2">mut </span><span class="self">self</span>, maybe_piece: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;Piece&gt;) {
+        <span class="self">self</span>.in_progress_piece.clone_from(maybe_piece);
+    }
+}
+
+<span class="kw">enum </span>InProgressPiece&lt;<span class="lifetime">'a</span>&gt; {
+    Getting(InProgressPieceGetting&lt;<span class="lifetime">'a</span>&gt;),
+    <span class="comment">// If piece is already in progress, just wait for it
+    </span>Waiting {
+        in_progress_piece_mutex: Arc&lt;AsyncMutex&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;&gt;,
+    },
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; InProgressPiece&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="kw">fn </span>new(
+        piece_index: PieceIndex,
+        in_progress_pieces: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Mutex&lt;HashMap&lt;PieceIndex, Arc&lt;AsyncMutex&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;&gt;&gt;&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>in_progress_piece_mutex = Arc::new(AsyncMutex::new(<span class="prelude-val">None</span>));
+        <span class="comment">// Take lock before anything else, set to `None` when another piece getting is already in
+        // progress
+        </span><span class="kw">let </span><span class="kw-2">mut </span>local_in_progress_piece_guard = <span class="prelude-val">Some</span>(
+            in_progress_piece_mutex
+                .try_lock_arc()
+                .expect(<span class="string">"Just created; qed"</span>),
+        );
+        <span class="kw">let </span>in_progress_piece_mutex = in_progress_pieces
+            .lock()
+            .entry(piece_index)
+            .and_modify(|_mutex| {
+                local_in_progress_piece_guard.take();
+            })
+            .or_insert_with(|| Arc::clone(<span class="kw-2">&amp;</span>in_progress_piece_mutex))
+            .clone();
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(in_progress_piece) = local_in_progress_piece_guard {
+            <span class="comment">// Store guard and details necessary to remove entry from `in_progress_pieces` after
+            // piece getting is complete (in `Drop` impl)
+            </span><span class="self">Self</span>::Getting(InProgressPieceGetting {
+                piece_index,
+                in_progress_piece,
+                in_progress_pieces,
+            })
+        } <span class="kw">else </span>{
+            <span class="comment">// Piece getting is already in progress, only mutex is needed to wait for its result
+            </span><span class="self">Self</span>::Waiting {
+                in_progress_piece_mutex,
+            }
+        }
+    }
+}
 
 <span class="doccomment">/// Retry policy for getting pieces from DSN cache
 </span><span class="kw">pub struct </span>DsnCacheRetryPolicy {
@@ -495,37 +591,23 @@
 
     <span class="doccomment">/// Fast way to get piece using various caches
     </span><span class="kw">pub async fn </span>get_piece_fast(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">let </span>in_progress_piece_mutex = Arc::new(AsyncMutex::new(<span class="prelude-val">None</span>));
-        <span class="comment">// Take lock before anything else, set to `None` when another piece getting is already in
-        // progress
-        </span><span class="kw">let </span><span class="kw-2">mut </span>local_in_progress_piece_guard = <span class="prelude-val">Some</span>(in_progress_piece_mutex.lock().<span class="kw">await</span>);
-        <span class="kw">let </span>in_progress_piece_mutex = <span class="self">self
-            </span>.inner
-            .in_progress_pieces
-            .lock()
-            .entry(piece_index)
-            .and_modify(|_mutex| {
-                local_in_progress_piece_guard.take();
-            })
-            .or_insert_with(|| Arc::clone(<span class="kw-2">&amp;</span>in_progress_piece_mutex))
-            .clone();
-
-        <span class="comment">// If piece is already in progress, just wait for it
-        </span><span class="kw">if </span>local_in_progress_piece_guard.is_none() {
-            <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece is already in progress, waiting for result #1"</span>);
-            <span class="comment">// Doesn't matter if it was successful or not here
-            </span><span class="kw">return </span>in_progress_piece_mutex.lock().<span class="kw">await</span>.clone();
+        <span class="kw">match </span>InProgressPiece::new(piece_index, <span class="kw-2">&amp;</span><span class="self">self</span>.inner.in_progress_pieces) {
+            InProgressPiece::Getting(in_progress_piece_getting) =&gt; {
+                <span class="comment">// Try to get the piece without releasing lock to make sure successfully
+                // downloaded piece gets stored
+                </span><span class="kw">let </span>maybe_piece = <span class="self">self</span>.get_piece_fast_internal(piece_index).<span class="kw">await</span>;
+                <span class="comment">// Store the result for others to observe
+                </span>in_progress_piece_getting.store_piece_getting_result(<span class="kw-2">&amp;</span>maybe_piece);
+                maybe_piece
+            }
+            InProgressPiece::Waiting {
+                in_progress_piece_mutex,
+            } =&gt; {
+                <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece is already in progress, waiting for result #1"</span>);
+                <span class="comment">// Doesn't matter if it was successful or not here
+                </span>in_progress_piece_mutex.lock().<span class="kw">await</span>.clone()
+            }
         }
-
-        <span class="comment">// Otherwise try to get the piece without releasing lock to make sure successfully
-        // downloaded piece gets stored
-        </span><span class="kw">let </span>maybe_piece = <span class="self">self</span>.get_piece_fast_internal(piece_index).<span class="kw">await</span>;
-        <span class="comment">// Store the result for others to observe
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>in_progress_piece) = local_in_progress_piece_guard {
-            in_progress_piece.clone_from(<span class="kw-2">&amp;</span>maybe_piece);
-            <span class="self">self</span>.inner.in_progress_pieces.lock().remove(<span class="kw-2">&amp;</span>piece_index);
-        }
-        maybe_piece
     }
 
     <span class="kw">async fn </span>get_piece_fast_internal(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
@@ -578,42 +660,31 @@
 
     <span class="doccomment">/// Slow way to get piece using archival storage
     </span><span class="kw">pub async fn </span>get_piece_slow(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
-        <span class="kw">let </span>in_progress_piece_mutex = Arc::new(AsyncMutex::new(<span class="prelude-val">None</span>));
-        <span class="comment">// Take lock before anything else, set to `None` when another piece getting is already in
-        // progress
-        </span><span class="kw">let </span><span class="kw-2">mut </span>local_in_progress_piece_guard = <span class="prelude-val">Some</span>(in_progress_piece_mutex.lock().<span class="kw">await</span>);
-        <span class="kw">let </span>in_progress_piece_mutex = <span class="self">self
-            </span>.inner
-            .in_progress_pieces
-            .lock()
-            .entry(piece_index)
-            .and_modify(|_mutex| {
-                local_in_progress_piece_guard.take();
-            })
-            .or_insert_with(|| Arc::clone(<span class="kw-2">&amp;</span>in_progress_piece_mutex))
-            .clone();
-
-        <span class="comment">// If piece is already in progress, wait for it to see if it was successful
-        </span><span class="kw">if </span>local_in_progress_piece_guard.is_none() {
-            <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece is already in progress, waiting for result #2"</span>);
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = in_progress_piece_mutex.lock().<span class="kw">await</span>.clone() {
-                <span class="macro">trace!</span>(
-                    %piece_index,
-                    <span class="string">"Piece was already in progress and downloaded successfully #1"
-                </span>);
-                <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+        <span class="kw">match </span>InProgressPiece::new(piece_index, <span class="kw-2">&amp;</span><span class="self">self</span>.inner.in_progress_pieces) {
+            InProgressPiece::Getting(in_progress_piece_getting) =&gt; {
+                <span class="comment">// Try to get the piece without releasing lock to make sure successfully
+                // downloaded piece gets stored
+                </span><span class="kw">let </span>maybe_piece = <span class="self">self</span>.get_piece_slow_internal(piece_index).<span class="kw">await</span>;
+                <span class="comment">// Store the result for others to observe
+                </span>in_progress_piece_getting.store_piece_getting_result(<span class="kw-2">&amp;</span>maybe_piece);
+                maybe_piece
             }
-        }
+            InProgressPiece::Waiting {
+                in_progress_piece_mutex,
+            } =&gt; {
+                <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece is already in progress, waiting for result #2"</span>);
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = in_progress_piece_mutex.lock().<span class="kw">await</span>.clone() {
+                    <span class="macro">trace!</span>(
+                        %piece_index,
+                        <span class="string">"Piece was already in progress and downloaded successfully #1"
+                    </span>);
+                    <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+                }
 
-        <span class="comment">// Otherwise try to get the piece without releasing lock to make sure successfully
-        // downloaded piece gets stored
-        </span><span class="kw">let </span>maybe_piece = <span class="self">self</span>.get_piece_slow_internal(piece_index).<span class="kw">await</span>;
-        <span class="comment">// Store the result for others to observe
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>in_progress_piece) = local_in_progress_piece_guard {
-            in_progress_piece.clone_from(<span class="kw-2">&amp;</span>maybe_piece);
-            <span class="self">self</span>.inner.in_progress_pieces.lock().remove(<span class="kw-2">&amp;</span>piece_index);
+                <span class="comment">// Try again just in case
+                </span><span class="self">self</span>.get_piece_slow_internal(piece_index).<span class="kw">await
+            </span>}
         }
-        maybe_piece
     }
 
     <span class="doccomment">/// Slow way to get piece using archival storage
@@ -657,6 +728,54 @@
         <span class="prelude-val">None
     </span>}
 
+    <span class="kw">async fn </span>get_piece_internal(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+        {
+            <span class="kw">let </span>retries = AtomicU32::new(<span class="number">0</span>);
+            <span class="kw">let </span>max_retries = u32::from(<span class="self">self</span>.inner.dsn_cache_retry_policy.max_retries);
+            <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">self</span>.inner.dsn_cache_retry_policy.backoff.clone();
+            backoff.reset();
+
+            <span class="kw">let </span>maybe_piece_fut = retry(backoff, || <span class="kw">async </span>{
+                <span class="kw">let </span>current_attempt = retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_fast_internal(piece_index).<span class="kw">await </span>{
+                    <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">"Got piece fast"</span>);
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+                }
+                <span class="kw">if </span>current_attempt &gt;= max_retries {
+                    <span class="kw">if </span>max_retries &gt; <span class="number">0 </span>{
+                        <span class="macro">debug!</span>(
+                            %piece_index,
+                            current_attempt,
+                            max_retries,
+                            <span class="string">"Couldn't get a piece fast. No retries left"
+                        </span>);
+                    }
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+                }
+
+                <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">"Couldn't get a piece fast, retrying..."</span>);
+
+                <span class="prelude-val">Err</span>(backoff::Error::transient(<span class="string">"Couldn't get piece fast"</span>))
+            });
+
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece)) = maybe_piece_fut.<span class="kw">await </span>{
+                <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from cache successfully"</span>);
+                <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+            }
+        };
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_slow_internal(piece_index).<span class="kw">await </span>{
+            <span class="kw">return </span><span class="prelude-val">Some</span>(piece);
+        }
+
+        <span class="macro">debug!</span>(
+            %piece_index,
+            <span class="string">"Cannot acquire piece: all methods yielded empty result"
+        </span>);
+        <span class="prelude-val">None
+    </span>}
+
     <span class="doccomment">/// Downgrade to [`WeakFarmerPieceGetter`] in order to break reference cycles with internally
     /// used [`Arc`]
     </span><span class="kw">pub fn </span>downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeakFarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
@@ -678,88 +797,31 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
-        <span class="kw">let </span>in_progress_piece_mutex = Arc::new(AsyncMutex::new(<span class="prelude-val">None</span>));
-        <span class="comment">// Take lock before anything else, set to `None` when another piece getting is already in
-        // progress
-        </span><span class="kw">let </span><span class="kw-2">mut </span>local_in_progress_piece_guard = <span class="prelude-val">Some</span>(in_progress_piece_mutex.lock().<span class="kw">await</span>);
-        <span class="kw">let </span>in_progress_piece_mutex = <span class="self">self
-            </span>.inner
-            .in_progress_pieces
-            .lock()
-            .entry(piece_index)
-            .and_modify(|_mutex| {
-                local_in_progress_piece_guard.take();
-            })
-            .or_insert_with(|| Arc::clone(<span class="kw-2">&amp;</span>in_progress_piece_mutex))
-            .clone();
-
-        <span class="comment">// If piece is already in progress, wait for it to see if it was successful
-        </span><span class="kw">if </span>local_in_progress_piece_guard.is_none() {
-            <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece is already in progress, waiting for result #3"</span>);
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = in_progress_piece_mutex.lock().<span class="kw">await</span>.clone() {
-                <span class="macro">trace!</span>(
-                    %piece_index,
-                    <span class="string">"Piece was already in progress and downloaded successfully #2"
-                </span>);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+        <span class="kw">match </span>InProgressPiece::new(piece_index, <span class="kw-2">&amp;</span><span class="self">self</span>.inner.in_progress_pieces) {
+            InProgressPiece::Getting(in_progress_piece_getting) =&gt; {
+                <span class="comment">// Try to get the piece without releasing lock to make sure successfully
+                // downloaded piece gets stored
+                </span><span class="kw">let </span>maybe_piece = <span class="self">self</span>.get_piece_internal(piece_index).<span class="kw">await</span>;
+                <span class="comment">// Store the result for others to observe
+                </span>in_progress_piece_getting.store_piece_getting_result(<span class="kw-2">&amp;</span>maybe_piece);
+                <span class="prelude-val">Ok</span>(maybe_piece)
             }
-        }
-
-        {
-            <span class="kw">let </span>retries = AtomicU32::new(<span class="number">0</span>);
-            <span class="kw">let </span>max_retries = u32::from(<span class="self">self</span>.inner.dsn_cache_retry_policy.max_retries);
-            <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">self</span>.inner.dsn_cache_retry_policy.backoff.clone();
-            backoff.reset();
-
-            <span class="kw">let </span>maybe_piece_fut = retry(backoff, || <span class="kw">async </span>{
-                <span class="kw">let </span>current_attempt = retries.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
-
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_fast_internal(piece_index).<span class="kw">await </span>{
-                    <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">"Got piece from DSN L2 cache"</span>);
+            InProgressPiece::Waiting {
+                in_progress_piece_mutex,
+            } =&gt; {
+                <span class="macro">trace!</span>(%piece_index, <span class="string">"Piece is already in progress, waiting for result #3"</span>);
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = in_progress_piece_mutex.lock().<span class="kw">await</span>.clone() {
+                    <span class="macro">trace!</span>(
+                        %piece_index,
+                        <span class="string">"Piece was already in progress and downloaded successfully #2"
+                    </span>);
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
                 }
-                <span class="kw">if </span>current_attempt &gt;= max_retries {
-                    <span class="kw">if </span>max_retries &gt; <span class="number">0 </span>{
-                        <span class="macro">debug!</span>(
-                            %piece_index,
-                            current_attempt,
-                            max_retries,
-                            <span class="string">"Couldn't get a piece from DSN L2. No retries left"
-                        </span>);
-                    }
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-                }
 
-                <span class="macro">trace!</span>(%piece_index, current_attempt, <span class="string">"Couldn't get a piece from DSN L2, retrying..."</span>);
-
-                <span class="prelude-val">Err</span>(backoff::Error::transient(<span class="string">"Couldn't get piece from DSN"</span>))
-            });
-
-            <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece)) = maybe_piece_fut.<span class="kw">await </span>{
-                <span class="macro">trace!</span>(%piece_index, <span class="string">"Got piece from cache successfully"</span>);
-                <span class="comment">// Store successfully downloaded piece for others to observe
-                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>in_progress_piece) = local_in_progress_piece_guard {
-                    in_progress_piece.replace(piece.clone());
-                    <span class="self">self</span>.inner.in_progress_pieces.lock().remove(<span class="kw-2">&amp;</span>piece_index);
-                }
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
+                <span class="comment">// Try again just in case
+                </span><span class="prelude-val">Ok</span>(<span class="self">self</span>.get_piece_internal(piece_index).<span class="kw">await</span>)
             }
-        };
-
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(piece) = <span class="self">self</span>.get_piece_slow_internal(piece_index).<span class="kw">await </span>{
-            <span class="comment">// Store successfully downloaded piece for others to observe
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>in_progress_piece) = local_in_progress_piece_guard {
-                in_progress_piece.replace(piece.clone());
-                <span class="self">self</span>.inner.in_progress_pieces.lock().remove(<span class="kw-2">&amp;</span>piece_index);
-            }
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(piece));
         }
-
-        <span class="macro">debug!</span>(
-            %piece_index,
-            <span class="string">"Cannot acquire piece: all methods yielded empty result"
-        </span>);
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
     }
 }
 
