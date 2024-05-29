@@ -1,3 +1,3 @@
 (function() {var implementors = {
-"pallet_subspace":[["impl&lt;T: <a class=\"trait\" href=\"pallet_subspace/pallet/trait.Config.html\" title=\"trait pallet_subspace::pallet::Config\">Config</a>&gt; RewardsEnabled for <a class=\"struct\" href=\"pallet_subspace/pallet/struct.Pallet.html\" title=\"struct pallet_subspace::pallet::Pallet\">Pallet</a>&lt;T&gt;"]]
+"pallet_subspace":[["impl&lt;T: <a class=\"trait\" href=\"pallet_subspace/pallet/trait.Config.html\" title=\"trait pallet_subspace::pallet::Config\">Config</a>&gt; <a class=\"trait\" href=\"subspace_runtime_primitives/trait.RewardsEnabled.html\" title=\"trait subspace_runtime_primitives::RewardsEnabled\">RewardsEnabled</a> for <a class=\"struct\" href=\"pallet_subspace/pallet/struct.Pallet.html\" title=\"struct pallet_subspace::pallet::Pallet\">Pallet</a>&lt;T&gt;"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
