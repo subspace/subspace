@@ -40,7 +40,7 @@ use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::task::yield_now;
 use tokio::time::Sleep;
@@ -48,27 +48,32 @@ use tracing::{debug, error, trace, warn};
 
 enum QueryResultSender {
     Value {
+        started: Instant,
         sender: mpsc::UnboundedSender<PeerRecord>,
         // Just holding onto permit while data structure is not dropped
         _permit: OwnedSemaphorePermit,
     },
     ClosestPeers {
+        started: Instant,
         sender: mpsc::UnboundedSender<PeerId>,
         // Just holding onto permit while data structure is not dropped
         _permit: Option<OwnedSemaphorePermit>,
     },
     Providers {
+        started: Instant,
         key: RecordKey,
         sender: mpsc::UnboundedSender<PeerId>,
         // Just holding onto permit while data structure is not dropped
         _permit: Option<OwnedSemaphorePermit>,
     },
     PutValue {
+        started: Instant,
         sender: mpsc::UnboundedSender<()>,
         // Just holding onto permit while data structure is not dropped
         _permit: OwnedSemaphorePermit,
     },
     Bootstrap {
+        started: Instant,
         sender: mpsc::UnboundedSender<()>,
     },
 }
@@ -277,7 +282,7 @@ where
                     self.handle_periodical_tasks().await;
 
                     self.periodical_tasks_interval =
-                        Box::pin(tokio::time::sleep(Duration::from_secs(5)).fuse());
+                        Box::pin(tokio::time::sleep(Duration::from_secs(60)).fuse());
                 },
                 event = self.removed_addresses_rx.select_next_some() => {
                     self.handle_removed_address_event(event);
@@ -335,7 +340,7 @@ where
                 },
                 result = bootstrap_command_receiver.next() => {
                     if result.is_some() {
-                        debug!(%bootstrap_step, "Kademlia bootstrapping...");
+                        tracing::info!(%bootstrap_step, "Kademlia bootstrapping...");
                         bootstrap_step += 1;
                     } else {
                         break;
@@ -344,7 +349,7 @@ where
             }
         }
 
-        debug!("Bootstrap finished.");
+        tracing::info!("Bootstrap finished.");
         *bootstrap_command_state = BootstrapCommandState::Finished;
     }
 
@@ -367,6 +372,36 @@ where
         }
 
         self.log_kademlia_stats();
+
+        for sender in self.query_id_receivers.values() {
+            match sender {
+                QueryResultSender::Value { started, .. } => {
+                    if started.elapsed() > Duration::from_secs(60) {
+                        warn!("Value is running for {:?}", started.elapsed());
+                    }
+                }
+                QueryResultSender::ClosestPeers { started, .. } => {
+                    if started.elapsed() > Duration::from_secs(60) {
+                        warn!("ClosestPeers is running for {:?}", started.elapsed());
+                    }
+                }
+                QueryResultSender::Providers { started, .. } => {
+                    if started.elapsed() > Duration::from_secs(60) {
+                        warn!("Providers is running for {:?}", started.elapsed());
+                    }
+                }
+                QueryResultSender::PutValue { started, .. } => {
+                    if started.elapsed() > Duration::from_secs(60) {
+                        warn!("PutValue is running for {:?}", started.elapsed());
+                    }
+                }
+                QueryResultSender::Bootstrap { started, .. } => {
+                    if started.elapsed() > Duration::from_secs(60) {
+                        warn!("Bootstrap is running for {:?}", started.elapsed());
+                    }
+                }
+            }
+        }
     }
 
     fn handle_random_query_interval(&mut self) {
@@ -1051,7 +1086,7 @@ where
                 debug!(?stats, %last, %count, ?id, ?result, "Bootstrap OutboundQueryProgressed step.");
 
                 let mut cancelled = false;
-                if let Some(QueryResultSender::Bootstrap { sender }) =
+                if let Some(QueryResultSender::Bootstrap { sender, .. }) =
                     self.query_id_receivers.get_mut(&id)
                 {
                     match result {
@@ -1209,6 +1244,7 @@ where
                 self.query_id_receivers.insert(
                     query_id,
                     QueryResultSender::Value {
+                        started: Instant::now(),
                         sender: result_sender,
                         _permit: permit,
                     },
@@ -1239,6 +1275,7 @@ where
                         self.query_id_receivers.insert(
                             query_id,
                             QueryResultSender::PutValue {
+                                started: Instant::now(),
                                 sender: result_sender,
                                 _permit: permit,
                             },
@@ -1353,6 +1390,7 @@ where
                 self.query_id_receivers.insert(
                     query_id,
                     QueryResultSender::ClosestPeers {
+                        started: Instant::now(),
                         sender: result_sender,
                         _permit: permit,
                     },
@@ -1386,6 +1424,7 @@ where
                 self.query_id_receivers.insert(
                     query_id,
                     QueryResultSender::Providers {
+                        started: Instant::now(),
                         key,
                         sender: result_sender,
                         _permit: permit,
@@ -1415,6 +1454,7 @@ where
                         self.query_id_receivers.insert(
                             query_id,
                             QueryResultSender::Bootstrap {
+                                started: Instant::now(),
                                 sender: result_sender,
                             },
                         );
