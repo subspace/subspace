@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"trait":["DsnSyncPieceGetter"]};
+window.SIDEBAR_ITEMS = {};

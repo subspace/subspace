@@ -717,18 +717,6 @@
 <a href="#717" id="717">717</a>
 <a href="#718" id="718">718</a>
 <a href="#719" id="719">719</a>
-<a href="#720" id="720">720</a>
-<a href="#721" id="721">721</a>
-<a href="#722" id="722">722</a>
-<a href="#723" id="723">723</a>
-<a href="#724" id="724">724</a>
-<a href="#725" id="725">725</a>
-<a href="#726" id="726">726</a>
-<a href="#727" id="727">727</a>
-<a href="#728" id="728">728</a>
-<a href="#729" id="729">729</a>
-<a href="#730" id="730">730</a>
-<a href="#731" id="731">731</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -768,6 +756,7 @@
 <span class="kw">use </span>sc_consensus::block_import::{
     BlockCheckParams, BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult,
 };
+<span class="kw">use </span>sc_consensus::StateAction;
 <span class="kw">use </span>sc_proof_of_time::verifier::PotVerifier;
 <span class="kw">use </span>sp_api::{ApiError, ApiExt, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder <span class="kw">as </span>BlockBuilderApi;
@@ -901,9 +890,6 @@
     <span class="doccomment">/// Farmer in block list
     </span><span class="attr">#[error(<span class="string">"Farmer {0} is in block list"</span>)]
     </span>FarmerInBlockList(FarmerPublicKey),
-    <span class="doccomment">/// No block weight for parent header
-    </span><span class="attr">#[error(<span class="string">"No block weight for parent header {0}"</span>)]
-    </span>NoBlockWeight(Header::Hash),
     <span class="doccomment">/// Segment commitment not found
     </span><span class="attr">#[error(<span class="string">"Segment commitment for segment index {0} not found"</span>)]
     </span>SegmentCommitmentNotFound(SegmentIndex),
@@ -1068,8 +1054,7 @@
         }
     }
 
-    <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="kw">async fn </span>block_import_verification(
+    <span class="kw">async fn </span>block_import_verification(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         block_hash: Block::Hash,
         header: Block::Header,
@@ -1081,7 +1066,6 @@
             FarmerSignature,
         &gt;,
         justifications: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;Justifications&gt;,
-        skip_runtime_access: bool,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&lt;Block::Header&gt;&gt; {
         <span class="kw">let </span>block_number = <span class="kw-2">*</span>header.number();
         <span class="kw">let </span>parent_hash = <span class="kw-2">*</span>header.parent_hash();
@@ -1098,14 +1082,7 @@
         </span><span class="kw">if </span><span class="self">self
             </span>.client
             .runtime_api()
-            .is_in_block_list(parent_hash, <span class="kw-2">&amp;</span>pre_digest.solution().public_key)
-            .or_else(|error| {
-                <span class="kw">if </span>skip_runtime_access {
-                    <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
-                } <span class="kw">else </span>{
-                    <span class="prelude-val">Err</span>(Error::RuntimeApi(error))
-                }
-            })<span class="question-mark">?
+            .is_in_block_list(parent_hash, <span class="kw-2">&amp;</span>pre_digest.solution().public_key)<span class="question-mark">?
         </span>{
             <span class="macro">warn!</span>(
                 public_key = %pre_digest.solution().public_key,
@@ -1223,10 +1200,7 @@
             pre_digest.solution().sector_index,
         );
 
-        <span class="comment">// TODO: Below `skip_runtime_access` has no impact on this, but ideally it
-        //  should (though we don't support fast sync yet, so doesn't matter in
-        //  practice)
-        </span><span class="kw">let </span>max_pieces_in_sector = <span class="self">self
+        <span class="kw">let </span>max_pieces_in_sector = <span class="self">self
             </span>.client
             .runtime_api()
             .max_pieces_in_sector(parent_hash)<span class="question-mark">?</span>;
@@ -1273,10 +1247,7 @@
                     recent_segments: chain_constants.recent_segments(),
                     recent_history_fraction: chain_constants.recent_history_fraction(),
                     min_sector_lifetime: chain_constants.min_sector_lifetime(),
-                    <span class="comment">// TODO: Below `skip_runtime_access` has no impact on this, but ideally it
-                    //  should (though we don't support fast sync yet, so doesn't matter in
-                    //  practice)
-                    </span>current_history_size: <span class="self">self</span>.client.runtime_api().history_size(parent_hash)<span class="question-mark">?</span>,
+                    current_history_size: <span class="self">self</span>.client.runtime_api().history_size(parent_hash)<span class="question-mark">?</span>,
                     sector_expiration_check_segment_commitment,
                 }),
             },
@@ -1284,37 +1255,35 @@
         )
         .map_err(|error| VerificationError::VerificationError(pre_digest.slot(), error))<span class="question-mark">?</span>;
 
-        <span class="kw">if </span>!skip_runtime_access {
-            <span class="comment">// If the body is passed through, we need to use the runtime to check that the
-            // internally-set timestamp in the inherents actually matches the slot set in the seal
-            // and segment headers in the inherents are set correctly.
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(extrinsics) = extrinsics {
-                <span class="kw">let </span>create_inherent_data_providers = <span class="self">self
-                    </span>.create_inherent_data_providers
-                    .create_inherent_data_providers(parent_hash, ())
-                    .<span class="kw">await
-                    </span>.map_err(|error| Error::Client(sp_blockchain::Error::from(error)))<span class="question-mark">?</span>;
+        <span class="comment">// If the body is passed through, we need to use the runtime to check that the
+        // internally-set timestamp in the inherents actually matches the slot set in the seal
+        // and segment headers in the inherents are set correctly.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(extrinsics) = extrinsics {
+            <span class="kw">let </span>create_inherent_data_providers = <span class="self">self
+                </span>.create_inherent_data_providers
+                .create_inherent_data_providers(parent_hash, ())
+                .<span class="kw">await
+                </span>.map_err(|error| Error::Client(sp_blockchain::Error::from(error)))<span class="question-mark">?</span>;
 
-                <span class="kw">let </span>inherent_data = create_inherent_data_providers
-                    .create_inherent_data()
-                    .<span class="kw">await
-                    </span>.map_err(Error::CreateInherents)<span class="question-mark">?</span>;
+            <span class="kw">let </span>inherent_data = create_inherent_data_providers
+                .create_inherent_data()
+                .<span class="kw">await
+                </span>.map_err(Error::CreateInherents)<span class="question-mark">?</span>;
 
-                <span class="kw">let </span>inherent_res = <span class="self">self</span>.client.runtime_api().check_inherents(
-                    parent_hash,
-                    Block::new(header, extrinsics),
-                    inherent_data,
-                )<span class="question-mark">?</span>;
+            <span class="kw">let </span>inherent_res = <span class="self">self</span>.client.runtime_api().check_inherents(
+                parent_hash,
+                Block::new(header, extrinsics),
+                inherent_data,
+            )<span class="question-mark">?</span>;
 
-                <span class="kw">if </span>!inherent_res.ok() {
-                    <span class="kw">for </span>(i, e) <span class="kw">in </span>inherent_res.into_errors() {
-                        <span class="kw">match </span>create_inherent_data_providers
-                            .try_handle_error(<span class="kw-2">&amp;</span>i, <span class="kw-2">&amp;</span>e)
-                            .<span class="kw">await
-                        </span>{
-                            <span class="prelude-val">Some</span>(res) =&gt; res.map_err(Error::CheckInherents)<span class="question-mark">?</span>,
-                            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::CheckInherentsUnhandled(i)),
-                        }
+            <span class="kw">if </span>!inherent_res.ok() {
+                <span class="kw">for </span>(i, e) <span class="kw">in </span>inherent_res.into_errors() {
+                    <span class="kw">match </span>create_inherent_data_providers
+                        .try_handle_error(<span class="kw-2">&amp;</span>i, <span class="kw-2">&amp;</span>e)
+                        .<span class="kw">await
+                    </span>{
+                        <span class="prelude-val">Some</span>(res) =&gt; res.map_err(Error::CheckInherents)<span class="question-mark">?</span>,
+                        <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::CheckInherentsUnhandled(i)),
                     }
                 }
             }
@@ -1365,28 +1334,34 @@
         }
 
         <span class="kw">let </span>subspace_digest_items = extract_subspace_digest_items(<span class="kw-2">&amp;</span>block.header)<span class="question-mark">?</span>;
-        <span class="kw">let </span>skip_execution_checks = block.state_action.skip_execution_checks();
 
-        <span class="kw">let </span>root_plot_public_key = <span class="self">self
-            </span>.client
-            .runtime_api()
-            .root_plot_public_key(<span class="kw-2">*</span>block.header.parent_hash())<span class="question-mark">?</span>;
+        <span class="comment">// Only do import verification if we do not have the state already. If state needs to be
+        // applied this means verification and execution already happened before and doesn't need to
+        // be done again here (often can't because parent block would be missing in special sync
+        // modes).
+        </span><span class="kw">if </span>!<span class="macro">matches!</span>(block.state_action, StateAction::ApplyChanges(<span class="kw">_</span>)) {
+            <span class="kw">let </span>root_plot_public_key = <span class="self">self
+                </span>.client
+                .runtime_api()
+                .root_plot_public_key(<span class="kw-2">*</span>block.header.parent_hash())<span class="question-mark">?</span>;
 
-        <span class="self">self</span>.block_import_verification(
-            block_hash,
-            block.header.clone(),
-            block.body.clone(),
-            <span class="kw-2">&amp;</span>root_plot_public_key,
-            <span class="kw-2">&amp;</span>subspace_digest_items,
-            <span class="kw-2">&amp;</span>block.justifications,
-            skip_execution_checks,
-        )
-        .<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="self">self</span>.block_import_verification(
+                block_hash,
+                block.header.clone(),
+                block.body.clone(),
+                <span class="kw-2">&amp;</span>root_plot_public_key,
+                <span class="kw-2">&amp;</span>subspace_digest_items,
+                <span class="kw-2">&amp;</span>block.justifications,
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        }
 
         <span class="kw">let </span>parent_weight = <span class="kw">if </span>block_number.is_one() {
             <span class="number">0
         </span>} <span class="kw">else </span>{
-            aux_schema::load_block_weight(<span class="self">self</span>.client.as_ref(), block.header.parent_hash())<span class="question-mark">?
+            <span class="comment">// Parent block weight might be missing in special sync modes where block is imported in
+            // the middle of the blockchain history directly
+            </span>aux_schema::load_block_weight(<span class="self">self</span>.client.as_ref(), block.header.parent_hash())<span class="question-mark">?
                 </span>.unwrap_or_default()
         };
 
@@ -1426,9 +1401,10 @@
                 // need to cover again here
                 </span>parent_weight
             } <span class="kw">else </span>{
-                aux_schema::load_block_weight(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, info.best_hash)<span class="question-mark">?
-                    </span>.ok_or_else(|| Error::NoBlockWeight(info.best_hash))<span class="question-mark">?
-            </span>};
+                <span class="comment">// Best block weight might be missing in special sync modes where block is imported
+                // in the middle of the blockchain history right after genesis
+                </span>aux_schema::load_block_weight(<span class="kw-2">&amp;*</span><span class="self">self</span>.client, info.best_hash)<span class="question-mark">?</span>.unwrap_or_default()
+            };
 
             ForkChoiceStrategy::Custom(total_weight &gt; last_best_weight)
         };
