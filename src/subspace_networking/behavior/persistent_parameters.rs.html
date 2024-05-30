@@ -766,14 +766,7 @@
 <a href="#766" id="766">766</a>
 <a href="#767" id="767">767</a>
 <a href="#768" id="768">768</a>
-<a href="#769" id="769">769</a>
-<a href="#770" id="770">770</a>
-<a href="#771" id="771">771</a>
-<a href="#772" id="772">772</a>
-<a href="#773" id="773">773</a>
-<a href="#774" id="774">774</a>
-<a href="#775" id="775">775</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::{AsyncJoinOnDrop, CollectionBatcher, Handler, HandlerFn, PeerAddress};
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::utils::{AsyncJoinOnDrop, Handler, HandlerFn};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>event_listener_primitives::HandlerId;
 <span class="kw">use </span>fs2::FileExt;
@@ -788,7 +781,6 @@
 <span class="kw">use </span>std::collections::HashSet;
 <span class="kw">use </span>std::fs::OpenOptions;
 <span class="kw">use </span>std::io::{Read, Seek, SeekFrom};
-<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::path::Path;
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::str::FromStr;
@@ -810,12 +802,12 @@
 </span><span class="kw">const </span>ADDRESSES_CACHE_SIZE: u32 = <span class="number">30</span>;
 <span class="doccomment">/// Pause duration between network parameters save.
 </span><span class="kw">const </span>DATA_FLUSH_DURATION_SECS: u64 = <span class="number">5</span>;
-<span class="doccomment">/// Defines a batch size for a combined collection for known peers addresses and boostrap addresses.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PEERS_ADDRESSES_BATCH_SIZE: usize = <span class="number">30</span>;
 <span class="doccomment">/// Defines an expiration period for the peer marked for the removal.
-</span><span class="kw">const </span>REMOVE_KNOWN_PEERS_GRACE_PERIOD_SECS: Duration = Duration::from_secs(<span class="number">3600 </span>* <span class="number">24</span>);
+</span><span class="kw">const </span>REMOVE_KNOWN_PEERS_GRACE_PERIOD: Duration = Duration::from_secs(<span class="number">24 </span>* <span class="number">3600</span>);
 <span class="doccomment">/// Defines an expiration period for the peer marked for the removal for Kademlia DHT.
-</span><span class="kw">const </span>REMOVE_KNOWN_PEERS_GRACE_PERIOD_FOR_KADEMLIA_SECS: Duration = Duration::from_secs(<span class="number">3600</span>);
+</span><span class="kw">const </span>REMOVE_KNOWN_PEERS_GRACE_PERIOD_FOR_KADEMLIA: Duration = Duration::from_secs(<span class="number">3600</span>);
+<span class="doccomment">/// Defines an expiration period for the peer marked for the removal for Kademlia DHT.
+</span><span class="kw">const </span>STALE_KNOWN_PEERS_TIMEOUT: Duration = Duration::from_secs(<span class="number">24 </span>* <span class="number">3600</span>);
 
 <span class="doccomment">/// Defines the event triggered when the peer address is removed from the permanent storage.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -842,10 +834,19 @@
 }
 
 <span class="kw">impl </span>EncodableKnownPeers {
-    <span class="kw">fn </span>into_cache(<span class="self">self</span>) -&gt; LruMap&lt;PeerId, LruMap&lt;Multiaddr, FailureTime&gt;&gt; {
+    <span class="kw">fn </span>into_cache(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; LruMap&lt;PeerId, LruMap&lt;Multiaddr, FailureTime&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>peers_cache = LruMap::new(ByLength::new(<span class="self">self</span>.cache_size));
 
-        <span class="lifetime">'peers</span>: <span class="kw">for </span>(peer_id, addresses) <span class="kw">in </span><span class="self">self</span>.known_peers {
+        <span class="comment">// Sort peers with the oldest expiration date first
+        </span><span class="self">self</span>.known_peers
+            .sort_by_cached_key(|(_peer_id, addresses)| {
+                addresses.iter().fold(<span class="number">0u64</span>, |acc, address| {
+                    acc.max(address.failure_time.unwrap_or(u64::MAX))
+                })
+            });
+
+        <span class="comment">// Iterate over known peers with most recent failure time (or no failire time) first
+        </span><span class="lifetime">'peers</span>: <span class="kw">for </span>(peer_id, addresses) <span class="kw">in </span><span class="self">self</span>.known_peers.into_iter().rev() {
             <span class="kw">let </span><span class="kw-2">mut </span>peer_cache =
                 LruMap::&lt;Multiaddr, FailureTime&gt;::new(ByLength::new(ADDRESSES_CACHE_SIZE));
 
@@ -966,13 +967,8 @@
     <span class="doccomment">/// Unregisters associated addresses for peer ID.
     </span><span class="kw">fn </span>remove_all_known_peer_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer_id: PeerId);
 
-    <span class="doccomment">/// Returns a batch of the combined collection of known addresses from networking parameters DB
-    /// and boostrap addresses from networking parameters initialization.
-    /// It removes p2p-protocol suffix.
-    </span><span class="kw">async fn </span>next_known_addresses_batch(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Vec&lt;PeerAddress&gt;;
-
-    <span class="doccomment">/// Reset the batching process to the initial state.
-    </span><span class="kw">fn </span>start_over_address_batching(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {}
+    <span class="doccomment">/// Returns all known peers and their addresses without P2P suffix at the end
+    </span><span class="kw">async fn </span>all_known_peers(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Vec&lt;(PeerId, Vec&lt;Multiaddr&gt;)&gt;;
 
     <span class="doccomment">/// Drive async work in the persistence provider
     </span><span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>);
@@ -1006,7 +1002,7 @@
 
     <span class="kw">fn </span>remove_all_known_peer_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _peer_id: PeerId) {}
 
-    <span class="kw">async fn </span>next_known_addresses_batch(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Vec&lt;PeerAddress&gt; {
+    <span class="kw">async fn </span>all_known_peers(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Vec&lt;(PeerId, Vec&lt;Multiaddr&gt;)&gt; {
         Vec::new()
     }
 
@@ -1026,7 +1022,7 @@
 <span class="doccomment">/// Configuration for [`KnownPeersManager`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>KnownPeersManagerConfig {
-    <span class="doccomment">/// Defines whether we return known peers batches on next_known_addresses_batch().
+    <span class="doccomment">/// Defines whether we return known peers in [`KnownPeersRegistry::all_known_peers()`]
     </span><span class="kw">pub </span>enable_known_peers_source: bool,
     <span class="doccomment">/// Defines cache size.
     </span><span class="kw">pub </span>cache_size: u32,
@@ -1038,6 +1034,8 @@
     </span><span class="kw">pub </span>failed_address_cache_removal_interval: Duration,
     <span class="doccomment">/// Defines interval before the next peer address removal triggers [`PeerAddressRemovedEvent`].
     </span><span class="kw">pub </span>failed_address_kademlia_removal_interval: Duration,
+    <span class="doccomment">/// Amount of time after which stored known peers contents is assumed to be stale.
+    </span><span class="kw">pub </span>stale_known_peers_timeout: Duration,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>KnownPeersManagerConfig {
@@ -1047,9 +1045,9 @@
             cache_size: KNOWN_PEERS_CACHE_SIZE,
             ignore_peer_list: Default::default(),
             path: <span class="prelude-val">None</span>,
-            failed_address_cache_removal_interval: REMOVE_KNOWN_PEERS_GRACE_PERIOD_SECS,
-            failed_address_kademlia_removal_interval:
-                REMOVE_KNOWN_PEERS_GRACE_PERIOD_FOR_KADEMLIA_SECS,
+            failed_address_cache_removal_interval: REMOVE_KNOWN_PEERS_GRACE_PERIOD,
+            failed_address_kademlia_removal_interval: REMOVE_KNOWN_PEERS_GRACE_PERIOD_FOR_KADEMLIA,
+            stale_known_peers_timeout: STALE_KNOWN_PEERS_TIMEOUT,
         }
     }
 }
@@ -1075,8 +1073,6 @@
     </span>networking_parameters_save_delay: Pin&lt;Box&lt;Fuse&lt;Sleep&gt;&gt;&gt;,
     <span class="doccomment">/// Slots backed by file that store known peers
     </span>known_peers_slots: <span class="prelude-ty">Option</span>&lt;Arc&lt;Mutex&lt;KnownPeersSlots&gt;&gt;&gt;,
-    <span class="doccomment">/// Provides batching capabilities for the address collection (it stores the last batch index)
-    </span>collection_batcher: CollectionBatcher&lt;PeerAddress&gt;,
     <span class="doccomment">/// Event handler triggered when we decide to remove address from the storage.
     </span>address_removed: Handler&lt;PeerAddressRemovedEvent&gt;,
     <span class="doccomment">/// Defines configuration.
@@ -1224,6 +1220,15 @@
         };
 
         <span class="kw">let </span>known_peers = maybe_newest_known_addresses
+            .filter(|newest_known_addresses| {
+                <span class="kw">let </span>time_since_unix_epoch = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect(<span class="string">"Never before Unix epoch; qed"</span>);
+                <span class="kw">let </span>known_peers_age = time_since_unix_epoch
+                    .saturating_sub(Duration::from_secs(newest_known_addresses.timestamp));
+
+                known_peers_age &lt;= config.stale_known_peers_timeout
+            })
             .map(EncodableKnownPeers::into_cache)
             .unwrap_or_else(|| LruMap::new(ByLength::new(config.cache_size)));
 
@@ -1232,23 +1237,9 @@
             known_peers,
             networking_parameters_save_delay: <span class="self">Self</span>::default_delay(),
             known_peers_slots,
-            collection_batcher: CollectionBatcher::new(
-                NonZeroUsize::new(PEERS_ADDRESSES_BATCH_SIZE)
-                    .expect(<span class="string">"Manual non-zero initialization failed."</span>),
-            ),
             address_removed: Default::default(),
             config,
         })
-    }
-
-    <span class="comment">// Returns known addresses from networking parameters DB.
-    </span><span class="kw">async fn </span>known_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;PeerAddress&gt; {
-        <span class="self">self</span>.known_peers
-            .iter()
-            .flat_map(|(peer_id, addresses)| {
-                addresses.iter().map(|addr| (<span class="kw-2">*</span>peer_id, addr.<span class="number">0</span>.clone()))
-            })
-            .collect()
     }
 
     <span class="doccomment">/// Size of the backing file on disk
@@ -1388,28 +1379,23 @@
         <span class="self">self</span>.cache_need_saving = <span class="bool-val">true</span>;
     }
 
-    <span class="kw">async fn </span>next_known_addresses_batch(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Vec&lt;PeerAddress&gt; {
+    <span class="kw">async fn </span>all_known_peers(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; Vec&lt;(PeerId, Vec&lt;Multiaddr&gt;)&gt; {
         <span class="kw">if </span>!<span class="self">self</span>.config.enable_known_peers_source {
             <span class="kw">return </span>Vec::new();
         }
 
-        <span class="comment">// We take cached known addresses and combine them with manually provided bootstrap addresses.
-        </span><span class="kw">let </span>combined_addresses = <span class="self">self</span>.known_addresses().<span class="kw">await</span>.into_iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-
-        <span class="macro">trace!</span>(
-            <span class="string">"Peer addresses batch requested. Total list size: {}"</span>,
-            combined_addresses.len()
-        );
-
-        <span class="self">self</span>.collection_batcher.next_batch(combined_addresses)
-    }
-
-    <span class="kw">fn </span>start_over_address_batching(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">if </span>!<span class="self">self</span>.config.enable_known_peers_source {
-            <span class="kw">return</span>;
-        }
-
-        <span class="self">self</span>.collection_batcher.reset();
+        <span class="self">self</span>.known_peers
+            .iter()
+            .map(|(<span class="kw-2">&amp;</span>peer_id, addresses)| {
+                (
+                    peer_id,
+                    addresses
+                        .iter()
+                        .map(|(addr, _failure_time)| addr.clone())
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     <span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
