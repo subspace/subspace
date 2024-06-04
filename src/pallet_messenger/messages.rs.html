@@ -396,20 +396,68 @@
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
 <a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">extern crate </span>alloc;
 
+<span class="kw">use </span><span class="kw">crate</span>::pallet::ChainAllowlist;
 <span class="kw">use crate</span>::{
     BalanceOf, BlockMessages <span class="kw">as </span>BlockMessagesStore, ChannelId, Channels, CloseChannelBy, Config,
     Error, Event, InboxResponses, Nonce, Outbox, OutboxMessageResult, Pallet,
 };
 <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
+</span><span class="kw">use </span>alloc::boxed::Box;
+<span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">use </span>alloc::vec::Vec;
 <span class="kw">use </span>codec::{Decode, Encode};
 <span class="kw">use </span>frame_support::ensure;
 <span class="kw">use </span>scale_info::TypeInfo;
+<span class="kw">use </span>sp_messenger::endpoint::{EndpointHandler, EndpointRequest, EndpointResponse};
 <span class="kw">use </span>sp_messenger::messages::{
-    BlockMessageWithStorageKey, BlockMessagesWithStorageKey, ChainId, Message, MessageId,
+    BlockMessageWithStorageKey, BlockMessagesWithStorageKey, ChainId, FeeModel, Message, MessageId,
     MessageWeightTag, Payload, ProtocolMessageRequest, ProtocolMessageResponse, RequestResponse,
     VersionedPayload,
 };
@@ -520,25 +568,20 @@
 
             <span class="comment">// process incoming endpoint message.
             </span>VersionedPayload::V0(Payload::Endpoint(RequestResponse::Request(req))) =&gt; {
-                <span class="kw">let </span>response = <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) =
-                    T::get_endpoint_handler(<span class="kw-2">&amp;</span>req.dst_endpoint)
-                {
-                    <span class="kw">if </span>msg_weight_tag != MessageWeightTag::EndpointRequest(req.dst_endpoint.clone())
-                    {
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
-                    }
-
-                    <span class="comment">// store fees for inbox message execution
-                    </span><span class="self">Self</span>::store_fees_for_inbox_message(
-                        (dst_chain_id, (channel_id, nonce)),
-                        <span class="kw-2">&amp;</span>channel.fee,
-                        <span class="kw-2">&amp;</span>req.src_endpoint,
-                    )<span class="question-mark">?</span>;
-
-                    endpoint_handler.message(dst_chain_id, (channel_id, nonce), req)
-                } <span class="kw">else </span>{
-                    <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
-                };
+                <span class="kw">let </span>response =
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) = T::get_endpoint_handler(<span class="kw-2">&amp;</span>req.dst_endpoint) {
+                        <span class="self">Self</span>::process_incoming_endpoint_message_req(
+                            dst_chain_id,
+                            req,
+                            channel_id,
+                            nonce,
+                            <span class="kw-2">&amp;</span>msg_weight_tag,
+                            <span class="kw-2">&amp;</span>channel.fee,
+                            endpoint_handler,
+                        )
+                    } <span class="kw">else </span>{
+                        <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
+                    };
 
                 Payload::Endpoint(RequestResponse::Response(response))
             }
@@ -607,14 +650,46 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="kw">fn </span>process_incoming_endpoint_message_req(
+        dst_chain_id: ChainId,
+        req: EndpointRequest,
+        channel_id: ChannelId,
+        nonce: Nonce,
+        msg_weight_tag: <span class="kw-2">&amp;</span>MessageWeightTag,
+        fee: <span class="kw-2">&amp;</span>FeeModel&lt;BalanceOf&lt;T&gt;&gt;,
+        endpoint_handler: Box&lt;<span class="kw">dyn </span>sp_messenger::endpoint::EndpointHandler&lt;MessageId&gt;&gt;,
+    ) -&gt; EndpointResponse {
+        <span class="kw">if </span>!ChainAllowlist::&lt;T&gt;::get().contains(<span class="kw-2">&amp;</span>dst_chain_id) {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::ChainNotAllowed.into());
+        }
+
+        <span class="kw">if </span>msg_weight_tag != <span class="kw-2">&amp;</span>MessageWeightTag::EndpointRequest(req.dst_endpoint.clone()) {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+        }
+
+        <span class="comment">// store fees for inbox message execution
+        </span><span class="self">Self</span>::store_fees_for_inbox_message(
+            (dst_chain_id, (channel_id, nonce)),
+            fee,
+            <span class="kw-2">&amp;</span>req.src_endpoint,
+        )<span class="question-mark">?</span>;
+
+        endpoint_handler.message(dst_chain_id, (channel_id, nonce), req)
+    }
+
     <span class="kw">fn </span>process_incoming_protocol_message_req(
         chain_id: ChainId,
         channel_id: ChannelId,
         req: ProtocolMessageRequest&lt;BalanceOf&lt;T&gt;&gt;,
         weight_tag: <span class="kw-2">&amp;</span>MessageWeightTag,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), DispatchError&gt; {
+        <span class="kw">let </span>is_chain_allowed = ChainAllowlist::&lt;T&gt;::get().contains(<span class="kw-2">&amp;</span>chain_id);
         <span class="kw">match </span>req {
             ProtocolMessageRequest::ChannelOpen(<span class="kw">_</span>) =&gt; {
+                <span class="kw">if </span>!is_chain_allowed {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::ChainNotAllowed.into());
+                }
+
                 <span class="kw">if </span>weight_tag != <span class="kw-2">&amp;</span>MessageWeightTag::ProtocolChannelOpen {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
                 }
@@ -653,6 +728,26 @@
             // for channel open request and request is rejected, channel is left in init state and no new messages are accepted.
             </span><span class="kw">_ </span>=&gt; <span class="prelude-val">Ok</span>(()),
         }
+    }
+
+    <span class="kw">fn </span>process_incoming_endpoint_message_response(
+        dst_chain_id: ChainId,
+        channel_id: ChannelId,
+        nonce: Nonce,
+        resp_msg_weight_tag: <span class="kw-2">&amp;</span>MessageWeightTag,
+        req: EndpointRequest,
+        resp: EndpointResponse,
+        endpoint_handler: Box&lt;<span class="kw">dyn </span>EndpointHandler&lt;MessageId&gt;&gt;,
+    ) -&gt; DispatchResult {
+        <span class="kw">if </span>resp_msg_weight_tag != <span class="kw-2">&amp;</span>MessageWeightTag::EndpointResponse(req.dst_endpoint.clone()) {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
+        }
+
+        <span class="kw">let </span>resp = endpoint_handler.message_response(dst_chain_id, (channel_id, nonce), req, resp);
+
+        <span class="self">Self</span>::reward_operators_for_outbox_execution(dst_chain_id, (channel_id, nonce));
+
+        resp
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>process_outbox_message_responses(
@@ -695,22 +790,15 @@
                 VersionedPayload::V0(Payload::Endpoint(RequestResponse::Response(resp))),
             ) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(endpoint_handler) = T::get_endpoint_handler(<span class="kw-2">&amp;</span>req.dst_endpoint) {
-                    <span class="kw">if </span>resp_msg_weight_tag
-                        != MessageWeightTag::EndpointResponse(req.dst_endpoint.clone())
-                    {
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::&lt;T&gt;::WeightTagNotMatch.into());
-                    }
-
-                    <span class="kw">let </span>resp = endpoint_handler.message_response(
+                    <span class="self">Self</span>::process_incoming_endpoint_message_response(
                         dst_chain_id,
-                        (channel_id, nonce),
+                        channel_id,
+                        nonce,
+                        <span class="kw-2">&amp;</span>resp_msg_weight_tag,
                         req,
                         resp,
-                    );
-
-                    <span class="self">Self</span>::reward_operators_for_outbox_execution(dst_chain_id, (channel_id, nonce));
-
-                    resp
+                        endpoint_handler,
+                    )
                 } <span class="kw">else </span>{
                     <span class="prelude-val">Err</span>(Error::&lt;T&gt;::NoMessageHandler.into())
                 }
