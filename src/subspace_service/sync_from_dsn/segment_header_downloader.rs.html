@@ -352,6 +352,31 @@
 <a href="#352" id="352">352</a>
 <a href="#353" id="353">353</a>
 <a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::stream::FuturesUnordered;
 <span class="kw">use </span>futures::StreamExt;
 <span class="kw">use </span>std::collections::{BTreeSet, HashMap};
@@ -376,24 +401,27 @@
         <span class="self">Self </span>{ dsn_node }
     }
 
-    <span class="doccomment">/// Returns segment headers known to DSN, ordered from 0 to the last known.
+    <span class="doccomment">/// Returns new segment headers known to DSN, ordered from 0 to the last known, but newer than
+    /// `last_known_segment_index`
     </span><span class="kw">pub async fn </span>get_segment_headers(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        last_known_segment_index: SegmentIndex,
+        last_known_segment_header: <span class="kw-2">&amp;</span>SegmentHeader,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SegmentHeader&gt;, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
+        <span class="kw">let </span>last_known_segment_index = last_known_segment_header.segment_index();
         <span class="macro">trace!</span>(
             %last_known_segment_index,
             <span class="string">"Searching for latest segment header"
         </span>);
 
-        <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw-2">mut </span>last_segment_header, peers)) = <span class="self">self</span>.get_last_segment_header().<span class="kw">await</span><span class="question-mark">? </span><span class="kw">else </span>{
+        <span class="kw">let </span><span class="prelude-val">Some</span>((last_segment_header, peers)) = <span class="self">self</span>.get_last_segment_header().<span class="kw">await</span><span class="question-mark">? </span><span class="kw">else </span>{
             <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
         };
 
-        <span class="kw">if </span>last_segment_header.segment_index() == last_known_segment_index {
+        <span class="kw">if </span>last_segment_header.segment_index() &lt;= last_known_segment_index {
             <span class="macro">debug!</span>(
                 %last_known_segment_index,
-                <span class="string">"Last segment header matches last known segment header, nothing to download"
+                last_found_segment_index = %last_segment_header.segment_index(),
+                <span class="string">"No new segment headers found, nothing to download"
             </span>);
 
             <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
@@ -405,12 +433,21 @@
             <span class="string">"Downloading segment headers"
         </span>);
 
-        <span class="kw">let </span><span class="kw-2">mut </span>all_segment_headers =
-            Vec::with_capacity(u64::from(last_segment_header.segment_index()) <span class="kw">as </span>usize + <span class="number">1</span>);
-        all_segment_headers.push(last_segment_header);
+        <span class="kw">let </span><span class="prelude-val">Some</span>(new_segment_headers_count) = last_segment_header
+            .segment_index()
+            .checked_sub(last_known_segment_index)
+        <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
+        };
+        <span class="kw">let </span><span class="kw-2">mut </span>new_segment_headers =
+            Vec::with_capacity(u64::from(new_segment_headers_count) <span class="kw">as </span>usize);
+        new_segment_headers.push(last_segment_header);
 
-        <span class="kw">while </span>last_segment_header.segment_index() &gt; last_known_segment_index {
-            <span class="kw">let </span>segment_indexes = (last_known_segment_index..last_segment_header.segment_index())
+        <span class="kw">let </span><span class="kw-2">mut </span>segment_to_download_to = last_segment_header;
+        <span class="kw">while </span>segment_to_download_to.segment_index() - last_known_segment_index &gt; SegmentIndex::ONE
+        {
+            <span class="kw">let </span>segment_indexes = (last_known_segment_index + SegmentIndex::ONE
+                ..segment_to_download_to.segment_index())
                 .rev()
                 .take(SEGMENT_HEADER_NUMBER_PER_REQUEST <span class="kw">as </span>usize)
                 .collect();
@@ -420,29 +457,42 @@
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="kw">for </span>segment_header <span class="kw">in </span>segment_headers {
-                <span class="kw">if </span>segment_header.hash() != last_segment_header.prev_segment_header_hash() {
+                <span class="kw">if </span>segment_header.hash() != segment_to_download_to.prev_segment_header_hash() {
                     <span class="macro">error!</span>(
                         %peer_id,
-                        segment_index=%last_segment_header.segment_index() - SegmentIndex::ONE,
+                        segment_index=%segment_to_download_to.segment_index() - SegmentIndex::ONE,
                         actual_hash=<span class="question-mark">?</span>segment_header.hash(),
-                        expected_hash=<span class="question-mark">?</span>last_segment_header.prev_segment_header_hash(),
-                        <span class="string">"Segment header hash doesn't match expected hash from the last block."
+                        expected_hash=<span class="question-mark">?</span>segment_to_download_to.prev_segment_header_hash(),
+                        <span class="string">"Segment header hash doesn't match expected hash from the last block"
                     </span>);
 
                     <span class="kw">return </span><span class="prelude-val">Err</span>(
-                        <span class="string">"Segment header hash doesn't match expected hash from the last block."
+                        <span class="string">"Segment header hash doesn't match expected hash from the last block"
                             </span>.into(),
                     );
                 }
 
-                last_segment_header = segment_header;
-                all_segment_headers.push(segment_header);
+                segment_to_download_to = segment_header;
+                new_segment_headers.push(segment_header);
             }
         }
 
-        all_segment_headers.reverse();
+        new_segment_headers.reverse();
 
-        <span class="prelude-val">Ok</span>(all_segment_headers)
+        <span class="kw">if </span>new_segment_headers
+            .first()
+            .expect(<span class="string">"Not empty; qed"</span>)
+            .prev_segment_header_hash()
+            != last_known_segment_header.hash()
+        {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(
+                <span class="string">"Downloaded segment headers do not match last known segment header, ignoring \
+                downloaded headers"
+                    </span>.into(),
+            );
+        }
+
+        <span class="prelude-val">Ok</span>(new_segment_headers)
     }
 
     <span class="doccomment">/// Return last segment header known to DSN and agreed on by majority of the peer set with
