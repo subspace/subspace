@@ -893,23 +893,6 @@
 <a href="#893" id="893">893</a>
 <a href="#894" id="894">894</a>
 <a href="#895" id="895">895</a>
-<a href="#896" id="896">896</a>
-<a href="#897" id="897">897</a>
-<a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a>
-<a href="#903" id="903">903</a>
-<a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
-<a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>NodeClientError, NodeClient};
 <span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
@@ -923,7 +906,6 @@
 <span class="kw">use </span>futures::stream::FuturesOrdered;
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::Encode;
-<span class="kw">use </span>schnellru::{ByLength, LruMap};
 <span class="kw">use </span>std::collections::{HashMap, HashSet};
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>std::fs::File;
@@ -947,8 +929,7 @@
 <span class="kw">const </span>FARMER_APP_INFO_RETRY_INTERVAL: Duration = Duration::from_millis(<span class="number">500</span>);
 <span class="doccomment">/// Size of the cache of archived segments for the purposes of faster sector expiration checks.
 
-</span><span class="kw">const </span>ARCHIVED_SEGMENTS_CACHE_SIZE: u32 = <span class="number">1000</span>;
-<span class="kw">const </span>PLOTTING_RETRY_DELAY: Duration = Duration::from_secs(<span class="number">1</span>);
+</span><span class="kw">const </span>PLOTTING_RETRY_DELAY: Duration = Duration::from_secs(<span class="number">1</span>);
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SectorToPlot {
     sector_index: SectorIndex,
@@ -1631,8 +1612,6 @@
 
     <span class="kw">let </span><span class="kw-2">mut </span>sectors_to_replot = Vec::new();
     <span class="kw">let </span><span class="kw-2">mut </span>sectors_to_check = Vec::with_capacity(usize::from(target_sector_count));
-    <span class="kw">let </span><span class="kw-2">mut </span>archived_segment_commitments_cache =
-        LruMap::new(ByLength::new(ARCHIVED_SEGMENTS_CACHE_SIZE));
 
     <span class="kw">loop </span>{
         <span class="kw">let </span>archived_segment_header = <span class="kw-2">*</span>archived_segments_receiver.borrow_and_update();
@@ -1698,27 +1677,14 @@
                     %expiration_check_segment_index,
                     <span class="string">"Determined sector expiration check segment index"
                 </span>);
-                <span class="kw">let </span>maybe_sector_expiration_check_segment_commitment =
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(segment_commitment) =
-                        archived_segment_commitments_cache.get(<span class="kw-2">&amp;</span>expiration_check_segment_index)
-                    {
-                        <span class="prelude-val">Some</span>(<span class="kw-2">*</span>segment_commitment)
-                    } <span class="kw">else </span>{
-                        node_client
-                            .segment_headers(<span class="macro">vec!</span>[expiration_check_segment_index])
-                            .<span class="kw">await
-                            </span>.map_err(|error| PlottingError::FailedToGetSegmentHeader { error })<span class="question-mark">?
-                            </span>.into_iter()
-                            .next()
-                            .flatten()
-                            .map(|segment_header| {
-                                <span class="kw">let </span>segment_commitment = segment_header.segment_commitment();
-
-                                archived_segment_commitments_cache
-                                    .insert(expiration_check_segment_index, segment_commitment);
-                                segment_commitment
-                            })
-                    };
+                <span class="kw">let </span>maybe_sector_expiration_check_segment_commitment = node_client
+                    .segment_headers(<span class="macro">vec!</span>[expiration_check_segment_index])
+                    .<span class="kw">await
+                    </span>.map_err(|error| PlottingError::FailedToGetSegmentHeader { error })<span class="question-mark">?
+                    </span>.into_iter()
+                    .next()
+                    .flatten()
+                    .map(|segment_header| segment_header.segment_commitment());
 
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(sector_expiration_check_segment_commitment) =
                     maybe_sector_expiration_check_segment_commitment
@@ -1732,7 +1698,7 @@
                         )
                         .expect(
                             <span class="string">"Farmers internally stores correct history size in sector \
-                                metadata; qed"</span>,
+                            metadata; qed"</span>,
                         );
 
                     <span class="kw">let </span>expires_at = expiration_history_size.segment_index();
