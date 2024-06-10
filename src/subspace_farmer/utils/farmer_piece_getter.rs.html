@@ -437,10 +437,25 @@
 <a href="#437" id="437">437</a>
 <a href="#438" id="438">438</a>
 <a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farmer_cache::FarmerCache;
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::utils::plotted_pieces::PlottedPieces;
-<span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, MutexGuardArc <span class="kw">as </span>AsyncMutexGuardArc, RwLock <span class="kw">as </span>AsyncRwLock};
+<span class="kw">use </span>async_lock::{
+    Mutex <span class="kw">as </span>AsyncMutex, MutexGuardArc <span class="kw">as </span>AsyncMutexGuardArc, RwLock <span class="kw">as </span>AsyncRwLock, Semaphore,
+};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>backoff::backoff::Backoff;
 <span class="kw">use </span>backoff::future::retry;
@@ -450,6 +465,7 @@
 <span class="kw">use </span>std::error::Error;
 <span class="kw">use </span>std::fmt;
 <span class="kw">use </span>std::hash::Hash;
+<span class="kw">use </span>std::num::NonZeroUsize;
 <span class="kw">use </span>std::sync::atomic::{AtomicU32, Ordering};
 <span class="kw">use </span>std::sync::{Arc, Weak};
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
@@ -541,6 +557,7 @@
     plotted_pieces: Arc&lt;AsyncRwLock&lt;PlottedPieces&lt;FarmIndex&gt;&gt;&gt;,
     dsn_cache_retry_policy: DsnCacheRetryPolicy,
     in_progress_pieces: Mutex&lt;HashMap&lt;PieceIndex, Arc&lt;AsyncMutex&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;&gt;&gt;&gt;&gt;,
+    request_semaphore: Arc&lt;Semaphore&gt;,
 }
 
 <span class="kw">pub struct </span>FarmerPieceGetter&lt;FarmIndex, PV, NC&gt; {
@@ -576,7 +593,9 @@
         node_client: NC,
         plotted_pieces: Arc&lt;AsyncRwLock&lt;PlottedPieces&lt;FarmIndex&gt;&gt;&gt;,
         dsn_cache_retry_policy: DsnCacheRetryPolicy,
+        request_concurrency: NonZeroUsize,
     ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>request_semaphore = Arc::new(Semaphore::new(request_concurrency.get()));
         <span class="self">Self </span>{
             inner: Arc::new(Inner {
                 piece_provider,
@@ -585,12 +604,15 @@
                 plotted_pieces,
                 dsn_cache_retry_policy,
                 in_progress_pieces: Mutex::default(),
+                request_semaphore,
             }),
         }
     }
 
     <span class="doccomment">/// Fast way to get piece using various caches
     </span><span class="kw">pub async fn </span>get_piece_fast(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+        <span class="kw">let </span>_guard = <span class="self">self</span>.inner.request_semaphore.acquire().<span class="kw">await</span>;
+
         <span class="kw">match </span>InProgressPiece::new(piece_index, <span class="kw-2">&amp;</span><span class="self">self</span>.inner.in_progress_pieces) {
             InProgressPiece::Getting(in_progress_piece_getting) =&gt; {
                 <span class="comment">// Try to get the piece without releasing lock to make sure successfully
@@ -660,6 +682,8 @@
 
     <span class="doccomment">/// Slow way to get piece using archival storage
     </span><span class="kw">pub async fn </span>get_piece_slow(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Option</span>&lt;Piece&gt; {
+        <span class="kw">let </span>_guard = <span class="self">self</span>.inner.request_semaphore.acquire().<span class="kw">await</span>;
+
         <span class="kw">match </span>InProgressPiece::new(piece_index, <span class="kw-2">&amp;</span><span class="self">self</span>.inner.in_progress_pieces) {
             InProgressPiece::Getting(in_progress_piece_getting) =&gt; {
                 <span class="comment">// Try to get the piece without releasing lock to make sure successfully
@@ -797,6 +821,8 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         piece_index: PieceIndex,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
+        <span class="kw">let </span>_guard = <span class="self">self</span>.inner.request_semaphore.acquire().<span class="kw">await</span>;
+
         <span class="kw">match </span>InProgressPiece::new(piece_index, <span class="kw-2">&amp;</span><span class="self">self</span>.inner.in_progress_pieces) {
             InProgressPiece::Getting(in_progress_piece_getting) =&gt; {
                 <span class="comment">// Try to get the piece without releasing lock to make sure successfully
