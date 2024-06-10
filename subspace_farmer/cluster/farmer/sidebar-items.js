@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["farmer_service"],"struct":["ClusterFarm","ClusterFarmerFarmingNotificationBroadcast","ClusterFarmerIdentifyFarmBroadcast","ClusterFarmerSectorUpdateBroadcast","ClusterFarmerSolutionBroadcast"]};
+window.SIDEBAR_ITEMS = {"fn":["farmer_service"],"struct":["ClusterFarm","ClusterFarmerIdentifyFarmBroadcast"]};

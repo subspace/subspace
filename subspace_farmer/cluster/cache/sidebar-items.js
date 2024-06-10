@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ClusterCacheId"],"fn":["cache_service"],"struct":["ClusterCacheIdentifyBroadcast","ClusterPieceCache"]};
+window.SIDEBAR_ITEMS = {"fn":["cache_service"],"struct":["ClusterCacheIdentifyBroadcast","ClusterPieceCache"]};
