@@ -306,14 +306,54 @@
 <a href="#306" id="306">306</a>
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>import_blocks;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>piece_validator;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>segment_header_downloader;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>snap_sync;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>snap_sync_engine;
 
-<span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::import_blocks::{import_blocks_from_dsn, DsnSyncPieceGetter};
+<span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::import_blocks::import_blocks_from_dsn;
 <span class="kw">use </span><span class="kw">crate</span>::sync_from_dsn::segment_header_downloader::SegmentHeaderDownloader;
+<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{select, FutureExt, StreamExt};
 <span class="kw">use </span>sc_client_api::{AuxStore, BlockBackend, BlockchainEvents};
@@ -325,11 +365,14 @@
 <span class="kw">use </span>sp_consensus_subspace::{FarmerPublicKey, SubspaceApi};
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, CheckedSub, NumberFor};
 <span class="kw">use </span>sp_runtime::Saturating;
+<span class="kw">use </span>std::error::Error;
+<span class="kw">use </span>std::fmt;
 <span class="kw">use </span>std::future::Future;
 <span class="kw">use </span>std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time::{Duration, Instant};
-<span class="kw">use </span>subspace_core_primitives::SegmentIndex;
+<span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex, SegmentIndex};
+<span class="kw">use </span>subspace_networking::utils::piece_provider::{PieceProvider, PieceValidator};
 <span class="kw">use </span>subspace_networking::Node;
 <span class="kw">use </span>tracing::{debug, info, warn};
 
@@ -341,6 +384,41 @@
 </span><span class="kw">const </span>CHECK_ALMOST_SYNCED_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 <span class="doccomment">/// Period of time during which node should be offline for DSN sync to kick-in
 </span><span class="kw">const </span>MIN_OFFLINE_PERIOD: Duration = Duration::from_secs(<span class="number">60</span>);
+
+<span class="doccomment">/// Trait representing a way to get pieces for DSN sync purposes
+</span><span class="attr">#[async_trait]
+</span><span class="kw">pub trait </span>DsnSyncPieceGetter: fmt::Debug {
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;;
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl</span>&lt;T&gt; DsnSyncPieceGetter <span class="kw">for </span>Arc&lt;T&gt;
+<span class="kw">where
+    </span>T: DsnSyncPieceGetter + Send + Sync + <span class="question-mark">?</span>Sized,
+{
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
+        <span class="self">self</span>.as_ref().get_piece(piece_index).<span class="kw">await
+    </span>}
+}
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl</span>&lt;PV&gt; DsnSyncPieceGetter <span class="kw">for </span>PieceProvider&lt;PV&gt;
+<span class="kw">where
+    </span>PV: PieceValidator,
+{
+    <span class="kw">async fn </span>get_piece(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        piece_index: PieceIndex,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_piece_from_cache(piece_index).<span class="kw">await</span>)
+    }
+}
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>NotificationReason {

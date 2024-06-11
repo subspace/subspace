@@ -1055,6 +1055,21 @@
 <a href="#1055" id="1055">1055</a>
 <a href="#1056" id="1056">1056</a>
 <a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -1131,6 +1146,7 @@
 <span class="kw">use </span>std::slice;
 <span class="kw">use </span>std::sync::atomic::{AtomicU16, Ordering};
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>std::time::Duration;
 <span class="kw">use </span>subspace_archiving::archiver::{Archiver, NewArchivedSegment};
 <span class="kw">use </span>subspace_core_primitives::crypto::kzg::Kzg;
 <span class="kw">use </span>subspace_core_primitives::objects::BlockObjectMapping;
@@ -1140,6 +1156,8 @@
 <span class="doccomment">/// Number of WASM instances is 8, this is a bit lower to avoid warnings exceeding number of
 /// instances
 </span><span class="kw">const </span>BLOCKS_TO_ARCHIVE_CONCURRENCY: usize = <span class="number">6</span>;
+<span class="doccomment">/// Do not wait for acknowledgements beyond this time limit
+</span><span class="kw">const </span>ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_mins(<span class="number">2</span>);
 
 <span class="doccomment">/// How deep (in segments) should block be in order to be finalized.
 ///
@@ -2094,7 +2112,7 @@
 ) {
     <span class="kw">let </span>segment_index = archived_segment.segment_header.segment_index();
     <span class="kw">let </span>(acknowledgement_sender, <span class="kw-2">mut </span>acknowledgement_receiver) =
-        tracing_unbounded::&lt;()&gt;(<span class="string">"subspace_acknowledgement"</span>, <span class="number">100</span>);
+        tracing_unbounded::&lt;()&gt;(<span class="string">"subspace_acknowledgement"</span>, <span class="number">1000</span>);
     <span class="comment">// Keep `archived_segment` around until all acknowledgements are received since some receivers
     // might use weak references
     </span><span class="kw">let </span>archived_segment = Arc::new(archived_segment);
@@ -2105,11 +2123,23 @@
 
     archived_segment_notification_sender.notify(<span class="kw">move </span>|| archived_segment_notification);
 
-    <span class="kw">while </span>acknowledgement_receiver.next().<span class="kw">await</span>.is_some() {
-        <span class="macro">debug!</span>(
-            <span class="string">"Archived segment notification acknowledged: {}"</span>,
-            segment_index
-        );
+    <span class="kw">let </span>wait_fut = <span class="kw">async </span>{
+        <span class="kw">while </span>acknowledgement_receiver.next().<span class="kw">await</span>.is_some() {
+            <span class="macro">debug!</span>(
+                <span class="string">"Archived segment notification acknowledged: {}"</span>,
+                segment_index
+            );
+        }
+    };
+
+    <span class="kw">if </span>tokio::time::timeout(ACKNOWLEDGEMENT_TIMEOUT, wait_fut)
+        .<span class="kw">await
+        </span>.is_err()
+    {
+        <span class="macro">warn!</span>(
+            <span class="string">"Archived segment notification was not acknowledged and reached timeout, continue \
+            regardless"
+        </span>);
     }
 }
 </code></pre></div></section></main></body></html>
