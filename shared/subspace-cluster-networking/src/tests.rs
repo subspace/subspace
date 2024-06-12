@@ -55,7 +55,7 @@ fn typical_behavior_config() -> BehaviorConfig {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn basic() {
     let (peer_1, mut peer_1_worker) = Network::<Requests, Responses>::new(NetworkConfig {
         bootstrap_nodes: vec![],
