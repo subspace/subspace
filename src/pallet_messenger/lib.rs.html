@@ -1332,6 +1332,22 @@
 <a href="#1332" id="1332">1332</a>
 <a href="#1333" id="1333">1333</a>
 <a href="#1334" id="1334">1334</a>
+<a href="#1335" id="1335">1335</a>
+<a href="#1336" id="1336">1336</a>
+<a href="#1337" id="1337">1337</a>
+<a href="#1338" id="1338">1338</a>
+<a href="#1339" id="1339">1339</a>
+<a href="#1340" id="1340">1340</a>
+<a href="#1341" id="1341">1341</a>
+<a href="#1342" id="1342">1342</a>
+<a href="#1343" id="1343">1343</a>
+<a href="#1344" id="1344">1344</a>
+<a href="#1345" id="1345">1345</a>
+<a href="#1346" id="1346">1346</a>
+<a href="#1347" id="1347">1347</a>
+<a href="#1348" id="1348">1348</a>
+<a href="#1349" id="1349">1349</a>
+<a href="#1350" id="1350">1350</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1459,6 +1475,12 @@
     Sudo,
 }
 
+<span class="doccomment">/// Parameters for a new channel between two chains.
+</span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo, Copy)]
+</span><span class="kw">pub struct </span>InitiateChannelParams {
+    <span class="kw">pub </span>max_outgoing_messages: u32,
+}
+
 <span class="doccomment">/// Hold identifier trait for messenger specific balance holds
 </span><span class="kw">pub trait </span>HoldIdentifier&lt;T: Config&gt; {
     <span class="kw">fn </span>messenger_channel(dst_chain_id: ChainId, channel_id: ChannelId) -&gt; FungibleHoldId&lt;T&gt;;
@@ -1469,8 +1491,8 @@
     <span class="kw">use </span><span class="kw">crate</span>::weights::WeightInfo;
     <span class="kw">use crate</span>::{
         BalanceOf, ChainAllowlistUpdate, Channel, ChannelId, ChannelState, CloseChannelBy,
-        FeeModel, HoldIdentifier, Nonce, OutboxMessageResult, StateRootOf, ValidatedRelayMessage,
-        U256,
+        FeeModel, HoldIdentifier, InitiateChannelParams, Nonce, OutboxMessageResult, StateRootOf,
+        ValidatedRelayMessage, U256,
     };
     <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
     </span><span class="kw">use </span>alloc::boxed::Box;
@@ -1489,7 +1511,7 @@
     <span class="kw">use </span>sp_domains::{DomainAllowlistUpdates, DomainId, DomainOwner};
     <span class="kw">use </span>sp_messenger::endpoint::{Endpoint, EndpointHandler, EndpointRequest, Sender};
     <span class="kw">use </span>sp_messenger::messages::{
-        ChainId, CrossDomainMessage, InitiateChannelParams, Message, MessageId, MessageKey,
+        ChainId, ChannelOpenParams, CrossDomainMessage, Message, MessageId, MessageKey,
         MessageWeightTag, Payload, ProtocolMessageRequest, RequestResponse, VersionedPayload,
     };
     <span class="kw">use </span>sp_messenger::{
@@ -1542,6 +1564,8 @@
         </span><span class="kw">type </span>ChannelInitReservePortion: Get&lt;Perbill&gt;;
         <span class="doccomment">/// Type to check if a given domain is registered on Consensus chain.
         </span><span class="kw">type </span>DomainRegistration: DomainRegistration;
+        <span class="doccomment">/// Channels fee model
+        </span><span class="kw">type </span>ChannelFeeModel: Get&lt;FeeModel&lt;BalanceOf&lt;<span class="self">Self</span>&gt;&gt;&gt;;
     }
 
     <span class="doccomment">/// Pallet messenger used to communicate between chains and other blockchains.
@@ -1898,13 +1922,21 @@
         </span><span class="kw">pub fn </span>initiate_channel(
             origin: OriginFor&lt;T&gt;,
             dst_chain_id: ChainId,
-            params: InitiateChannelParams&lt;BalanceOf&lt;T&gt;&gt;,
+            params: InitiateChannelParams,
         ) -&gt; DispatchResult {
             <span class="kw">let </span>owner = ensure_signed(origin)<span class="question-mark">?</span>;
+            <span class="kw">let </span>channel_open_params = ChannelOpenParams {
+                max_outgoing_messages: params.max_outgoing_messages,
+                fee_model: T::ChannelFeeModel::get(),
+            };
 
             <span class="comment">// initiate the channel config
-            </span><span class="kw">let </span>channel_id =
-                <span class="self">Self</span>::do_init_channel(dst_chain_id, params, <span class="prelude-val">Some</span>(owner.clone()), <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>channel_id = <span class="self">Self</span>::do_init_channel(
+                dst_chain_id,
+                channel_open_params,
+                <span class="prelude-val">Some</span>(owner.clone()),
+                <span class="bool-val">true</span>,
+            )<span class="question-mark">?</span>;
 
             <span class="comment">// reserve channel open fees
             </span><span class="kw">let </span>hold_id = T::HoldIdentifier::messenger_channel(dst_chain_id, channel_id);
@@ -1924,7 +1956,7 @@
                 dst_chain_id,
                 channel_id,
                 VersionedPayload::V0(Payload::Protocol(RequestResponse::Request(
-                    ProtocolMessageRequest::ChannelOpen(params),
+                    ProtocolMessageRequest::ChannelOpen(channel_open_params),
                 ))),
             )<span class="question-mark">?</span>;
 
@@ -2196,7 +2228,7 @@
             <span class="kw">let </span>fee_model = FeeModel {
                 relay_fee: Default::default(),
             };
-            <span class="kw">let </span>init_params = InitiateChannelParams {
+            <span class="kw">let </span>init_params = ChannelOpenParams {
                 max_outgoing_messages: <span class="number">100</span>,
                 fee_model,
             };
@@ -2326,7 +2358,7 @@
 
         <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>do_init_channel(
             dst_chain_id: ChainId,
-            init_params: InitiateChannelParams&lt;BalanceOf&lt;T&gt;&gt;,
+            init_params: ChannelOpenParams&lt;BalanceOf&lt;T&gt;&gt;,
             maybe_owner: <span class="prelude-ty">Option</span>&lt;T::AccountId&gt;,
             check_allowlist: bool,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;ChannelId, DispatchError&gt; {
