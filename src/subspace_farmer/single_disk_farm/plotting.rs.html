@@ -893,6 +893,23 @@
 <a href="#893" id="893">893</a>
 <a href="#894" id="894">894</a>
 <a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>NodeClientError, NodeClient};
 <span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
@@ -991,15 +1008,15 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) metadata_file: File,
     <span class="attr">#[cfg(windows)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) metadata_file: UnbufferedIoFileWindows,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) handlers: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Handlers,
-    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_being_modified: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) global_mutex: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncMutex&lt;()&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) plotter: P,
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt; {
     <span class="kw">pub</span>(<span class="kw">super</span>) metadata_header: PlotMetadataHeader,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_metadata: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sectors_being_modified: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) sectors_to_plot_receiver: mpsc::Receiver&lt;SectorToPlot&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) sector_plotting_options: SectorPlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt;,
 }
@@ -1017,6 +1034,8 @@
 {
     <span class="kw">let </span>PlottingOptions {
         <span class="kw-2">mut </span>metadata_header,
+        sectors_metadata,
+        sectors_being_modified,
         <span class="kw-2">mut </span>sectors_to_plot_receiver,
         sector_plotting_options,
     } = plotting_options;
@@ -1033,7 +1052,12 @@
                 };
 
                 <span class="kw">let </span>sector_index = sector_to_plot.sector_index;
-                <span class="kw">let </span>sector_plotting_init_fut = plot_single_sector(sector_to_plot, <span class="kw-2">&amp;</span>sector_plotting_options)
+                <span class="kw">let </span>sector_plotting_init_fut = plot_single_sector(
+                    sector_to_plot,
+                    <span class="kw-2">&amp;</span>sector_plotting_options,
+                    sectors_metadata,
+                    sectors_being_modified,
+                )
                     .instrument(<span class="macro">info_span!</span>(<span class="string">""</span>, %sector_index))
                     .fuse();
                 <span class="kw">let </span><span class="kw-2">mut </span>sector_plotting_init_fut = <span class="macro">pin!</span>(sector_plotting_init_fut);
@@ -1053,8 +1077,10 @@
                             process_plotting_result(
                                 maybe_sector_plotting_result<span class="question-mark">?</span>,
                                 <span class="kw-2">&amp;mut </span>metadata_header,
+                                sectors_metadata,
+                                sectors_being_modified,
                                 <span class="kw-2">&amp;</span>sector_plotting_options.metadata_file
-                            )<span class="question-mark">?</span>;
+                            ).<span class="kw">await</span><span class="question-mark">?</span>;
                         }
                     }
                 }
@@ -1063,8 +1089,10 @@
                 process_plotting_result(
                     maybe_sector_plotting_result<span class="question-mark">?</span>,
                     <span class="kw-2">&amp;mut </span>metadata_header,
+                    sectors_metadata,
+                    sectors_being_modified,
                     <span class="kw-2">&amp;</span>sector_plotting_options.metadata_file
-                )<span class="question-mark">?</span>;
+                ).<span class="kw">await</span><span class="question-mark">?</span>;
             }
         }
     }
@@ -1072,17 +1100,33 @@
     <span class="prelude-val">Ok</span>(())
 }
 
-<span class="kw">fn </span>process_plotting_result(
+<span class="kw">async fn </span>process_plotting_result(
     sector_plotting_result: SectorPlottingResult,
     metadata_header: <span class="kw-2">&amp;mut </span>PlotMetadataHeader,
+    sectors_metadata: <span class="kw-2">&amp;</span>AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;,
+    sectors_being_modified: <span class="kw-2">&amp;</span>AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;,
     <span class="attr">#[cfg(not(windows))] </span>metadata_file: <span class="kw-2">&amp;</span>File,
     <span class="attr">#[cfg(windows)] </span>metadata_file: <span class="kw-2">&amp;</span>UnbufferedIoFileWindows,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PlottingError&gt; {
     <span class="kw">let </span>SectorPlottingResult {
         sector_index,
+        sector_metadata,
         replotting,
         last_queued,
     } = sector_plotting_result;
+
+    {
+        <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata = sectors_metadata.write().<span class="kw">await</span>;
+        <span class="comment">// If exists then we're replotting, otherwise we create sector for the first time
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(existing_sector_metadata) = sectors_metadata.get_mut(sector_index <span class="kw">as </span>usize) {
+            <span class="kw-2">*</span>existing_sector_metadata = sector_metadata;
+        } <span class="kw">else </span>{
+            sectors_metadata.push(sector_metadata);
+        }
+    }
+
+    <span class="comment">// Inform others that this sector is no longer being modified
+    </span>sectors_being_modified.write().<span class="kw">await</span>.remove(<span class="kw-2">&amp;</span>sector_index);
 
     <span class="kw">if </span>sector_index + <span class="number">1 </span>&gt; metadata_header.plotted_sector_count {
         metadata_header.plotted_sector_count = sector_index + <span class="number">1</span>;
@@ -1115,6 +1159,7 @@
 
 <span class="kw">struct </span>SectorPlottingResult {
     sector_index: SectorIndex,
+    sector_metadata: SectorMetadataChecksummed,
     replotting: bool,
     last_queued: bool,
 }
@@ -1122,6 +1167,8 @@
 <span class="kw">async fn </span>plot_single_sector&lt;<span class="lifetime">'a</span>, NC, P&gt;(
     sector_to_plot: SectorToPlot,
     sector_plotting_options: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SectorPlottingOptions&lt;<span class="lifetime">'a</span>, NC, P&gt;,
+    sectors_metadata: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;,
+    sectors_being_modified: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;SectorPlottingResult, PlottingError&gt;&gt; + <span class="lifetime">'a</span>, PlottingError&gt;
 <span class="kw">where
     </span>NC: NodeClient,
@@ -1134,9 +1181,7 @@
         sector_size,
         plot_file,
         metadata_file,
-        sectors_metadata,
         handlers,
-        sectors_being_modified,
         global_mutex,
         plotter,
     } = sector_plotting_options;
@@ -1263,17 +1308,6 @@
             }
         };
 
-        {
-            <span class="kw">let </span><span class="kw-2">mut </span>sectors_metadata = sectors_metadata.write().<span class="kw">await</span>;
-            <span class="comment">// If exists then we're replotting, otherwise we create sector for the first time
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(existing_sector_metadata) = sectors_metadata.get_mut(sector_index <span class="kw">as </span>usize)
-            {
-                <span class="kw-2">*</span>existing_sector_metadata = plotted_sector.sector_metadata.clone();
-            } <span class="kw">else </span>{
-                sectors_metadata.push(plotted_sector.sector_metadata.clone());
-            }
-        }
-
         <span class="kw">let </span>maybe_old_plotted_sector = maybe_old_sector_metadata.map(|old_sector_metadata| {
             <span class="kw">let </span>old_history_size = old_sector_metadata.history_size;
 
@@ -1300,14 +1334,13 @@
             }
         });
 
-        <span class="comment">// Inform others that this sector is no longer being modified
-        </span>sectors_being_modified.write().<span class="kw">await</span>.remove(<span class="kw-2">&amp;</span>sector_index);
-
         <span class="kw">if </span>replotting {
             <span class="macro">debug!</span>(<span class="string">"Sector replotted successfully"</span>);
         } <span class="kw">else </span>{
             <span class="macro">debug!</span>(<span class="string">"Sector plotted successfully"</span>);
         }
+
+        <span class="kw">let </span>sector_metadata = plotted_sector.sector_metadata.clone();
 
         <span class="kw">let </span>sector_state = SectorUpdate::Plotting(SectorPlottingDetails::Finished {
             plotted_sector,
@@ -1320,6 +1353,7 @@
 
         <span class="prelude-val">Ok</span>(SectorPlottingResult {
             sector_index,
+            sector_metadata,
             replotting,
             last_queued,
         })
