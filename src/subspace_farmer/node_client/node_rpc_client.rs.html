@@ -266,9 +266,22 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>RpcError, Error, NodeClient, NodeClientExt};
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
-<span class="kw">use </span>async_lock::RwLock <span class="kw">as </span>AsyncRwLock;
+<span class="kw">use </span>async_lock::{RwLock <span class="kw">as </span>AsyncRwLock, Semaphore};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>futures::{Stream, StreamExt};
 <span class="kw">use </span>jsonrpsee::core::client::{ClientT, Error <span class="kw">as </span>JsonError, SubscriptionClientT};
@@ -283,10 +296,15 @@
 };
 <span class="kw">use </span>tracing::{info, trace, warn};
 
+<span class="doccomment">/// TODO: Node is having a hard time responding for many piece requests, specifically this results
+///  in subscriptions become broken on the node: https://github.com/paritytech/jsonrpsee/issues/1409
+</span><span class="kw">const </span>MAX_CONCURRENT_PIECE_REQUESTS: usize = <span class="number">10</span>;
+
 <span class="doccomment">/// `WsClient` wrapper.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>NodeRpcClient {
     client: Arc&lt;WsClient&gt;,
+    piece_request_semaphore: Arc&lt;Semaphore&gt;,
     segment_headers: Arc&lt;AsyncRwLock&lt;Vec&lt;SegmentHeader&gt;&gt;&gt;,
     _background_task: Arc&lt;AsyncJoinOnDrop&lt;()&gt;&gt;,
 }
@@ -300,6 +318,7 @@
                 .build(url)
                 .<span class="kw">await</span><span class="question-mark">?</span>,
         );
+        <span class="kw">let </span>piece_request_semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PIECE_REQUESTS));
 
         <span class="kw">let </span><span class="kw-2">mut </span>segment_headers = Vec::&lt;SegmentHeader&gt;::new();
         <span class="kw">let </span><span class="kw-2">mut </span>archived_segments_notifications = Box::pin(
@@ -391,6 +410,7 @@
 
         <span class="kw">let </span>node_client = <span class="self">Self </span>{
             client,
+            piece_request_semaphore,
             segment_headers,
             _background_task: Arc::new(AsyncJoinOnDrop::new(background_task, <span class="bool-val">true</span>)),
         };
@@ -502,10 +522,16 @@
     }
 
     <span class="kw">async fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, RpcError&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self
-            </span>.client
-            .request(<span class="string">"subspace_piece"</span>, <span class="macro">rpc_params!</span>[<span class="kw-2">&amp;</span>piece_index])
-            .<span class="kw">await</span><span class="question-mark">?</span>)
+        <span class="kw">let </span>_permit = <span class="self">self</span>.piece_request_semaphore.acquire().<span class="kw">await</span>;
+        <span class="kw">let </span>client = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.client);
+        <span class="comment">// Spawn a separate task to improve concurrency due to slow-ish JSON decoding that causes
+        // issues for jsonrpsee
+        </span><span class="kw">let </span>piece_fut = tokio::task::spawn(<span class="kw">async move </span>{
+            client
+                .request(<span class="string">"subspace_piece"</span>, <span class="macro">rpc_params!</span>[<span class="kw-2">&amp;</span>piece_index])
+                .<span class="kw">await
+        </span>});
+        <span class="prelude-val">Ok</span>(piece_fut.<span class="kw">await</span><span class="question-mark">??</span>)
     }
 
     <span class="kw">async fn </span>acknowledge_archived_segment_header(
