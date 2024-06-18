@@ -279,6 +279,33 @@
 <a href="#279" id="279">279</a>
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>RpcError, Error, NodeClient, NodeClientExt};
 <span class="kw">use </span><span class="kw">crate</span>::utils::AsyncJoinOnDrop;
 <span class="kw">use </span>async_lock::{RwLock <span class="kw">as </span>AsyncRwLock, Semaphore};
@@ -299,6 +326,46 @@
 <span class="doccomment">/// TODO: Node is having a hard time responding for many piece requests, specifically this results
 ///  in subscriptions become broken on the node: https://github.com/paritytech/jsonrpsee/issues/1409
 </span><span class="kw">const </span>MAX_CONCURRENT_PIECE_REQUESTS: usize = <span class="number">10</span>;
+
+<span class="kw">async fn </span>sync_segment_headers(
+    segment_headers: <span class="kw-2">&amp;mut </span>Vec&lt;SegmentHeader&gt;,
+    client: <span class="kw-2">&amp;</span>WsClient,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), JsonError&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>segment_index_offset = SegmentIndex::from(segment_headers.len() <span class="kw">as </span>u64);
+    <span class="kw">let </span>segment_index_step = SegmentIndex::from(MAX_SEGMENT_HEADERS_PER_REQUEST <span class="kw">as </span>u64);
+
+    <span class="lifetime">'outer</span>: <span class="kw">loop </span>{
+        <span class="kw">let </span>from = segment_index_offset;
+        <span class="kw">let </span>to = segment_index_offset + segment_index_step;
+        <span class="macro">trace!</span>(%from, %to, <span class="string">"Requesting segment headers"</span>);
+
+        <span class="kw">for </span>maybe_segment_header <span class="kw">in </span>client
+            .request::&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, <span class="kw">_</span>&gt;(
+                <span class="string">"subspace_segmentHeaders"</span>,
+                <span class="macro">rpc_params!</span>[<span class="kw-2">&amp;</span>(from..to).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()],
+            )
+            .<span class="kw">await
+            </span>.map_err(|error| {
+                JsonError::Custom(<span class="macro">format!</span>(
+                    <span class="string">"Failed to download segment headers {from}..{to} from node: {error}"
+                </span>))
+            })<span class="question-mark">?
+        </span>{
+            <span class="kw">let </span><span class="prelude-val">Some</span>(segment_header) = maybe_segment_header <span class="kw">else </span>{
+                <span class="comment">// Reached non-existent segment header
+                </span><span class="kw">break </span><span class="lifetime">'outer</span>;
+            };
+
+            <span class="kw">if </span>segment_headers.len() == u64::from(segment_header.segment_index()) <span class="kw">as </span>usize {
+                segment_headers.push(segment_header);
+            }
+        }
+
+        segment_index_offset += segment_index_step;
+    }
+
+    <span class="prelude-val">Ok</span>(())
+}
 
 <span class="doccomment">/// `WsClient` wrapper.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -335,40 +402,7 @@
         );
 
         <span class="macro">info!</span>(<span class="string">"Downloading all segment headers from node..."</span>);
-        {
-            <span class="kw">let </span><span class="kw-2">mut </span>segment_index_offset = SegmentIndex::from(segment_headers.len() <span class="kw">as </span>u64);
-            <span class="kw">let </span>segment_index_step = SegmentIndex::from(MAX_SEGMENT_HEADERS_PER_REQUEST <span class="kw">as </span>u64);
-
-            <span class="lifetime">'outer</span>: <span class="kw">loop </span>{
-                <span class="kw">let </span>from = segment_index_offset;
-                <span class="kw">let </span>to = segment_index_offset + segment_index_step;
-                <span class="macro">trace!</span>(%from, %to, <span class="string">"Requesting segment headers"</span>);
-
-                <span class="kw">for </span>maybe_segment_header <span class="kw">in </span>client
-                    .request::&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, <span class="kw">_</span>&gt;(
-                        <span class="string">"subspace_segmentHeaders"</span>,
-                        <span class="macro">rpc_params!</span>[<span class="kw-2">&amp;</span>(from..to).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()],
-                    )
-                    .<span class="kw">await
-                    </span>.map_err(|error| {
-                        JsonError::Custom(<span class="macro">format!</span>(
-                            <span class="string">"Failed to download segment headers {from}..{to} from node: {error}"
-                        </span>))
-                    })<span class="question-mark">?
-                </span>{
-                    <span class="kw">let </span><span class="prelude-val">Some</span>(segment_header) = maybe_segment_header <span class="kw">else </span>{
-                        <span class="comment">// Reached non-existent segment header
-                        </span><span class="kw">break </span><span class="lifetime">'outer</span>;
-                    };
-
-                    <span class="kw">if </span>segment_headers.len() == u64::from(segment_header.segment_index()) <span class="kw">as </span>usize {
-                        segment_headers.push(segment_header);
-                    }
-                }
-
-                segment_index_offset += segment_index_step;
-            }
-        }
+        sync_segment_headers(<span class="kw-2">&amp;mut </span>segment_headers, <span class="kw-2">&amp;</span>client).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"Downloaded all segment headers from node successfully"</span>);
 
         <span class="kw">let </span>segment_headers = Arc::new(AsyncRwLock::new(segment_headers));
@@ -510,15 +544,35 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         segment_indices: Vec&lt;SegmentIndex&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SegmentHeader&gt;&gt;, RpcError&gt; {
-        <span class="kw">let </span>segment_headers = <span class="self">self</span>.segment_headers.read().<span class="kw">await</span>;
-        <span class="prelude-val">Ok</span>(segment_indices
-            .into_iter()
-            .map(|segment_index| {
-                segment_headers
-                    .get(u64::from(segment_index) <span class="kw">as </span>usize)
-                    .copied()
-            })
-            .collect())
+        <span class="kw">let </span>retrieved_segment_headers = {
+            <span class="kw">let </span>segment_headers = <span class="self">self</span>.segment_headers.read().<span class="kw">await</span>;
+
+            segment_indices
+                .iter()
+                .map(|segment_index| {
+                    segment_headers
+                        .get(u64::from(<span class="kw-2">*</span>segment_index) <span class="kw">as </span>usize)
+                        .copied()
+                })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+        };
+
+        <span class="kw">if </span>retrieved_segment_headers.iter().all(Option::is_some) {
+            <span class="prelude-val">Ok</span>(retrieved_segment_headers)
+        } <span class="kw">else </span>{
+            <span class="comment">// Re-sync segment headers
+            </span><span class="kw">let </span><span class="kw-2">mut </span>segment_headers = <span class="self">self</span>.segment_headers.write().<span class="kw">await</span>;
+            sync_segment_headers(<span class="kw-2">&amp;mut </span>segment_headers, <span class="kw-2">&amp;</span><span class="self">self</span>.client).<span class="kw">await</span><span class="question-mark">?</span>;
+
+            <span class="prelude-val">Ok</span>(segment_indices
+                .iter()
+                .map(|segment_index| {
+                    segment_headers
+                        .get(u64::from(<span class="kw-2">*</span>segment_index) <span class="kw">as </span>usize)
+                        .copied()
+                })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;())
+        }
     }
 
     <span class="kw">async fn </span>piece(<span class="kw-2">&amp;</span><span class="self">self</span>, piece_index: PieceIndex) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Piece&gt;, RpcError&gt; {
