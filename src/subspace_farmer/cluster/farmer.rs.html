@@ -758,6 +758,26 @@
 <a href="#758" id="758">758</a>
 <a href="#759" id="759">759</a>
 <a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Farming cluster farmer
 //!
 //! Farmer is responsible for maintaining farms, doing audits and generating proofs when solution is
@@ -1101,7 +1121,7 @@
     total_sectors_count: SectorIndex,
     piece_reader: Arc&lt;<span class="kw">dyn </span>PieceReader + <span class="lifetime">'static</span>&gt;,
     plotted_sectors: Arc&lt;<span class="kw">dyn </span>PlottedSectors + <span class="lifetime">'static</span>&gt;,
-    _background_tasks: AsyncJoinOnDrop&lt;()&gt;,
+    _background_tasks: <span class="prelude-ty">Option</span>&lt;AsyncJoinOnDrop&lt;()&gt;&gt;,
 }
 
 <span class="doccomment">/// Create farmer service for specified farms that will be processing incoming requests and send
@@ -1113,6 +1133,7 @@
     nats_client: NatsClient,
     farms: <span class="kw-2">&amp;</span>[F],
     identification_broadcast_interval: Duration,
+    primary_instance: bool,
 ) -&gt; <span class="kw">impl </span>Future&lt;Output = anyhow::Result&lt;()&gt;&gt; + Send + <span class="lifetime">'static
 </span><span class="kw">where
     </span>F: Farm,
@@ -1125,97 +1146,104 @@
             <span class="kw">let </span>farm_id = <span class="kw-2">*</span>farm.id();
             <span class="kw">let </span>nats_client = nats_client.clone();
 
-            <span class="kw">let </span>(sector_updates_sender, <span class="kw-2">mut </span>sector_updates_receiver) =
-                mpsc::channel(BROADCAST_NOTIFICATIONS_BUFFER);
-            <span class="kw">let </span>(farming_notifications_sender, <span class="kw-2">mut </span>farming_notifications_receiver) =
-                mpsc::channel(BROADCAST_NOTIFICATIONS_BUFFER);
-            <span class="kw">let </span>(solutions_sender, <span class="kw-2">mut </span>solutions_receiver) =
-                mpsc::channel(BROADCAST_NOTIFICATIONS_BUFFER);
+            <span class="kw">let </span>background_tasks = <span class="kw">if </span>primary_instance {
+                <span class="kw">let </span>(sector_updates_sender, <span class="kw-2">mut </span>sector_updates_receiver) =
+                    mpsc::channel(BROADCAST_NOTIFICATIONS_BUFFER);
+                <span class="kw">let </span>(farming_notifications_sender, <span class="kw-2">mut </span>farming_notifications_receiver) =
+                    mpsc::channel(BROADCAST_NOTIFICATIONS_BUFFER);
+                <span class="kw">let </span>(solutions_sender, <span class="kw-2">mut </span>solutions_receiver) =
+                    mpsc::channel(BROADCAST_NOTIFICATIONS_BUFFER);
 
-            <span class="kw">let </span>sector_updates_handler_id =
-                farm.on_sector_update(Arc::new(<span class="kw">move </span>|(sector_index, sector_update)| {
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                        sector_updates_sender
-                            .clone()
-                            .try_send(ClusterFarmerSectorUpdateBroadcast {
+                <span class="kw">let </span>sector_updates_handler_id =
+                    farm.on_sector_update(Arc::new(<span class="kw">move </span>|(sector_index, sector_update)| {
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = sector_updates_sender.clone().try_send(
+                            ClusterFarmerSectorUpdateBroadcast {
                                 farm_id,
                                 sector_index: <span class="kw-2">*</span>sector_index,
                                 sector_update: sector_update.clone(),
+                            },
+                        ) {
+                            <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to send sector update notification"</span>);
+                        }
+                    }));
+
+                <span class="kw">let </span>farming_notifications_handler_id =
+                    farm.on_farming_notification(Arc::new(<span class="kw">move </span>|farming_notification| {
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_notifications_sender.clone().try_send(
+                            ClusterFarmerFarmingNotificationBroadcast {
+                                farm_id,
+                                farming_notification: farming_notification.clone(),
+                            },
+                        ) {
+                            <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to send farming notification"</span>);
+                        }
+                    }));
+
+                <span class="kw">let </span>solutions_handler_id = farm.on_solution(Arc::new(<span class="kw">move </span>|solution_response| {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                        solutions_sender
+                            .clone()
+                            .try_send(ClusterFarmerSolutionBroadcast {
+                                farm_id,
+                                solution_response: solution_response.clone(),
                             })
                     {
-                        <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to send sector update notification"</span>);
+                        <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to send solution notification"</span>);
                     }
                 }));
 
-            <span class="kw">let </span>farming_notifications_handler_id =
-                farm.on_farming_notification(Arc::new(<span class="kw">move </span>|farming_notification| {
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = farming_notifications_sender.clone().try_send(
-                        ClusterFarmerFarmingNotificationBroadcast {
-                            farm_id,
-                            farming_notification: farming_notification.clone(),
-                        },
-                    ) {
-                        <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to send farming notification"</span>);
-                    }
-                }));
+                <span class="prelude-val">Some</span>(AsyncJoinOnDrop::new(
+                    tokio::spawn(<span class="kw">async move </span>{
+                        <span class="kw">let </span>farm_id_string = farm_id.to_string();
 
-            <span class="kw">let </span>solutions_handler_id = farm.on_solution(Arc::new(<span class="kw">move </span>|solution_response| {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                    solutions_sender
-                        .clone()
-                        .try_send(ClusterFarmerSolutionBroadcast {
-                            farm_id,
-                            solution_response: solution_response.clone(),
-                        })
-                {
-                    <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to send solution notification"</span>);
-                }
-            }));
-
-            <span class="kw">let </span>background_tasks = AsyncJoinOnDrop::new(
-                tokio::spawn(<span class="kw">async move </span>{
-                    <span class="kw">let </span>farm_id_string = farm_id.to_string();
-
-                    <span class="kw">let </span>sector_updates_fut = <span class="kw">async </span>{
-                        <span class="kw">while let </span><span class="prelude-val">Some</span>(broadcast) = sector_updates_receiver.next().<span class="kw">await </span>{
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                                nats_client.broadcast(<span class="kw-2">&amp;</span>broadcast, <span class="kw-2">&amp;</span>farm_id_string).<span class="kw">await
-                            </span>{
-                                <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to broadcast sector update"</span>);
+                        <span class="kw">let </span>sector_updates_fut = <span class="kw">async </span>{
+                            <span class="kw">while let </span><span class="prelude-val">Some</span>(broadcast) = sector_updates_receiver.next().<span class="kw">await </span>{
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                                    nats_client.broadcast(<span class="kw-2">&amp;</span>broadcast, <span class="kw-2">&amp;</span>farm_id_string).<span class="kw">await
+                                </span>{
+                                    <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to broadcast sector update"</span>);
+                                }
                             }
-                        }
-                    };
-                    <span class="kw">let </span>farming_notifications_fut = <span class="kw">async </span>{
-                        <span class="kw">while let </span><span class="prelude-val">Some</span>(broadcast) = farming_notifications_receiver.next().<span class="kw">await </span>{
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                                nats_client.broadcast(<span class="kw-2">&amp;</span>broadcast, <span class="kw-2">&amp;</span>farm_id_string).<span class="kw">await
+                        };
+                        <span class="kw">let </span>farming_notifications_fut = <span class="kw">async </span>{
+                            <span class="kw">while let </span><span class="prelude-val">Some</span>(broadcast) = farming_notifications_receiver.next().<span class="kw">await
                             </span>{
-                                <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to broadcast farming notification"</span>);
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                                    nats_client.broadcast(<span class="kw-2">&amp;</span>broadcast, <span class="kw-2">&amp;</span>farm_id_string).<span class="kw">await
+                                </span>{
+                                    <span class="macro">warn!</span>(
+                                        %farm_id,
+                                        %error,
+                                        <span class="string">"Failed to broadcast farming notification"
+                                    </span>);
+                                }
                             }
-                        }
-                    };
-                    <span class="kw">let </span>solutions_fut = <span class="kw">async </span>{
-                        <span class="kw">while let </span><span class="prelude-val">Some</span>(broadcast) = solutions_receiver.next().<span class="kw">await </span>{
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
-                                nats_client.broadcast(<span class="kw-2">&amp;</span>broadcast, <span class="kw-2">&amp;</span>farm_id_string).<span class="kw">await
-                            </span>{
-                                <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to broadcast solution"</span>);
+                        };
+                        <span class="kw">let </span>solutions_fut = <span class="kw">async </span>{
+                            <span class="kw">while let </span><span class="prelude-val">Some</span>(broadcast) = solutions_receiver.next().<span class="kw">await </span>{
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) =
+                                    nats_client.broadcast(<span class="kw-2">&amp;</span>broadcast, <span class="kw-2">&amp;</span>farm_id_string).<span class="kw">await
+                                </span>{
+                                    <span class="macro">warn!</span>(%farm_id, %error, <span class="string">"Failed to broadcast solution"</span>);
+                                }
                             }
+                        };
+
+                        <span class="macro">select!</span> {
+                            <span class="kw">_ </span>= sector_updates_fut.fuse() =&gt; {}
+                            <span class="kw">_ </span>= farming_notifications_fut.fuse() =&gt; {}
+                            <span class="kw">_ </span>= solutions_fut.fuse() =&gt; {}
                         }
-                    };
 
-                    <span class="macro">select!</span> {
-                        <span class="kw">_ </span>= sector_updates_fut.fuse() =&gt; {}
-                        <span class="kw">_ </span>= farming_notifications_fut.fuse() =&gt; {}
-                        <span class="kw">_ </span>= solutions_fut.fuse() =&gt; {}
-                    }
-
-                    drop(sector_updates_handler_id);
-                    drop(farming_notifications_handler_id);
-                    drop(solutions_handler_id);
-                }),
-                <span class="bool-val">true</span>,
-            );
+                        drop(sector_updates_handler_id);
+                        drop(farming_notifications_handler_id);
+                        drop(solutions_handler_id);
+                    }),
+                    <span class="bool-val">true</span>,
+                ))
+            } <span class="kw">else </span>{
+                <span class="prelude-val">None
+            </span>};
 
             FarmDetails {
                 farm_id,
@@ -1229,16 +1257,27 @@
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
     <span class="kw">async move </span>{
-        <span class="macro">select!</span> {
-            result = identify_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details, identification_broadcast_interval).fuse() =&gt; {
-                result
-            },
-            result = plotted_sectors_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details).fuse() =&gt; {
-                result
-            },
-            result = read_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details).fuse() =&gt; {
-                result
-            },
+        <span class="kw">if </span>primary_instance {
+            <span class="macro">select!</span> {
+                result = identify_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details, identification_broadcast_interval).fuse() =&gt; {
+                    result
+                },
+                result = plotted_sectors_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details).fuse() =&gt; {
+                    result
+                },
+                result = read_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details).fuse() =&gt; {
+                    result
+                },
+            }
+        } <span class="kw">else </span>{
+            <span class="macro">select!</span> {
+                result = plotted_sectors_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details).fuse() =&gt; {
+                    result
+                },
+                result = read_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>farms_details).fuse() =&gt; {
+                    result
+                },
+            }
         }
     }
 }
@@ -1264,6 +1303,7 @@
             <span class="macro">anyhow!</span>(<span class="string">"Failed to subscribe to farmer identify broadcast requests: {error}"</span>)
         })<span class="question-mark">?
         </span>.fuse();
+
     <span class="comment">// Also send periodic updates in addition to the subscription response
     </span><span class="kw">let </span><span class="kw-2">mut </span>interval = tokio::time::interval(identification_broadcast_interval);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);

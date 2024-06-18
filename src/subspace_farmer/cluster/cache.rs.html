@@ -718,6 +718,38 @@
 <a href="#718" id="718">718</a>
 <a href="#719" id="719">719</a>
 <a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Farming cluster cache
 //!
 //! Cache is responsible for caching pieces within allocated space to accelerate plotting and serve
@@ -740,10 +772,12 @@
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>std::future::{pending, Future};
 <span class="kw">use </span>std::pin::{pin, Pin};
-<span class="kw">use </span>std::time::Duration;
+<span class="kw">use </span>std::time::{Duration, Instant};
 <span class="kw">use </span>subspace_core_primitives::{Piece, PieceIndex};
 <span class="kw">use </span>tokio::time::MissedTickBehavior;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn};
+
+<span class="kw">const </span>MIN_CACHE_IDENTIFICATION_INTERVAL: Duration = Duration::from_secs(<span class="number">1</span>);
 
 <span class="doccomment">/// Broadcast with identification details by caches
 </span><span class="attr">#[derive(Debug, Clone, Encode, Decode)]
@@ -919,6 +953,7 @@
     caches: <span class="kw-2">&amp;</span>[C],
     cache_group: <span class="kw-2">&amp;</span>str,
     identification_broadcast_interval: Duration,
+    primary_instance: bool,
 ) -&gt; anyhow::Result&lt;()&gt;
 <span class="kw">where
     </span>C: PieceCache,
@@ -928,7 +963,9 @@
         .map(|cache| {
             <span class="kw">let </span>cache_id = <span class="kw-2">*</span>cache.id();
 
-            <span class="macro">info!</span>(%cache_id, max_num_elements = %cache.max_num_elements(), <span class="string">"Created cache"</span>);
+            <span class="kw">if </span>primary_instance {
+                <span class="macro">info!</span>(%cache_id, max_num_elements = %cache.max_num_elements(), <span class="string">"Created cache"</span>);
+            }
 
             CacheDetails {
                 cache_id,
@@ -938,22 +975,39 @@
         })
         .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 
-    <span class="macro">select!</span> {
-        result = identify_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details, cache_group, identification_broadcast_interval).fuse() =&gt; {
-            result
-        },
-        result = write_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
-            result
-        },
-        result = read_piece_index_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
-            result
-        },
-        result = read_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
-            result
-        },
-        result = contents_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
-            result
-        },
+    <span class="kw">if </span>primary_instance {
+        <span class="macro">select!</span> {
+            result = identify_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details, cache_group, identification_broadcast_interval).fuse() =&gt; {
+                result
+            },
+            result = write_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+            result = read_piece_index_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+            result = read_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+            result = contents_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+        }
+    } <span class="kw">else </span>{
+        <span class="macro">select!</span> {
+            result = write_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+            result = read_piece_index_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+            result = read_piece_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+            result = contents_responder(<span class="kw-2">&amp;</span>nats_client, <span class="kw-2">&amp;</span>caches_details).fuse() =&gt; {
+                result
+            },
+        }
     }
 }
 
@@ -981,9 +1035,12 @@
             <span class="macro">anyhow!</span>(<span class="string">"Failed to subscribe to cache identify broadcast requests: {error}"</span>)
         })<span class="question-mark">?
         </span>.fuse();
+
     <span class="comment">// Also send periodic updates in addition to the subscription response
     </span><span class="kw">let </span><span class="kw-2">mut </span>interval = tokio::time::interval(identification_broadcast_interval);
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    <span class="kw">let </span><span class="kw-2">mut </span>last_identification = Instant::now();
 
     <span class="kw">loop </span>{
         <span class="macro">select!</span> {
@@ -995,10 +1052,17 @@
 
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>message, <span class="string">"Cache received identify broadcast message"</span>);
 
+                <span class="kw">if </span>last_identification.elapsed() &lt; MIN_CACHE_IDENTIFICATION_INTERVAL {
+                    <span class="comment">// Skip too frequent identification requests
+                    </span><span class="kw">continue</span>;
+                }
+
+                last_identification = Instant::now();
                 send_identify_broadcast(nats_client, caches_details).<span class="kw">await</span>;
                 interval.reset();
             }
             <span class="kw">_ </span>= interval.tick().fuse() =&gt; {
+                last_identification = Instant::now();
                 <span class="macro">trace!</span>(<span class="string">"Cache self-identification"</span>);
 
                 send_identify_broadcast(nats_client, caches_details).<span class="kw">await</span>;
