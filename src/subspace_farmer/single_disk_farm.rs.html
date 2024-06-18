@@ -2349,26 +2349,58 @@
 <a href="#2349" id="2349">2349</a>
 <a href="#2350" id="2350">2350</a>
 <a href="#2351" id="2351">2351</a>
-</pre></div><pre class="rust"><code><span class="kw">pub mod </span>farming;
+<a href="#2352" id="2352">2352</a>
+<a href="#2353" id="2353">2353</a>
+<a href="#2354" id="2354">2354</a>
+<a href="#2355" id="2355">2355</a>
+<a href="#2356" id="2356">2356</a>
+<a href="#2357" id="2357">2357</a>
+<a href="#2358" id="2358">2358</a>
+<a href="#2359" id="2359">2359</a>
+<a href="#2360" id="2360">2360</a>
+<a href="#2361" id="2361">2361</a>
+<a href="#2362" id="2362">2362</a>
+<a href="#2363" id="2363">2363</a>
+<a href="#2364" id="2364">2364</a>
+<a href="#2365" id="2365">2365</a>
+<a href="#2366" id="2366">2366</a>
+<a href="#2367" id="2367">2367</a>
+<a href="#2368" id="2368">2368</a>
+<a href="#2369" id="2369">2369</a>
+<a href="#2370" id="2370">2370</a>
+<a href="#2371" id="2371">2371</a>
+<a href="#2372" id="2372">2372</a>
+<a href="#2373" id="2373">2373</a>
+<a href="#2374" id="2374">2374</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Primary [`Farm`] implementation that deals with hardware directly
+//!
+//! Single disk farm is an abstraction that contains an identity, associated plot with metadata and
+//! a small piece cache. It fully manages farming and plotting process, including listening to node
+//! notifications, producing solutions and singing rewards.
+
+</span><span class="kw">pub mod </span>farming;
+<span class="kw">pub mod </span>identity;
 <span class="kw">pub mod </span>piece_cache;
 <span class="kw">pub mod </span>piece_reader;
 <span class="kw">pub mod </span>plot_cache;
 <span class="kw">mod </span>plotted_sectors;
 <span class="kw">mod </span>plotting;
+<span class="kw">mod </span>reward_signing;
 <span class="kw">pub mod </span>unbuffered_io_file_windows;
 
-<span class="kw">use </span><span class="kw">crate</span>::farm::{Farm, FarmId, HandlerFn, PieceReader, PlottedSectors, SectorUpdate};
-<span class="kw">pub use </span><span class="kw">crate</span>::farm::{FarmingError, FarmingNotification};
-<span class="kw">use </span><span class="kw">crate</span>::identity::{Identity, IdentityError};
+<span class="kw">use </span><span class="kw">crate</span>::disk_piece_cache::{DiskPieceCache, DiskPieceCacheError};
+<span class="kw">use </span><span class="kw">crate</span>::farm::{
+    Farm, FarmId, FarmingError, FarmingNotification, HandlerFn, PieceReader, PlottedSectors,
+    SectorUpdate,
+};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
-<span class="kw">use </span><span class="kw">crate</span>::piece_cache::{PieceCache, PieceCacheError};
 <span class="kw">use </span><span class="kw">crate</span>::plotter::Plotter;
-<span class="kw">use </span><span class="kw">crate</span>::reward_signing::reward_signing;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::rayon_files::RayonFiles;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::farming::{
     farming, slot_notification_forwarder, FarmingOptions, PlotAudit,
 };
-<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::DiskPieceCache;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::identity::{Identity, IdentityError};
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_cache::SingleDiskPieceCache;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::piece_reader::DiskPieceReader;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plot_cache::DiskPlotCache;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotted_sectors::SingleDiskPlottedSectors;
@@ -2376,6 +2408,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::plotting::{
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions, SectorPlottingOptions,
 };
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::reward_signing::reward_signing;
 <span class="attr">#[cfg(windows)]
 </span><span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::unbuffered_io_file_windows::DISK_SECTOR_SIZE;
@@ -2441,7 +2474,8 @@
 </span><span class="kw">const </span>INTERNAL_BENCHMARK_READ_TIMEOUT: Duration = Duration::from_millis(<span class="number">3500</span>);
 
 <span class="doccomment">/// Exclusive lock for single disk farm info file, ensuring no concurrent edits by cooperating processes is done
-</span><span class="attr">#[must_use = <span class="string">"Lock file must be kept around or as long as farm is used"</span>]
+</span><span class="attr">#[derive(Debug)]
+#[must_use = <span class="string">"Lock file must be kept around or as long as farm is used"</span>]
 </span><span class="kw">pub struct </span>SingleDiskFarmInfoLock {
     _file: File,
 }
@@ -2470,7 +2504,8 @@
 <span class="kw">impl </span>SingleDiskFarmInfo {
     <span class="kw">const </span>FILE_NAME: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"single_disk_farm.json"</span>;
 
-    <span class="kw">pub fn </span>new(
+    <span class="doccomment">/// Create new instance
+    </span><span class="kw">pub fn </span>new(
         id: FarmId,
         genesis_hash: [u8; <span class="number">32</span>],
         public_key: PublicKey,
@@ -2531,19 +2566,19 @@
         <span class="prelude-val">Ok</span>(SingleDiskFarmInfoLock { _file: file })
     }
 
-    <span class="comment">// ID of the farm
+    <span class="doccomment">/// ID of the farm
     </span><span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>FarmId {
         <span class="kw">let </span><span class="self">Self</span>::V0 { id, .. } = <span class="self">self</span>;
         id
     }
 
-    <span class="comment">// Genesis hash of the chain used for farm creation
+    <span class="doccomment">/// Genesis hash of the chain used for farm creation
     </span><span class="kw">pub fn </span>genesis_hash(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>] {
         <span class="kw">let </span><span class="self">Self</span>::V0 { genesis_hash, .. } = <span class="self">self</span>;
         genesis_hash
     }
 
-    <span class="comment">// Public key of identity used for farm creation
+    <span class="doccomment">/// Public key of identity used for farm creation
     </span><span class="kw">pub fn </span>public_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>PublicKey {
         <span class="kw">let </span><span class="self">Self</span>::V0 { public_key, .. } = <span class="self">self</span>;
         public_key
@@ -2609,6 +2644,7 @@
 }
 
 <span class="doccomment">/// Options used to open single disk farm
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SingleDiskFarmOptions&lt;NC, P&gt;
 <span class="kw">where
     </span>NC: Clone,
@@ -2674,7 +2710,7 @@
     </span>TokioJoinError(<span class="attr">#[from] </span>tokio::task::JoinError),
     <span class="doccomment">/// Piece cache error
     </span><span class="attr">#[error(<span class="string">"Piece cache error: {0}"</span>)]
-    </span>PieceCacheError(<span class="attr">#[from] </span>PieceCacheError),
+    </span>PieceCacheError(<span class="attr">#[from] </span>DiskPieceCacheError),
     <span class="doccomment">/// Can't preallocate metadata file, probably not enough space on disk
     </span><span class="attr">#[error(<span class="string">"Can't preallocate metadata file, probably not enough space on disk: {0}"</span>)]
     </span>CantPreallocateMetadataFile(io::Error),
@@ -2746,10 +2782,14 @@
         instead."
     </span>)]
     </span>FarmTooLarge {
-        allocated_space: u64,
-        allocated_sectors: u64,
-        max_space: u64,
-        max_sectors: u16,
+        <span class="doccomment">/// Allocated space
+        </span>allocated_space: u64,
+        <span class="doccomment">/// Allocated space in sectors
+        </span>allocated_sectors: u64,
+        <span class="doccomment">/// Max supported allocated space
+        </span>max_space: u64,
+        <span class="doccomment">/// Max supported allocated space in sectors
+        </span>max_sectors: u16,
     },
     <span class="doccomment">/// Failed to create thread pool
     </span><span class="attr">#[error(<span class="string">"Failed to create thread pool: {0}"</span>)]
@@ -2895,7 +2935,10 @@
     </span>RewardSigning(<span class="attr">#[from] </span>Box&lt;<span class="kw">dyn </span>Error + Send + Sync + <span class="lifetime">'static</span>&gt;),
     <span class="doccomment">/// Background task panicked
     </span><span class="attr">#[error(<span class="string">"Background task {task} panicked"</span>)]
-    </span>BackgroundTaskPanicked { task: String },
+    </span>BackgroundTaskPanicked {
+        <span class="doccomment">/// Name of the task
+        </span>task: String,
+    },
 }
 
 <span class="kw">type </span>BackgroundTask = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), BackgroundTaskError&gt;&gt; + Send&gt;&gt;;
@@ -2985,7 +3028,7 @@
     metadata_header: PlotMetadataHeader,
     target_sector_count: u16,
     sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
-    piece_cache: DiskPieceCache,
+    piece_cache: SingleDiskPieceCache,
     plot_cache: DiskPlotCache,
 }
 
@@ -2993,7 +3036,8 @@
 /// disk.
 ///
 /// Farm starts operating during creation and doesn't stop until dropped (or error happens).
-</span><span class="attr">#[must_use = <span class="string">"Plot does not function properly unless run() method is called"</span>]
+</span><span class="attr">#[derive(Debug)]
+#[must_use = <span class="string">"Plot does not function properly unless run() method is called"</span>]
 </span><span class="kw">pub struct </span>SingleDiskFarm {
     farmer_protocol_info: FarmerProtocolInfo,
     single_disk_farm_info: SingleDiskFarmInfo,
@@ -3004,7 +3048,7 @@
     span: Span,
     tasks: FuturesUnordered&lt;BackgroundTask&gt;,
     handlers: Arc&lt;Handlers&gt;,
-    piece_cache: DiskPieceCache,
+    piece_cache: SingleDiskPieceCache,
     plot_cache: DiskPlotCache,
     piece_reader: DiskPieceReader,
     <span class="doccomment">/// Sender that will be used to signal to background threads that they should start
@@ -3067,8 +3111,10 @@
 }
 
 <span class="kw">impl </span>SingleDiskFarm {
-    <span class="kw">pub const </span>PLOT_FILE: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"plot.bin"</span>;
-    <span class="kw">pub const </span>METADATA_FILE: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"metadata.bin"</span>;
+    <span class="doccomment">/// Name of the plot file
+    </span><span class="kw">pub const </span>PLOT_FILE: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"plot.bin"</span>;
+    <span class="doccomment">/// Name of the metadata file
+    </span><span class="kw">pub const </span>METADATA_FILE: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"metadata.bin"</span>;
     <span class="kw">const </span>SUPPORTED_PLOT_VERSION: u8 = <span class="number">0</span>;
 
     <span class="doccomment">/// Create new single disk farm instance
@@ -3602,10 +3648,10 @@
             <span class="comment">// Cache must not be empty, ensure it contains at least one element even if
             // percentage-wise it will use more space
             </span><span class="kw">if </span>single_plot_with_cache_space - single_sector_overhead
-                &lt; PieceCache::element_size() <span class="kw">as </span>u64
+                &lt; DiskPieceCache::element_size() <span class="kw">as </span>u64
             {
                 single_plot_with_cache_space =
-                    single_sector_overhead + PieceCache::element_size() <span class="kw">as </span>u64;
+                    single_sector_overhead + DiskPieceCache::element_size() <span class="kw">as </span>u64;
             }
 
             <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmError::InsufficientAllocatedSpace {
@@ -3624,7 +3670,7 @@
                 - fixed_space_usage
                 - plot_file_size
                 - (sector_metadata_size <span class="kw">as </span>u64 * target_sector_count);
-            (cache_space / u64::from(PieceCache::element_size())) <span class="kw">as </span>u32
+            (cache_space / u64::from(DiskPieceCache::element_size())) <span class="kw">as </span>u32
         } <span class="kw">else </span>{
             <span class="number">0
         </span>};
@@ -3775,12 +3821,12 @@
 
         <span class="kw">let </span>plot_file = Arc::new(plot_file);
 
-        <span class="kw">let </span>piece_cache = DiskPieceCache::new(
+        <span class="kw">let </span>piece_cache = SingleDiskPieceCache::new(
             <span class="kw-2">*</span>single_disk_farm_info.id(),
             <span class="kw">if </span>cache_capacity == <span class="number">0 </span>{
                 <span class="prelude-val">None
             </span>} <span class="kw">else </span>{
-                <span class="prelude-val">Some</span>(PieceCache::open(directory, cache_capacity)<span class="question-mark">?</span>)
+                <span class="prelude-val">Some</span>(DiskPieceCache::open(directory, cache_capacity)<span class="question-mark">?</span>)
             },
         );
         <span class="kw">let </span>plot_cache = DiskPlotCache::new(
@@ -3906,7 +3952,7 @@
     }
 
     <span class="doccomment">/// Get piece cache instance
-    </span><span class="kw">pub fn </span>piece_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DiskPieceCache {
+    </span><span class="kw">pub fn </span>piece_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SingleDiskPieceCache {
         <span class="self">self</span>.piece_cache.clone()
     }
 
@@ -3994,7 +4040,7 @@
             }
         }
 
-        PieceCache::wipe(directory)<span class="question-mark">?</span>;
+        DiskPieceCache::wipe(directory)<span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(
             <span class="string">"Deleting info file at {}"</span>,
@@ -4486,7 +4532,7 @@
         }
 
         <span class="kw">if </span>target.cache() {
-            <span class="kw">let </span>file = directory.join(PieceCache::FILE_NAME);
+            <span class="kw">let </span>file = directory.join(DiskPieceCache::FILE_NAME);
             <span class="macro">info!</span>(path = %file.display(), <span class="string">"Checking cache file"</span>);
 
             <span class="kw">let </span>cache_file = <span class="kw">match </span>OpenOptions::new().read(<span class="bool-val">true</span>).write(!dry_run).open(<span class="kw-2">&amp;</span>file) {
@@ -4513,7 +4559,7 @@
                 }
             };
 
-            <span class="kw">let </span>element_size = PieceCache::element_size();
+            <span class="kw">let </span>element_size = DiskPieceCache::element_size();
             <span class="kw">let </span>number_of_cached_elements = cache_size / u64::from(element_size);
             <span class="kw">let </span>dummy_element = <span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize];
             (<span class="number">0</span>..number_of_cached_elements)

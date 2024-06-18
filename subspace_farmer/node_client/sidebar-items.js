@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["node_rpc_client"],"trait":["NodeClient","NodeClientExt"],"type":["Error"]};
+window.SIDEBAR_ITEMS = {"mod":["rpc_node_client"],"trait":["NodeClient","NodeClientExt"],"type":["Error"]};

@@ -933,9 +933,6 @@
 <a href="#933" id="933">933</a>
 <a href="#934" id="934">934</a>
 <a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a>
-<a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>NodeClientError, NodeClient};
 <span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
@@ -949,7 +946,7 @@
 <span class="kw">use </span>futures::stream::FuturesOrdered;
 <span class="kw">use </span>futures::{select, FutureExt, SinkExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::Encode;
-<span class="kw">use </span>std::collections::{HashMap, HashSet};
+<span class="kw">use </span>std::collections::HashSet;
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>std::fs::File;
 <span class="kw">use </span>std::future::{pending, Future};
@@ -1693,30 +1690,24 @@
         </span><span class="kw">let _ </span>= acknowledgement_receiver.<span class="kw">await</span>;
     }
 
-    <span class="kw">let </span><span class="kw-2">mut </span>sectors_expire_at =
-        HashMap::&lt;SectorIndex, SegmentIndex&gt;::with_capacity(usize::from(target_sector_count));
-
-    <span class="kw">let </span><span class="kw-2">mut </span>sectors_to_replot = Vec::new();
-    <span class="kw">let </span><span class="kw-2">mut </span>sectors_to_check = Vec::with_capacity(usize::from(target_sector_count));
+    <span class="kw">let </span><span class="kw-2">mut </span>sectors_expire_at = <span class="macro">vec!</span>[<span class="prelude-val">None</span>::&lt;SegmentIndex&gt;; usize::from(target_sector_count)];
+    <span class="comment">// 10% capacity is generous and should prevent reallocation in most cases
+    </span><span class="kw">let </span><span class="kw-2">mut </span>sectors_to_replot = Vec::with_capacity(usize::from(target_sector_count) / <span class="number">10</span>);
 
     <span class="kw">loop </span>{
-        <span class="kw">let </span>archived_segment_header = <span class="kw-2">*</span>archived_segments_receiver.borrow_and_update();
-        <span class="macro">trace!</span>(
-            segment_index = %archived_segment_header.segment_index(),
-            <span class="string">"New archived segment received"</span>,
-        );
+        <span class="kw">let </span>segment_index = archived_segments_receiver
+            .borrow_and_update()
+            .segment_index();
+        <span class="macro">trace!</span>(%segment_index, <span class="string">"New archived segment received"</span>);
 
-        <span class="comment">// It is fine to take a synchronous read lock here because the only time
-        // write lock is taken is during plotting, which we know doesn't happen
-        // right now. We copy data here because `.read()`'s guard is not `Send`.
-        </span>sectors_metadata
-            .read()
-            .<span class="kw">await
-            </span>.iter()
-            .map(|sector_metadata| (sector_metadata.sector_index, sector_metadata.history_size))
-            .collect_into(<span class="kw-2">&amp;mut </span>sectors_to_check);
-        <span class="kw">for </span>(sector_index, history_size) <span class="kw">in </span>sectors_to_check.drain(..) {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(expires_at) = sectors_expire_at.get(<span class="kw-2">&amp;</span>sector_index).copied() {
+        <span class="kw">let </span>sectors_metadata = sectors_metadata.read().<span class="kw">await</span>;
+        <span class="kw">let </span>sectors_to_check = sectors_metadata
+            .iter()
+            .map(|sector_metadata| (sector_metadata.sector_index, sector_metadata.history_size));
+        <span class="kw">for </span>(sector_index, history_size) <span class="kw">in </span>sectors_to_check {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(expires_at)) =
+                sectors_expire_at.get(usize::from(sector_index)).copied()
+            {
                 <span class="macro">trace!</span>(
                     %sector_index,
                     %history_size,
@@ -1725,7 +1716,7 @@
                 </span>);
                 <span class="comment">// +1 means we will start replotting a bit before it actually expires to avoid
                 // storing expired sectors
-                </span><span class="kw">if </span>expires_at &lt;= (archived_segment_header.segment_index() + SegmentIndex::ONE) {
+                </span><span class="kw">if </span>expires_at &lt;= (segment_index + SegmentIndex::ONE) {
                     <span class="macro">debug!</span>(
                         %sector_index,
                         %history_size,
@@ -1735,13 +1726,11 @@
 
                     handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                         sector_index,
-                        SectorUpdate::Expiration(
-                            <span class="kw">if </span>expires_at &lt;= archived_segment_header.segment_index() {
-                                SectorExpirationDetails::Expired
-                            } <span class="kw">else </span>{
-                                SectorExpirationDetails::AboutToExpire
-                            },
-                        ),
+                        SectorUpdate::Expiration(<span class="kw">if </span>expires_at &lt;= segment_index {
+                            SectorExpirationDetails::Expired
+                        } <span class="kw">else </span>{
+                            SectorExpirationDetails::AboutToExpire
+                        }),
                     ));
 
                     <span class="comment">// Time to replot
@@ -1797,7 +1786,7 @@
                     </span>);
                     <span class="comment">// +1 means we will start replotting a bit before it actually expires to avoid
                     // storing expired sectors
-                    </span><span class="kw">if </span>expires_at &lt;= (archived_segment_header.segment_index() + SegmentIndex::ONE) {
+                    </span><span class="kw">if </span>expires_at &lt;= (segment_index + SegmentIndex::ONE) {
                         <span class="macro">debug!</span>(
                             %sector_index,
                             %history_size,
@@ -1807,13 +1796,11 @@
 
                         handlers.sector_update.call_simple(<span class="kw-2">&amp;</span>(
                             sector_index,
-                            SectorUpdate::Expiration(
-                                <span class="kw">if </span>expires_at &lt;= archived_segment_header.segment_index() {
-                                    SectorExpirationDetails::Expired
-                                } <span class="kw">else </span>{
-                                    SectorExpirationDetails::AboutToExpire
-                                },
-                            ),
+                            SectorUpdate::Expiration(<span class="kw">if </span>expires_at &lt;= segment_index {
+                                SectorExpirationDetails::Expired
+                            } <span class="kw">else </span>{
+                                SectorExpirationDetails::AboutToExpire
+                            }),
                         ));
 
                         <span class="comment">// Time to replot
@@ -1837,11 +1824,16 @@
                         ));
 
                         <span class="comment">// Store expiration so we don't have to recalculate it later
-                        </span>sectors_expire_at.insert(sector_index, expires_at);
+                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(expires_at_entry) =
+                            sectors_expire_at.get_mut(usize::from(sector_index))
+                        {
+                            expires_at_entry.replace(expires_at);
+                        }
                     }
                 }
             }
         }
+        drop(sectors_metadata);
 
         <span class="kw">let </span>sectors_queued = sectors_to_replot.len();
         sectors_to_replot.sort_by_key(|sector_to_replot| sector_to_replot.expires_at);
@@ -1864,7 +1856,9 @@
             <span class="comment">// We do not care if message was sent back or sender was just dropped
             </span><span class="kw">let _ </span>= acknowledgement_receiver.<span class="kw">await</span>;
 
-            sectors_expire_at.remove(<span class="kw-2">&amp;</span>sector_index);
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(expires_at_entry) = sectors_expire_at.get_mut(usize::from(sector_index)) {
+                expires_at_entry.take();
+            }
         }
 
         <span class="kw">if </span>archived_segments_receiver.changed().<span class="kw">await</span>.is_err() {
