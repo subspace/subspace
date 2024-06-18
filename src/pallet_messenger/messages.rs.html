@@ -447,17 +447,28 @@
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
 <a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
 </pre></div><pre class="rust"><code><span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">extern crate </span>alloc;
 
 <span class="kw">use </span><span class="kw">crate</span>::pallet::ChainAllowlist;
 <span class="kw">use crate</span>::{
-    BalanceOf, BlockMessages <span class="kw">as </span>BlockMessagesStore, ChannelId, ChannelState, Channels,
-    CloseChannelBy, Config, Error, Event, InboxResponses, Nonce, Outbox, OutboxMessageResult,
+    BalanceOf, ChannelId, ChannelState, Channels, CloseChannelBy, Config, Error, Event,
+    InboxResponses, MessageWeightTags <span class="kw">as </span>MessageWeightTagStore, Nonce, Outbox, OutboxMessageResult,
     Pallet,
 };
 <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">use </span>alloc::boxed::Box;
+<span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
+</span><span class="kw">use </span>alloc::collections::BTreeMap;
 <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">use </span>alloc::vec::Vec;
 <span class="kw">use </span>codec::{Decode, Encode};
@@ -471,12 +482,14 @@
 };
 <span class="kw">use </span>sp_runtime::traits::Get;
 <span class="kw">use </span>sp_runtime::{ArithmeticError, DispatchError, DispatchResult};
+<span class="attr">#[cfg(feature = <span class="string">"std"</span>)]
+</span><span class="kw">use </span>std::collections::BTreeMap;
 
-<span class="doccomment">/// Set of messages to be relayed by a given relayer.
+<span class="doccomment">/// Weight tags for given outbox and inbox responses
 </span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
-</span><span class="kw">pub struct </span>BlockMessages {
-    <span class="kw">pub </span>outbox: Vec&lt;(ChainId, MessageId, MessageWeightTag)&gt;,
-    <span class="kw">pub </span>inbox_responses: Vec&lt;(ChainId, MessageId, MessageWeightTag)&gt;,
+</span><span class="kw">pub struct </span>MessageWeightTags {
+    <span class="kw">pub </span>outbox: BTreeMap&lt;(ChainId, MessageId), MessageWeightTag&gt;,
+    <span class="kw">pub </span>inbox_responses: BTreeMap&lt;(ChainId, MessageId), MessageWeightTag&gt;,
 }
 
 <span class="kw">impl</span>&lt;T: Config&gt; Pallet&lt;T&gt; {
@@ -525,13 +538,11 @@
                     .checked_add(Nonce::one())
                     .ok_or(DispatchError::Arithmetic(ArithmeticError::Overflow))<span class="question-mark">?</span>;
 
-                BlockMessagesStore::&lt;T&gt;::mutate(|maybe_messages| {
+                MessageWeightTagStore::&lt;T&gt;::mutate(|maybe_messages| {
                     <span class="kw">let </span><span class="kw-2">mut </span>messages = maybe_messages.as_mut().cloned().unwrap_or_default();
-                    messages.outbox.push((
-                        dst_chain_id,
-                        (channel_id, next_outbox_nonce),
-                        weight_tag,
-                    ));
+                    messages
+                        .outbox
+                        .insert((dst_chain_id, (channel_id, next_outbox_nonce)), weight_tag);
                     <span class="kw-2">*</span>maybe_messages = <span class="prelude-val">Some</span>(messages)
                 });
 
@@ -621,11 +632,11 @@
             },
         );
 
-        BlockMessagesStore::&lt;T&gt;::mutate(|maybe_messages| {
+        MessageWeightTagStore::&lt;T&gt;::mutate(|maybe_messages| {
             <span class="kw">let </span><span class="kw-2">mut </span>messages = maybe_messages.as_mut().cloned().unwrap_or_default();
             messages
                 .inbox_responses
-                .push((dst_chain_id, (channel_id, nonce), weight_tag));
+                .insert((dst_chain_id, (channel_id, nonce)), weight_tag);
             <span class="kw-2">*</span>maybe_messages = <span class="prelude-val">Some</span>(messages)
         });
 
@@ -785,6 +796,13 @@
         </span><span class="kw">let </span>req_msg = Outbox::&lt;T&gt;::take((dst_chain_id, channel_id, nonce))
             .ok_or(Error::&lt;T&gt;::MissingMessage)<span class="question-mark">?</span>;
 
+        <span class="comment">// clear out box message weight tag
+        </span>MessageWeightTagStore::&lt;T&gt;::mutate(|maybe_messages| {
+            <span class="kw">let </span><span class="kw-2">mut </span>messages = maybe_messages.as_mut().cloned().unwrap_or_default();
+            messages.outbox.remove(<span class="kw-2">&amp;</span>(dst_chain_id, (channel_id, nonce)));
+            <span class="kw-2">*</span>maybe_messages = <span class="prelude-val">Some</span>(messages)
+        });
+
         <span class="kw">let </span>resp = <span class="kw">match </span>(req_msg.payload, resp_msg.payload) {
             <span class="comment">// process incoming protocol outbox message response.
             </span>(
@@ -851,7 +869,7 @@
     }
 
     <span class="kw">pub fn </span>get_block_messages() -&gt; BlockMessagesWithStorageKey {
-        <span class="kw">let </span>block_messages = <span class="kw">match </span><span class="kw">crate</span>::pallet::BlockMessages::&lt;T&gt;::get() {
+        <span class="kw">let </span>message_weight_tags = <span class="kw">match </span><span class="kw">crate</span>::pallet::MessageWeightTags::&lt;T&gt;::get() {
             <span class="prelude-val">None </span>=&gt; <span class="kw">return </span>Default::default(),
             <span class="prelude-val">Some</span>(messages) =&gt; messages,
         };
@@ -859,8 +877,8 @@
         <span class="kw">let </span><span class="kw-2">mut </span>messages_with_storage_key = BlockMessagesWithStorageKey::default();
 
         <span class="comment">// create storage keys for inbox responses
-        </span>block_messages.inbox_responses.into_iter().for_each(
-            |(chain_id, (channel_id, nonce), weight_tag)| {
+        </span>message_weight_tags.inbox_responses.into_iter().for_each(
+            |((chain_id, (channel_id, nonce)), weight_tag)| {
                 <span class="kw">let </span>storage_key =
                     InboxResponses::&lt;T&gt;::hashed_key_for((chain_id, channel_id, nonce));
                 messages_with_storage_key
@@ -872,13 +890,13 @@
                         nonce,
                         storage_key,
                         weight_tag,
-                    })
+                    });
             },
         );
 
         <span class="comment">// create storage keys for outbox
-        </span>block_messages.outbox.into_iter().for_each(
-            |(chain_id, (channel_id, nonce), weight_tag)| {
+        </span>message_weight_tags.outbox.into_iter().for_each(
+            |((chain_id, (channel_id, nonce)), weight_tag)| {
                 <span class="kw">let </span>storage_key = Outbox::&lt;T&gt;::hashed_key_for((chain_id, channel_id, nonce));
                 messages_with_storage_key
                     .outbox

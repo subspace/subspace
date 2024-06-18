@@ -1348,6 +1348,11 @@
 <a href="#1348" id="1348">1348</a>
 <a href="#1349" id="1349">1349</a>
 <a href="#1350" id="1350">1350</a>
+<a href="#1351" id="1351">1351</a>
+<a href="#1352" id="1352">1352</a>
+<a href="#1353" id="1353">1353</a>
+<a href="#1354" id="1354">1354</a>
+<a href="#1355" id="1355">1355</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1395,6 +1400,12 @@
 };
 <span class="kw">use </span>sp_runtime::traits::{Extrinsic, Hash};
 <span class="kw">use </span>sp_runtime::DispatchError;
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>verification_errors {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>INVALID_CHANNEL: u8 = <span class="number">100</span>;
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>INVALID_NONCE: u8 = <span class="number">101</span>;
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NONCE_OVERFLOW: u8 = <span class="number">102</span>;
+}
 
 <span class="doccomment">/// State of a channel.
 </span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
@@ -1645,12 +1656,11 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>OutboxResponses&lt;T: Config&gt; =
         StorageValue&lt;<span class="kw">_</span>, Message&lt;BalanceOf&lt;T&gt;&gt;, OptionQuery&gt;;
 
-    <span class="doccomment">/// A temporary storage to store all the messages to be relayed in this block.
-    /// Will be cleared on the initialization on next block.
+    <span class="doccomment">/// Storage to store the weight tags for all the outbox and inbox response messages.
     </span><span class="attr">#[pallet::storage]
-    #[pallet::getter(<span class="kw">fn </span>block_messages)]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>BlockMessages&lt;T: Config&gt; =
-        StorageValue&lt;<span class="kw">_</span>, <span class="kw">crate</span>::messages::BlockMessages, OptionQuery&gt;;
+    #[pallet::getter(<span class="kw">fn </span>message_weight_tags)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>MessageWeightTags&lt;T: Config&gt; =
+        StorageValue&lt;<span class="kw">_</span>, <span class="kw">crate</span>::messages::MessageWeightTags, OptionQuery&gt;;
 
     <span class="doccomment">/// An allowlist of chains that can open channel with this chain.
     </span><span class="attr">#[pallet::storage]
@@ -1902,14 +1912,6 @@
 
         <span class="doccomment">/// Failed to unlock the balance
         </span>BalanceUnlock,
-    }
-
-    <span class="attr">#[pallet::hooks]
-    </span><span class="kw">impl</span>&lt;T: Config&gt; Hooks&lt;BlockNumberFor&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
-        <span class="kw">fn </span>on_initialize(_now: BlockNumberFor&lt;T&gt;) -&gt; Weight {
-            BlockMessages::&lt;T&gt;::kill();
-            T::DbWeight::get().writes(<span class="number">1</span>)
-        }
     }
 
     <span class="attr">#[pallet::call]
@@ -2525,18 +2527,20 @@
             xdm: <span class="kw-2">&amp;</span>CrossDomainMessage&lt;BlockNumberFor&lt;T&gt;, T::Hash, T::MmrHash&gt;,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;(Message&lt;BalanceOf&lt;T&gt;&gt;, Nonce), TransactionValidityError&gt; {
             <span class="comment">// channel should be open and message should be present in outbox
-            </span><span class="kw">let </span>next_nonce = <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_chain_id, xdm.channel_id) {
-                <span class="comment">// unknown channel. return
-                </span><span class="prelude-val">None </span>=&gt; {
-                    <span class="macro">log::error!</span>(<span class="string">"Unexpected inbox message response: {:?}"</span>, xdm,);
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::Call.into());
-                }
-                <span class="prelude-val">Some</span>(channel) =&gt; <span class="kw">match </span>channel.latest_response_received_message_nonce {
-                    <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Some</span>(Nonce::zero()),
-                    <span class="prelude-val">Some</span>(last_nonce) =&gt; last_nonce.checked_add(Nonce::one()),
-                },
-            }
-            .ok_or(TransactionValidityError::Invalid(InvalidTransaction::Call))<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>next_nonce =
+                <span class="kw">match </span>Channels::&lt;T&gt;::get(xdm.src_chain_id, xdm.channel_id) {
+                    <span class="comment">// unknown channel. return
+                    </span><span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">log::error!</span>(<span class="string">"Unexpected inbox message response: {:?}"</span>, xdm,);
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(InvalidTransaction::Call.into());
+                    }
+                    <span class="prelude-val">Some</span>(channel) =&gt; <span class="kw">match </span>channel.latest_response_received_message_nonce {
+                        <span class="prelude-val">None </span>=&gt; Nonce::zero(),
+                        <span class="prelude-val">Some</span>(last_nonce) =&gt; last_nonce.checked_add(Nonce::one()).ok_or(
+                            InvalidTransaction::Custom(<span class="kw">crate</span>::verification_errors::NONCE_OVERFLOW),
+                        )<span class="question-mark">?</span>,
+                    },
+                };
 
             <span class="comment">// derive the key as stored on the src_chain.
             </span><span class="kw">let </span>key = StorageKey(
@@ -2573,11 +2577,17 @@
         ) -&gt; <span class="prelude-ty">Result</span>&lt;Message&lt;BalanceOf&lt;T&gt;&gt;, TransactionValidityError&gt; {
             <span class="comment">// channel should be either already be created or match the next channelId for chain.
             </span><span class="kw">let </span>next_channel_id = NextChannelId::&lt;T&gt;::get(xdm.src_chain_id);
-            <span class="macro">ensure!</span>(xdm.channel_id &lt;= next_channel_id, InvalidTransaction::Call);
+            <span class="macro">ensure!</span>(
+                xdm.channel_id &lt;= next_channel_id,
+                InvalidTransaction::Custom(<span class="kw">crate</span>::verification_errors::INVALID_CHANNEL)
+            );
 
             <span class="comment">// verify nonce
             // nonce should be either be next or in future.
-            </span><span class="macro">ensure!</span>(xdm.nonce &gt;= next_nonce, InvalidTransaction::Call);
+            </span><span class="macro">ensure!</span>(
+                xdm.nonce &gt;= next_nonce,
+                InvalidTransaction::Custom(<span class="kw">crate</span>::verification_errors::INVALID_NONCE)
+            );
 
             <span class="kw">let </span>state_root =
                 T::MmrProofVerifier::verify_proof_and_extract_leaf(xdm.proof.consensus_mmr_proof())
