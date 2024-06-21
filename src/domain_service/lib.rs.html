@@ -343,6 +343,9 @@
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
 <a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
 </span><span class="kw">pub mod </span>config;
@@ -358,8 +361,7 @@
 <span class="kw">use </span>sc_consensus::ImportQueue;
 <span class="kw">use </span>sc_domains::RuntimeExecutor;
 <span class="kw">use </span>sc_network::config::Roles;
-<span class="kw">use </span>sc_network::peer_store::PeerStore;
-<span class="kw">use </span>sc_network::NetworkService;
+<span class="kw">use </span>sc_network::{NetworkService, NetworkWorker};
 <span class="kw">use </span>sc_network_sync::block_request_handler::BlockRequestHandler;
 <span class="kw">use </span>sc_network_sync::engine::SyncingEngine;
 <span class="kw">use </span>sc_network_sync::service::network::NetworkServiceProvider;
@@ -389,7 +391,13 @@
 </span><span class="comment">// TODO: Struct for returned value
 </span><span class="attr">#[allow(clippy::type_complexity)]
 </span><span class="kw">pub fn </span>build_network&lt;TBl, TExPool, TImpQu, TCl&gt;(
-    params: BuildNetworkParams&lt;TBl, TExPool, TImpQu, TCl&gt;,
+    params: BuildNetworkParams&lt;
+        TBl,
+        NetworkWorker&lt;TBl, &lt;TBl <span class="kw">as </span>BlockT&gt;::Hash&gt;,
+        TExPool,
+        TImpQu,
+        TCl,
+    &gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;
     (
         Arc&lt;NetworkService&lt;TBl, &lt;TBl <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;,
@@ -424,6 +432,7 @@
         block_announce_validator_builder: <span class="kw">_</span>,
         warp_sync_params: <span class="kw">_</span>,
         block_relay,
+        metrics,
     } = params;
 
     <span class="kw">if </span>client.requires_full_sync() {
@@ -437,13 +446,18 @@
     }
 
     <span class="kw">let </span>protocol_id = config.protocol_id();
+    <span class="kw">let </span>genesis_hash = client
+        .hash(Zero::zero())
+        .ok()
+        .flatten()
+        .expect(<span class="string">"Genesis block exists; qed"</span>);
 
     <span class="kw">let </span>(chain_sync_network_provider, chain_sync_network_handle) = NetworkServiceProvider::new();
     <span class="kw">let </span>(<span class="kw-2">mut </span>block_server, block_downloader) = <span class="kw">match </span>block_relay {
         <span class="prelude-val">Some</span>(params) =&gt; (params.server, params.downloader),
         <span class="prelude-val">None </span>=&gt; {
             <span class="comment">// Custom protocol was not specified, use the default block handler.
-            </span><span class="kw">let </span>params = BlockRequestHandler::new(
+            </span><span class="kw">let </span>params = BlockRequestHandler::new::&lt;NetworkWorker&lt;TBl, &lt;TBl <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;(
                 chain_sync_network_handle.clone(),
                 <span class="kw-2">&amp;</span>protocol_id,
                 config.chain_spec.fork_id(),
@@ -458,26 +472,35 @@
         block_server.run().<span class="kw">await</span>;
     });
 
-    <span class="comment">// Create `PeerStore` and initialize it with bootnode peer ids.
-    </span><span class="kw">let </span>peer_store = PeerStore::new(
-        net_config
-            .network_config
-            .boot_nodes
-            .iter()
-            .map(|bootnode| bootnode.peer_id)
-            .collect(),
-    );
-    <span class="kw">let </span>peer_store_handle = peer_store.handle();
+    <span class="comment">// crate transactions protocol and add it to the list of supported protocols of `network_params`
+    </span><span class="kw">let </span>peer_store_handle = net_config.peer_store_handle();
+    <span class="kw">let </span>(transactions_handler_proto, transactions_config) =
+        sc_network_transactions::TransactionsHandlerPrototype::new::&lt;
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            NetworkWorker&lt;TBl, &lt;TBl <span class="kw">as </span>BlockT&gt;::Hash&gt;,
+        &gt;(
+            protocol_id.clone(),
+            genesis_hash,
+            config.chain_spec.fork_id(),
+            metrics.clone(),
+            Arc::clone(<span class="kw-2">&amp;</span>peer_store_handle),
+        );
+    net_config.add_notification_protocol(transactions_config);
+
+    <span class="comment">// Start task for `PeerStore`
+    </span><span class="kw">let </span>peer_store = net_config.take_peer_store();
     spawn_handle.spawn(<span class="string">"peer-store"</span>, <span class="prelude-val">Some</span>(<span class="string">"networking"</span>), peer_store.run());
 
     <span class="kw">let </span>state_request_protocol_config = {
         <span class="comment">// Allow both outgoing and incoming requests.
-        </span><span class="kw">let </span>(handler, protocol_config) = StateRequestHandler::new(
-            <span class="kw-2">&amp;</span>protocol_id,
-            config.chain_spec.fork_id(),
-            client.clone(),
-            config.network.default_peers_set_num_full <span class="kw">as </span>usize,
-        );
+        </span><span class="kw">let </span>(handler, protocol_config) =
+            StateRequestHandler::new::&lt;NetworkWorker&lt;TBl, &lt;TBl <span class="kw">as </span>BlockT&gt;::Hash&gt;&gt;(
+                <span class="kw-2">&amp;</span>protocol_id,
+                config.chain_spec.fork_id(),
+                client.clone(),
+                config.network.default_peers_set_num_full <span class="kw">as </span>usize,
+            );
         spawn_handle.spawn(<span class="string">"state-request-handler"</span>, <span class="prelude-val">Some</span>(<span class="string">"networking"</span>), handler.run());
         protocol_config
     };
@@ -490,6 +513,7 @@
             .as_ref()
             .map(|config| config.registry.clone())
             .as_ref(),
+        metrics.clone(),
         <span class="kw-2">&amp;</span>net_config,
         protocol_id.clone(),
         <span class="kw-2">&amp;</span>config.chain_spec.fork_id().map(ToOwned::to_owned),
@@ -500,7 +524,7 @@
         block_downloader,
         state_request_protocol_config.name.clone(),
         <span class="prelude-val">None</span>,
-        peer_store_handle.clone(),
+        peer_store_handle,
         <span class="comment">// set to be force_synced always for domains since they relay on Consensus chain to derive and import domain blocks.
         // If not set, each domain node will wait to be fully synced and as a result will not propagate the transactions over network.
         // It would have been ideal to use `Consensus` chain sync service to respond to `is_major_sync` requests but this
@@ -512,26 +536,7 @@
     <span class="kw">let </span>sync_service_import_queue = sync_service.clone();
     <span class="kw">let </span>sync_service = Arc::new(sync_service);
 
-    <span class="kw">let </span>genesis_hash = client
-        .hash(Zero::zero())
-        .ok()
-        .flatten()
-        .expect(<span class="string">"Genesis block exists; qed"</span>);
-
-    <span class="comment">// crate transactions protocol and add it to the list of supported protocols of `network_params`
-    </span><span class="kw">let </span>(transactions_handler_proto, transactions_config) =
-        sc_network_transactions::TransactionsHandlerPrototype::new(
-            protocol_id.clone(),
-            client
-                .block_hash(<span class="number">0u32</span>.into())
-                .ok()
-                .flatten()
-                .expect(<span class="string">"Genesis block exists; qed"</span>),
-            config.chain_spec.fork_id(),
-        );
-    net_config.add_notification_protocol(transactions_config);
-
-    <span class="kw">let </span>network_params = sc_network::config::Params::&lt;TBl&gt; {
+    <span class="kw">let </span>network_params = sc_network::config::Params::&lt;TBl, <span class="kw">_</span>, <span class="kw">_</span>&gt; {
         role: config.role.clone(),
         executor: {
             <span class="kw">let </span>spawn_handle = Clone::clone(<span class="kw-2">&amp;</span>spawn_handle);
@@ -540,7 +545,6 @@
             })
         },
         network_config: net_config,
-        peer_store: peer_store_handle,
         genesis_hash,
         protocol_id,
         fork_id: config.chain_spec.fork_id().map(ToOwned::to_owned),
@@ -549,6 +553,8 @@
             .as_ref()
             .map(|config| config.registry.clone()),
         block_announce_config,
+        bitswap_config: <span class="prelude-val">None</span>,
+        notification_metrics: metrics,
     };
 
     <span class="kw">let </span>has_bootnodes = !network_params
@@ -593,7 +599,7 @@
     spawn_handle.spawn(
         <span class="string">"system-rpc-handler"</span>,
         <span class="prelude-val">Some</span>(<span class="string">"networking"</span>),
-        build_system_rpc_future(
+        build_system_rpc_future::&lt;<span class="kw">_</span>, <span class="kw">_</span>, &lt;TBl <span class="kw">as </span>BlockT&gt;::Hash&gt;(
             config.role.clone(),
             network_mut.service().clone(),
             sync_service.clone(),
@@ -663,7 +669,7 @@
         + <span class="lifetime">'static</span>,
     H: sc_network_common::ExHashT,
 &gt;(
-    network: sc_network::NetworkWorker&lt;B, H&gt;,
+    network: NetworkWorker&lt;B, H&gt;,
     client: Arc&lt;C&gt;,
     sync_service: Arc&lt;SyncingService&lt;B&gt;&gt;,
 ) {

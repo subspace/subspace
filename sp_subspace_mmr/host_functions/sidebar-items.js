@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["EncodableOpaqueLeaf","Proof","SubspaceMmrExtension","SubspaceMmrHostFunctionsImpl"],"trait":["MmrApi","SubspaceMmrHostFunctions"]};
+window.SIDEBAR_ITEMS = {"struct":["EncodableOpaqueLeaf","LeafProof","SubspaceMmrExtension","SubspaceMmrHostFunctionsImpl"],"trait":["MmrApi","SubspaceMmrHostFunctions"]};
