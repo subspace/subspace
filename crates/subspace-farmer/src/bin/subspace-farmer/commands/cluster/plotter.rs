@@ -63,9 +63,7 @@ pub(super) struct PlotterArgs {
     plotting_thread_pool_size: Option<NonZeroUsize>,
     /// Specify exact CPU cores to be used for plotting bypassing any custom logic farmer might use
     /// otherwise. It replaces both `--sector-encoding-concurrency` and
-    /// `--plotting-thread-pool-size` options if specified. Requires `--replotting-cpu-cores` to be
-    /// specified with the same number of CPU cores groups (or not specified at all, in which case
-    /// it'll use the same thread pool as plotting).
+    /// `--plotting-thread-pool-size` options if specified.
     ///
     /// Cores are coma-separated, with whitespace separating different thread pools/encoding
     /// instances. For example "0,1 2,3" will result in two sectors being encoded at the same time,
@@ -161,7 +159,7 @@ where
     )
     .map_err(|error| anyhow!("Failed to create thread pool manager: {error}"))?;
     let global_mutex = Arc::default();
-    let cpu_plotter = CpuPlotter::<_, PosTable>::new(
+    let cpu_plotter = Arc::new(CpuPlotter::<_, PosTable>::new(
         piece_getter,
         downloading_semaphore,
         plotting_thread_pool_manager,
@@ -169,13 +167,13 @@ where
         Arc::clone(&global_mutex),
         kzg.clone(),
         erasure_coding.clone(),
-    );
+    ));
 
     // TODO: Metrics
 
     Ok(Box::pin(async move {
         plotter_service(&nats_client, &cpu_plotter)
             .await
-            .map_err(|error| anyhow!("Ploter service failed: {error}"))
+            .map_err(|error| anyhow!("Plotter service failed: {error}"))
     }))
 }

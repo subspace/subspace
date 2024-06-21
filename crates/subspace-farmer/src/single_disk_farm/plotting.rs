@@ -11,7 +11,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::stream::FuturesOrdered;
 use futures::{select, FutureExt, SinkExt, StreamExt};
 use parity_scale_codec::Encode;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 #[cfg(not(windows))]
 use std::fs::File;
 use std::future::{pending, Future};
@@ -29,6 +29,7 @@ use subspace_farmer_components::plotting::PlottedSector;
 use subspace_farmer_components::sector::SectorMetadataChecksummed;
 use thiserror::Error;
 use tokio::sync::watch;
+use tokio::task;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 const FARMER_APP_INFO_RETRY_INTERVAL: Duration = Duration::from_millis(500);
@@ -89,22 +90,22 @@ pub(super) struct SectorPlottingOptions<'a, NC, P> {
     pub(super) pieces_in_sector: u16,
     pub(super) sector_size: usize,
     #[cfg(not(windows))]
-    pub(super) plot_file: &'a File,
+    pub(super) plot_file: Arc<File>,
     #[cfg(windows)]
-    pub(super) plot_file: &'a UnbufferedIoFileWindows,
+    pub(super) plot_file: Arc<UnbufferedIoFileWindows>,
     #[cfg(not(windows))]
-    pub(super) metadata_file: File,
+    pub(super) metadata_file: Arc<File>,
     #[cfg(windows)]
-    pub(super) metadata_file: UnbufferedIoFileWindows,
-    pub(super) sectors_metadata: &'a AsyncRwLock<Vec<SectorMetadataChecksummed>>,
+    pub(super) metadata_file: Arc<UnbufferedIoFileWindows>,
     pub(super) handlers: &'a Handlers,
-    pub(super) sectors_being_modified: &'a AsyncRwLock<HashSet<SectorIndex>>,
     pub(super) global_mutex: &'a AsyncMutex<()>,
     pub(super) plotter: P,
 }
 
 pub(super) struct PlottingOptions<'a, NC, P> {
     pub(super) metadata_header: PlotMetadataHeader,
+    pub(super) sectors_metadata: &'a AsyncRwLock<Vec<SectorMetadataChecksummed>>,
+    pub(super) sectors_being_modified: &'a AsyncRwLock<HashSet<SectorIndex>>,
     pub(super) sectors_to_plot_receiver: mpsc::Receiver<SectorToPlot>,
     pub(super) sector_plotting_options: SectorPlottingOptions<'a, NC, P>,
 }
@@ -122,6 +123,8 @@ where
 {
     let PlottingOptions {
         mut metadata_header,
+        sectors_metadata,
+        sectors_being_modified,
         mut sectors_to_plot_receiver,
         sector_plotting_options,
     } = plotting_options;
@@ -138,7 +141,12 @@ where
                 };
 
                 let sector_index = sector_to_plot.sector_index;
-                let sector_plotting_init_fut = plot_single_sector(sector_to_plot, &sector_plotting_options)
+                let sector_plotting_init_fut = plot_single_sector(
+                    sector_to_plot,
+                    &sector_plotting_options,
+                    sectors_metadata,
+                    sectors_being_modified,
+                )
                     .instrument(info_span!("", %sector_index))
                     .fuse();
                 let mut sector_plotting_init_fut = pin!(sector_plotting_init_fut);
@@ -158,8 +166,10 @@ where
                             process_plotting_result(
                                 maybe_sector_plotting_result?,
                                 &mut metadata_header,
-                                &sector_plotting_options.metadata_file
-                            )?;
+                                sectors_metadata,
+                                sectors_being_modified,
+                                Arc::clone(&sector_plotting_options.metadata_file)
+                            ).await?;
                         }
                     }
                 }
@@ -168,8 +178,10 @@ where
                 process_plotting_result(
                     maybe_sector_plotting_result?,
                     &mut metadata_header,
-                    &sector_plotting_options.metadata_file
-                )?;
+                    sectors_metadata,
+                    sectors_being_modified,
+                    Arc::clone(&sector_plotting_options.metadata_file)
+                ).await?;
             }
         }
     }
@@ -177,21 +189,43 @@ where
     Ok(())
 }
 
-fn process_plotting_result(
+async fn process_plotting_result(
     sector_plotting_result: SectorPlottingResult,
     metadata_header: &mut PlotMetadataHeader,
-    #[cfg(not(windows))] metadata_file: &File,
-    #[cfg(windows)] metadata_file: &UnbufferedIoFileWindows,
+    sectors_metadata: &AsyncRwLock<Vec<SectorMetadataChecksummed>>,
+    sectors_being_modified: &AsyncRwLock<HashSet<SectorIndex>>,
+    #[cfg(not(windows))] metadata_file: Arc<File>,
+    #[cfg(windows)] metadata_file: Arc<UnbufferedIoFileWindows>,
 ) -> Result<(), PlottingError> {
     let SectorPlottingResult {
         sector_index,
+        sector_metadata,
         replotting,
         last_queued,
     } = sector_plotting_result;
 
+    {
+        let mut sectors_metadata = sectors_metadata.write().await;
+        // If exists then we're replotting, otherwise we create sector for the first time
+        if let Some(existing_sector_metadata) = sectors_metadata.get_mut(sector_index as usize) {
+            *existing_sector_metadata = sector_metadata;
+        } else {
+            sectors_metadata.push(sector_metadata);
+        }
+    }
+
+    // Inform others that this sector is no longer being modified
+    sectors_being_modified.write().await.remove(&sector_index);
+
     if sector_index + 1 > metadata_header.plotted_sector_count {
         metadata_header.plotted_sector_count = sector_index + 1;
-        metadata_file.write_all_at(&metadata_header.encode(), 0)?;
+
+        let encoded_metadata_header = metadata_header.encode();
+        let write_fut =
+            task::spawn_blocking(move || metadata_file.write_all_at(&encoded_metadata_header, 0));
+        write_fut.await.map_err(|error| {
+            PlottingError::LowLevel(format!("Failed to spawn blocking tokio task: {error}"))
+        })??;
     }
 
     if last_queued {
@@ -220,6 +254,7 @@ where
 
 struct SectorPlottingResult {
     sector_index: SectorIndex,
+    sector_metadata: SectorMetadataChecksummed,
     replotting: bool,
     last_queued: bool,
 }
@@ -227,6 +262,8 @@ struct SectorPlottingResult {
 async fn plot_single_sector<'a, NC, P>(
     sector_to_plot: SectorToPlot,
     sector_plotting_options: &'a SectorPlottingOptions<'a, NC, P>,
+    sectors_metadata: &'a AsyncRwLock<Vec<SectorMetadataChecksummed>>,
+    sectors_being_modified: &'a AsyncRwLock<HashSet<SectorIndex>>,
 ) -> Result<impl Future<Output = Result<SectorPlottingResult, PlottingError>> + 'a, PlottingError>
 where
     NC: NodeClient,
@@ -239,9 +276,7 @@ where
         sector_size,
         plot_file,
         metadata_file,
-        sectors_metadata,
         handlers,
-        sectors_being_modified,
         global_mutex,
         plotter,
     } = sector_plotting_options;
@@ -368,17 +403,6 @@ where
             }
         };
 
-        {
-            let mut sectors_metadata = sectors_metadata.write().await;
-            // If exists then we're replotting, otherwise we create sector for the first time
-            if let Some(existing_sector_metadata) = sectors_metadata.get_mut(sector_index as usize)
-            {
-                *existing_sector_metadata = plotted_sector.sector_metadata.clone();
-            } else {
-                sectors_metadata.push(plotted_sector.sector_metadata.clone());
-            }
-        }
-
         let maybe_old_plotted_sector = maybe_old_sector_metadata.map(|old_sector_metadata| {
             let old_history_size = old_sector_metadata.history_size;
 
@@ -405,14 +429,13 @@ where
             }
         });
 
-        // Inform others that this sector is no longer being modified
-        sectors_being_modified.write().await.remove(&sector_index);
-
         if replotting {
             debug!("Sector replotted successfully");
         } else {
             debug!("Sector plotted successfully");
         }
+
+        let sector_metadata = plotted_sector.sector_metadata.clone();
 
         let sector_state = SectorUpdate::Plotting(SectorPlottingDetails::Finished {
             plotted_sector,
@@ -425,6 +448,7 @@ where
 
         Ok(SectorPlottingResult {
             sector_index,
+            sector_metadata,
             replotting,
             last_queued,
         })
@@ -437,10 +461,10 @@ where
 async fn plot_single_sector_internal(
     sector_index: SectorIndex,
     sector_size: usize,
-    #[cfg(not(windows))] plot_file: &File,
-    #[cfg(windows)] plot_file: &UnbufferedIoFileWindows,
-    #[cfg(not(windows))] metadata_file: &File,
-    #[cfg(windows)] metadata_file: &UnbufferedIoFileWindows,
+    #[cfg(not(windows))] plot_file: &Arc<File>,
+    #[cfg(windows)] plot_file: &Arc<UnbufferedIoFileWindows>,
+    #[cfg(not(windows))] metadata_file: &Arc<File>,
+    #[cfg(windows)] metadata_file: &Arc<UnbufferedIoFileWindows>,
     handlers: &Handlers,
     sectors_being_modified: &AsyncRwLock<HashSet<SectorIndex>>,
     global_mutex: &AsyncMutex<()>,
@@ -527,8 +551,18 @@ async fn plot_single_sector_internal(
                         ))));
                     }
                 };
-                plot_file.write_all_at(&sector_chunk, sector_write_offset)?;
-                sector_write_offset += sector_chunk.len() as u64;
+                let sector_chunk_size = sector_chunk.len() as u64;
+
+                let write_fut = task::spawn_blocking({
+                    let plot_file = Arc::clone(plot_file);
+
+                    move || plot_file.write_all_at(&sector_chunk, sector_write_offset)
+                });
+                write_fut.await.map_err(|error| {
+                    PlottingError::LowLevel(format!("Failed to spawn blocking tokio task: {error}"))
+                })??;
+
+                sector_write_offset += sector_chunk_size;
             }
             drop(sector);
 
@@ -541,11 +575,20 @@ async fn plot_single_sector_internal(
         }
         {
             let encoded_sector_metadata = plotted_sector.sector_metadata.encode();
-            metadata_file.write_all_at(
-                &encoded_sector_metadata,
-                RESERVED_PLOT_METADATA
-                    + (u64::from(sector_index) * encoded_sector_metadata.len() as u64),
-            )?;
+            let write_fut = task::spawn_blocking({
+                let metadata_file = Arc::clone(metadata_file);
+
+                move || {
+                    metadata_file.write_all_at(
+                        &encoded_sector_metadata,
+                        RESERVED_PLOT_METADATA
+                            + (u64::from(sector_index) * encoded_sector_metadata.len() as u64),
+                    )
+                }
+            });
+            write_fut.await.map_err(|error| {
+                PlottingError::LowLevel(format!("Failed to spawn blocking tokio task: {error}"))
+            })??;
         }
 
         handlers.sector_update.call_simple(&(
@@ -712,30 +755,24 @@ where
         let _ = acknowledgement_receiver.await;
     }
 
-    let mut sectors_expire_at =
-        HashMap::<SectorIndex, SegmentIndex>::with_capacity(usize::from(target_sector_count));
-
-    let mut sectors_to_replot = Vec::new();
-    let mut sectors_to_check = Vec::with_capacity(usize::from(target_sector_count));
+    let mut sectors_expire_at = vec![None::<SegmentIndex>; usize::from(target_sector_count)];
+    // 10% capacity is generous and should prevent reallocation in most cases
+    let mut sectors_to_replot = Vec::with_capacity(usize::from(target_sector_count) / 10);
 
     loop {
-        let archived_segment_header = *archived_segments_receiver.borrow_and_update();
-        trace!(
-            segment_index = %archived_segment_header.segment_index(),
-            "New archived segment received",
-        );
+        let segment_index = archived_segments_receiver
+            .borrow_and_update()
+            .segment_index();
+        trace!(%segment_index, "New archived segment received");
 
-        // It is fine to take a synchronous read lock here because the only time
-        // write lock is taken is during plotting, which we know doesn't happen
-        // right now. We copy data here because `.read()`'s guard is not `Send`.
-        sectors_metadata
-            .read()
-            .await
+        let sectors_metadata = sectors_metadata.read().await;
+        let sectors_to_check = sectors_metadata
             .iter()
-            .map(|sector_metadata| (sector_metadata.sector_index, sector_metadata.history_size))
-            .collect_into(&mut sectors_to_check);
-        for (sector_index, history_size) in sectors_to_check.drain(..) {
-            if let Some(expires_at) = sectors_expire_at.get(&sector_index).copied() {
+            .map(|sector_metadata| (sector_metadata.sector_index, sector_metadata.history_size));
+        for (sector_index, history_size) in sectors_to_check {
+            if let Some(Some(expires_at)) =
+                sectors_expire_at.get(usize::from(sector_index)).copied()
+            {
                 trace!(
                     %sector_index,
                     %history_size,
@@ -744,7 +781,7 @@ where
                 );
                 // +1 means we will start replotting a bit before it actually expires to avoid
                 // storing expired sectors
-                if expires_at <= (archived_segment_header.segment_index() + SegmentIndex::ONE) {
+                if expires_at <= (segment_index + SegmentIndex::ONE) {
                     debug!(
                         %sector_index,
                         %history_size,
@@ -754,13 +791,11 @@ where
 
                     handlers.sector_update.call_simple(&(
                         sector_index,
-                        SectorUpdate::Expiration(
-                            if expires_at <= archived_segment_header.segment_index() {
-                                SectorExpirationDetails::Expired
-                            } else {
-                                SectorExpirationDetails::AboutToExpire
-                            },
-                        ),
+                        SectorUpdate::Expiration(if expires_at <= segment_index {
+                            SectorExpirationDetails::Expired
+                        } else {
+                            SectorExpirationDetails::AboutToExpire
+                        }),
                     ));
 
                     // Time to replot
@@ -816,7 +851,7 @@ where
                     );
                     // +1 means we will start replotting a bit before it actually expires to avoid
                     // storing expired sectors
-                    if expires_at <= (archived_segment_header.segment_index() + SegmentIndex::ONE) {
+                    if expires_at <= (segment_index + SegmentIndex::ONE) {
                         debug!(
                             %sector_index,
                             %history_size,
@@ -826,13 +861,11 @@ where
 
                         handlers.sector_update.call_simple(&(
                             sector_index,
-                            SectorUpdate::Expiration(
-                                if expires_at <= archived_segment_header.segment_index() {
-                                    SectorExpirationDetails::Expired
-                                } else {
-                                    SectorExpirationDetails::AboutToExpire
-                                },
-                            ),
+                            SectorUpdate::Expiration(if expires_at <= segment_index {
+                                SectorExpirationDetails::Expired
+                            } else {
+                                SectorExpirationDetails::AboutToExpire
+                            }),
                         ));
 
                         // Time to replot
@@ -856,11 +889,16 @@ where
                         ));
 
                         // Store expiration so we don't have to recalculate it later
-                        sectors_expire_at.insert(sector_index, expires_at);
+                        if let Some(expires_at_entry) =
+                            sectors_expire_at.get_mut(usize::from(sector_index))
+                        {
+                            expires_at_entry.replace(expires_at);
+                        }
                     }
                 }
             }
         }
+        drop(sectors_metadata);
 
         let sectors_queued = sectors_to_replot.len();
         sectors_to_replot.sort_by_key(|sector_to_replot| sector_to_replot.expires_at);
@@ -883,7 +921,9 @@ where
             // We do not care if message was sent back or sender was just dropped
             let _ = acknowledgement_receiver.await;
 
-            sectors_expire_at.remove(&sector_index);
+            if let Some(expires_at_entry) = sectors_expire_at.get_mut(usize::from(sector_index)) {
+                expires_at_entry.take();
+            }
         }
 
         if archived_segments_receiver.changed().await.is_err() {

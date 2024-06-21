@@ -1,23 +1,32 @@
+//! Primary [`Farm`] implementation that deals with hardware directly
+//!
+//! Single disk farm is an abstraction that contains an identity, associated plot with metadata and
+//! a small piece cache. It fully manages farming and plotting process, including listening to node
+//! notifications, producing solutions and singing rewards.
+
 pub mod farming;
+pub mod identity;
 pub mod piece_cache;
 pub mod piece_reader;
 pub mod plot_cache;
 mod plotted_sectors;
 mod plotting;
+mod reward_signing;
 pub mod unbuffered_io_file_windows;
 
-use crate::farm::{Farm, FarmId, HandlerFn, PieceReader, PlottedSectors, SectorUpdate};
-pub use crate::farm::{FarmingError, FarmingNotification};
-use crate::identity::{Identity, IdentityError};
+use crate::disk_piece_cache::{DiskPieceCache, DiskPieceCacheError};
+use crate::farm::{
+    Farm, FarmId, FarmingError, FarmingNotification, HandlerFn, PieceReader, PlottedSectors,
+    SectorUpdate,
+};
 use crate::node_client::NodeClient;
-use crate::piece_cache::{PieceCache, PieceCacheError};
 use crate::plotter::Plotter;
-use crate::reward_signing::reward_signing;
 use crate::single_disk_farm::farming::rayon_files::RayonFiles;
 use crate::single_disk_farm::farming::{
     farming, slot_notification_forwarder, FarmingOptions, PlotAudit,
 };
-use crate::single_disk_farm::piece_cache::DiskPieceCache;
+use crate::single_disk_farm::identity::{Identity, IdentityError};
+use crate::single_disk_farm::piece_cache::SingleDiskPieceCache;
 use crate::single_disk_farm::piece_reader::DiskPieceReader;
 use crate::single_disk_farm::plot_cache::DiskPlotCache;
 use crate::single_disk_farm::plotted_sectors::SingleDiskPlottedSectors;
@@ -25,6 +34,7 @@ pub use crate::single_disk_farm::plotting::PlottingError;
 use crate::single_disk_farm::plotting::{
     plotting, plotting_scheduler, PlottingOptions, PlottingSchedulerOptions, SectorPlottingOptions,
 };
+use crate::single_disk_farm::reward_signing::reward_signing;
 #[cfg(windows)]
 use crate::single_disk_farm::unbuffered_io_file_windows::UnbufferedIoFileWindows;
 use crate::single_disk_farm::unbuffered_io_file_windows::DISK_SECTOR_SIZE;
@@ -50,10 +60,11 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{fs, io, mem};
+use std::{fmt, fs, io, mem};
 use subspace_core_primitives::crypto::kzg::Kzg;
 use subspace_core_primitives::crypto::{blake3_hash, Scalar};
 use subspace_core_primitives::{
@@ -89,6 +100,7 @@ const NEW_SEGMENT_PROCESSING_DELAY: Duration = Duration::from_secs(30);
 const INTERNAL_BENCHMARK_READ_TIMEOUT: Duration = Duration::from_millis(3500);
 
 /// Exclusive lock for single disk farm info file, ensuring no concurrent edits by cooperating processes is done
+#[derive(Debug)]
 #[must_use = "Lock file must be kept around or as long as farm is used"]
 pub struct SingleDiskFarmInfoLock {
     _file: File,
@@ -118,6 +130,7 @@ pub enum SingleDiskFarmInfo {
 impl SingleDiskFarmInfo {
     const FILE_NAME: &'static str = "single_disk_farm.json";
 
+    /// Create new instance
     pub fn new(
         id: FarmId,
         genesis_hash: [u8; 32],
@@ -179,19 +192,19 @@ impl SingleDiskFarmInfo {
         Ok(SingleDiskFarmInfoLock { _file: file })
     }
 
-    // ID of the farm
+    /// ID of the farm
     pub fn id(&self) -> &FarmId {
         let Self::V0 { id, .. } = self;
         id
     }
 
-    // Genesis hash of the chain used for farm creation
+    /// Genesis hash of the chain used for farm creation
     pub fn genesis_hash(&self) -> &[u8; 32] {
         let Self::V0 { genesis_hash, .. } = self;
         genesis_hash
     }
 
-    // Public key of identity used for farm creation
+    /// Public key of identity used for farm creation
     pub fn public_key(&self) -> &PublicKey {
         let Self::V0 { public_key, .. } = self;
         public_key
@@ -257,6 +270,7 @@ impl PlotMetadataHeader {
 }
 
 /// Options used to open single disk farm
+#[derive(Debug)]
 pub struct SingleDiskFarmOptions<NC, P>
 where
     NC: Clone,
@@ -322,7 +336,7 @@ pub enum SingleDiskFarmError {
     TokioJoinError(#[from] tokio::task::JoinError),
     /// Piece cache error
     #[error("Piece cache error: {0}")]
-    PieceCacheError(#[from] PieceCacheError),
+    PieceCacheError(#[from] DiskPieceCacheError),
     /// Can't preallocate metadata file, probably not enough space on disk
     #[error("Can't preallocate metadata file, probably not enough space on disk: {0}")]
     CantPreallocateMetadataFile(io::Error),
@@ -394,9 +408,13 @@ pub enum SingleDiskFarmError {
         instead."
     )]
     FarmTooLarge {
+        /// Allocated space
         allocated_space: u64,
+        /// Allocated space in sectors
         allocated_sectors: u64,
+        /// Max supported allocated space
         max_space: u64,
+        /// Max supported allocated space in sectors
         max_sectors: u16,
     },
     /// Failed to create thread pool
@@ -543,10 +561,74 @@ pub enum BackgroundTaskError {
     RewardSigning(#[from] Box<dyn Error + Send + Sync + 'static>),
     /// Background task panicked
     #[error("Background task {task} panicked")]
-    BackgroundTaskPanicked { task: String },
+    BackgroundTaskPanicked {
+        /// Name of the task
+        task: String,
+    },
 }
 
 type BackgroundTask = Pin<Box<dyn Future<Output = Result<(), BackgroundTaskError>> + Send>>;
+
+/// Scrub target
+#[derive(Debug, Copy, Clone)]
+pub enum ScrubTarget {
+    /// Scrub everything
+    All,
+    /// Scrub just metadata
+    Metadata,
+    /// Scrub metadata and corresponding plot
+    Plot,
+    /// Only scrub cache
+    Cache,
+}
+
+impl fmt::Display for ScrubTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::All => f.write_str("all"),
+            Self::Metadata => f.write_str("metadata"),
+            Self::Plot => f.write_str("plot"),
+            Self::Cache => f.write_str("cache"),
+        }
+    }
+}
+
+impl FromStr for ScrubTarget {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "all" => Ok(Self::All),
+            "metadata" => Ok(Self::Metadata),
+            "plot" => Ok(Self::Plot),
+            "cache" => Ok(Self::Cache),
+            s => Err(format!("Can't parse {s} as `ScrubTarget`")),
+        }
+    }
+}
+
+impl ScrubTarget {
+    fn metadata(&self) -> bool {
+        match self {
+            Self::All | Self::Metadata | Self::Plot => true,
+            Self::Cache => false,
+        }
+    }
+
+    fn plot(&self) -> bool {
+        match self {
+            Self::All | Self::Plot => true,
+            Self::Metadata | Self::Cache => false,
+        }
+    }
+
+    fn cache(&self) -> bool {
+        match self {
+            Self::All | Self::Cache => true,
+            Self::Metadata | Self::Plot => false,
+        }
+    }
+}
 
 type Handler<A> = Bag<HandlerFn<A>, A>;
 
@@ -572,7 +654,7 @@ struct SingleDiskFarmInit {
     metadata_header: PlotMetadataHeader,
     target_sector_count: u16,
     sectors_metadata: Arc<AsyncRwLock<Vec<SectorMetadataChecksummed>>>,
-    piece_cache: DiskPieceCache,
+    piece_cache: SingleDiskPieceCache,
     plot_cache: DiskPlotCache,
 }
 
@@ -580,6 +662,7 @@ struct SingleDiskFarmInit {
 /// disk.
 ///
 /// Farm starts operating during creation and doesn't stop until dropped (or error happens).
+#[derive(Debug)]
 #[must_use = "Plot does not function properly unless run() method is called"]
 pub struct SingleDiskFarm {
     farmer_protocol_info: FarmerProtocolInfo,
@@ -591,7 +674,7 @@ pub struct SingleDiskFarm {
     span: Span,
     tasks: FuturesUnordered<BackgroundTask>,
     handlers: Arc<Handlers>,
-    piece_cache: DiskPieceCache,
+    piece_cache: SingleDiskPieceCache,
     plot_cache: DiskPlotCache,
     piece_reader: DiskPieceReader,
     /// Sender that will be used to signal to background threads that they should start
@@ -654,7 +737,9 @@ impl Farm for SingleDiskFarm {
 }
 
 impl SingleDiskFarm {
+    /// Name of the plot file
     pub const PLOT_FILE: &'static str = "plot.bin";
+    /// Name of the metadata file
     pub const METADATA_FILE: &'static str = "metadata.bin";
     const SUPPORTED_PLOT_VERSION: u8 = 0;
 
@@ -814,17 +899,17 @@ impl SingleDiskFarm {
 
                 let plotting_options = PlottingOptions {
                     metadata_header,
+                    sectors_metadata: &sectors_metadata,
+                    sectors_being_modified: &sectors_being_modified,
                     sectors_to_plot_receiver,
                     sector_plotting_options: SectorPlottingOptions {
                         public_key,
                         node_client: &node_client,
                         pieces_in_sector,
                         sector_size,
-                        plot_file: &plot_file,
-                        metadata_file,
-                        sectors_metadata: &sectors_metadata,
+                        plot_file,
+                        metadata_file: Arc::new(metadata_file),
                         handlers: &handlers,
-                        sectors_being_modified: &sectors_being_modified,
                         global_mutex: &global_mutex,
                         plotter,
                     },
@@ -1189,10 +1274,10 @@ impl SingleDiskFarm {
             // Cache must not be empty, ensure it contains at least one element even if
             // percentage-wise it will use more space
             if single_plot_with_cache_space - single_sector_overhead
-                < PieceCache::element_size() as u64
+                < DiskPieceCache::element_size() as u64
             {
                 single_plot_with_cache_space =
-                    single_sector_overhead + PieceCache::element_size() as u64;
+                    single_sector_overhead + DiskPieceCache::element_size() as u64;
             }
 
             return Err(SingleDiskFarmError::InsufficientAllocatedSpace {
@@ -1211,7 +1296,7 @@ impl SingleDiskFarm {
                 - fixed_space_usage
                 - plot_file_size
                 - (sector_metadata_size as u64 * target_sector_count);
-            (cache_space / u64::from(PieceCache::element_size())) as u32
+            (cache_space / u64::from(DiskPieceCache::element_size())) as u32
         } else {
             0
         };
@@ -1362,12 +1447,12 @@ impl SingleDiskFarm {
 
         let plot_file = Arc::new(plot_file);
 
-        let piece_cache = DiskPieceCache::new(
+        let piece_cache = SingleDiskPieceCache::new(
             *single_disk_farm_info.id(),
             if cache_capacity == 0 {
                 None
             } else {
-                Some(PieceCache::open(directory, cache_capacity)?)
+                Some(DiskPieceCache::open(directory, cache_capacity)?)
             },
         );
         let plot_cache = DiskPlotCache::new(
@@ -1493,7 +1578,7 @@ impl SingleDiskFarm {
     }
 
     /// Get piece cache instance
-    pub fn piece_cache(&self) -> DiskPieceCache {
+    pub fn piece_cache(&self) -> SingleDiskPieceCache {
         self.piece_cache.clone()
     }
 
@@ -1581,7 +1666,7 @@ impl SingleDiskFarm {
             }
         }
 
-        PieceCache::wipe(directory)?;
+        DiskPieceCache::wipe(directory)?;
 
         info!(
             "Deleting info file at {}",
@@ -1595,6 +1680,7 @@ impl SingleDiskFarm {
     pub fn scrub(
         directory: &Path,
         disable_farm_locking: bool,
+        target: ScrubTarget,
         dry_run: bool,
     ) -> Result<(), SingleDiskFarmScrubError> {
         let span = Span::current();
@@ -1603,269 +1689,246 @@ impl SingleDiskFarm {
             info!("Dry run is used, no changes will be written to disk");
         }
 
-        let info = {
-            let file = directory.join(SingleDiskFarmInfo::FILE_NAME);
-            info!(path = %file.display(), "Checking info file");
+        if target.metadata() || target.plot() {
+            let info = {
+                let file = directory.join(SingleDiskFarmInfo::FILE_NAME);
+                info!(path = %file.display(), "Checking info file");
 
-            match SingleDiskFarmInfo::load_from(directory) {
-                Ok(Some(info)) => info,
-                Ok(None) => {
-                    return Err(SingleDiskFarmScrubError::FarmInfoFileDoesNotExist { file });
-                }
-                Err(error) => {
-                    return Err(SingleDiskFarmScrubError::FarmInfoCantBeOpened { file, error });
-                }
-            }
-        };
-
-        let _single_disk_farm_info_lock = if disable_farm_locking {
-            None
-        } else {
-            Some(
-                SingleDiskFarmInfo::try_lock(directory)
-                    .map_err(SingleDiskFarmScrubError::LikelyAlreadyInUse)?,
-            )
-        };
-
-        let identity = {
-            let file = directory.join(Identity::FILE_NAME);
-            info!(path = %file.display(), "Checking identity file");
-
-            match Identity::open(directory) {
-                Ok(Some(identity)) => identity,
-                Ok(None) => {
-                    return Err(SingleDiskFarmScrubError::IdentityFileDoesNotExist { file });
-                }
-                Err(error) => {
-                    return Err(SingleDiskFarmScrubError::IdentityCantBeOpened { file, error });
-                }
-            }
-        };
-
-        if PublicKey::from(identity.public.to_bytes()) != *info.public_key() {
-            return Err(SingleDiskFarmScrubError::PublicKeyMismatch {
-                identity: PublicKey::from(identity.public.to_bytes()),
-                info: *info.public_key(),
-            });
-        }
-
-        let sector_metadata_size = SectorMetadataChecksummed::encoded_size();
-
-        let metadata_file_path = directory.join(Self::METADATA_FILE);
-        let (metadata_file, mut metadata_header) = {
-            info!(path = %metadata_file_path.display(), "Checking metadata file");
-
-            let metadata_file = match OpenOptions::new()
-                .read(true)
-                .write(!dry_run)
-                .open(&metadata_file_path)
-            {
-                Ok(metadata_file) => metadata_file,
-                Err(error) => {
-                    return Err(if error.kind() == io::ErrorKind::NotFound {
-                        SingleDiskFarmScrubError::MetadataFileDoesNotExist {
-                            file: metadata_file_path,
-                        }
-                    } else {
-                        SingleDiskFarmScrubError::MetadataCantBeOpened {
-                            file: metadata_file_path,
-                            error,
-                        }
-                    });
+                match SingleDiskFarmInfo::load_from(directory) {
+                    Ok(Some(info)) => info,
+                    Ok(None) => {
+                        return Err(SingleDiskFarmScrubError::FarmInfoFileDoesNotExist { file });
+                    }
+                    Err(error) => {
+                        return Err(SingleDiskFarmScrubError::FarmInfoCantBeOpened { file, error });
+                    }
                 }
             };
 
-            // Error doesn't matter here
-            let _ = metadata_file.advise_sequential_access();
+            let _single_disk_farm_info_lock = if disable_farm_locking {
+                None
+            } else {
+                Some(
+                    SingleDiskFarmInfo::try_lock(directory)
+                        .map_err(SingleDiskFarmScrubError::LikelyAlreadyInUse)?,
+                )
+            };
 
-            let metadata_size = match metadata_file.size() {
-                Ok(metadata_size) => metadata_size,
-                Err(error) => {
-                    return Err(SingleDiskFarmScrubError::FailedToDetermineFileSize {
-                        file: metadata_file_path,
-                        error,
-                    });
+            let identity = {
+                let file = directory.join(Identity::FILE_NAME);
+                info!(path = %file.display(), "Checking identity file");
+
+                match Identity::open(directory) {
+                    Ok(Some(identity)) => identity,
+                    Ok(None) => {
+                        return Err(SingleDiskFarmScrubError::IdentityFileDoesNotExist { file });
+                    }
+                    Err(error) => {
+                        return Err(SingleDiskFarmScrubError::IdentityCantBeOpened { file, error });
+                    }
                 }
             };
 
-            if metadata_size < RESERVED_PLOT_METADATA {
-                return Err(SingleDiskFarmScrubError::MetadataFileTooSmall {
-                    file: metadata_file_path,
-                    reserved_size: RESERVED_PLOT_METADATA,
-                    size: metadata_size,
+            if PublicKey::from(identity.public.to_bytes()) != *info.public_key() {
+                return Err(SingleDiskFarmScrubError::PublicKeyMismatch {
+                    identity: PublicKey::from(identity.public.to_bytes()),
+                    info: *info.public_key(),
                 });
             }
 
-            let mut metadata_header = {
-                let mut reserved_metadata = vec![0; RESERVED_PLOT_METADATA as usize];
+            let sector_metadata_size = SectorMetadataChecksummed::encoded_size();
 
-                if let Err(error) = metadata_file.read_exact_at(&mut reserved_metadata, 0) {
-                    return Err(SingleDiskFarmScrubError::FailedToReadBytes {
-                        file: metadata_file_path,
-                        size: RESERVED_PLOT_METADATA,
-                        offset: 0,
-                        error,
-                    });
-                }
+            let metadata_file_path = directory.join(Self::METADATA_FILE);
+            let (metadata_file, mut metadata_header) = {
+                info!(path = %metadata_file_path.display(), "Checking metadata file");
 
-                PlotMetadataHeader::decode(&mut reserved_metadata.as_slice())
-                    .map_err(SingleDiskFarmScrubError::FailedToDecodeMetadataHeader)?
-            };
+                let metadata_file = match OpenOptions::new()
+                    .read(true)
+                    .write(!dry_run)
+                    .open(&metadata_file_path)
+                {
+                    Ok(metadata_file) => metadata_file,
+                    Err(error) => {
+                        return Err(if error.kind() == io::ErrorKind::NotFound {
+                            SingleDiskFarmScrubError::MetadataFileDoesNotExist {
+                                file: metadata_file_path,
+                            }
+                        } else {
+                            SingleDiskFarmScrubError::MetadataCantBeOpened {
+                                file: metadata_file_path,
+                                error,
+                            }
+                        });
+                    }
+                };
 
-            if metadata_header.version != Self::SUPPORTED_PLOT_VERSION {
-                return Err(SingleDiskFarmScrubError::UnexpectedMetadataVersion(
-                    metadata_header.version,
-                ));
-            }
+                // Error doesn't matter here
+                let _ = metadata_file.advise_sequential_access();
 
-            let plotted_sector_count = metadata_header.plotted_sector_count;
-
-            let expected_metadata_size = RESERVED_PLOT_METADATA
-                + sector_metadata_size as u64 * u64::from(plotted_sector_count);
-
-            if metadata_size < expected_metadata_size {
-                warn!(
-                    %metadata_size,
-                    %expected_metadata_size,
-                    "Metadata file size is smaller than expected, shrinking number of plotted \
-                    sectors to correct value"
-                );
-
-                metadata_header.plotted_sector_count = ((metadata_size - RESERVED_PLOT_METADATA)
-                    / sector_metadata_size as u64)
-                    as SectorIndex;
-                let metadata_header_bytes = metadata_header.encode();
-
-                if !dry_run {
-                    if let Err(error) = metadata_file.write_all_at(&metadata_header_bytes, 0) {
-                        return Err(SingleDiskFarmScrubError::FailedToWriteBytes {
+                let metadata_size = match metadata_file.size() {
+                    Ok(metadata_size) => metadata_size,
+                    Err(error) => {
+                        return Err(SingleDiskFarmScrubError::FailedToDetermineFileSize {
                             file: metadata_file_path,
-                            size: metadata_header_bytes.len() as u64,
+                            error,
+                        });
+                    }
+                };
+
+                if metadata_size < RESERVED_PLOT_METADATA {
+                    return Err(SingleDiskFarmScrubError::MetadataFileTooSmall {
+                        file: metadata_file_path,
+                        reserved_size: RESERVED_PLOT_METADATA,
+                        size: metadata_size,
+                    });
+                }
+
+                let mut metadata_header = {
+                    let mut reserved_metadata = vec![0; RESERVED_PLOT_METADATA as usize];
+
+                    if let Err(error) = metadata_file.read_exact_at(&mut reserved_metadata, 0) {
+                        return Err(SingleDiskFarmScrubError::FailedToReadBytes {
+                            file: metadata_file_path,
+                            size: RESERVED_PLOT_METADATA,
                             offset: 0,
                             error,
                         });
                     }
+
+                    PlotMetadataHeader::decode(&mut reserved_metadata.as_slice())
+                        .map_err(SingleDiskFarmScrubError::FailedToDecodeMetadataHeader)?
+                };
+
+                if metadata_header.version != Self::SUPPORTED_PLOT_VERSION {
+                    return Err(SingleDiskFarmScrubError::UnexpectedMetadataVersion(
+                        metadata_header.version,
+                    ));
                 }
-            }
 
-            (metadata_file, metadata_header)
-        };
+                let plotted_sector_count = metadata_header.plotted_sector_count;
 
-        let pieces_in_sector = info.pieces_in_sector();
-        let sector_size = sector_size(pieces_in_sector) as u64;
+                let expected_metadata_size = RESERVED_PLOT_METADATA
+                    + sector_metadata_size as u64 * u64::from(plotted_sector_count);
 
-        let plot_file_path = directory.join(Self::PLOT_FILE);
-        let plot_file = {
+                if metadata_size < expected_metadata_size {
+                    warn!(
+                        %metadata_size,
+                        %expected_metadata_size,
+                        "Metadata file size is smaller than expected, shrinking number of plotted \
+                        sectors to correct value"
+                    );
+
+                    metadata_header.plotted_sector_count =
+                        ((metadata_size - RESERVED_PLOT_METADATA) / sector_metadata_size as u64)
+                            as SectorIndex;
+                    let metadata_header_bytes = metadata_header.encode();
+
+                    if !dry_run {
+                        if let Err(error) = metadata_file.write_all_at(&metadata_header_bytes, 0) {
+                            return Err(SingleDiskFarmScrubError::FailedToWriteBytes {
+                                file: metadata_file_path,
+                                size: metadata_header_bytes.len() as u64,
+                                offset: 0,
+                                error,
+                            });
+                        }
+                    }
+                }
+
+                (metadata_file, metadata_header)
+            };
+
+            let pieces_in_sector = info.pieces_in_sector();
+            let sector_size = sector_size(pieces_in_sector) as u64;
+
             let plot_file_path = directory.join(Self::PLOT_FILE);
-            info!(path = %plot_file_path.display(), "Checking plot file");
+            let plot_file = {
+                let plot_file_path = directory.join(Self::PLOT_FILE);
+                info!(path = %plot_file_path.display(), "Checking plot file");
 
-            let plot_file = match OpenOptions::new()
-                .read(true)
-                .write(!dry_run)
-                .open(&plot_file_path)
-            {
-                Ok(plot_file) => plot_file,
-                Err(error) => {
-                    return Err(if error.kind() == io::ErrorKind::NotFound {
-                        SingleDiskFarmScrubError::MetadataFileDoesNotExist {
+                let plot_file = match OpenOptions::new()
+                    .read(true)
+                    .write(!dry_run)
+                    .open(&plot_file_path)
+                {
+                    Ok(plot_file) => plot_file,
+                    Err(error) => {
+                        return Err(if error.kind() == io::ErrorKind::NotFound {
+                            SingleDiskFarmScrubError::MetadataFileDoesNotExist {
+                                file: plot_file_path,
+                            }
+                        } else {
+                            SingleDiskFarmScrubError::MetadataCantBeOpened {
+                                file: plot_file_path,
+                                error,
+                            }
+                        });
+                    }
+                };
+
+                // Error doesn't matter here
+                let _ = plot_file.advise_sequential_access();
+
+                let plot_size = match plot_file.size() {
+                    Ok(metadata_size) => metadata_size,
+                    Err(error) => {
+                        return Err(SingleDiskFarmScrubError::FailedToDetermineFileSize {
                             file: plot_file_path,
-                        }
-                    } else {
-                        SingleDiskFarmScrubError::MetadataCantBeOpened {
-                            file: plot_file_path,
-                            error,
-                        }
-                    });
-                }
-            };
-
-            // Error doesn't matter here
-            let _ = plot_file.advise_sequential_access();
-
-            let plot_size = match plot_file.size() {
-                Ok(metadata_size) => metadata_size,
-                Err(error) => {
-                    return Err(SingleDiskFarmScrubError::FailedToDetermineFileSize {
-                        file: plot_file_path,
-                        error,
-                    });
-                }
-            };
-
-            let min_expected_plot_size =
-                u64::from(metadata_header.plotted_sector_count) * sector_size;
-            if plot_size < min_expected_plot_size {
-                warn!(
-                    %plot_size,
-                    %min_expected_plot_size,
-                    "Plot file size is smaller than expected, shrinking number of plotted \
-                    sectors to correct value"
-                );
-
-                metadata_header.plotted_sector_count = (plot_size / sector_size) as SectorIndex;
-                let metadata_header_bytes = metadata_header.encode();
-
-                if !dry_run {
-                    if let Err(error) = metadata_file.write_all_at(&metadata_header_bytes, 0) {
-                        return Err(SingleDiskFarmScrubError::FailedToWriteBytes {
-                            file: plot_file_path,
-                            size: metadata_header_bytes.len() as u64,
-                            offset: 0,
                             error,
                         });
                     }
-                }
-            }
+                };
 
-            plot_file
-        };
+                let min_expected_plot_size =
+                    u64::from(metadata_header.plotted_sector_count) * sector_size;
+                if plot_size < min_expected_plot_size {
+                    warn!(
+                        %plot_size,
+                        %min_expected_plot_size,
+                        "Plot file size is smaller than expected, shrinking number of plotted \
+                        sectors to correct value"
+                    );
 
-        let sector_bytes_range = 0..(sector_size as usize - mem::size_of::<Blake3Hash>());
+                    metadata_header.plotted_sector_count = (plot_size / sector_size) as SectorIndex;
+                    let metadata_header_bytes = metadata_header.encode();
 
-        info!("Checking sectors and corresponding metadata");
-        (0..metadata_header.plotted_sector_count)
-            .into_par_iter()
-            .map_init(
-                || vec![0u8; Record::SIZE],
-                |scratch_buffer, sector_index| {
-                    let _span_guard = span.enter();
-
-                    let offset = RESERVED_PLOT_METADATA
-                        + u64::from(sector_index) * sector_metadata_size as u64;
-                    if let Err(error) = metadata_file
-                        .read_exact_at(&mut scratch_buffer[..sector_metadata_size], offset)
-                    {
-                        warn!(
-                            path = %metadata_file_path.display(),
-                            %error,
-                            %offset,
-                            size = %sector_metadata_size,
-                            %sector_index,
-                            "Failed to read sector metadata, replacing with dummy expired sector \
-                            metadata"
-                        );
-
-                        if !dry_run {
-                            write_dummy_sector_metadata(
-                                &metadata_file,
-                                &metadata_file_path,
-                                sector_index,
-                                pieces_in_sector,
-                            )?;
+                    if !dry_run {
+                        if let Err(error) = metadata_file.write_all_at(&metadata_header_bytes, 0) {
+                            return Err(SingleDiskFarmScrubError::FailedToWriteBytes {
+                                file: plot_file_path,
+                                size: metadata_header_bytes.len() as u64,
+                                offset: 0,
+                                error,
+                            });
                         }
-                        return Ok(());
                     }
+                }
 
-                    let sector_metadata = match SectorMetadataChecksummed::decode(
-                        &mut &scratch_buffer[..sector_metadata_size],
-                    ) {
-                        Ok(sector_metadata) => sector_metadata,
-                        Err(error) => {
+                plot_file
+            };
+
+            let sector_bytes_range = 0..(sector_size as usize - mem::size_of::<Blake3Hash>());
+
+            info!("Checking sectors and corresponding metadata");
+            (0..metadata_header.plotted_sector_count)
+                .into_par_iter()
+                .map_init(
+                    || vec![0u8; Record::SIZE],
+                    |scratch_buffer, sector_index| {
+                        let _span_guard = span.enter();
+
+                        let offset = RESERVED_PLOT_METADATA
+                            + u64::from(sector_index) * sector_metadata_size as u64;
+                        if let Err(error) = metadata_file
+                            .read_exact_at(&mut scratch_buffer[..sector_metadata_size], offset)
+                        {
                             warn!(
                                 path = %metadata_file_path.display(),
                                 %error,
+                                %offset,
+                                size = %sector_metadata_size,
                                 %sector_index,
-                                "Failed to decode sector metadata, replacing with dummy expired \
+                                "Failed to read sector metadata, replacing with dummy expired \
                                 sector metadata"
                             );
 
@@ -1879,186 +1942,223 @@ impl SingleDiskFarm {
                             }
                             return Ok(());
                         }
-                    };
 
-                    if sector_metadata.sector_index != sector_index {
-                        warn!(
-                            path = %metadata_file_path.display(),
-                            %sector_index,
-                            found_sector_index = sector_metadata.sector_index,
-                            "Sector index mismatch, replacing with dummy expired sector metadata"
-                        );
+                        let sector_metadata = match SectorMetadataChecksummed::decode(
+                            &mut &scratch_buffer[..sector_metadata_size],
+                        ) {
+                            Ok(sector_metadata) => sector_metadata,
+                            Err(error) => {
+                                warn!(
+                                    path = %metadata_file_path.display(),
+                                    %error,
+                                    %sector_index,
+                                    "Failed to decode sector metadata, replacing with dummy \
+                                    expired sector metadata"
+                                );
 
-                        if !dry_run {
-                            write_dummy_sector_metadata(
-                                &metadata_file,
-                                &metadata_file_path,
-                                sector_index,
-                                pieces_in_sector,
-                            )?;
-                        }
-                        return Ok(());
-                    }
+                                if !dry_run {
+                                    write_dummy_sector_metadata(
+                                        &metadata_file,
+                                        &metadata_file_path,
+                                        sector_index,
+                                        pieces_in_sector,
+                                    )?;
+                                }
+                                return Ok(());
+                            }
+                        };
 
-                    if sector_metadata.pieces_in_sector != pieces_in_sector {
-                        warn!(
-                            path = %metadata_file_path.display(),
-                            %sector_index,
-                            %pieces_in_sector,
-                            found_pieces_in_sector = sector_metadata.pieces_in_sector,
-                            "Pieces in sector mismatch, replacing with dummy expired sector \
-                            metadata"
-                        );
-
-                        if !dry_run {
-                            write_dummy_sector_metadata(
-                                &metadata_file,
-                                &metadata_file_path,
-                                sector_index,
-                                pieces_in_sector,
-                            )?;
-                        }
-                        return Ok(());
-                    }
-
-                    let mut hasher = blake3::Hasher::new();
-                    // Read sector bytes and compute checksum
-                    for offset_in_sector in sector_bytes_range.clone().step_by(scratch_buffer.len())
-                    {
-                        let offset =
-                            u64::from(sector_index) * sector_size + offset_in_sector as u64;
-                        let bytes_to_read = (offset_in_sector + scratch_buffer.len())
-                            .min(sector_bytes_range.end)
-                            - offset_in_sector;
-
-                        let bytes = &mut scratch_buffer[..bytes_to_read];
-
-                        if let Err(error) = plot_file.read_exact_at(bytes, offset) {
+                        if sector_metadata.sector_index != sector_index {
                             warn!(
-                                path = %plot_file_path.display(),
-                                %error,
+                                path = %metadata_file_path.display(),
                                 %sector_index,
-                                %offset,
-                                size = %bytes.len() as u64,
-                                "Failed to read sector bytes"
+                                found_sector_index = sector_metadata.sector_index,
+                                "Sector index mismatch, replacing with dummy expired sector \
+                                metadata"
                             );
-
-                            continue;
-                        }
-
-                        hasher.update(bytes);
-                    }
-
-                    let actual_checksum = *hasher.finalize().as_bytes();
-                    let mut expected_checksum = [0; mem::size_of::<Blake3Hash>()];
-                    {
-                        let offset =
-                            u64::from(sector_index) * sector_size + sector_bytes_range.end as u64;
-                        if let Err(error) = plot_file.read_exact_at(&mut expected_checksum, offset)
-                        {
-                            warn!(
-                                path = %plot_file_path.display(),
-                                %error,
-                                %sector_index,
-                                %offset,
-                                size = %expected_checksum.len() as u64,
-                                "Failed to read sector checksum bytes"
-                            );
-                        }
-                    }
-
-                    // Verify checksum
-                    if actual_checksum != expected_checksum {
-                        warn!(
-                            path = %plot_file_path.display(),
-                            %sector_index,
-                            actual_checksum = %hex::encode(actual_checksum),
-                            expected_checksum = %hex::encode(expected_checksum),
-                            "Plotted sector checksum mismatch, replacing with dummy expired sector"
-                        );
-
-                        if !dry_run {
-                            write_dummy_sector_metadata(
-                                &metadata_file,
-                                &metadata_file_path,
-                                sector_index,
-                                pieces_in_sector,
-                            )?;
-                        }
-
-                        scratch_buffer.fill(0);
-
-                        hasher.reset();
-                        // Fill sector with zeroes and compute checksum
-                        for offset_in_sector in
-                            sector_bytes_range.clone().step_by(scratch_buffer.len())
-                        {
-                            let offset =
-                                u64::from(sector_index) * sector_size + offset_in_sector as u64;
-                            let bytes_to_write = (offset_in_sector + scratch_buffer.len())
-                                .min(sector_bytes_range.end)
-                                - offset_in_sector;
-                            let bytes = &mut scratch_buffer[..bytes_to_write];
 
                             if !dry_run {
-                                if let Err(error) = plot_file.write_all_at(bytes, offset) {
-                                    return Err(SingleDiskFarmScrubError::FailedToWriteBytes {
-                                        file: plot_file_path.clone(),
-                                        size: scratch_buffer.len() as u64,
-                                        offset,
-                                        error,
-                                    });
+                                write_dummy_sector_metadata(
+                                    &metadata_file,
+                                    &metadata_file_path,
+                                    sector_index,
+                                    pieces_in_sector,
+                                )?;
+                            }
+                            return Ok(());
+                        }
+
+                        if sector_metadata.pieces_in_sector != pieces_in_sector {
+                            warn!(
+                                path = %metadata_file_path.display(),
+                                %sector_index,
+                                %pieces_in_sector,
+                                found_pieces_in_sector = sector_metadata.pieces_in_sector,
+                                "Pieces in sector mismatch, replacing with dummy expired sector \
+                                metadata"
+                            );
+
+                            if !dry_run {
+                                write_dummy_sector_metadata(
+                                    &metadata_file,
+                                    &metadata_file_path,
+                                    sector_index,
+                                    pieces_in_sector,
+                                )?;
+                            }
+                            return Ok(());
+                        }
+
+                        if target.plot() {
+                            let mut hasher = blake3::Hasher::new();
+                            // Read sector bytes and compute checksum
+                            for offset_in_sector in
+                                sector_bytes_range.clone().step_by(scratch_buffer.len())
+                            {
+                                let offset =
+                                    u64::from(sector_index) * sector_size + offset_in_sector as u64;
+                                let bytes_to_read = (offset_in_sector + scratch_buffer.len())
+                                    .min(sector_bytes_range.end)
+                                    - offset_in_sector;
+
+                                let bytes = &mut scratch_buffer[..bytes_to_read];
+
+                                if let Err(error) = plot_file.read_exact_at(bytes, offset) {
+                                    warn!(
+                                        path = %plot_file_path.display(),
+                                        %error,
+                                        %sector_index,
+                                        %offset,
+                                        size = %bytes.len() as u64,
+                                        "Failed to read sector bytes"
+                                    );
+
+                                    continue;
+                                }
+
+                                hasher.update(bytes);
+                            }
+
+                            let actual_checksum = *hasher.finalize().as_bytes();
+                            let mut expected_checksum = [0; mem::size_of::<Blake3Hash>()];
+                            {
+                                let offset = u64::from(sector_index) * sector_size
+                                    + sector_bytes_range.end as u64;
+                                if let Err(error) =
+                                    plot_file.read_exact_at(&mut expected_checksum, offset)
+                                {
+                                    warn!(
+                                        path = %plot_file_path.display(),
+                                        %error,
+                                        %sector_index,
+                                        %offset,
+                                        size = %expected_checksum.len() as u64,
+                                        "Failed to read sector checksum bytes"
+                                    );
                                 }
                             }
 
-                            hasher.update(bytes);
-                        }
-                        // Write checksum
-                        {
-                            let checksum = *hasher.finalize().as_bytes();
-                            let offset = u64::from(sector_index) * sector_size
-                                + sector_bytes_range.end as u64;
-                            if !dry_run {
-                                if let Err(error) = plot_file.write_all_at(&checksum, offset) {
-                                    return Err(SingleDiskFarmScrubError::FailedToWriteBytes {
-                                        file: plot_file_path.clone(),
-                                        size: checksum.len() as u64,
-                                        offset,
-                                        error,
-                                    });
+                            // Verify checksum
+                            if actual_checksum != expected_checksum {
+                                warn!(
+                                    path = %plot_file_path.display(),
+                                    %sector_index,
+                                    actual_checksum = %hex::encode(actual_checksum),
+                                    expected_checksum = %hex::encode(expected_checksum),
+                                    "Plotted sector checksum mismatch, replacing with dummy \
+                                    expired sector"
+                                );
+
+                                if !dry_run {
+                                    write_dummy_sector_metadata(
+                                        &metadata_file,
+                                        &metadata_file_path,
+                                        sector_index,
+                                        pieces_in_sector,
+                                    )?;
                                 }
+
+                                scratch_buffer.fill(0);
+
+                                hasher.reset();
+                                // Fill sector with zeroes and compute checksum
+                                for offset_in_sector in
+                                    sector_bytes_range.clone().step_by(scratch_buffer.len())
+                                {
+                                    let offset = u64::from(sector_index) * sector_size
+                                        + offset_in_sector as u64;
+                                    let bytes_to_write = (offset_in_sector + scratch_buffer.len())
+                                        .min(sector_bytes_range.end)
+                                        - offset_in_sector;
+                                    let bytes = &mut scratch_buffer[..bytes_to_write];
+
+                                    if !dry_run {
+                                        if let Err(error) = plot_file.write_all_at(bytes, offset) {
+                                            return Err(
+                                                SingleDiskFarmScrubError::FailedToWriteBytes {
+                                                    file: plot_file_path.clone(),
+                                                    size: scratch_buffer.len() as u64,
+                                                    offset,
+                                                    error,
+                                                },
+                                            );
+                                        }
+                                    }
+
+                                    hasher.update(bytes);
+                                }
+                                // Write checksum
+                                {
+                                    let checksum = *hasher.finalize().as_bytes();
+                                    let offset = u64::from(sector_index) * sector_size
+                                        + sector_bytes_range.end as u64;
+                                    if !dry_run {
+                                        if let Err(error) =
+                                            plot_file.write_all_at(&checksum, offset)
+                                        {
+                                            return Err(
+                                                SingleDiskFarmScrubError::FailedToWriteBytes {
+                                                    file: plot_file_path.clone(),
+                                                    size: checksum.len() as u64,
+                                                    offset,
+                                                    error,
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+
+                                return Ok(());
                             }
                         }
 
-                        return Ok(());
+                        trace!(%sector_index, "Sector is in good shape");
+
+                        Ok(())
+                    },
+                )
+                .try_for_each({
+                    let span = &span;
+                    let checked_sectors = AtomicUsize::new(0);
+
+                    move |result| {
+                        let _span_guard = span.enter();
+
+                        let checked_sectors = checked_sectors.fetch_add(1, Ordering::Relaxed);
+                        if checked_sectors > 1 && checked_sectors % 10 == 0 {
+                            info!(
+                                "Checked {}/{} sectors",
+                                checked_sectors, metadata_header.plotted_sector_count
+                            );
+                        }
+
+                        result
                     }
+                })?;
+        }
 
-                    trace!(%sector_index, "Sector is in good shape");
-
-                    Ok(())
-                },
-            )
-            .try_for_each({
-                let span = &span;
-                let checked_sectors = AtomicUsize::new(0);
-
-                move |result| {
-                    let _span_guard = span.enter();
-
-                    let checked_sectors = checked_sectors.fetch_add(1, Ordering::Relaxed);
-                    if checked_sectors > 1 && checked_sectors % 10 == 0 {
-                        info!(
-                            "Checked {}/{} sectors",
-                            checked_sectors, metadata_header.plotted_sector_count
-                        );
-                    }
-
-                    result
-                }
-            })?;
-
-        {
-            let file = directory.join(PieceCache::FILE_NAME);
+        if target.cache() {
+            let file = directory.join(DiskPieceCache::FILE_NAME);
             info!(path = %file.display(), "Checking cache file");
 
             let cache_file = match OpenOptions::new().read(true).write(!dry_run).open(&file) {
@@ -2085,7 +2185,7 @@ impl SingleDiskFarm {
                 }
             };
 
-            let element_size = PieceCache::element_size();
+            let element_size = DiskPieceCache::element_size();
             let number_of_cached_elements = cache_size / u64::from(element_size);
             let dummy_element = vec![0; element_size as usize];
             (0..number_of_cached_elements)

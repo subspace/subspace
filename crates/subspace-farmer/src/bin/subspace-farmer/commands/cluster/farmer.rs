@@ -24,6 +24,7 @@ use subspace_farmer::cluster::plotter::ClusterPlotter;
 use subspace_farmer::farm::{
     Farm, FarmingNotification, SectorExpirationDetails, SectorPlottingDetails, SectorUpdate,
 };
+use subspace_farmer::node_client::caching_proxy_node_client::CachingProxyNodeClient;
 use subspace_farmer::node_client::NodeClient;
 use subspace_farmer::single_disk_farm::{
     SingleDiskFarm, SingleDiskFarmError, SingleDiskFarmOptions,
@@ -105,6 +106,12 @@ pub(super) struct FarmerArgs {
     /// By default, farmer will continue running if there are still other working farms.
     #[arg(long)]
     exit_on_farm_error: bool,
+    /// Number of service instances.
+    ///
+    /// Increasing number of services allows to process more concurrent requests, but increasing
+    /// beyond number of CPU cores doesn't make sense and will likely hurt performance instead.
+    #[arg(long, default_value = "32")]
+    service_instances: NonZeroUsize,
     /// Additional cluster components
     #[clap(raw = true)]
     pub(super) additional_components: Vec<String>,
@@ -129,6 +136,7 @@ where
         disable_farm_locking,
         create,
         exit_on_farm_error,
+        service_instances,
         additional_components: _,
     } = farmer_args;
 
@@ -164,9 +172,13 @@ where
         None
     };
 
-    let node_client = ClusterNodeClient::new(nats_client.clone())
-        .await
-        .map_err(|error| anyhow!("Failed to create cluster node client: {error}"))?;
+    let node_client = CachingProxyNodeClient::new(
+        ClusterNodeClient::new(nats_client.clone())
+            .await
+            .map_err(|error| anyhow!("Failed to create cluster node client: {error}"))?,
+    )
+    .await
+    .map_err(|error| anyhow!("Failed to create caching proxy node client: {error}"))?;
 
     let farmer_app_info = node_client
         .farmer_app_info()
@@ -354,19 +366,28 @@ where
         .try_collect::<Vec<_>>()
         .await?;
 
-    let farmer_service_fut = farmer_service(
-        nats_client,
-        farms.as_slice(),
-        FARMER_IDENTIFICATION_BROADCAST_INTERVAL,
-    );
-    let farmer_service_fut = run_future_in_dedicated_thread(
-        move || async move {
-            farmer_service_fut
-                .await
-                .map_err(|error| anyhow!("Farmer service failed: {error}"))
-        },
-        "controller-service".to_string(),
-    )?;
+    let mut farmer_services = (0..service_instances.get())
+        .map(|index| {
+            AsyncJoinOnDrop::new(
+                tokio::spawn(farmer_service(
+                    nats_client.clone(),
+                    farms.as_slice(),
+                    FARMER_IDENTIFICATION_BROADCAST_INTERVAL,
+                    index == 0,
+                )),
+                true,
+            )
+        })
+        .collect::<FuturesUnordered<_>>();
+
+    let farmer_service_fut = async move {
+        farmer_services
+            .next()
+            .await
+            .expect("Not empty; qed")
+            .map_err(|error| anyhow!("Farmer service failed: {error}"))?
+            .map_err(|error| anyhow!("Farmer service failed: {error}"))
+    };
 
     let mut farms_stream = (0u8..)
         .zip(farms)
@@ -512,7 +533,7 @@ where
 
             // Piece cache worker future
             result = farmer_service_fut.fuse() => {
-                result??;
+                result?;
             },
         }
 

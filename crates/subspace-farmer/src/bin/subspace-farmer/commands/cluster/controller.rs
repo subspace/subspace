@@ -9,7 +9,8 @@ use anyhow::anyhow;
 use async_lock::RwLock as AsyncRwLock;
 use backoff::ExponentialBackoff;
 use clap::{Parser, ValueHint};
-use futures::{select, FutureExt};
+use futures::stream::FuturesUnordered;
+use futures::{select, FutureExt, StreamExt};
 use prometheus_client::registry::Registry;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -20,14 +21,15 @@ use std::time::Duration;
 use subspace_core_primitives::crypto::kzg::{embedded_kzg_settings, Kzg};
 use subspace_farmer::cluster::controller::controller_service;
 use subspace_farmer::cluster::nats_client::NatsClient;
+use subspace_farmer::farm::plotted_pieces::PlottedPieces;
 use subspace_farmer::farmer_cache::FarmerCache;
-use subspace_farmer::node_client::node_rpc_client::NodeRpcClient;
+use subspace_farmer::farmer_piece_getter::piece_validator::SegmentCommitmentPieceValidator;
+use subspace_farmer::farmer_piece_getter::{DsnCacheRetryPolicy, FarmerPieceGetter};
+use subspace_farmer::node_client::caching_proxy_node_client::CachingProxyNodeClient;
+use subspace_farmer::node_client::rpc_node_client::RpcNodeClient;
 use subspace_farmer::node_client::NodeClient;
-use subspace_farmer::utils::farmer_piece_getter::{DsnCacheRetryPolicy, FarmerPieceGetter};
-use subspace_farmer::utils::piece_validator::SegmentCommitmentPieceValidator;
-use subspace_farmer::utils::plotted_pieces::PlottedPieces;
-use subspace_farmer::utils::run_future_in_dedicated_thread;
-use subspace_farmer::Identity;
+use subspace_farmer::single_disk_farm::identity::Identity;
+use subspace_farmer::utils::{run_future_in_dedicated_thread, AsyncJoinOnDrop};
 use subspace_networking::utils::piece_provider::PieceProvider;
 use tracing::info;
 
@@ -61,6 +63,12 @@ pub(super) struct ControllerArgs {
     /// must be also specified on corresponding caches.
     #[arg(long, default_value = "default")]
     cache_group: String,
+    /// Number of service instances.
+    ///
+    /// Increasing number of services allows to process more concurrent requests, but increasing
+    /// beyond number of CPU cores doesn't make sense and will likely hurt performance instead.
+    #[arg(long, default_value = "32")]
+    service_instances: NonZeroUsize,
     /// Network parameters
     #[clap(flatten)]
     network_args: NetworkArgs,
@@ -85,6 +93,7 @@ pub(super) async fn controller(
         base_path,
         node_rpc_url,
         cache_group,
+        service_instances,
         mut network_args,
         dev,
         tmp,
@@ -112,7 +121,7 @@ pub(super) async fn controller(
     let plotted_pieces = Arc::new(AsyncRwLock::new(PlottedPieces::<FarmIndex>::default()));
 
     info!(url = %node_rpc_url, "Connecting to node RPC");
-    let node_client = NodeRpcClient::new(&node_rpc_url)
+    let node_client = RpcNodeClient::new(&node_rpc_url)
         .await
         .map_err(|error| anyhow!("Failed to connect to node RPC: {error}"))?;
 
@@ -151,6 +160,10 @@ pub(super) async fn controller(
         .map_err(|error| anyhow!("Failed to configure networking: {error}"))?
     };
 
+    let node_client = CachingProxyNodeClient::new(node_client)
+        .await
+        .map_err(|error| anyhow!("Failed to create caching proxy node client: {error}"))?;
+
     let kzg = Kzg::new(embedded_kzg_settings());
     let validator = Some(SegmentCommitmentPieceValidator::new(
         node.clone(),
@@ -187,26 +200,39 @@ pub(super) async fn controller(
         "controller-cache-worker".to_string(),
     )?;
 
-    let controller_service_fut = run_future_in_dedicated_thread(
-        {
+    let mut controller_services = (0..service_instances.get())
+        .map(|index| {
             let nats_client = nats_client.clone();
-            let instance = instance.clone();
+            let node_client = node_client.clone();
+            let piece_getter = piece_getter.clone();
             let farmer_cache = farmer_cache.clone();
+            let instance = instance.clone();
 
-            move || async move {
-                controller_service(
-                    &nats_client,
-                    &node_client,
-                    &piece_getter,
-                    &farmer_cache,
-                    &instance,
-                )
-                .await
-                .map_err(|error| anyhow!("Controller service failed: {error}"))
-            }
-        },
-        "controller-service".to_string(),
-    )?;
+            AsyncJoinOnDrop::new(
+                tokio::spawn(async move {
+                    controller_service(
+                        &nats_client,
+                        &node_client,
+                        &piece_getter,
+                        &farmer_cache,
+                        &instance,
+                        index == 0,
+                    )
+                    .await
+                }),
+                true,
+            )
+        })
+        .collect::<FuturesUnordered<_>>();
+
+    let controller_service_fut = async move {
+        controller_services
+            .next()
+            .await
+            .expect("Not empty; qed")
+            .map_err(|error| anyhow!("Controller service failed: {error}"))?
+            .map_err(|error| anyhow!("Controller service failed: {error}"))
+    };
 
     let farms_fut = run_future_in_dedicated_thread(
         {
@@ -264,7 +290,7 @@ pub(super) async fn controller(
 
             // Controller service future
             result = controller_service_fut.fuse() => {
-                result??;
+                result?;
             },
         }
 
