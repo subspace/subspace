@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["relay_consensus_chain_messages","relay_domain_messages"]};
+window.SIDEBAR_ITEMS = {"fn":["gossip_channel_updates","relay_consensus_chain_messages","relay_domain_messages"]};

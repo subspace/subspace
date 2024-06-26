@@ -288,6 +288,20 @@
 <a href="#288" id="288">288</a>
 <a href="#289" id="289">289</a>
 <a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures::{FutureExt, StreamExt};
 <span class="kw">use </span>parity_scale_codec::{Decode, Encode};
 <span class="kw">use </span>parking_lot::{Mutex, RwLock};
@@ -298,39 +312,63 @@
     ValidatorContext,
 };
 <span class="kw">use </span>sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver, TracingUnboundedSender};
+<span class="kw">use </span>sp_api::StorageProof;
 <span class="kw">use </span>sp_core::twox_256;
-<span class="kw">use </span>sp_messenger::messages::ChainId;
+<span class="kw">use </span>sp_messenger::messages::{ChainId, ChannelId};
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, Header <span class="kw">as </span>HeaderT};
 <span class="kw">use </span>std::collections::{BTreeMap, HashSet};
 <span class="kw">use </span>std::future::poll_fn;
 <span class="kw">use </span>std::pin::pin;
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>subspace_runtime_primitives::BlockNumber;
 
 <span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span>str = <span class="string">"cross_chain_gossip_worker"</span>;
 <span class="kw">const </span>PROTOCOL_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"/subspace/cross-chain-messages"</span>;
 
 <span class="doccomment">/// Encoded message with sender info if available.
-</span><span class="kw">pub struct </span>ChainTxPoolMsg {
-    <span class="kw">pub </span>encoded_data: Vec&lt;u8&gt;,
+</span><span class="kw">pub struct </span>ChainMsg {
     <span class="kw">pub </span>maybe_peer: <span class="prelude-ty">Option</span>&lt;PeerId&gt;,
+    <span class="kw">pub </span>data: MessageData,
 }
 
-<span class="doccomment">/// Unbounded sender to send encoded ext to listeners.
-</span><span class="kw">pub type </span>ChainTxPoolSink = TracingUnboundedSender&lt;ChainTxPoolMsg&gt;;
+<span class="doccomment">/// Unbounded sender to send encoded message to listeners.
+</span><span class="kw">pub type </span>ChainSink = TracingUnboundedSender&lt;ChainMsg&gt;;
 <span class="kw">type </span>MessageHash = [u8; <span class="number">32</span>];
+
+<span class="doccomment">/// Channel update message.
+</span><span class="attr">#[derive(Debug, Encode, Decode)]
+</span><span class="kw">pub struct </span>ChannelUpdate {
+    <span class="doccomment">/// Message is coming from src_chain.
+    </span><span class="kw">pub </span>src_chain_id: ChainId,
+    <span class="doccomment">/// Channel id.
+    </span><span class="kw">pub </span>channel_id: ChannelId,
+    <span class="doccomment">/// Block number at which storage proof was generated.
+    </span><span class="kw">pub </span>block_number: BlockNumber,
+    <span class="doccomment">/// Storage proof of the channel on src_chain.
+    </span><span class="kw">pub </span>storage_proof: StorageProof,
+}
+
+<span class="doccomment">/// A type of cross chain message
+</span><span class="attr">#[derive(Debug, Encode, Decode)]
+</span><span class="kw">pub enum </span>MessageData {
+    <span class="doccomment">/// Encoded XDM message
+    </span>Xdm(Vec&lt;u8&gt;),
+    <span class="doccomment">/// Encoded channel update message.
+    </span>ChannelUpdate(ChannelUpdate),
+}
 
 <span class="doccomment">/// A cross chain message with encoded data.
 </span><span class="attr">#[derive(Debug, Encode, Decode)]
 </span><span class="kw">pub struct </span>Message {
     <span class="kw">pub </span>chain_id: ChainId,
-    <span class="kw">pub </span>encoded_data: Vec&lt;u8&gt;,
+    <span class="kw">pub </span>data: MessageData,
 }
 
 <span class="doccomment">/// Gossip worker builder
 </span><span class="kw">pub struct </span>GossipWorkerBuilder {
     gossip_msg_stream: TracingUnboundedReceiver&lt;Message&gt;,
     gossip_msg_sink: TracingUnboundedSender&lt;Message&gt;,
-    chain_tx_pool_sinks: BTreeMap&lt;ChainId, ChainTxPoolSink&gt;,
+    chain_sinks: BTreeMap&lt;ChainId, ChainSink&gt;,
 }
 
 <span class="kw">impl </span>GossipWorkerBuilder {
@@ -342,13 +380,13 @@
         <span class="self">Self </span>{
             gossip_msg_stream,
             gossip_msg_sink,
-            chain_tx_pool_sinks: BTreeMap::new(),
+            chain_sinks: BTreeMap::new(),
         }
     }
 
-    <span class="doccomment">/// Collect the chain tx pool sink that will be used by the gossip message worker later.
-    </span><span class="kw">pub fn </span>push_chain_tx_pool_sink(<span class="kw-2">&amp;mut </span><span class="self">self</span>, chain_id: ChainId, tx_pool_sink: ChainTxPoolSink) {
-        <span class="self">self</span>.chain_tx_pool_sinks.insert(chain_id, tx_pool_sink);
+    <span class="doccomment">/// Collect the chain sink that will be used by the gossip message worker later.
+    </span><span class="kw">pub fn </span>push_chain_sink(<span class="kw-2">&amp;mut </span><span class="self">self</span>, chain_id: ChainId, sink: ChainSink) {
+        <span class="self">self</span>.chain_sinks.insert(chain_id, sink);
     }
 
     <span class="doccomment">/// Get the gossip message sink
@@ -370,7 +408,7 @@
     {
         <span class="kw">let </span><span class="self">Self </span>{
             gossip_msg_stream,
-            chain_tx_pool_sinks,
+            chain_sinks,
             ..
         } = <span class="self">self</span>;
 
@@ -388,7 +426,7 @@
             gossip_engine,
             gossip_validator,
             gossip_msg_stream,
-            chain_tx_pool_sinks,
+            chain_sinks,
         }
     }
 }
@@ -399,7 +437,7 @@
     gossip_engine: Arc&lt;Mutex&lt;GossipEngine&lt;Block&gt;&gt;&gt;,
     gossip_validator: Arc&lt;GossipValidator&lt;Network&gt;&gt;,
     gossip_msg_stream: TracingUnboundedReceiver&lt;Message&gt;,
-    chain_tx_pool_sinks: BTreeMap&lt;ChainId, ChainTxPoolSink&gt;,
+    chain_sinks: BTreeMap&lt;ChainId, ChainSink&gt;,
 }
 
 <span class="doccomment">/// Returns the network configuration for cross chain message gossip.
@@ -467,24 +505,14 @@
             .lock()
             .gossip_message(topic::&lt;Block&gt;(), encoded_msg, <span class="bool-val">false</span>);
 
-        <span class="kw">let </span>Message {
-            chain_id,
-            encoded_data,
-        } = msg;
-        <span class="kw">let </span>sink = <span class="kw">match </span><span class="self">self</span>.chain_tx_pool_sinks.get(<span class="kw-2">&amp;</span>chain_id) {
+        <span class="kw">let </span>Message { chain_id, data } = msg;
+        <span class="kw">let </span>sink = <span class="kw">match </span><span class="self">self</span>.chain_sinks.get(<span class="kw-2">&amp;</span>chain_id) {
             <span class="prelude-val">Some</span>(sink) =&gt; sink,
             <span class="prelude-val">None </span>=&gt; <span class="kw">return</span>,
         };
 
         <span class="comment">// send the message to the open and ready channel
-        </span><span class="kw">if </span>!sink.is_closed()
-            &amp;&amp; sink
-                .unbounded_send(ChainTxPoolMsg {
-                    encoded_data,
-                    maybe_peer,
-                })
-                .is_ok()
-        {
+        </span><span class="kw">if </span>!sink.is_closed() &amp;&amp; sink.unbounded_send(ChainMsg { data, maybe_peer }).is_ok() {
             <span class="kw">return</span>;
         }
 
@@ -495,7 +523,7 @@
             <span class="string">"Failed to send incoming chain message: {:?}"</span>,
             chain_id
         );
-        <span class="self">self</span>.chain_tx_pool_sinks.remove(<span class="kw-2">&amp;</span>chain_id);
+        <span class="self">self</span>.chain_sinks.remove(<span class="kw-2">&amp;</span>chain_id);
     }
 }
 

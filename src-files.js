@@ -1,6 +1,6 @@
 var srcIndex = new Map(JSON.parse('[\
 ["auto_id_domain_runtime",["",[],["lib.rs"]]],\
-["cross_domain_message_gossip",["",[],["gossip_worker.rs","lib.rs","message_listener.rs"]]],\
+["cross_domain_message_gossip",["",[],["aux_schema.rs","gossip_worker.rs","lib.rs","message_listener.rs"]]],\
 ["domain_block_builder",["",[],["lib.rs"]]],\
 ["domain_block_preprocessor",["",[],["inherents.rs","lib.rs","stateless_runtime.rs"]]],\
 ["domain_client_consensus_relay_chain",["",[],["import_queue.rs","lib.rs"]]],\

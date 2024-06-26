@@ -615,14 +615,74 @@
 <a href="#615" id="615">615</a>
 <a href="#616" id="616">616</a>
 <a href="#617" id="617">617</a>
-</pre></div><pre class="rust"><code><span class="attr">#![warn(rust_2018_idioms)]
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+</pre></div><pre class="rust"><code><span class="attr">#![feature(let_chains)]
+#![warn(rust_2018_idioms)]
 </span><span class="comment">// TODO: Restore once https://github.com/rust-lang/rust/issues/122105 is resolved
 // #![deny(unused_crate_dependencies)]
 
 </span><span class="kw">pub mod </span>worker;
 
 <span class="kw">use </span>async_channel::TrySendError;
-<span class="kw">use </span>cross_domain_message_gossip::Message <span class="kw">as </span>GossipMessage;
+<span class="kw">use </span>cross_domain_message_gossip::{
+    ChannelStorage, Message <span class="kw">as </span>GossipMessage, MessageData <span class="kw">as </span>GossipMessageData,
+};
 <span class="kw">use </span>parity_scale_codec::{Codec, Decode, Encode};
 <span class="kw">use </span>sc_client_api::{AuxStore, HeaderBackend, ProofProvider, StorageProof};
 <span class="kw">use </span>sc_utils::mpsc::TracingUnboundedSender;
@@ -639,6 +699,7 @@
 <span class="kw">use </span>sp_subspace_mmr::ConsensusChainMmrLeafProof;
 <span class="kw">use </span>std::marker::PhantomData;
 <span class="kw">use </span>std::sync::Arc;
+<span class="kw">use </span>tracing::log;
 
 <span class="doccomment">/// The logging target.
 </span><span class="kw">const </span>LOG_TARGET: <span class="kw-2">&amp;</span>str = <span class="string">"message::relayer"</span>;
@@ -809,7 +870,7 @@
 
     sink.unbounded_send(GossipMessage {
         chain_id: dst_chain_id,
-        encoded_data: ext.encode(),
+        data: GossipMessageData::Xdm(ext.encode()),
     })
     .map_err(Error::UnableToSubmitCrossDomainMessage)
 }
@@ -838,7 +899,7 @@
 
     sink.unbounded_send(GossipMessage {
         chain_id: dst_chain_id,
-        encoded_data: ext.encode(),
+        data: GossipMessageData::Xdm(ext.encode()),
     })
     .map_err(Error::UnableToSubmitCrossDomainMessage)
 }
@@ -872,36 +933,62 @@
         })
     }
 
-    <span class="kw">fn </span>filter_messages&lt;CNumber, CHash&gt;(
+    <span class="kw">fn </span>filter_messages&lt;CClient, CNumber, CHash&gt;(
         client: <span class="kw-2">&amp;</span>Arc&lt;Client&gt;,
+        consensus_client: <span class="kw-2">&amp;</span>Arc&lt;CClient&gt;,
         <span class="kw-2">mut </span>msgs: BlockMessagesWithStorageKey,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;BlockMessagesWithStorageKey, Error&gt;
     <span class="kw">where
         </span>CHash: Codec,
         CNumber: Codec,
+        CClient: AuxStore,
         Client::Api: RelayerApi&lt;Block, NumberFor&lt;Block&gt;, CNumber, CHash&gt;,
     {
         <span class="kw">let </span>api = client.runtime_api();
         <span class="kw">let </span>best_hash = client.info().best_hash;
         msgs.outbox.retain(|msg| {
             <span class="kw">let </span>id = (msg.channel_id, msg.nonce);
-            <span class="kw">match </span>api.should_relay_outbox_message(best_hash, msg.dst_chain_id, id) {
-                <span class="prelude-val">Ok</span>(valid) =&gt; valid,
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">tracing::error!</span>(
-                        target: LOG_TARGET,
-                        <span class="question-mark">?</span>err,
-                        <span class="string">"Failed to fetch validity of outbox message {id:?} for domain {0:?}"</span>,
-                        msg.dst_chain_id
+            <span class="kw">let </span>should_relay =
+                <span class="kw">match </span>api.should_relay_outbox_message(best_hash, msg.dst_chain_id, id) {
+                    <span class="prelude-val">Ok</span>(valid) =&gt; valid,
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">tracing::error!</span>(
+                            target: LOG_TARGET,
+                            <span class="question-mark">?</span>err,
+                            <span class="string">"Failed to fetch validity of outbox message {id:?} for domain {0:?}"</span>,
+                            msg.dst_chain_id
+                        );
+                        <span class="bool-val">false
+                    </span>}
+                };
+
+            <span class="kw">let </span>channel_storage = ChannelStorage::new(msg.dst_chain_id);
+            <span class="kw">if </span>should_relay
+                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(dst_channel_state) = channel_storage
+                    .get_channel_state_for(<span class="kw-2">&amp;**</span>consensus_client, msg.src_chain_id, msg.channel_id)
+                    .ok()
+                    .flatten()
+            {
+                <span class="comment">// if this message should relay,
+                // check if the dst_chain inbox nonce is more than message nonce,
+                // if so, skip relaying since message is already executed on dst_chain
+                </span><span class="kw">let </span>relay_message = msg.nonce &gt;= dst_channel_state.next_inbox_nonce;
+                <span class="kw">if </span>!relay_message {
+                    <span class="macro">log::debug!</span>(
+                        <span class="string">"Skipping message relay from {:?} to {:?}"</span>,
+                        msg.src_chain_id,
+                        msg.dst_chain_id,
                     );
-                    <span class="bool-val">false
-                </span>}
+                }
+                relay_message
+            } <span class="kw">else </span>{
+                should_relay
             }
         });
 
         msgs.inbox_responses.retain(|msg| {
             <span class="kw">let </span>id = (msg.channel_id, msg.nonce);
-            <span class="kw">match </span>api.should_relay_inbox_message_response(best_hash, msg.dst_chain_id, id) {
+            <span class="kw">let </span>should_relay = <span class="kw">match </span>api.should_relay_inbox_message_response(best_hash, msg.dst_chain_id, id) {
                 <span class="prelude-val">Ok</span>(valid) =&gt; valid,
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">tracing::error!</span>(
@@ -912,7 +999,27 @@
                     );
                     <span class="bool-val">false
                 </span>}
-            }
+            };
+
+            <span class="kw">let </span>channel_storage = ChannelStorage::new(msg.dst_chain_id);
+            <span class="kw">if </span>should_relay &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(dst_channel_state) = channel_storage.get_channel_state_for(
+                <span class="kw-2">&amp;**</span>consensus_client,
+                msg.src_chain_id,
+                msg.channel_id,
+            )
+                .ok()
+                .flatten() &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(dst_chain_outbox_response_nonce) = dst_channel_state.latest_response_received_message_nonce{
+                <span class="comment">// relay inbox response if the dst_chain did not execute is already
+                </span><span class="kw">let </span>relay_message = msg.nonce &gt; dst_chain_outbox_response_nonce;
+                <span class="kw">if </span>!relay_message{
+                    <span class="macro">log::debug!</span>(
+                        <span class="string">"Skipping message relay from {:?} to {:?}"</span>,
+                        msg.src_chain_id,
+                        msg.dst_chain_id,
+                    );
+                }
+                relay_message
+            } <span class="kw">else </span>{ should_relay }
         });
 
         <span class="prelude-val">Ok</span>(msgs)
@@ -942,7 +1049,12 @@
         <span class="kw">let </span>block_messages: BlockMessagesWithStorageKey = api
             .block_messages(block_hash_to_process)
             .map_err(|<span class="kw">_</span>| Error::FetchAssignedMessages)<span class="question-mark">?</span>;
-        <span class="kw">let </span>filtered_messages = <span class="self">Self</span>::filter_messages(consensus_chain_client, block_messages)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>filtered_messages = <span class="self">Self</span>::filter_messages(
+            consensus_chain_client,
+            consensus_chain_client,
+            block_messages,
+        )<span class="question-mark">?</span>;
 
         <span class="comment">// short circuit if the there are no messages to relay
         </span><span class="kw">if </span>filtered_messages.outbox.is_empty() &amp;&amp; filtered_messages.inbox_responses.is_empty() {
@@ -990,7 +1102,8 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt;
     <span class="kw">where
         </span>CBlock: BlockT,
-        CClient: HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + ProofProvider&lt;CBlock&gt;,
+        CClient:
+            HeaderBackend&lt;CBlock&gt; + ProvideRuntimeApi&lt;CBlock&gt; + ProofProvider&lt;CBlock&gt; + AuxStore,
         CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;
             + MessengerApi&lt;CBlock&gt;
             + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
@@ -1003,7 +1116,8 @@
             .map_err(|<span class="kw">_</span>| Error::FetchAssignedMessages)<span class="question-mark">?</span>;
 
         <span class="comment">// filter out already relayed messages
-        </span><span class="kw">let </span>filtered_messages = <span class="self">Self</span>::filter_messages(domain_client, block_messages)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>filtered_messages =
+            <span class="self">Self</span>::filter_messages(domain_client, consensus_chain_client, block_messages)<span class="question-mark">?</span>;
 
         <span class="comment">// short circuit if the there are no messages to relay
         </span><span class="kw">if </span>filtered_messages.outbox.is_empty() &amp;&amp; filtered_messages.inbox_responses.is_empty() {

@@ -1342,6 +1342,31 @@
 <a href="#1342" id="1342">1342</a>
 <a href="#1343" id="1343">1343</a>
 <a href="#1344" id="1344">1344</a>
+<a href="#1345" id="1345">1345</a>
+<a href="#1346" id="1346">1346</a>
+<a href="#1347" id="1347">1347</a>
+<a href="#1348" id="1348">1348</a>
+<a href="#1349" id="1349">1349</a>
+<a href="#1350" id="1350">1350</a>
+<a href="#1351" id="1351">1351</a>
+<a href="#1352" id="1352">1352</a>
+<a href="#1353" id="1353">1353</a>
+<a href="#1354" id="1354">1354</a>
+<a href="#1355" id="1355">1355</a>
+<a href="#1356" id="1356">1356</a>
+<a href="#1357" id="1357">1357</a>
+<a href="#1358" id="1358">1358</a>
+<a href="#1359" id="1359">1359</a>
+<a href="#1360" id="1360">1360</a>
+<a href="#1361" id="1361">1361</a>
+<a href="#1362" id="1362">1362</a>
+<a href="#1363" id="1363">1363</a>
+<a href="#1364" id="1364">1364</a>
+<a href="#1365" id="1365">1365</a>
+<a href="#1366" id="1366">1366</a>
+<a href="#1367" id="1367">1367</a>
+<a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1748,7 +1773,7 @@
             sc_service::new_full_parts::&lt;Block, RuntimeApi, <span class="kw">_</span>&gt;(<span class="kw-2">&amp;</span>config, <span class="prelude-val">None</span>, executor.clone())
                 .expect(<span class="string">"Fail to new full parts"</span>);
 
-        <span class="kw">let </span>domain_executor = sc_service::new_wasm_executor(<span class="kw-2">&amp;</span>config);
+        <span class="kw">let </span>domain_executor = Arc::new(sc_service::new_wasm_executor(<span class="kw-2">&amp;</span>config));
         <span class="kw">let </span>client = Arc::new(client);
         <span class="kw">let </span>mock_pot_verifier = Arc::new(MockPotVerfier::default());
         client
@@ -1760,7 +1785,7 @@
                 <span class="kw">_</span>,
             &gt;::new(
                 client.clone(),
-                Arc::new(domain_executor),
+                domain_executor.clone(),
                 Arc::clone(<span class="kw-2">&amp;</span>mock_pot_verifier),
                 backend.clone(),
             ));
@@ -1851,16 +1876,41 @@
                 ),
             );
 
+        task_manager
+            .spawn_essential_handle()
+            .spawn_essential_blocking(
+                <span class="string">"consensus-chain-channel-update-worker"</span>,
+                <span class="prelude-val">None</span>,
+                Box::pin(
+                    domain_client_message_relayer::worker::gossip_channel_updates::&lt;<span class="kw">_</span>, <span class="kw">_</span>, Block, <span class="kw">_</span>&gt;(
+                        ChainId::Consensus,
+                        client.clone(),
+                        sync_service.clone(),
+                        gossip_builder.gossip_msg_sink(),
+                    ),
+                ),
+            );
+
         <span class="kw">let </span>(consensus_msg_sink, consensus_msg_receiver) =
             tracing_unbounded(<span class="string">"consensus_message_channel"</span>, <span class="number">100</span>);
 
         <span class="comment">// Start cross domain message listener for Consensus chain to receive messages from domains in the network
-        </span><span class="kw">let </span>consensus_listener = cross_domain_message_gossip::start_cross_chain_message_listener(
+        </span><span class="kw">let </span>consensus_listener = cross_domain_message_gossip::start_cross_chain_message_listener::&lt;
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            DomainBlock,
+            <span class="kw">_</span>,
+        &gt;(
             ChainId::Consensus,
+            client.clone(),
             client.clone(),
             transaction_pool.clone(),
             network_service.clone(),
             consensus_msg_receiver,
+            domain_executor,
         );
 
         task_manager
@@ -1871,7 +1921,7 @@
                 Box::pin(consensus_listener),
             );
 
-        gossip_builder.push_chain_tx_pool_sink(ChainId::Consensus, consensus_msg_sink);
+        gossip_builder.push_chain_sink(ChainId::Consensus, consensus_msg_sink);
 
         task_manager.spawn_essential_handle().spawn_blocking(
             <span class="string">"mmr-gadget"</span>,

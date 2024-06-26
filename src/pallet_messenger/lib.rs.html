@@ -1342,17 +1342,6 @@
 <a href="#1342" id="1342">1342</a>
 <a href="#1343" id="1343">1343</a>
 <a href="#1344" id="1344">1344</a>
-<a href="#1345" id="1345">1345</a>
-<a href="#1346" id="1346">1346</a>
-<a href="#1347" id="1347">1347</a>
-<a href="#1348" id="1348">1348</a>
-<a href="#1349" id="1349">1349</a>
-<a href="#1350" id="1350">1350</a>
-<a href="#1351" id="1351">1351</a>
-<a href="#1352" id="1352">1352</a>
-<a href="#1353" id="1353">1353</a>
-<a href="#1354" id="1354">1354</a>
-<a href="#1355" id="1355">1355</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -1396,7 +1385,8 @@
 <span class="kw">use </span>sp_core::U256;
 <span class="kw">use </span>sp_domains::{DomainAllowlistUpdates, DomainId};
 <span class="kw">use </span>sp_messenger::messages::{
-    ChainId, ChannelId, CrossDomainMessage, FeeModel, Message, MessageId, Nonce,
+    ChainId, Channel, ChannelId, ChannelState, CrossDomainMessage, FeeModel, Message, MessageId,
+    Nonce,
 };
 <span class="kw">use </span>sp_runtime::traits::{Extrinsic, Hash};
 <span class="kw">use </span>sp_runtime::DispatchError;
@@ -1405,40 +1395,6 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>INVALID_CHANNEL: u8 = <span class="number">100</span>;
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>INVALID_NONCE: u8 = <span class="number">101</span>;
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NONCE_OVERFLOW: u8 = <span class="number">102</span>;
-}
-
-<span class="doccomment">/// State of a channel.
-</span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
-</span><span class="kw">pub enum </span>ChannelState {
-    <span class="doccomment">/// Channel between chains is initiated but do not yet send or receive messages in this state.
-    </span><span class="attr">#[default]
-    </span>Initiated,
-    <span class="doccomment">/// Channel is open and can send and receive messages.
-    </span>Open,
-    <span class="doccomment">/// Channel is closed and do not send or receive messages.
-    </span>Closed,
-}
-
-<span class="doccomment">/// Channel describes a bridge to exchange messages between two chains.
-</span><span class="attr">#[derive(Default, Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo)]
-</span><span class="kw">pub struct </span>Channel&lt;Balance, AccountId&gt; {
-    <span class="doccomment">/// Channel identifier.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) channel_id: ChannelId,
-    <span class="doccomment">/// State of the channel.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) state: ChannelState,
-    <span class="doccomment">/// Next inbox nonce.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) next_inbox_nonce: Nonce,
-    <span class="doccomment">/// Next outbox nonce.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) next_outbox_nonce: Nonce,
-    <span class="doccomment">/// Latest outbox message nonce for which response was received from dst_chain.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) latest_response_received_message_nonce: <span class="prelude-ty">Option</span>&lt;Nonce&gt;,
-    <span class="doccomment">/// Maximum outgoing non-delivered messages.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) max_outgoing_messages: u32,
-    <span class="doccomment">/// Fee model for this channel between the chains.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) fee: FeeModel&lt;Balance&gt;,
-    <span class="doccomment">/// Owner of the channel
-    /// Owner maybe None if the channel was initiated on the other chain.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) maybe_owner: <span class="prelude-ty">Option</span>&lt;AccountId&gt;,
 }
 
 <span class="attr">#[derive(Debug, Encode, Decode, Clone, Eq, PartialEq, TypeInfo, Copy)]
@@ -1675,6 +1631,12 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>DomainChainAllowlistUpdate&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, DomainAllowlistUpdates, OptionQuery&gt;;
 
+    <span class="doccomment">/// Temporary storage to store the updated channels between this chain and other chain.
+    /// Storage is cleared on block initialization.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>UpdatedChannels&lt;T: Config&gt; =
+        StorageValue&lt;<span class="kw">_</span>, BTreeSet&lt;(ChainId, ChannelId)&gt;, ValueQuery&gt;;
+
     <span class="doccomment">/// `pallet-messenger` events
     </span><span class="attr">#[pallet::event]
     #[pallet::generate_deposit(<span class="kw">pub </span>(<span class="kw">super</span>) <span class="kw">fn </span>deposit_event)]
@@ -1742,6 +1704,14 @@
             </span>channel_id: ChannelId,
             nonce: Nonce,
         },
+    }
+
+    <span class="attr">#[pallet::hooks]
+    </span><span class="kw">impl</span>&lt;T: Config&gt; Hooks&lt;BlockNumberFor&lt;T&gt;&gt; <span class="kw">for </span>Pallet&lt;T&gt; {
+        <span class="kw">fn </span>on_initialize(_n: BlockNumberFor&lt;T&gt;) -&gt; Weight {
+            UpdatedChannels::&lt;T&gt;::take();
+            T::DbWeight::get().writes(<span class="number">1</span>)
+        }
     }
 
     <span class="attr">#[pallet::validate_unsigned]
@@ -2649,6 +2619,10 @@
             InboxResponses::&lt;T&gt;::hashed_key_for(message_key)
         }
 
+        <span class="kw">pub fn </span>channel_storage_key(chain_id: ChainId, channel_id: ChannelId) -&gt; Vec&lt;u8&gt; {
+            Channels::&lt;T&gt;::hashed_key_for(chain_id, channel_id)
+        }
+
         <span class="kw">pub fn </span>domain_chains_allowlist_update(
             domain_id: DomainId,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;DomainAllowlistUpdates&gt; {
@@ -2657,6 +2631,10 @@
 
         <span class="kw">pub fn </span>domain_allow_list_update_storage_key(domain_id: DomainId) -&gt; Vec&lt;u8&gt; {
             DomainChainAllowlistUpdate::&lt;T&gt;::hashed_key_for(domain_id)
+        }
+
+        <span class="kw">pub fn </span>updated_channels() -&gt; BTreeSet&lt;(ChainId, ChannelId)&gt; {
+            UpdatedChannels::&lt;T&gt;::get()
         }
     }
 }
