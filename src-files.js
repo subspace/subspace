@@ -57,7 +57,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["subspace_malicious_operator",["",[],["chain_spec.rs","lib.rs","malicious_bundle_producer.rs","malicious_bundle_tamper.rs","malicious_domain_instance_starter.rs"]]],\
 ["subspace_metrics",["",[],["lib.rs"]]],\
 ["subspace_networking",["",[["behavior",[],["persistent_parameters.rs"]],["constructor",[],["temporary_bans.rs","transport.rs"]],["protocols",[["request_response",[["handlers",[],["generic_request_handler.rs","piece_by_index.rs","segment_header.rs"]]],["handlers.rs","request_response_factory.rs"]],["reserved_peers",[],["handler.rs"]]],["autonat_wrapper.rs","request_response.rs","reserved_peers.rs","subspace_connection_limits.rs"]],["utils",[],["multihash.rs","piece_provider.rs","rate_limiter.rs","unique_record_binary_heap.rs"]]],["behavior.rs","constructor.rs","lib.rs","node.rs","node_runner.rs","protocols.rs","shared.rs","utils.rs"]]],\
-["subspace_proof_of_space",["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chiapos.rs","lib.rs","shim.rs"]]],\
+["subspace_proof_of_space",["",[["chiapos",[["table",[],["types.rs"]]],["constants.rs","table.rs","tables.rs","utils.rs"]]],["chia.rs","chia_legacy.rs","chiapos.rs","lib.rs","shim.rs"]]],\
 ["subspace_proof_of_time",["",[["aes",[],["x86_64.rs"]]],["aes.rs","lib.rs"]]],\
 ["subspace_rpc_primitives",["",[],["lib.rs"]]],\
 ["subspace_runtime",["",[],["domains.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]]],\

@@ -965,6 +965,15 @@
 <a href="#965" id="965">965</a>
 <a href="#966" id="966">966</a>
 <a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Farming cluster plotter
 //!
 //! Plotter is responsible for plotting sectors in response to farmer requests.
@@ -1032,7 +1041,7 @@
 </span><span class="kw">struct </span>ClusterPlotterFreeInstanceRequest;
 
 <span class="kw">impl </span>GenericRequest <span class="kw">for </span>ClusterPlotterFreeInstanceRequest {
-    <span class="kw">const </span>SUBJECT: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"subspace.plotter.free-instance"</span>;
+    <span class="kw">const </span>SUBJECT: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"subspace.plotter.*.free-instance"</span>;
     <span class="doccomment">/// Might be `None` if instance had to respond, but turned out it was fully occupied already
     </span><span class="kw">type </span>Response = <span class="prelude-ty">Option</span>&lt;String&gt;;
 }
@@ -1094,6 +1103,7 @@
     nats_client: NatsClient,
     handlers: Arc&lt;Handlers&gt;,
     tasks_sender: mpsc::Sender&lt;AsyncJoinOnDrop&lt;()&gt;&gt;,
+    modern: bool,
     _background_tasks: AsyncJoinOnDrop&lt;()&gt;,
 }
 
@@ -1116,18 +1126,15 @@
                 </span>.is_some())
     }
 
-    <span class="kw">async fn </span>plot_sector&lt;PS&gt;(
+    <span class="kw">async fn </span>plot_sector(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         public_key: PublicKey,
         sector_index: SectorIndex,
         farmer_protocol_info: FarmerProtocolInfo,
         pieces_in_sector: u16,
         _replotting: bool,
-        <span class="kw-2">mut </span>progress_sender: PS,
-    ) <span class="kw">where
-        </span>PS: Sink&lt;SectorPlottingProgress&gt; + Unpin + Send + <span class="lifetime">'static</span>,
-        PS::Error: Error,
-    {
+        <span class="kw-2">mut </span>progress_sender: mpsc::Sender&lt;SectorPlottingProgress&gt;,
+    ) {
         <span class="kw">let </span>start = Instant::now();
 
         <span class="comment">// Done outside the future below as a backpressure, ensuring that it is not possible to
@@ -1171,19 +1178,15 @@
         .<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>try_plot_sector&lt;PS&gt;(
+    <span class="kw">async fn </span>try_plot_sector(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         public_key: PublicKey,
         sector_index: SectorIndex,
         farmer_protocol_info: FarmerProtocolInfo,
         pieces_in_sector: u16,
         _replotting: bool,
-        progress_sender: PS,
-    ) -&gt; bool
-    <span class="kw">where
-        </span>PS: Sink&lt;SectorPlottingProgress&gt; + Unpin + Send + <span class="lifetime">'static</span>,
-        PS::Error: Error,
-    {
+        progress_sender: mpsc::Sender&lt;SectorPlottingProgress&gt;,
+    ) -&gt; bool {
         <span class="kw">let </span>start = Instant::now();
 
         <span class="kw">let </span><span class="prelude-val">Ok</span>(sector_encoding_permit) =
@@ -1213,6 +1216,7 @@
         nats_client: NatsClient,
         sector_encoding_concurrency: NonZeroUsize,
         retry_backoff_policy: ExponentialBackoff,
+        modern: bool,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>sector_encoding_semaphore = Arc::new(Semaphore::new(sector_encoding_concurrency.get()));
 
@@ -1250,6 +1254,7 @@
             nats_client,
             handlers: Arc::default(),
             tasks_sender,
+            modern,
             _background_tasks: background_tasks,
         }
     }
@@ -1288,11 +1293,13 @@
         retry_backoff_policy.reset();
 
         <span class="comment">// Try to get plotter instance here first as a backpressure measure
-        </span><span class="kw">let </span>free_plotter_instance_fut = get_free_plotter_instance(
+        </span><span class="kw">let </span>modern = <span class="self">self</span>.modern;
+        <span class="kw">let </span>free_plotter_instance_fut = get_free_plotter_instance(
             <span class="kw-2">&amp;</span><span class="self">self</span>.nats_client,
             <span class="kw-2">&amp;</span>progress_updater,
             <span class="kw-2">&amp;mut </span>progress_sender,
             <span class="kw-2">&amp;mut </span>retry_backoff_policy,
+            modern,
         );
         <span class="kw">let </span><span class="kw-2">mut </span>maybe_free_instance = free_plotter_instance_fut.<span class="kw">await</span>;
         <span class="kw">if </span>maybe_free_instance.is_none() {
@@ -1314,6 +1321,7 @@
                             <span class="kw-2">&amp;</span>progress_updater,
                             <span class="kw-2">&amp;mut </span>progress_sender,
                             <span class="kw-2">&amp;mut </span>retry_backoff_policy,
+                            modern,
                         );
                         <span class="kw">let </span><span class="prelude-val">Some</span>(free_instance) = free_plotter_instance_fut.<span class="kw">await else </span>{
                             <span class="kw">break</span>;
@@ -1428,6 +1436,7 @@
     progress_updater: <span class="kw-2">&amp;</span>ProgressUpdater,
     progress_sender: <span class="kw-2">&amp;mut </span>PS,
     retry_backoff_policy: <span class="kw-2">&amp;mut </span>ExponentialBackoff,
+    modern: bool,
 ) -&gt; <span class="prelude-ty">Option</span>&lt;String&gt;
 <span class="kw">where
     </span>PS: Sink&lt;SectorPlottingProgress&gt; + Unpin + Send + <span class="lifetime">'static</span>,
@@ -1435,7 +1444,10 @@
 {
     <span class="kw">loop </span>{
         <span class="kw">match </span>nats_client
-            .request(<span class="kw-2">&amp;</span>ClusterPlotterFreeInstanceRequest, <span class="prelude-val">None</span>)
+            .request(
+                <span class="kw-2">&amp;</span>ClusterPlotterFreeInstanceRequest,
+                <span class="prelude-val">Some</span>(<span class="kw">if </span>modern { <span class="string">"modern" </span>} <span class="kw">else </span>{ <span class="string">"legacy" </span>}),
+            )
             .<span class="kw">await
         </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(free_instance)) =&gt; {
@@ -1644,17 +1656,21 @@
 ///
 /// Implementation is using concurrency with multiple tokio tasks, but can be started multiple times
 /// per controller instance in order to parallelize more work across threads if needed.
-</span><span class="kw">pub async fn </span>plotter_service&lt;P&gt;(nats_client: <span class="kw-2">&amp;</span>NatsClient, cpu_plotter: <span class="kw-2">&amp;</span>P) -&gt; anyhow::Result&lt;()&gt;
+</span><span class="kw">pub async fn </span>plotter_service&lt;P&gt;(
+    nats_client: <span class="kw-2">&amp;</span>NatsClient,
+    plotter: <span class="kw-2">&amp;</span>P,
+    modern: bool,
+) -&gt; anyhow::Result&lt;()&gt;
 <span class="kw">where
     </span>P: Plotter + Sync,
 {
     <span class="kw">let </span>plotter_id = ClusterPlotterId::new();
 
     <span class="macro">select!</span> {
-        result = free_instance_responder(<span class="kw-2">&amp;</span>plotter_id, nats_client, cpu_plotter).fuse() =&gt; {
+        result = free_instance_responder(<span class="kw-2">&amp;</span>plotter_id, nats_client, plotter, modern).fuse() =&gt; {
             result
         }
-        result = plot_sector_responder(<span class="kw-2">&amp;</span>plotter_id, nats_client, cpu_plotter).fuse() =&gt; {
+        result = plot_sector_responder(<span class="kw-2">&amp;</span>plotter_id, nats_client, plotter).fuse() =&gt; {
             result
         }
     }
@@ -1663,19 +1679,21 @@
 <span class="kw">async fn </span>free_instance_responder&lt;P&gt;(
     plotter_id: <span class="kw-2">&amp;</span>ClusterPlotterId,
     nats_client: <span class="kw-2">&amp;</span>NatsClient,
-    cpu_plotter: <span class="kw-2">&amp;</span>P,
+    plotter: <span class="kw-2">&amp;</span>P,
+    modern: bool,
 ) -&gt; anyhow::Result&lt;()&gt;
 <span class="kw">where
     </span>P: Plotter + Sync,
 {
     <span class="kw">loop </span>{
-        <span class="kw">while </span>!cpu_plotter.has_free_capacity().<span class="kw">await</span>.unwrap_or_default() {
+        <span class="kw">while </span>!plotter.has_free_capacity().<span class="kw">await</span>.unwrap_or_default() {
             tokio::time::sleep(FREE_CAPACITY_CHECK_INTERVAL).<span class="kw">await</span>;
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>subscription = nats_client
             .queue_subscribe(
-                ClusterPlotterFreeInstanceRequest::SUBJECT,
+                ClusterPlotterFreeInstanceRequest::SUBJECT
+                    .replace(<span class="string">'*'</span>, <span class="kw">if </span>modern { <span class="string">"modern" </span>} <span class="kw">else </span>{ <span class="string">"legacy" </span>}),
                 <span class="string">"subspace.plotter"</span>.to_string(),
             )
             .<span class="kw">await
@@ -1689,7 +1707,7 @@
 
             <span class="macro">debug!</span>(%reply_subject, <span class="string">"Free instance request"</span>);
 
-            <span class="kw">let </span>has_free_capacity = cpu_plotter.has_free_capacity().<span class="kw">await</span>.unwrap_or_default();
+            <span class="kw">let </span>has_free_capacity = plotter.has_free_capacity().<span class="kw">await</span>.unwrap_or_default();
             <span class="kw">let </span>response: &lt;ClusterPlotterFreeInstanceRequest <span class="kw">as </span>GenericRequest&gt;::Response =
                 has_free_capacity.then(|| plotter_id.to_string());
 
@@ -1712,7 +1730,7 @@
 <span class="kw">async fn </span>plot_sector_responder&lt;P&gt;(
     plotter_id: <span class="kw-2">&amp;</span>ClusterPlotterId,
     nats_client: <span class="kw-2">&amp;</span>NatsClient,
-    cpu_plotter: <span class="kw-2">&amp;</span>P,
+    plotter: <span class="kw-2">&amp;</span>P,
 ) -&gt; anyhow::Result&lt;()&gt;
 <span class="kw">where
     </span>P: Plotter + Sync,
@@ -1740,7 +1758,7 @@
                 <span class="comment">// Create background task for concurrent processing
                 </span>processing.push(Box::pin(process_plot_sector_request(
                     nats_client,
-                    cpu_plotter,
+                    plotter,
                     message,
                 )));
             }
@@ -1755,7 +1773,7 @@
 
 <span class="kw">async fn </span>process_plot_sector_request&lt;P&gt;(
     nats_client: <span class="kw-2">&amp;</span>NatsClient,
-    cpu_plotter: <span class="kw-2">&amp;</span>P,
+    plotter: <span class="kw-2">&amp;</span>P,
     request: StreamRequest&lt;ClusterPlotterPlotSectorRequest&gt;,
 ) <span class="kw">where
     </span>P: Plotter,
@@ -1777,7 +1795,7 @@
 
         <span class="kw">let </span>(progress_sender, <span class="kw-2">mut </span>progress_receiver) = mpsc::channel(<span class="number">1</span>);
 
-        <span class="kw">if </span>!cpu_plotter
+        <span class="kw">if </span>!plotter
             .try_plot_sector(
                 public_key,
                 sector_index,
