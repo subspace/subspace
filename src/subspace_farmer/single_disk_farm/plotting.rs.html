@@ -931,6 +931,35 @@
 <a href="#931" id="931">931</a>
 <a href="#932" id="932">932</a>
 <a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::farm::{SectorExpirationDetails, SectorPlottingDetails, SectorUpdate};
 <span class="kw">use </span><span class="kw">crate</span>::node_client::{Error <span class="kw">as </span>NodeClientError, NodeClient};
 <span class="kw">use </span><span class="kw">crate</span>::plotter::{Plotter, SectorPlottingProgress};
@@ -1089,8 +1118,17 @@
                 </span><span class="kw">loop </span>{
                     <span class="macro">select!</span> {
                         sector_plotting_init_result = sector_plotting_init_fut =&gt; {
+                            <span class="kw">let </span>sector_plotting_fut = <span class="kw">match </span>sector_plotting_init_result {
+                                PlotSingleSectorResult::Scheduled(future) =&gt; future,
+                                PlotSingleSectorResult::Skipped =&gt; {
+                                    <span class="kw">break</span>;
+                                }
+                                PlotSingleSectorResult::FatalError(error) =&gt; {
+                                    <span class="kw">return </span><span class="prelude-val">Err</span>(error);
+                                }
+                            };
                             sectors_being_plotted.push_back(
-                                sector_plotting_init_result<span class="question-mark">?</span>.instrument(<span class="macro">info_span!</span>(<span class="string">""</span>, %sector_index))
+                                sector_plotting_fut.instrument(<span class="macro">info_span!</span>(<span class="string">""</span>, %sector_index))
                             );
                             <span class="kw">break</span>;
                         }
@@ -1184,6 +1222,12 @@
     }
 }
 
+<span class="kw">enum </span>PlotSingleSectorResult&lt;F&gt; {
+    Scheduled(F),
+    Skipped,
+    FatalError(PlottingError),
+}
+
 <span class="kw">struct </span>SectorPlottingResult {
     sector_index: SectorIndex,
     sector_metadata: SectorMetadataChecksummed,
@@ -1196,7 +1240,7 @@
     sector_plotting_options: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SectorPlottingOptions&lt;<span class="lifetime">'a</span>, NC&gt;,
     sectors_metadata: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;,
     sectors_being_modified: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>AsyncRwLock&lt;HashSet&lt;SectorIndex&gt;&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;SectorPlottingResult, PlottingError&gt;&gt; + <span class="lifetime">'a</span>, PlottingError&gt;
+) -&gt; PlotSingleSectorResult&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;SectorPlottingResult, PlottingError&gt;&gt; + <span class="lifetime">'a</span>&gt;
 <span class="kw">where
     </span>NC: NodeClient,
 {
@@ -1244,21 +1288,35 @@
     // farmer app info to return old data, meaning we're replotting exactly the same sector that
     // just expired.
     </span><span class="kw">let </span>farmer_app_info = <span class="kw">loop </span>{
-        <span class="kw">let </span>farmer_app_info = node_client
-            .farmer_app_info()
-            .<span class="kw">await
-            </span>.map_err(|error| PlottingError::FailedToGetFarmerInfo { error })<span class="question-mark">?</span>;
+        <span class="kw">let </span>farmer_app_info = <span class="kw">match </span>node_client.farmer_app_info().<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(farmer_app_info) =&gt; farmer_app_info,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="kw">return </span>PlotSingleSectorResult::FatalError(PlottingError::FailedToGetFarmerInfo {
+                    error,
+                });
+            }
+        };
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_sector_metadata) = <span class="kw-2">&amp;</span>maybe_old_sector_metadata {
             <span class="kw">if </span>farmer_app_info.protocol_info.history_size &lt;= old_sector_metadata.history_size {
-                <span class="macro">debug!</span>(
-                    current_history_size = %farmer_app_info.protocol_info.history_size,
-                    old_sector_history_size = %old_sector_metadata.history_size,
-                    <span class="string">"Latest protocol history size is not yet newer than old sector history \
-                    size, wait for a bit and try again"
-                </span>);
-                tokio::time::sleep(FARMER_APP_INFO_RETRY_INTERVAL).<span class="kw">await</span>;
-                <span class="kw">continue</span>;
+                <span class="kw">if </span>farmer_app_info.protocol_info.min_sector_lifetime == HistorySize::ONE {
+                    <span class="macro">debug!</span>(
+                        current_history_size = %farmer_app_info.protocol_info.history_size,
+                        old_sector_history_size = %old_sector_metadata.history_size,
+                        <span class="string">"Latest protocol history size is not yet newer than old sector history \
+                        size, wait for a bit and try again"
+                    </span>);
+                    tokio::time::sleep(FARMER_APP_INFO_RETRY_INTERVAL).<span class="kw">await</span>;
+                    <span class="kw">continue</span>;
+                } <span class="kw">else </span>{
+                    <span class="macro">debug!</span>(
+                        current_history_size = %farmer_app_info.protocol_info.history_size,
+                        old_sector_history_size = %old_sector_metadata.history_size,
+                        <span class="string">"Skipped sector plotting, likely redundant due to redundant archived \
+                        segment notification"
+                    </span>);
+                    <span class="kw">return </span>PlotSingleSectorResult::Skipped;
+                }
             }
         }
 
@@ -1285,7 +1343,7 @@
         <span class="macro">info!</span>(<span class="string">"Plotting sector ({progress:.2}% complete)"</span>);
     }
 
-    <span class="prelude-val">Ok</span>(<span class="kw">async move </span>{
+    PlotSingleSectorResult::Scheduled(<span class="kw">async move </span>{
         <span class="kw">let </span>plotted_sector = <span class="kw">loop </span>{
             <span class="kw">match </span>plot_single_sector_internal(
                 sector_index,

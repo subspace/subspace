@@ -314,6 +314,18 @@
 <a href="#314" id="314">314</a>
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Plot cache for single disk farm
 
 </span><span class="attr">#[cfg(test)]
@@ -339,6 +351,7 @@
 <span class="kw">use </span>subspace_networking::libp2p::kad::RecordKey;
 <span class="kw">use </span>subspace_networking::utils::multihash::ToMultihash;
 <span class="kw">use </span>thiserror::Error;
+<span class="kw">use </span>tokio::task;
 <span class="kw">use </span>tracing::{debug, info, warn};
 
 <span class="doccomment">/// Disk plot cache open error
@@ -571,7 +584,7 @@
         <span class="kw">let </span>cached_pieces = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.cached_pieces);
         <span class="kw">let </span>key = key.clone();
 
-        <span class="kw">let </span>read_fut = tokio::task::spawn_blocking(<span class="kw">move </span>|| {
+        <span class="kw">let </span>read_fn = <span class="kw">move </span>|| {
             <span class="kw">let </span><span class="kw-2">mut </span>element = BytesMut::zeroed(<span class="self">Self</span>::element_size() <span class="kw">as </span>usize);
             <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span>file, offset, <span class="kw-2">&amp;mut </span>element) {
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(_piece_index)) =&gt; {
@@ -588,11 +601,22 @@
                     <span class="prelude-val">None
                 </span>}
             }
-        });
+        };
+        <span class="comment">// TODO: On Windows spawning blocking task that allows concurrent reads causes huge memory
+        //  usage. No idea why it happens, but not spawning anything at all helps for some reason.
+        //  Someone at some point should figure it out and fix, but it will probably be not me
+        //  (Nazar).
+        //  See https://github.com/subspace/subspace/issues/2813 and linked forum post for details.
+        //  This TODO exists in multiple files
+        </span><span class="kw">if </span><span class="macro">cfg!</span>(windows) {
+            task::block_in_place(read_fn)
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>read_fut = task::spawn_blocking(read_fn);
 
-        AsyncJoinOnDrop::new(read_fut, <span class="bool-val">false</span>)
-            .<span class="kw">await
-            </span>.unwrap_or_default()
+            AsyncJoinOnDrop::new(read_fut, <span class="bool-val">false</span>)
+                .<span class="kw">await
+                </span>.unwrap_or_default()
+        }
     }
 
     <span class="kw">fn </span>read_piece_internal(

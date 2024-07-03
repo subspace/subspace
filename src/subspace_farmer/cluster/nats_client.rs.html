@@ -967,6 +967,37 @@
 <a href="#967" id="967">967</a>
 <a href="#968" id="968">968</a>
 <a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! NATS client
 //!
 //! [`NatsClient`] provided here is a wrapper around [`Client`] that provides convenient methods
@@ -1151,6 +1182,7 @@
     #[deref]
     #[deref_mut]
     </span>subscriber: Subscriber,
+    response_subject: String,
     buffered_responses: <span class="prelude-ty">Option</span>&lt;GenericStreamResponses&lt;Response&gt;&gt;,
     next_index: u32,
     acknowledgement_sender: mpsc::UnboundedSender&lt;(String, u32)&gt;,
@@ -1186,6 +1218,7 @@
                                 actual_index = %responses.index(),
                                 expected_index = %<span class="kw-2">*</span>projected.next_index,
                                 message_type = %type_name::&lt;Response&gt;(),
+                                response_subject = %projected.response_subject,
                                 <span class="string">"Received unexpected response stream index, aborting stream"
                             </span>);
 
@@ -1204,6 +1237,7 @@
                                     %error,
                                     %index,
                                     message_type = %type_name::&lt;Response&gt;(),
+                                    response_subject = %projected.response_subject,
                                     %ack_subject,
                                     <span class="string">"Failed to send acknowledgement for stream response"
                                 </span>);
@@ -1221,6 +1255,7 @@
                         <span class="macro">warn!</span>(
                             %error,
                             response_type = %type_name::&lt;Response&gt;(),
+                            response_subject = %projected.response_subject,
                             message = %hex::encode(message.payload),
                             <span class="string">"Failed to decode stream response"
                         </span>);
@@ -1236,19 +1271,37 @@
 }
 
 <span class="kw">impl</span>&lt;Response&gt; StreamResponseSubscriber&lt;Response&gt; {
-    <span class="kw">fn </span>new(subscriber: Subscriber, nats_client: NatsClient) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>new(subscriber: Subscriber, response_subject: String, nats_client: NatsClient) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(acknowledgement_sender, <span class="kw-2">mut </span>acknowledgement_receiver) =
             mpsc::unbounded::&lt;(String, u32)&gt;();
 
         <span class="kw">let </span>background_task = AsyncJoinOnDrop::new(
-            tokio::spawn(<span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>((subject, index)) = acknowledgement_receiver.next().<span class="kw">await </span>{
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = nats_client
-                        .publish(subject.clone(), index.to_le_bytes().to_vec().into())
-                        .<span class="kw">await
-                    </span>{
-                        <span class="macro">warn!</span>(%error, %subject, %index, <span class="string">"Failed to send acknowledgement"</span>);
-                        <span class="kw">return</span>;
+            tokio::spawn({
+                <span class="kw">let </span>response_subject = response_subject.clone();
+
+                <span class="kw">async move </span>{
+                    <span class="kw">while let </span><span class="prelude-val">Some</span>((subject, index)) = acknowledgement_receiver.next().<span class="kw">await </span>{
+                        <span class="macro">trace!</span>(
+                            %subject,
+                            %index,
+                            %response_subject,
+                            %index,
+                            <span class="string">"Sending stream response acknowledgement"
+                        </span>);
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = nats_client
+                            .publish(subject.clone(), index.to_le_bytes().to_vec().into())
+                            .<span class="kw">await
+                        </span>{
+                            <span class="macro">warn!</span>(
+                                %error,
+                                %subject,
+                                %index,
+                                %response_subject,
+                                %index,
+                                <span class="string">"Failed to send stream response acknowledgement"
+                            </span>);
+                            <span class="kw">return</span>;
+                        }
                     }
                 }
             }),
@@ -1256,6 +1309,7 @@
         );
 
         <span class="self">Self </span>{
+            response_subject,
             subscriber,
             buffered_responses: <span class="prelude-val">None</span>,
             next_index: <span class="number">0</span>,
@@ -1600,17 +1654,25 @@
             .client
             .subscribe(stream_request.response_subject.clone())
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">debug!</span>(request_type = %type_name::&lt;Request&gt;(), <span class="question-mark">?</span>subscriber, <span class="string">"Stream request subscription"</span>);
+
+        <span class="kw">let </span>stream_request_subject = subject_with_instance(Request::SUBJECT, instance);
+        <span class="macro">debug!</span>(
+            request_type = %type_name::&lt;Request&gt;(),
+            %stream_request_subject,
+            <span class="question-mark">?</span>subscriber,
+            <span class="string">"Stream request subscription"
+        </span>);
 
         <span class="self">self</span>.inner
             .client
-            .publish(
-                subject_with_instance(Request::SUBJECT, instance),
-                stream_request.encode().into(),
-            )
+            .publish(stream_request_subject, stream_request.encode().into())
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="prelude-val">Ok</span>(StreamResponseSubscriber::new(subscriber, <span class="self">self</span>.clone()))
+        <span class="prelude-val">Ok</span>(StreamResponseSubscriber::new(
+            subscriber,
+            stream_request.response_subject,
+            <span class="self">self</span>.clone(),
+        ))
     }
 
     <span class="doccomment">/// Helper method to send responses to requests initiated with [`Self::stream_request`]
