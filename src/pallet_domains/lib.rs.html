@@ -2649,6 +2649,61 @@
 <a href="#2649" id="2649">2649</a>
 <a href="#2650" id="2650">2650</a>
 <a href="#2651" id="2651">2651</a>
+<a href="#2652" id="2652">2652</a>
+<a href="#2653" id="2653">2653</a>
+<a href="#2654" id="2654">2654</a>
+<a href="#2655" id="2655">2655</a>
+<a href="#2656" id="2656">2656</a>
+<a href="#2657" id="2657">2657</a>
+<a href="#2658" id="2658">2658</a>
+<a href="#2659" id="2659">2659</a>
+<a href="#2660" id="2660">2660</a>
+<a href="#2661" id="2661">2661</a>
+<a href="#2662" id="2662">2662</a>
+<a href="#2663" id="2663">2663</a>
+<a href="#2664" id="2664">2664</a>
+<a href="#2665" id="2665">2665</a>
+<a href="#2666" id="2666">2666</a>
+<a href="#2667" id="2667">2667</a>
+<a href="#2668" id="2668">2668</a>
+<a href="#2669" id="2669">2669</a>
+<a href="#2670" id="2670">2670</a>
+<a href="#2671" id="2671">2671</a>
+<a href="#2672" id="2672">2672</a>
+<a href="#2673" id="2673">2673</a>
+<a href="#2674" id="2674">2674</a>
+<a href="#2675" id="2675">2675</a>
+<a href="#2676" id="2676">2676</a>
+<a href="#2677" id="2677">2677</a>
+<a href="#2678" id="2678">2678</a>
+<a href="#2679" id="2679">2679</a>
+<a href="#2680" id="2680">2680</a>
+<a href="#2681" id="2681">2681</a>
+<a href="#2682" id="2682">2682</a>
+<a href="#2683" id="2683">2683</a>
+<a href="#2684" id="2684">2684</a>
+<a href="#2685" id="2685">2685</a>
+<a href="#2686" id="2686">2686</a>
+<a href="#2687" id="2687">2687</a>
+<a href="#2688" id="2688">2688</a>
+<a href="#2689" id="2689">2689</a>
+<a href="#2690" id="2690">2690</a>
+<a href="#2691" id="2691">2691</a>
+<a href="#2692" id="2692">2692</a>
+<a href="#2693" id="2693">2693</a>
+<a href="#2694" id="2694">2694</a>
+<a href="#2695" id="2695">2695</a>
+<a href="#2696" id="2696">2696</a>
+<a href="#2697" id="2697">2697</a>
+<a href="#2698" id="2698">2698</a>
+<a href="#2699" id="2699">2699</a>
+<a href="#2700" id="2700">2700</a>
+<a href="#2701" id="2701">2701</a>
+<a href="#2702" id="2702">2702</a>
+<a href="#2703" id="2703">2703</a>
+<a href="#2704" id="2704">2704</a>
+<a href="#2705" id="2705">2705</a>
+<a href="#2706" id="2706">2706</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -2874,13 +2929,14 @@
     <span class="kw">use </span>sp_core::H256;
     <span class="kw">use </span>sp_domains::bundle_producer_election::ProofOfElectionError;
     <span class="kw">use </span>sp_domains::{
-        BundleDigest, ConfirmedDomainBlock, DomainBundleSubmitted, DomainId,
+        BundleDigest, ConfirmedDomainBlock, DomainBundleSubmitted, DomainId, DomainSudoCall,
         DomainsTransfersTracker, EpochIndex, GenesisDomain, OnChainRewards, OnDomainInstantiated,
         OperatorAllowList, OperatorId, OperatorPublicKey, OperatorSignature, RuntimeId,
         RuntimeObject, RuntimeType,
     };
+    <span class="kw">use </span>sp_domains_fraud_proof::fraud_proof_runtime_interface::domain_runtime_call;
     <span class="kw">use </span>sp_domains_fraud_proof::storage_proof::{<span class="self">self</span>, FraudProofStorageKeyProvider};
-    <span class="kw">use </span>sp_domains_fraud_proof::InvalidTransactionCode;
+    <span class="kw">use </span>sp_domains_fraud_proof::{InvalidTransactionCode, StatelessDomainRuntimeCall};
     <span class="kw">use </span>sp_runtime::traits::{
         AtLeast32BitUnsigned, BlockNumberProvider, CheckEqual, CheckedAdd, Header <span class="kw">as </span>HeaderT,
         MaybeDisplay, One, SimpleBitOps, Zero,
@@ -3356,6 +3412,13 @@
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub type </span>DomainRuntimeUpgrades&lt;T&gt; = StorageValue&lt;<span class="kw">_</span>, Vec&lt;RuntimeId&gt;, ValueQuery&gt;;
 
+    <span class="doccomment">/// Temporary storage to hold the sudo calls meant for the Domains.
+    /// Storage is cleared when there are any successful bundles in the next block.
+    /// Only one sudo call is allowed per domain per consensus block.
+    </span><span class="attr">#[pallet::storage]
+    </span><span class="kw">pub type </span>DomainSudoCalls&lt;T: Config&gt; =
+        StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, DomainSudoCall, ValueQuery&gt;;
+
     <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
     </span><span class="kw">pub enum </span>BundleError {
         <span class="doccomment">/// Can not find the operator for given operator id.
@@ -3519,6 +3582,10 @@
         </span>BundleStorageFund(BundleStorageFundError),
         <span class="doccomment">/// Permissioned action is not allowed by the caller.
         </span>PermissionedActionNotAllowed,
+        <span class="doccomment">/// Domain Sudo already exists.
+        </span>DomainSudoCallExists,
+        <span class="doccomment">/// Invalid Domain sudo call.
+        </span>InvalidDomainSudoCall,
     }
 
     <span class="doccomment">/// Reason for slashing an operator
@@ -4145,6 +4212,41 @@
             PermissionedActionAllowedBy::&lt;T&gt;::put(permissioned_action_allowed_by);
             <span class="prelude-val">Ok</span>(())
         }
+
+        <span class="doccomment">/// Submit a domain sudo call.
+        </span><span class="attr">#[pallet::call_index(<span class="number">16</span>)]
+        #[pallet::weight(&lt;T <span class="kw">as </span>frame_system::Config&gt;::DbWeight::get().reads_writes(<span class="number">3</span>, <span class="number">1</span>))]
+        </span><span class="kw">pub fn </span>send_domain_sudo_call(
+            origin: OriginFor&lt;T&gt;,
+            domain_id: DomainId,
+            call: Vec&lt;u8&gt;,
+        ) -&gt; DispatchResult {
+            ensure_root(origin)<span class="question-mark">?</span>;
+            <span class="macro">ensure!</span>(
+                DomainSudoCalls::&lt;T&gt;::get(domain_id).maybe_call.is_none(),
+                Error::&lt;T&gt;::DomainSudoCallExists
+            );
+
+            <span class="kw">let </span>domain_runtime = <span class="self">Self</span>::domain_runtime_code(domain_id).ok_or(
+                Error::&lt;T&gt;::DomainRegistry(DomainRegistryError::DomainNotFound),
+            )<span class="question-mark">?</span>;
+            <span class="macro">ensure!</span>(
+                domain_runtime_call(
+                    domain_runtime,
+                    StatelessDomainRuntimeCall::IsValidDomainSudoCall(call.clone()),
+                )
+                .unwrap_or(<span class="bool-val">false</span>),
+                Error::&lt;T&gt;::InvalidDomainSudoCall
+            );
+
+            DomainSudoCalls::&lt;T&gt;::set(
+                domain_id,
+                DomainSudoCall {
+                    maybe_call: <span class="prelude-val">Some</span>(call),
+                },
+            );
+            <span class="prelude-val">Ok</span>(())
+        }
     }
 
     <span class="attr">#[pallet::genesis_config]
@@ -4260,6 +4362,9 @@
             </span><span class="kw">for </span>(domain_id, <span class="kw">_</span>) <span class="kw">in </span>SuccessfulBundles::&lt;T&gt;::drain() {
                 ConsensusBlockHash::&lt;T&gt;::insert(domain_id, parent_number, parent_hash);
                 T::DomainBundleSubmitted::domain_bundle_submitted(domain_id);
+                DomainSudoCalls::&lt;T&gt;::mutate(domain_id, |sudo_call| {
+                    sudo_call.clear();
+                });
             }
 
             <span class="kw">for </span>(operator_id, slot_set) <span class="kw">in </span>OperatorBundleSlot::&lt;T&gt;::drain() {
@@ -5223,6 +5328,11 @@
     <span class="doccomment">/// Returns true if the Domain is registered.
     </span><span class="kw">pub fn </span>is_domain_registered(domain_id: DomainId) -&gt; bool {
         DomainStakingSummary::&lt;T&gt;::contains_key(domain_id)
+    }
+
+    <span class="doccomment">/// Returns domain's sudo call if any.
+    </span><span class="kw">pub fn </span>domain_sudo_call(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt; {
+        DomainSudoCalls::&lt;T&gt;::get(domain_id).maybe_call
     }
 }
 

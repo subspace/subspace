@@ -18,6 +18,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["pallet_auto_id",["",[],["lib.rs"]]],\
 ["pallet_block_fees",["",[],["fees.rs","lib.rs"]]],\
 ["pallet_domain_id",["",[],["lib.rs"]]],\
+["pallet_domain_sudo",["",[],["lib.rs"]]],\
 ["pallet_domains",["",[],["block_tree.rs","bundle_storage_fund.rs","domain_registry.rs","lib.rs","migrations.rs","runtime_registry.rs","staking.rs","staking_epoch.rs","weights.rs"]]],\
 ["pallet_evm_nonce_tracker",["",[],["check_nonce.rs","lib.rs"]]],\
 ["pallet_feeds",["",[],["feed_processor.rs","lib.rs"]]],\
@@ -41,6 +42,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["sp_block_fees",["",[],["lib.rs"]]],\
 ["sp_consensus_subspace",["",[],["digests.rs","inherents.rs","lib.rs","offence.rs"]]],\
 ["sp_domain_digests",["",[],["lib.rs"]]],\
+["sp_domain_sudo",["",[],["lib.rs"]]],\
 ["sp_domains",["",[],["bundle_producer_election.rs","core_api.rs","extrinsics.rs","lib.rs","merkle_tree.rs","proof_provider_and_verifier.rs","storage.rs","valued_trie.rs"]]],\
 ["sp_domains_fraud_proof",["",[],["execution_prover.rs","fraud_proof.rs","host_functions.rs","lib.rs","runtime_interface.rs","storage_proof.rs","verification.rs"]]],\
 ["sp_executive",["",[],["lib.rs"]]],\

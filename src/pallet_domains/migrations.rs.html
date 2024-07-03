@@ -204,6 +204,9 @@
 <a href="#204" id="204">204</a>
 <a href="#205" id="205">205</a>
 <a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Migration module for pallet-domains
 
 </span><span class="kw">use </span><span class="kw">crate</span>::Config;
@@ -219,7 +222,7 @@
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">mod </span>runtime_registry_instance_count_migration {
     <span class="kw">use </span><span class="kw">crate</span>::pallet::{DomainRegistry, RuntimeRegistry <span class="kw">as </span>RuntimeRegistryV1};
-    <span class="kw">use </span><span class="kw">crate</span>::Config;
+    <span class="kw">use crate</span>::{Config, DomainSudoCalls};
     <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
     </span><span class="kw">use </span>alloc::string::String;
     <span class="kw">use </span>codec::{Decode, Encode};
@@ -228,7 +231,7 @@
     <span class="kw">use </span>frame_system::pallet_prelude::BlockNumberFor;
     <span class="kw">use </span>sp_core::Get;
     <span class="kw">use </span>sp_domains::storage::RawGenesis;
-    <span class="kw">use </span>sp_domains::{RuntimeId, RuntimeObject <span class="kw">as </span>RuntimeObjectV1, RuntimeType};
+    <span class="kw">use </span>sp_domains::{DomainSudoCall, RuntimeId, RuntimeObject <span class="kw">as </span>RuntimeObjectV1, RuntimeType};
     <span class="kw">use </span>sp_version::RuntimeVersion;
 
     <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -256,15 +259,16 @@
 
     <span class="comment">// Return the number of domain instance that instantiated with the given runtime
     </span><span class="kw">fn </span>domain_instance_count&lt;T: Config&gt;(runtime_id: RuntimeId) -&gt; (u32, u64) {
-        <span class="kw">let </span><span class="kw-2">mut </span>read_count = <span class="number">0</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>read_write_count = <span class="number">0</span>;
         (
             DomainRegistry::&lt;T&gt;::iter()
-                .filter(|(<span class="kw">_</span>, domain_obj)| {
-                    read_count += <span class="number">1</span>;
+                .filter(|(domain_id, domain_obj)| {
+                    read_write_count += <span class="number">1</span>;
+                    DomainSudoCalls::&lt;T&gt;::insert(domain_id, DomainSudoCall { maybe_call: <span class="prelude-val">None </span>});
                     domain_obj.domain_config.runtime_id == runtime_id
                 })
                 .count() <span class="kw">as </span>u32,
-            read_count,
+            read_write_count,
         )
     }
 
@@ -272,7 +276,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>migrate_runtime_registry_storages&lt;T: Config&gt;() -&gt; Weight {
         <span class="kw">let </span>(<span class="kw-2">mut </span>read_count, <span class="kw-2">mut </span>write_count) = (<span class="number">0</span>, <span class="number">0</span>);
         RuntimeRegistry::&lt;T&gt;::drain().for_each(|(runtime_id, runtime_obj)| {
-            <span class="kw">let </span>(instance_count, domain_read_count) = domain_instance_count::&lt;T&gt;(runtime_id);
+            <span class="kw">let </span>(instance_count, domain_read_write_count) = domain_instance_count::&lt;T&gt;(runtime_id);
             RuntimeRegistryV1::&lt;T&gt;::set(
                 runtime_id,
                 <span class="prelude-val">Some</span>(RuntimeObjectV1 {
@@ -289,9 +293,9 @@
             );
 
             <span class="comment">// domain_read_count + 1 since we read the old runtime registry as well
-            </span>read_count += domain_read_count + <span class="number">1</span>;
-            <span class="comment">// 1 write to new registry and 1 for old registry.
-            </span>write_count += <span class="number">2</span>;
+            </span>read_count += domain_read_write_count + <span class="number">1</span>;
+            <span class="comment">// 1 write to new registry and 1 for old registry + domain_write_count to load Sudo Domain runtime call.
+            </span>write_count += <span class="number">2 </span>+ domain_read_write_count;
         });
 
         T::DbWeight::get().reads_writes(read_count, write_count)
@@ -306,13 +310,13 @@
     };
     <span class="kw">use </span><span class="kw">crate</span>::pallet::RuntimeRegistry <span class="kw">as </span>RuntimeRegistryV1;
     <span class="kw">use </span><span class="kw">crate</span>::tests::{new_test_ext, Balances, Test};
-    <span class="kw">use </span><span class="kw">crate</span>::Config;
+    <span class="kw">use crate</span>::{Config, DomainSudoCalls};
     <span class="kw">use </span>domain_runtime_primitives::{AccountId20, AccountId20Converter};
     <span class="kw">use </span>frame_support::pallet_prelude::Weight;
     <span class="kw">use </span>frame_support::traits::Currency;
     <span class="kw">use </span>hex_literal::hex;
     <span class="kw">use </span>sp_domains::storage::RawGenesis;
-    <span class="kw">use </span>sp_domains::{OperatorAllowList, RuntimeObject <span class="kw">as </span>RuntimeObjectV1};
+    <span class="kw">use </span>sp_domains::{DomainId, OperatorAllowList, RuntimeObject <span class="kw">as </span>RuntimeObjectV1};
     <span class="kw">use </span>sp_runtime::traits::Convert;
     <span class="kw">use </span>sp_version::RuntimeVersion;
     <span class="kw">use </span>subspace_runtime_primitives::SSC;
@@ -400,13 +404,15 @@
                 <span class="kw">crate</span>::migrations::runtime_registry_instance_count_migration::migrate_runtime_registry_storages::&lt;Test&gt;();
             <span class="macro">assert_eq!</span>(
                 weights,
-                &lt;Test <span class="kw">as </span>frame_system::Config&gt;::DbWeight::get().reads_writes(<span class="number">2</span>, <span class="number">2</span>),
+                &lt;Test <span class="kw">as </span>frame_system::Config&gt;::DbWeight::get().reads_writes(<span class="number">2</span>, <span class="number">3</span>),
             );
 
             <span class="macro">assert_eq!</span>(
                 RuntimeRegistryV1::&lt;Test&gt;::get(<span class="number">0</span>).unwrap().instance_count,
                 <span class="number">1
             </span>);
+
+            <span class="macro">assert!</span>(DomainSudoCalls::&lt;Test&gt;::contains_key(DomainId::new(<span class="number">0</span>)));
         });
     }
 }
