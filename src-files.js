@@ -15,7 +15,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["evm_domain_runtime",["",[],["lib.rs","precompiles.rs"]]],\
 ["evm_domain_test_runtime",["",[],["lib.rs","precompiles.rs"]]],\
 ["orml_vesting",["",[],["lib.rs","weights.rs"]]],\
-["pallet_auto_id",["",[],["lib.rs"]]],\
+["pallet_auto_id",["",[],["lib.rs","weights.rs"]]],\
 ["pallet_block_fees",["",[],["fees.rs","lib.rs"]]],\
 ["pallet_domain_id",["",[],["lib.rs"]]],\
 ["pallet_domain_sudo",["",[],["lib.rs"]]],\
