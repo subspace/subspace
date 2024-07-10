@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["verify_mmr_proof"],"struct":["HostFunctions"]};
+window.SIDEBAR_ITEMS = {"fn":["is_consensus_block_finalized","verify_mmr_proof"],"struct":["HostFunctions"]};

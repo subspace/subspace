@@ -368,6 +368,54 @@
 <a href="#368" id="368">368</a>
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the consensus block.
 //!
@@ -388,7 +436,7 @@
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::opaque::AccountId;
 <span class="kw">use </span>sc_client_api::BlockBackend;
-<span class="kw">use </span>sp_api::ProvideRuntimeApi;
+<span class="kw">use </span>sp_api::{ApiError, ApiExt, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
@@ -398,8 +446,10 @@
     InvalidBundleType, OpaqueBundle, OpaqueBundles, ReceiptValidity,
 };
 <span class="kw">use </span>sp_messenger::MessengerApi;
+<span class="kw">use </span>sp_mmr_primitives::MmrApi;
 <span class="kw">use </span>sp_runtime::traits::{Block <span class="kw">as </span>BlockT, Hash <span class="kw">as </span>HashT, NumberFor};
 <span class="kw">use </span>sp_state_machine::LayoutV1;
+<span class="kw">use </span>sp_subspace_mmr::ConsensusChainMmrLeafProof;
 <span class="kw">use </span>sp_weights::Weight;
 <span class="kw">use </span>std::collections::VecDeque;
 <span class="kw">use </span>std::marker::PhantomData;
@@ -489,14 +539,16 @@
     CBlock::Hash: From&lt;Block::Hash&gt;,
     NumberFor&lt;CBlock&gt;: From&lt;NumberFor&lt;Block&gt;&gt;,
     Client: HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + <span class="lifetime">'static</span>,
-    Client::Api: DomainCoreApi&lt;Block&gt; + MessengerApi&lt;Block&gt;,
+    Client::Api: DomainCoreApi&lt;Block&gt; + MessengerApi&lt;Block, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;,
     CClient: HeaderBackend&lt;CBlock&gt;
         + BlockBackend&lt;CBlock&gt;
         + ProvideRuntimeApi&lt;CBlock&gt;
         + Send
         + Sync
         + <span class="lifetime">'static</span>,
-    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt; + MessengerApi&lt;CBlock&gt;,
+    CClient::Api: DomainsApi&lt;CBlock, Block::Header&gt;
+        + MessengerApi&lt;CBlock, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;
+        + MmrApi&lt;CBlock, H256, NumberFor&lt;CBlock&gt;&gt;,
     ReceiptValidator: ValidateReceipt&lt;Block, CBlock&gt;,
 {
     <span class="kw">pub fn </span>new(
@@ -517,7 +569,7 @@
     <span class="kw">pub fn </span>preprocess_consensus_block(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         consensus_block_hash: CBlock::Hash,
-        domain_hash: Block::Hash,
+        parent_domain_block: (Block::Hash, NumberFor&lt;Block&gt;),
     ) -&gt; sp_blockchain::Result&lt;<span class="prelude-ty">Option</span>&lt;PreprocessResult&lt;Block&gt;&gt;&gt; {
         <span class="kw">let </span>(primary_extrinsics, shuffling_seed) = prepare_domain_block_elements::&lt;Block, CBlock, <span class="kw">_</span>&gt;(
             <span class="kw-2">&amp;*</span><span class="self">self</span>.consensus_client,
@@ -544,8 +596,12 @@
             .runtime_api()
             .domain_tx_range(consensus_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(inboxed_bundles, extrinsics) =
-            <span class="self">self</span>.compile_bundles_to_extrinsics(bundles, tx_range, domain_hash)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(inboxed_bundles, extrinsics) = <span class="self">self</span>.compile_bundles_to_extrinsics(
+            bundles,
+            tx_range,
+            parent_domain_block,
+            consensus_block_hash,
+        )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>extrinsics = deduplicate_and_shuffle_extrinsics::&lt;&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic&gt;(
             extrinsics,
@@ -565,7 +621,8 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         bundles: OpaqueBundles&lt;CBlock, Block::Header, Balance&gt;,
         tx_range: U256,
-        at: Block::Hash,
+        (domain_hash, domain_number): (Block::Hash, NumberFor&lt;Block&gt;),
+        at_consensus_hash: CBlock::Hash,
     ) -&gt; sp_blockchain::Result&lt;(
         Vec&lt;InboxedBundle&lt;Block::Hash&gt;&gt;,
         Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Block::Extrinsic)&gt;,
@@ -576,9 +633,16 @@
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
         <span class="kw">for </span>bundle <span class="kw">in </span>bundles {
             <span class="kw">let </span>extrinsic_root = bundle.extrinsics_root();
-            <span class="kw">match </span><span class="self">self</span>.check_bundle_validity(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>tx_range, at)<span class="question-mark">? </span>{
+            <span class="kw">match </span><span class="self">self</span>.check_bundle_validity(
+                <span class="kw-2">&amp;</span>bundle,
+                <span class="kw-2">&amp;</span>tx_range,
+                (domain_hash, domain_number),
+                at_consensus_hash,
+            )<span class="question-mark">? </span>{
                 BundleValidity::Valid(extrinsics) =&gt; {
-                    <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>runtime_api.extract_signer(at, extrinsics) {
+                    <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>runtime_api
+                        .extract_signer(domain_hash, extrinsics)
+                    {
                         <span class="prelude-val">Ok</span>(res) =&gt; res,
                         <span class="prelude-val">Err</span>(e) =&gt; {
                             <span class="macro">tracing::error!</span>(error = <span class="question-mark">?</span>e, <span class="string">"Error at calling runtime api: extract_signer"</span>);
@@ -616,7 +680,8 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         bundle: <span class="kw-2">&amp;</span>OpaqueBundle&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, Block::Header, Balance&gt;,
         tx_range: <span class="kw-2">&amp;</span>U256,
-        at: Block::Hash,
+        (domain_hash, domain_number): (Block::Hash, NumberFor&lt;Block&gt;),
+        at_consensus_hash: CBlock::Hash,
     ) -&gt; sp_blockchain::Result&lt;BundleValidity&lt;Block::Extrinsic&gt;&gt; {
         <span class="kw">let </span>bundle_vrf_hash =
             U256::from_be_bytes(bundle.sealed_header.header.proof_of_election.vrf_hash());
@@ -624,17 +689,23 @@
         <span class="kw">let </span><span class="kw-2">mut </span>extrinsics = Vec::with_capacity(bundle.extrinsics.len());
         <span class="kw">let </span><span class="kw-2">mut </span>estimated_bundle_weight = Weight::default();
 
-        <span class="kw">let </span>domain_block_number = <span class="self">self
-            </span>.client
-            .number(at)<span class="question-mark">?
-            </span>.ok_or(sp_blockchain::Error::MissingHeader(at.to_string()))<span class="question-mark">?</span>;
+        <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
+        <span class="kw">let </span>consensus_runtime_api = <span class="self">self</span>.consensus_client.runtime_api();
+        <span class="kw">let </span>api_version = runtime_api
+            .api_version::&lt;<span class="kw">dyn </span>MessengerApi&lt;Block, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;&gt;(domain_hash)
+            .map_err(sp_blockchain::Error::RuntimeApiError)<span class="question-mark">?
+            </span>.ok_or_else(|| {
+                sp_blockchain::Error::RuntimeApiError(ApiError::Application(
+                    <span class="macro">format!</span>(<span class="string">"MessengerApi not found at: {:?}"</span>, domain_hash).into(),
+                ))
+            })<span class="question-mark">?</span>;
 
         <span class="comment">// Check the validity of each extrinsic
         //
         // NOTE: for each extrinsic the checking order must follow `InvalidBundleType::checking_order`
-        </span><span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
-        <span class="kw">for </span>(index, opaque_extrinsic) <span class="kw">in </span>bundle.extrinsics.iter().enumerate() {
-            <span class="kw">let </span>decode_result = runtime_api.decode_extrinsic(at, opaque_extrinsic.clone())<span class="question-mark">?</span>;
+        </span><span class="kw">for </span>(index, opaque_extrinsic) <span class="kw">in </span>bundle.extrinsics.iter().enumerate() {
+            <span class="kw">let </span>decode_result =
+                runtime_api.decode_extrinsic(domain_hash, opaque_extrinsic.clone())<span class="question-mark">?</span>;
             <span class="kw">let </span>extrinsic = <span class="kw">match </span>decode_result {
                 <span class="prelude-val">Ok</span>(extrinsic) =&gt; extrinsic,
                 <span class="prelude-val">Err</span>(err) =&gt; {
@@ -650,8 +721,12 @@
                 }
             };
 
-            <span class="kw">let </span>is_within_tx_range =
-                runtime_api.is_within_tx_range(at, <span class="kw-2">&amp;</span>extrinsic, <span class="kw-2">&amp;</span>bundle_vrf_hash, tx_range)<span class="question-mark">?</span>;
+            <span class="kw">let </span>is_within_tx_range = runtime_api.is_within_tx_range(
+                domain_hash,
+                <span class="kw-2">&amp;</span>extrinsic,
+                <span class="kw-2">&amp;</span>bundle_vrf_hash,
+                tx_range,
+            )<span class="question-mark">?</span>;
 
             <span class="kw">if </span>!is_within_tx_range {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::OutOfRangeTx(
@@ -662,10 +737,31 @@
             <span class="comment">// Check if this extrinsic is an inherent extrinsic.
             // If so, this is an invalid bundle since these extrinsics should not be included in the
             // bundle. Extrinsic is always decodable due to the check above.
-            </span><span class="kw">if </span>runtime_api.is_inherent_extrinsic(at, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">? </span>{
+            </span><span class="kw">if </span>runtime_api.is_inherent_extrinsic(domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">? </span>{
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(
                     InvalidBundleType::InherentExtrinsic(index <span class="kw">as </span>u32),
                 ));
+            }
+
+            <span class="kw">if </span>api_version &gt;= <span class="number">4 </span>{
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(xdm_mmr_proof) =
+                    runtime_api.extract_xdm_mmr_proof(domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?
+                </span>{
+                    <span class="kw">let </span>ConsensusChainMmrLeafProof {
+                        opaque_mmr_leaf,
+                        proof,
+                        ..
+                    } = xdm_mmr_proof;
+
+                    <span class="kw">if </span>consensus_runtime_api
+                        .verify_proof(at_consensus_hash, <span class="macro">vec!</span>[opaque_mmr_leaf], proof)<span class="question-mark">?
+                        </span>.is_err()
+                    {
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(InvalidBundleType::InvalidXDM(
+                            index <span class="kw">as </span>u32,
+                        )));
+                    }
+                }
             }
 
             <span class="comment">// Using one instance of runtime_api throughout the loop in order to maintain context
@@ -674,10 +770,10 @@
             // to maintain side-effect in the storage buffer.
             </span><span class="kw">let </span>is_legal_tx = runtime_api
                 .check_extrinsics_and_do_pre_dispatch(
-                    at,
+                    domain_hash,
                     <span class="macro">vec!</span>[extrinsic.clone()],
-                    domain_block_number,
-                    at,
+                    domain_number,
+                    domain_hash,
                 )<span class="question-mark">?
                 </span>.is_ok();
 
@@ -687,7 +783,7 @@
                 )));
             }
 
-            <span class="kw">let </span>tx_weight = runtime_api.extrinsic_weight(at, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?</span>;
+            <span class="kw">let </span>tx_weight = runtime_api.extrinsic_weight(domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?</span>;
             estimated_bundle_weight = estimated_bundle_weight.saturating_add(tx_weight);
 
             extrinsics.push(extrinsic);

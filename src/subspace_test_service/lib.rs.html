@@ -1367,6 +1367,22 @@
 <a href="#1367" id="1367">1367</a>
 <a href="#1368" id="1368">1368</a>
 <a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a>
+<a href="#1371" id="1371">1371</a>
+<a href="#1372" id="1372">1372</a>
+<a href="#1373" id="1373">1373</a>
+<a href="#1374" id="1374">1374</a>
+<a href="#1375" id="1375">1375</a>
+<a href="#1376" id="1376">1376</a>
+<a href="#1377" id="1377">1377</a>
+<a href="#1378" id="1378">1378</a>
+<a href="#1379" id="1379">1379</a>
+<a href="#1380" id="1380">1380</a>
+<a href="#1381" id="1381">1381</a>
+<a href="#1382" id="1382">1382</a>
+<a href="#1383" id="1383">1383</a>
+<a href="#1384" id="1384">1384</a>
+<a href="#1385" id="1385">1385</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1455,7 +1471,7 @@
 <span class="kw">use </span>std::pin::Pin;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::time;
-<span class="kw">use </span>subspace_core_primitives::{PotOutput, Solution};
+<span class="kw">use </span>subspace_core_primitives::{BlockNumber, PotOutput, Solution};
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block;
 <span class="kw">use </span>subspace_runtime_primitives::{AccountId, Balance, Hash, Signature};
 <span class="kw">use </span>subspace_service::transaction_pool::FullPool;
@@ -1576,6 +1592,7 @@
     consensus_backend: Arc&lt;CBackend&gt;,
     executor: Arc&lt;Executor&gt;,
     mock_pot_verifier: Arc&lt;MockPotVerfier&gt;,
+    confirmation_depth_k: BlockNumber,
     _phantom: PhantomData&lt;DomainBlock&gt;,
 }
 
@@ -1587,12 +1604,14 @@
         executor: Arc&lt;Executor&gt;,
         mock_pot_verifier: Arc&lt;MockPotVerfier&gt;,
         consensus_backend: Arc&lt;CBackend&gt;,
+        confirmation_depth_k: BlockNumber,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             consensus_client,
             consensus_backend,
             executor,
             mock_pot_verifier,
+            confirmation_depth_k,
             _phantom: Default::default(),
         }
     }
@@ -1621,7 +1640,7 @@
     Client: BlockBackend&lt;Block&gt; + HeaderBackend&lt;Block&gt; + ProvideRuntimeApi&lt;Block&gt; + <span class="lifetime">'static</span>,
     Client::Api: DomainsApi&lt;Block, DomainBlock::Header&gt;
         + BundleProducerElectionApi&lt;Block, Balance&gt;
-        + MessengerApi&lt;Block&gt;
+        + MessengerApi&lt;Block, NumberFor&lt;Block&gt;, Block::Hash&gt;
         + MmrApi&lt;Block, H256, NumberFor&lt;Block&gt;&gt;,
     Executor: CodeExecutor + sc_executor::RuntimeVersionOf,
     CBackend: BackendT&lt;Block&gt; + <span class="lifetime">'static</span>,
@@ -1631,20 +1650,28 @@
         _block_hash: Block::Hash,
         _block_number: NumberFor&lt;Block&gt;,
     ) -&gt; Extensions {
+        <span class="kw">let </span>confirmation_depth_k = <span class="self">self</span>.confirmation_depth_k;
         <span class="kw">let </span><span class="kw-2">mut </span>exts = Extensions::new();
         exts.register(FraudProofExtension::new(Arc::new(
             FraudProofHostFunctionsImpl::&lt;<span class="kw">_</span>, <span class="kw">_</span>, DomainBlock, Executor, <span class="kw">_</span>&gt;::new(
                 <span class="self">self</span>.consensus_client.clone(),
                 <span class="self">self</span>.executor.clone(),
-                |client, executor| {
+                <span class="kw">move </span>|client, executor| {
                     <span class="kw">let </span>extension_factory =
-                        DomainsExtensionFactory::&lt;<span class="kw">_</span>, Block, DomainBlock, <span class="kw">_</span>&gt;::new(client, executor);
+                        DomainsExtensionFactory::&lt;<span class="kw">_</span>, Block, DomainBlock, <span class="kw">_</span>&gt;::new(
+                            client,
+                            executor,
+                            confirmation_depth_k,
+                        );
                     Box::new(extension_factory) <span class="kw">as </span>Box&lt;<span class="kw">dyn </span>ExtensionsFactory&lt;DomainBlock&gt;&gt;
                 },
             ),
         )));
         exts.register(SubspaceMmrExtension::new(Arc::new(
-            SubspaceMmrHostFunctionsImpl::&lt;Block, <span class="kw">_</span>&gt;::new(<span class="self">self</span>.consensus_client.clone()),
+            SubspaceMmrHostFunctionsImpl::&lt;Block, <span class="kw">_</span>&gt;::new(
+                <span class="self">self</span>.consensus_client.clone(),
+                confirmation_depth_k,
+            ),
         )));
         exts.register(MessengerExtension::new(Arc::new(
             MessengerHostFunctionsImpl::&lt;Block, <span class="kw">_</span>, DomainBlock, <span class="kw">_</span>&gt;::new(
@@ -1776,6 +1803,10 @@
         <span class="kw">let </span>domain_executor = Arc::new(sc_service::new_wasm_executor(<span class="kw-2">&amp;</span>config));
         <span class="kw">let </span>client = Arc::new(client);
         <span class="kw">let </span>mock_pot_verifier = Arc::new(MockPotVerfier::default());
+        <span class="kw">let </span>chain_constants = client
+            .runtime_api()
+            .chain_constants(client.info().best_hash)
+            .expect(<span class="string">"Fail to get chain constants"</span>);
         client
             .execution_extensions()
             .set_extensions_factory(MockExtensionsFactory::&lt;
@@ -1788,6 +1819,7 @@
                 domain_executor.clone(),
                 Arc::clone(<span class="kw-2">&amp;</span>mock_pot_verifier),
                 backend.clone(),
+                chain_constants.confirmation_depth_k(),
             ));
 
         <span class="kw">let </span>select_chain = sc_consensus::LongestChain::new(backend.clone());

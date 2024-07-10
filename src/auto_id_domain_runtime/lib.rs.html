@@ -990,6 +990,32 @@
 <a href="#990" id="990">990</a>
 <a href="#991" id="991">991</a>
 <a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
 </pre></div><pre class="rust"><code><span class="attr">#![feature(variant_count)]
 #![cfg_attr(not(feature = <span class="string">"std"</span>), no_std)]
 </span><span class="comment">// `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
@@ -1054,7 +1080,9 @@
 <span class="kw">use </span>sp_std::collections::btree_set::BTreeSet;
 <span class="kw">use </span>sp_std::marker::PhantomData;
 <span class="kw">use </span>sp_std::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>sp_subspace_mmr::domain_mmr_runtime_interface::verify_mmr_proof;
+<span class="kw">use </span>sp_subspace_mmr::domain_mmr_runtime_interface::{
+    is_consensus_block_finalized, verify_mmr_proof,
+};
 <span class="kw">use </span>sp_subspace_mmr::{ConsensusChainMmrLeafProof, MmrLeaf};
 <span class="kw">use </span>sp_version::RuntimeVersion;
 <span class="kw">use </span>subspace_runtime_primitives::{
@@ -1319,10 +1347,15 @@
         mmr_leaf_proof: ConsensusChainMmrLeafProof&lt;NumberFor&lt;Block&gt;, Hash, MmrHash&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;MmrLeaf&lt;ConsensusBlockNumber, ConsensusBlockHash&gt;&gt; {
         <span class="kw">let </span>ConsensusChainMmrLeafProof {
+            consensus_block_number,
             opaque_mmr_leaf: opaque_leaf,
             proof,
             ..
         } = mmr_leaf_proof;
+
+        <span class="kw">if </span>!is_consensus_block_finalized(consensus_block_number) {
+            <span class="kw">return </span><span class="prelude-val">None</span>;
+        }
 
         <span class="kw">let </span>leaf: MmrLeaf&lt;ConsensusBlockNumber, ConsensusBlockHash&gt; =
             opaque_leaf.into_opaque_leaf().try_decode()<span class="question-mark">?</span>;
@@ -1487,20 +1520,25 @@
     }
 );
 
-<span class="kw">fn </span>is_xdm_valid(encoded_ext: Vec&lt;u8&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;bool&gt; {
-    <span class="kw">if let </span><span class="prelude-val">Ok</span>(ext) = UncheckedExtrinsic::decode(<span class="kw-2">&amp;mut </span>encoded_ext.as_slice()) {
-        <span class="kw">match </span><span class="kw-2">&amp;</span>ext.function {
-            RuntimeCall::Messenger(pallet_messenger::Call::relay_message { msg }) =&gt; {
-                <span class="prelude-val">Some</span>(Messenger::validate_relay_message(msg).is_ok())
+<span class="kw">fn </span>is_xdm_mmr_proof_valid(ext: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic) -&gt; <span class="prelude-ty">Option</span>&lt;bool&gt; {
+    <span class="kw">match </span><span class="kw-2">&amp;</span>ext.function {
+        RuntimeCall::Messenger(pallet_messenger::Call::relay_message { msg })
+        | RuntimeCall::Messenger(pallet_messenger::Call::relay_message_response { msg }) =&gt; {
+            <span class="kw">let </span>ConsensusChainMmrLeafProof {
+                consensus_block_number,
+                opaque_mmr_leaf,
+                proof,
+                ..
+            } = msg.proof.consensus_mmr_proof();
+
+            <span class="kw">if </span>!is_consensus_block_finalized(consensus_block_number) {
+                <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="bool-val">false</span>);
             }
-            RuntimeCall::Messenger(pallet_messenger::Call::relay_message_response { msg }) =&gt; {
-                <span class="prelude-val">Some</span>(Messenger::validate_relay_message_response(msg).is_ok())
-            }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+
+            <span class="prelude-val">Some</span>(verify_mmr_proof(<span class="macro">vec!</span>[opaque_mmr_leaf], proof.encode()))
         }
-    } <span class="kw">else </span>{
-        <span class="prelude-val">None
-    </span>}
+        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+    }
 }
 
 <span class="doccomment">/// Returns a valid Sudo call.
@@ -1590,7 +1628,11 @@
             .map(|<span class="kw">_</span>| ()),
         <span class="comment">// unsigned transaction
         </span><span class="prelude-val">None </span>=&gt; {
-            Runtime::pre_dispatch(<span class="kw-2">&amp;</span>xt.function).map(|<span class="kw">_</span>| ())<span class="question-mark">?</span>;
+            <span class="kw">if let </span>RuntimeCall::Messenger(call) = <span class="kw-2">&amp;</span>xt.function {
+                Messenger::pre_dispatch_with_trusted_mmr_proof(call)<span class="question-mark">?</span>;
+            } <span class="kw">else </span>{
+                Runtime::pre_dispatch(<span class="kw-2">&amp;</span>xt.function).map(|<span class="kw">_</span>| ())<span class="question-mark">?</span>;
+            }
             SignedExtra::pre_dispatch_unsigned(<span class="kw-2">&amp;</span>xt.function, <span class="kw-2">&amp;</span>dispatch_info, encoded_len)
                 .map(|<span class="kw">_</span>| ())
         }
@@ -1850,11 +1892,21 @@
         }
     }
 
-    <span class="kw">impl </span>sp_messenger::MessengerApi&lt;Block&gt; <span class="kw">for </span>Runtime {
-        <span class="kw">fn </span>is_xdm_valid(
-            extrinsic: Vec&lt;u8&gt;,
+    <span class="kw">impl </span>sp_messenger::MessengerApi&lt;Block, ConsensusBlockNumber, ConsensusBlockHash&gt; <span class="kw">for </span>Runtime {
+        <span class="kw">fn </span>is_xdm_mmr_proof_valid(
+            extrinsic: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;bool&gt; {
-            is_xdm_valid(extrinsic)
+            is_xdm_mmr_proof_valid(extrinsic)
+        }
+
+        <span class="kw">fn </span>extract_xdm_mmr_proof(ext: <span class="kw-2">&amp;</span>&lt;Block <span class="kw">as </span>BlockT&gt;::Extrinsic) -&gt; <span class="prelude-ty">Option</span>&lt;ConsensusChainMmrLeafProof&lt;ConsensusBlockNumber, ConsensusBlockHash, sp_core::H256&gt;&gt; {
+            <span class="kw">match </span><span class="kw-2">&amp;</span>ext.function {
+                RuntimeCall::Messenger(pallet_messenger::Call::relay_message { msg })
+                | RuntimeCall::Messenger(pallet_messenger::Call::relay_message_response { msg }) =&gt; {
+                    <span class="prelude-val">Some</span>(msg.proof.consensus_mmr_proof())
+                }
+                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+            }
         }
 
         <span class="kw">fn </span>confirmed_domain_block_storage_key(_domain_id: DomainId) -&gt; Vec&lt;u8&gt; {
