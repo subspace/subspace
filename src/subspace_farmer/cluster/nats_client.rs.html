@@ -1047,6 +1047,20 @@
 <a href="#1047" id="1047">1047</a>
 <a href="#1048" id="1048">1048</a>
 <a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! NATS client
 //!
 //! [`NatsClient`] provided here is a wrapper around [`Client`] that provides convenient methods
@@ -1434,6 +1448,7 @@
     client: Client,
     request_retry_backoff_policy: ExponentialBackoff,
     approximate_max_message_size: usize,
+    max_message_size: usize,
 }
 
 <span class="doccomment">/// NATS client wrapper that can be used to interact with other Subspace-specific clients
@@ -1487,6 +1502,8 @@
             request_retry_backoff_policy,
             <span class="comment">// Allow up to 90%, the rest will be wrapper data structures, etc.
             </span>approximate_max_message_size: max_payload * <span class="number">9 </span>/ <span class="number">10</span>,
+            <span class="comment">// Allow up to 90%, the rest will be wrapper data structures, etc.
+            </span>max_message_size: max_payload,
         };
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -1777,8 +1794,9 @@
                 <span class="kw">return</span>;
             }
         };
-        <span class="kw">let </span>approximate_max_message_size = <span class="self">self</span>.approximate_max_message_size();
-        <span class="kw">let </span>max_responses_per_message = approximate_max_message_size / first_element.encoded_size();
+        <span class="kw">let </span>max_message_size = <span class="self">self</span>.inner.max_message_size;
+        <span class="kw">let </span>max_responses_per_message =
+            <span class="self">self</span>.approximate_max_message_size() / first_element.encoded_size();
 
         <span class="kw">let </span>ack_subject = <span class="macro">format!</span>(<span class="string">"stream-response-ack.{}"</span>, Ulid::new());
         <span class="kw">let </span><span class="kw-2">mut </span>ack_subscription = <span class="kw">match </span><span class="self">self</span>.subscribe(ack_subject.clone()).<span class="kw">await </span>{
@@ -1837,11 +1855,21 @@
                     }
                 };
                 <span class="kw">let </span>encoded_response = response.encode();
+                <span class="kw">let </span>encoded_response_len = encoded_response.len();
                 <span class="comment">// When encoded response is too large, remove one of the responses from it and try
                 // again
-                </span><span class="kw">if </span>encoded_response.len() &gt; approximate_max_message_size {
+                </span><span class="kw">if </span>encoded_response_len &gt; max_message_size {
                     buffer = response.into();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(element) = buffer.pop_back() {
+                        <span class="kw">if </span>buffer.is_empty() {
+                            <span class="macro">error!</span>(
+                                <span class="question-mark">?</span>element,
+                                encoded_response_len,
+                                max_message_size,
+                                <span class="string">"Element was too large to fit into NATS message, this is an \
+                                implementation bug"
+                            </span>);
+                        }
                         overflow_buffer.push_front(element);
                         <span class="kw">continue</span>;
                     } <span class="kw">else </span>{
