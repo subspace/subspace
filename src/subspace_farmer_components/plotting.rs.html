@@ -689,6 +689,18 @@
 <a href="#689" id="689">689</a>
 <a href="#690" id="690">690</a>
 <a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Plotting utilities
 //!
 //! This module contains functions and data structures that can be used for plotting purposes
@@ -1220,30 +1232,35 @@
     <span class="kw-2">mut </span>encoded_chunks_used: EncodedChunksUsed&lt;<span class="lifetime">'_</span>&gt;,
     table_generator: <span class="kw-2">&amp;mut </span>PosTable::Generator,
     erasure_coding: <span class="kw-2">&amp;</span>ErasureCoding,
-    chunks_scratch: <span class="kw-2">&amp;mut </span>Vec&lt;<span class="prelude-ty">Option</span>&lt;Simd&lt;u8, <span class="number">32</span>&gt;&gt;&gt;,
+    chunks_scratch: <span class="kw-2">&amp;mut </span>Vec&lt;[u8; Scalar::FULL_BYTES]&gt;,
 ) <span class="kw">where
     </span>PosTable: Table,
 {
     <span class="comment">// Derive PoSpace table
     </span><span class="kw">let </span>pos_table = table_generator.generate_parallel(pos_seed);
 
-    <span class="kw">let </span>source_record_chunks = record
-        .iter()
-        .map(|scalar_bytes| {
-            Scalar::try_from(scalar_bytes).expect(
-                <span class="string">"Piece getter must returns valid pieces of history that contain proper \
-                    scalar bytes; qed"</span>,
-            )
-        })
-        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
     <span class="comment">// Erasure code source record chunks
     </span><span class="kw">let </span>parity_record_chunks = erasure_coding
-        .extend(<span class="kw-2">&amp;</span>source_record_chunks)
-        .expect(<span class="string">"Instance was verified to be able to work with this many values earlier; qed"</span>);
+        .extend(
+            <span class="kw-2">&amp;</span>record
+                .iter()
+                .map(|scalar_bytes| {
+                    Scalar::try_from(scalar_bytes).expect(
+                        <span class="string">"Piece getter must returns valid pieces of history that contain \
+                        proper scalar bytes; qed"</span>,
+                    )
+                })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+        )
+        .expect(<span class="string">"Instance was verified to be able to work with this many values earlier; qed"</span>)
+        .into_iter()
+        .map(&lt;[u8; Scalar::FULL_BYTES]&gt;::from)
+        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+    <span class="kw">let </span>source_record_chunks = record.to_vec();
 
     chunks_scratch.clear();
-    <span class="comment">// For every erasure coded chunk check if there is quality present, if so then encode
-    // with PoSpace quality bytes and set corresponding `quality_present` bit to `true`
+    <span class="comment">// For every erasure coded chunk check if there is proof present, if so then encode
+    // with PoSpace proof bytes and set corresponding `encoded_chunks_used` bit to `true`
     </span>(u16::from(SBucket::ZERO)..=u16::from(SBucket::MAX))
         .into_par_iter()
         .map(SBucket::from)
@@ -1253,20 +1270,27 @@
                 .interleave(<span class="kw-2">&amp;</span>parity_record_chunks),
         )
         .map(|(s_bucket, record_chunk)| {
-            <span class="kw">let </span>proof = pos_table.find_proof(s_bucket.into())<span class="question-mark">?</span>;
-
-            <span class="prelude-val">Some</span>(Simd::from(record_chunk.to_bytes()) ^ Simd::from(proof.hash()))
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(proof) = pos_table.find_proof(s_bucket.into()) {
+                (Simd::from(<span class="kw-2">*</span>record_chunk) ^ Simd::from(proof.hash())).to_array()
+            } <span class="kw">else </span>{
+                <span class="comment">// We represent missing proof as invalid set of bits of Scalar (Scalar is 254-bit
+                // and must have two bits set to 0)
+                </span>[u8::MAX; Scalar::FULL_BYTES]
+            }
         })
         .collect_into_vec(chunks_scratch);
     <span class="kw">let </span>num_successfully_encoded_chunks = chunks_scratch
         .drain(..)
         .zip(encoded_chunks_used.iter_mut())
         .filter_map(|(maybe_encoded_chunk, <span class="kw-2">mut </span>encoded_chunk_used)| {
-            <span class="kw">let </span>encoded_chunk = maybe_encoded_chunk<span class="question-mark">?</span>;
+            <span class="comment">// Last byte's bits all set to 1 represents missing proof, see above
+            </span><span class="kw">if </span>maybe_encoded_chunk[<span class="number">31</span>] == u8::MAX {
+                <span class="prelude-val">None
+            </span>} <span class="kw">else </span>{
+                <span class="kw-2">*</span>encoded_chunk_used = <span class="bool-val">true</span>;
 
-            <span class="kw-2">*</span>encoded_chunk_used = <span class="bool-val">true</span>;
-
-            <span class="prelude-val">Some</span>(encoded_chunk)
+                <span class="prelude-val">Some</span>(maybe_encoded_chunk)
+            }
         })
         <span class="comment">// Make sure above filter function (and corresponding `encoded_chunk_used` update)
         // happen at most as many times as there is number of chunks in the record,
@@ -1276,11 +1300,11 @@
         .zip(record.iter_mut())
         <span class="comment">// Write encoded chunk back so we can reuse original allocation
         </span>.map(|(input_chunk, output_chunk)| {
-            <span class="kw-2">*</span>output_chunk = input_chunk.to_array();
+            <span class="kw-2">*</span>output_chunk = input_chunk;
         })
         .count();
 
-    <span class="comment">// In some cases there is not enough PoSpace qualities available, in which case we add
+    <span class="comment">// In some cases there is not enough PoSpace proofs available, in which case we add
     // remaining number of unencoded erasure coded record chunks to the end
     </span>source_record_chunks
         .iter()
@@ -1299,7 +1323,7 @@
         </span>.zip(record.iter_mut().skip(num_successfully_encoded_chunks))
         <span class="comment">// Write necessary number of unencoded chunks at the end
         </span>.for_each(|(input_chunk, output_chunk)| {
-            <span class="kw-2">*</span>output_chunk = input_chunk.to_bytes();
+            <span class="kw-2">*</span>output_chunk = <span class="kw-2">*</span>input_chunk;
         });
 }
 
