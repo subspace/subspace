@@ -501,12 +501,17 @@
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
 <a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used for testing with the domain.
 </span><span class="attr">#![warn(missing_docs)]
 
 </span><span class="kw">use </span><span class="kw">crate</span>::chain_spec::create_domain_spec;
 <span class="kw">use crate</span>::{
-    construct_extrinsic_generic, node_config, BalanceOf, EcdsaKeyring, UncheckedExtrinsicFor,
+    construct_extrinsic_generic, node_config, BalanceOf, DomainRuntime, EcdsaKeyring,
+    Sr25519Keyring, UncheckedExtrinsicFor, AUTO_ID_DOMAIN_ID, EVM_DOMAIN_ID,
 };
 <span class="kw">use </span>cross_domain_message_gossip::ChainMsg;
 <span class="kw">use </span>domain_client_operator::{fetch_domain_bootstrap_info, BootstrapResult, OperatorStreams};
@@ -515,8 +520,6 @@
 <span class="kw">use </span>domain_service::providers::DefaultProvider;
 <span class="kw">use </span>domain_service::FullClient;
 <span class="kw">use </span>domain_test_primitives::OnchainStateApi;
-<span class="kw">use </span>evm_domain_test_runtime::AccountId <span class="kw">as </span>AccountId20;
-<span class="kw">use </span>fp_rpc::EthereumRuntimeRPCApi;
 <span class="kw">use </span>frame_support::dispatch::{DispatchInfo, PostDispatchInfo};
 <span class="kw">use </span>frame_system::pallet_prelude::BlockNumberFor;
 <span class="kw">use </span>pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi;
@@ -528,11 +531,10 @@
 <span class="kw">use </span>sc_service::{BasePath, PruningMode, Role, RpcHandlers, TFullBackend, TaskManager};
 <span class="kw">use </span>sc_transaction_pool_api::OffchainTransactionPoolFactory;
 <span class="kw">use </span>sc_utils::mpsc::{tracing_unbounded, TracingUnboundedSender};
-<span class="kw">use </span>serde::de::DeserializeOwned;
 <span class="kw">use </span>sp_api::{ApiExt, ConstructRuntimeApi, Metadata, ProvideRuntimeApi};
 <span class="kw">use </span>sp_block_builder::BlockBuilder;
 <span class="kw">use </span>sp_consensus_subspace::SubspaceApi;
-<span class="kw">use </span>sp_core::{Decode, Encode, H256};
+<span class="kw">use </span>sp_core::{Encode, H256};
 <span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
 <span class="kw">use </span>sp_domains::DomainId;
 <span class="kw">use </span>sp_messenger::messages::{ChainId, ChannelId};
@@ -542,10 +544,7 @@
 <span class="kw">use </span>sp_runtime::OpaqueExtrinsic;
 <span class="kw">use </span>sp_session::SessionKeys;
 <span class="kw">use </span>sp_transaction_pool::runtime_api::TaggedTransactionQueue;
-<span class="kw">use </span>std::fmt::{Debug, Display};
 <span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::marker::PhantomData;
-<span class="kw">use </span>std::str::FromStr;
 <span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>subspace_runtime_primitives::opaque::Block <span class="kw">as </span>CBlock;
 <span class="kw">use </span>subspace_runtime_primitives::Nonce;
@@ -554,18 +553,6 @@
 <span class="kw">use </span>substrate_test_client::{
     BlockchainEventsExt, RpcHandlersExt, RpcTransactionError, RpcTransactionOutput,
 };
-
-<span class="doccomment">/// Trait for convert keyring to account id
-</span><span class="kw">pub trait </span>FromKeyring {
-    <span class="doccomment">/// Convert keyring to account id
-    </span><span class="kw">fn </span>from_keyring(key: EcdsaKeyring) -&gt; <span class="self">Self</span>;
-}
-
-<span class="kw">impl </span>FromKeyring <span class="kw">for </span>AccountId20 {
-    <span class="kw">fn </span>from_keyring(key: EcdsaKeyring) -&gt; <span class="self">Self </span>{
-        key.to_account_id()
-    }
-}
 
 <span class="doccomment">/// The backend type used by the test service.
 </span><span class="kw">pub type </span>Backend = TFullBackend&lt;Block&gt;;
@@ -577,9 +564,10 @@
     domain_service::DomainOperator&lt;Block, CBlock, subspace_test_client::Client, RuntimeApi&gt;;
 
 <span class="doccomment">/// A generic domain node instance used for testing.
-</span><span class="kw">pub struct </span>DomainNode&lt;Runtime, RuntimeApi, AccountId&gt;
+</span><span class="kw">pub struct </span>DomainNode&lt;Runtime, RuntimeApi&gt;
 <span class="kw">where
-    </span>RuntimeApi: ConstructRuntimeApi&lt;Block, Client&lt;RuntimeApi&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
+    </span>Runtime: DomainRuntime,
+    RuntimeApi: ConstructRuntimeApi&lt;Block, Client&lt;RuntimeApi&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
     RuntimeApi::RuntimeApi: ApiExt&lt;Block&gt;
         + Metadata&lt;Block&gt;
         + BlockBuilder&lt;Block&gt;
@@ -588,17 +576,14 @@
         + DomainCoreApi&lt;Block&gt;
         + MessengerApi&lt;Block, NumberFor&lt;CBlock&gt;, &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash&gt;
         + TaggedTransactionQueue&lt;Block&gt;
-        + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
+        + AccountNonceApi&lt;Block, &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::AccountId, Nonce&gt;
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + RelayerApi&lt;Block, NumberFor&lt;Block&gt;, NumberFor&lt;CBlock&gt;, &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash&gt;,
-    AccountId: Encode + Decode + FromKeyring,
 {
     <span class="doccomment">/// The domain id
     </span><span class="kw">pub </span>domain_id: DomainId,
-    <span class="comment">// TODO: Make the signing scheme generic over domains, because Ecdsa only used in the EVM domain,
-    // other (incoming) domains may use Sr25519
-    </span><span class="doccomment">/// The node's account key
-    </span><span class="kw">pub </span>key: EcdsaKeyring,
+    <span class="doccomment">/// The node's account key
+    </span><span class="kw">pub </span>key: &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::Keyring,
     <span class="doccomment">/// TaskManager's instance.
     </span><span class="kw">pub </span>task_manager: TaskManager,
     <span class="doccomment">/// Client's instance.
@@ -620,12 +605,15 @@
     </span><span class="kw">pub </span>operator: DomainOperator&lt;RuntimeApi&gt;,
     <span class="doccomment">/// Sink to the node's tx pool
     </span><span class="kw">pub </span>tx_pool_sink: TracingUnboundedSender&lt;ChainMsg&gt;,
-    _phantom_data: PhantomData&lt;(Runtime, AccountId)&gt;,
 }
 
-<span class="kw">impl</span>&lt;Runtime, RuntimeApi, AccountId&gt; DomainNode&lt;Runtime, RuntimeApi, AccountId&gt;
+<span class="kw">impl</span>&lt;Runtime, RuntimeApi&gt; DomainNode&lt;Runtime, RuntimeApi&gt;
 <span class="kw">where
-    </span>Runtime: frame_system::Config&lt;Hash = H256&gt; + pallet_transaction_payment::Config + Send + Sync,
+    </span>Runtime: frame_system::Config&lt;Hash = H256&gt;
+        + pallet_transaction_payment::Config
+        + DomainRuntime
+        + Send
+        + Sync,
     Runtime::RuntimeCall:
         Dispatchable&lt;Info = DispatchInfo, PostInfo = PostDispatchInfo&gt; + Send + Sync,
     <span class="kw">crate</span>::BalanceOf&lt;Runtime&gt;: Send + Sync + From&lt;u64&gt; + sp_runtime::FixedPointOperand,
@@ -638,29 +626,17 @@
         + SessionKeys&lt;Block&gt;
         + DomainCoreApi&lt;Block&gt;
         + TaggedTransactionQueue&lt;Block&gt;
-        + AccountNonceApi&lt;Block, AccountId, Nonce&gt;
+        + AccountNonceApi&lt;Block, &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::AccountId, Nonce&gt;
         + TransactionPaymentRuntimeApi&lt;Block, Balance&gt;
         + MessengerApi&lt;Block, NumberFor&lt;CBlock&gt;, &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash&gt;
         + RelayerApi&lt;Block, NumberFor&lt;Block&gt;, NumberFor&lt;CBlock&gt;, &lt;CBlock <span class="kw">as </span>BlockT&gt;::Hash&gt;
-        + OnchainStateApi&lt;Block, AccountId, Balance&gt;
-        + EthereumRuntimeRPCApi&lt;Block&gt;,
-    AccountId: DeserializeOwned
-        + Encode
-        + Decode
-        + Clone
-        + Debug
-        + Display
-        + FromStr
-        + Sync
-        + Send
-        + FromKeyring
-        + <span class="lifetime">'static</span>,
+        + OnchainStateApi&lt;Block, &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::AccountId, Balance&gt;,
 {
     <span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="kw">async fn </span>build(
         domain_id: DomainId,
         tokio_handle: tokio::runtime::Handle,
-        key: EcdsaKeyring,
+        key: &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::Keyring,
         base_path: BasePath,
         domain_nodes: Vec&lt;MultiaddrWithPeerId&gt;,
         domain_nodes_exclusive: bool,
@@ -676,10 +652,11 @@
             .<span class="kw">await
             </span>.expect(<span class="string">"Failed to get domain instance data"</span>);
         <span class="kw">let </span>chain_spec = create_domain_spec(domain_instance_data.raw_genesis);
+        <span class="kw">let </span>key_seed = &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::to_seed(key);
         <span class="kw">let </span>domain_config = node_config(
             domain_id,
             tokio_handle.clone(),
-            key,
+            key_seed,
             domain_nodes,
             domain_nodes_exclusive,
             role.clone(),
@@ -714,7 +691,9 @@
             .xdm_gossip_worker_builder()
             .gossip_msg_sink();
 
-        <span class="kw">let </span>maybe_operator_id = role.is_authority().then_some(<span class="number">0</span>);
+        <span class="kw">let </span>maybe_operator_id = role
+            .is_authority()
+            .then_some(<span class="kw">if </span>domain_id == EVM_DOMAIN_ID { <span class="number">0 </span>} <span class="kw">else </span>{ <span class="number">1 </span>});
 
         <span class="kw">let </span>consensus_best_hash = mock_consensus_node.client.info().best_hash;
         <span class="kw">let </span>chain_constants = mock_consensus_node
@@ -744,10 +723,19 @@
             confirmation_depth_k: chain_constants.confirmation_depth_k(),
         };
 
-        <span class="kw">let </span>domain_node =
-            domain_service::new_full::&lt;<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, RuntimeApi, AccountId, <span class="kw">_</span>&gt;(domain_params)
-                .<span class="kw">await
-                </span>.expect(<span class="string">"failed to build domain node"</span>);
+        <span class="kw">let </span>domain_node = domain_service::new_full::&lt;
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            <span class="kw">_</span>,
+            RuntimeApi,
+            &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::AccountId,
+            <span class="kw">_</span>,
+        &gt;(domain_params)
+        .<span class="kw">await
+        </span>.expect(<span class="string">"failed to build domain node"</span>);
 
         <span class="kw">let </span>domain_service::NewFull {
             task_manager,
@@ -788,7 +776,6 @@
             rpc_handlers,
             operator,
             tx_pool_sink: domain_message_sink,
-            _phantom_data: Default::default(),
         }
     }
 
@@ -805,7 +792,7 @@
             .runtime_api()
             .account_nonce(
                 <span class="self">self</span>.client.info().best_hash,
-                &lt;AccountId <span class="kw">as </span>FromKeyring&gt;::from_keyring(<span class="self">self</span>.key),
+                &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::account_id(<span class="self">self</span>.key),
             )
             .expect(<span class="string">"Fail to get account nonce"</span>)
     }
@@ -890,7 +877,7 @@
     </span>}
 
     <span class="doccomment">/// Get the free balance of the given account
-    </span><span class="kw">pub fn </span>free_balance(<span class="kw-2">&amp;</span><span class="self">self</span>, account_id: AccountId) -&gt; Balance {
+    </span><span class="kw">pub fn </span>free_balance(<span class="kw-2">&amp;</span><span class="self">self</span>, account_id: &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::AccountId) -&gt; Balance {
         <span class="self">self</span>.client
             .runtime_api()
             .free_balance(<span class="self">self</span>.client.info().best_hash, account_id)
@@ -925,7 +912,6 @@
 <span class="doccomment">/// A builder to create a [`DomainNode`].
 </span><span class="kw">pub struct </span>DomainNodeBuilder {
     tokio_handle: tokio::runtime::Handle,
-    key: EcdsaKeyring,
     domain_nodes: Vec&lt;MultiaddrWithPeerId&gt;,
     domain_nodes_exclusive: bool,
     skip_empty_bundle_production: bool,
@@ -936,15 +922,9 @@
     <span class="doccomment">/// Create a new instance of `Self`.
     ///
     /// `tokio_handle` - The tokio handler to use.
-    /// `key` - The key that will be used to generate the name.
     /// `base_path` - Where databases will be stored.
-    </span><span class="kw">pub fn </span>new(
-        tokio_handle: tokio::runtime::Handle,
-        key: EcdsaKeyring,
-        base_path: BasePath,
-    ) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(tokio_handle: tokio::runtime::Handle, base_path: BasePath) -&gt; <span class="self">Self </span>{
         DomainNodeBuilder {
-            key,
             tokio_handle,
             domain_nodes: Vec::new(),
             domain_nodes_exclusive: <span class="bool-val">false</span>,
@@ -980,13 +960,34 @@
     </span><span class="kw">pub async fn </span>build_evm_node(
         <span class="self">self</span>,
         role: Role,
-        domain_id: DomainId,
+        key: EcdsaKeyring,
         mock_consensus_node: <span class="kw-2">&amp;mut </span>MockConsensusNode,
     ) -&gt; EvmDomainNode {
         DomainNode::build(
-            domain_id,
+            EVM_DOMAIN_ID,
             <span class="self">self</span>.tokio_handle,
-            <span class="self">self</span>.key,
+            key,
+            <span class="self">self</span>.base_path,
+            <span class="self">self</span>.domain_nodes,
+            <span class="self">self</span>.domain_nodes_exclusive,
+            <span class="self">self</span>.skip_empty_bundle_production,
+            role,
+            mock_consensus_node,
+        )
+        .<span class="kw">await
+    </span>}
+
+    <span class="doccomment">/// Build a evm domain node
+    </span><span class="kw">pub async fn </span>build_auto_id_node(
+        <span class="self">self</span>,
+        role: Role,
+        key: Sr25519Keyring,
+        mock_consensus_node: <span class="kw-2">&amp;mut </span>MockConsensusNode,
+    ) -&gt; AutoIdDomainNode {
+        DomainNode::build(
+            AUTO_ID_DOMAIN_ID,
+            <span class="self">self</span>.tokio_handle,
+            key,
             <span class="self">self</span>.base_path,
             <span class="self">self</span>.domain_nodes,
             <span class="self">self</span>.domain_nodes_exclusive,
@@ -1000,8 +1001,15 @@
 
 <span class="doccomment">/// The evm domain node
 </span><span class="kw">pub type </span>EvmDomainNode =
-    DomainNode&lt;evm_domain_test_runtime::Runtime, evm_domain_test_runtime::RuntimeApi, AccountId20&gt;;
+    DomainNode&lt;evm_domain_test_runtime::Runtime, evm_domain_test_runtime::RuntimeApi&gt;;
 
 <span class="doccomment">/// The evm domain client
 </span><span class="kw">pub type </span>EvmDomainClient = Client&lt;evm_domain_test_runtime::RuntimeApi&gt;;
+
+<span class="doccomment">/// The auto-id domain node
+</span><span class="kw">pub type </span>AutoIdDomainNode =
+    DomainNode&lt;auto_id_domain_test_runtime::Runtime, auto_id_domain_test_runtime::RuntimeApi&gt;;
+
+<span class="doccomment">/// The auto-id domain client
+</span><span class="kw">pub type </span>AutoIdDomainClient = Client&lt;auto_id_domain_test_runtime::RuntimeApi&gt;;
 </code></pre></div></section></main></body></html>

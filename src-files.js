@@ -1,5 +1,6 @@
 var srcIndex = new Map(JSON.parse('[\
 ["auto_id_domain_runtime",["",[],["lib.rs"]]],\
+["auto_id_domain_test_runtime",["",[],["lib.rs"]]],\
 ["cross_domain_message_gossip",["",[],["aux_schema.rs","gossip_worker.rs","lib.rs","message_listener.rs"]]],\
 ["domain_block_builder",["",[],["lib.rs"]]],\
 ["domain_block_preprocessor",["",[],["inherents.rs","lib.rs","stateless_runtime.rs"]]],\
@@ -65,7 +66,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["subspace_runtime",["",[],["domains.rs","fees.rs","lib.rs","object_mapping.rs","signed_extensions.rs"]]],\
 ["subspace_runtime_primitives",["",[],["lib.rs"]]],\
 ["subspace_service",["",[["sync_from_dsn",[],["import_blocks.rs","piece_validator.rs","segment_header_downloader.rs","snap_sync.rs","snap_sync_engine.rs"]]],["config.rs","dsn.rs","lib.rs","metrics.rs","rpc.rs","sync_from_dsn.rs","transaction_pool.rs"]]],\
-["subspace_test_client",["",[],["chain_spec.rs","domain_chain_spec.rs","lib.rs"]]],\
+["subspace_test_client",["",[],["auto_id_domain_chain_spec.rs","chain_spec.rs","evm_domain_chain_spec.rs","lib.rs"]]],\
 ["subspace_test_primitives",["",[],["lib.rs"]]],\
 ["subspace_test_runtime",["",[],["lib.rs"]]],\
 ["subspace_test_service",["",[],["lib.rs"]]],\

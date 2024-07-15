@@ -1,5 +1,6 @@
 (function() {var implementors = {
 "auto_id_domain_runtime":[["impl BuildGenesisConfig for <a class=\"struct\" href=\"auto_id_domain_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct auto_id_domain_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
+"auto_id_domain_test_runtime":[["impl BuildGenesisConfig for <a class=\"struct\" href=\"auto_id_domain_test_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct auto_id_domain_test_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
 "evm_domain_runtime":[["impl BuildGenesisConfig for <a class=\"struct\" href=\"evm_domain_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct evm_domain_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
 "evm_domain_test_runtime":[["impl BuildGenesisConfig for <a class=\"struct\" href=\"evm_domain_test_runtime/struct.RuntimeGenesisConfig.html\" title=\"struct evm_domain_test_runtime::RuntimeGenesisConfig\">RuntimeGenesisConfig</a>"]],
 "orml_vesting":[["impl&lt;T: <a class=\"trait\" href=\"orml_vesting/module/trait.Config.html\" title=\"trait orml_vesting::module::Config\">Config</a>&gt; BuildGenesisConfig for <a class=\"struct\" href=\"orml_vesting/module/struct.GenesisConfig.html\" title=\"struct orml_vesting::module::GenesisConfig\">GenesisConfig</a>&lt;T&gt;"]],

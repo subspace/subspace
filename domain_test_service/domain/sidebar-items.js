@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["DomainNode","DomainNodeBuilder"],"trait":["FromKeyring"],"type":["Backend","DomainOperator","EvmDomainClient","EvmDomainNode"]};
+window.SIDEBAR_ITEMS = {"struct":["DomainNode","DomainNodeBuilder"],"type":["AutoIdDomainClient","AutoIdDomainNode","Backend","DomainOperator","EvmDomainClient","EvmDomainNode"]};

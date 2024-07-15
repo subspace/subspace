@@ -304,6 +304,46 @@
 <a href="#304" id="304">304</a>
 <a href="#305" id="305">305</a>
 <a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright 2019-2021 Parity Technologies (UK) Ltd.
 // This file is part of Cumulus.
 
@@ -323,19 +363,15 @@
 </span><span class="doccomment">//! Crate used for testing with Domain.
 
 </span><span class="attr">#![feature(trait_upcasting)]
-#![warn(missing_docs)]
 
 </span><span class="kw">pub mod </span>chain_spec;
 <span class="kw">pub mod </span>domain;
 <span class="kw">pub mod </span>keyring;
 
-<span class="kw">pub use </span>keyring::Keyring <span class="kw">as </span>EcdsaKeyring;
-<span class="kw">pub use </span>sp_keyring::Sr25519Keyring;
-
 <span class="kw">use </span>domain_runtime_primitives::opaque::Block;
-<span class="kw">use </span>evm_domain_test_runtime::{Address, Signature};
 <span class="kw">use </span>frame_support::dispatch::{DispatchInfo, PostDispatchInfo};
 <span class="kw">use </span>frame_system::pallet_prelude::BlockNumberFor;
+<span class="kw">pub use </span>keyring::Keyring <span class="kw">as </span>EcdsaKeyring;
 <span class="kw">use </span>sc_network::config::{NonReservedPeerMode, TransportConfig};
 <span class="kw">use </span>sc_network::multiaddr;
 <span class="kw">use </span>sc_service::config::{
@@ -347,20 +383,27 @@
     BasePath, BlocksPruning, ChainSpec, Configuration <span class="kw">as </span>ServiceConfiguration,
     Error <span class="kw">as </span>ServiceError, Role,
 };
+<span class="kw">use </span>serde::de::DeserializeOwned;
 <span class="kw">use </span>sp_arithmetic::traits::SaturatedConversion;
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
-<span class="kw">use </span>sp_core::{ecdsa, keccak_256, Get, Pair, H256};
+<span class="kw">use </span>sp_core::{Get, H256};
 <span class="kw">use </span>sp_domains::DomainId;
-<span class="kw">use </span>sp_runtime::codec::Encode;
+<span class="kw">pub use </span>sp_keyring::Sr25519Keyring;
+<span class="kw">use </span>sp_runtime::codec::{Decode, Encode};
 <span class="kw">use </span>sp_runtime::generic;
 <span class="kw">use </span>sp_runtime::generic::SignedPayload;
 <span class="kw">use </span>sp_runtime::traits::Dispatchable;
+<span class="kw">use </span>std::fmt::{Debug, Display};
+<span class="kw">use </span>std::str::FromStr;
 
 <span class="kw">pub use </span>domain::<span class="kw-2">*</span>;
 <span class="kw">pub use </span>evm_domain_test_runtime;
 
-<span class="doccomment">/// The domain id of the genesis domain
-</span><span class="kw">pub const </span>GENESIS_DOMAIN_ID: DomainId = DomainId::new(<span class="number">0u32</span>);
+<span class="doccomment">/// The domain id of the evm domain
+</span><span class="kw">pub const </span>EVM_DOMAIN_ID: DomainId = DomainId::new(<span class="number">0u32</span>);
+
+<span class="doccomment">/// The domain id of the auto-id domain
+</span><span class="kw">pub const </span>AUTO_ID_DOMAIN_ID: DomainId = DomainId::new(<span class="number">1u32</span>);
 
 <span class="doccomment">/// Create a domain node `Configuration`.
 ///
@@ -371,7 +414,7 @@
 </span><span class="kw">pub fn </span>node_config(
     domain_id: DomainId,
     tokio_handle: tokio::runtime::Handle,
-    key: EcdsaKeyring,
+    key_seed: String,
     nodes: Vec&lt;MultiaddrWithPeerId&gt;,
     nodes_exclusive: bool,
     role: Role,
@@ -379,7 +422,6 @@
     chain_spec: Box&lt;<span class="kw">dyn </span>ChainSpec&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ServiceConfiguration, ServiceError&gt; {
     <span class="kw">let </span>root = base_path.path().to_path_buf();
-    <span class="kw">let </span>key_seed = key.to_seed();
 
     <span class="kw">let </span>domain_name = <span class="macro">format!</span>(<span class="string">"{domain_id:?}"</span>);
 
@@ -476,15 +518,15 @@
 );
 
 <span class="kw">type </span>UncheckedExtrinsicFor&lt;Runtime&gt; = generic::UncheckedExtrinsic&lt;
-    Address,
+    &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::Address,
     &lt;Runtime <span class="kw">as </span>frame_system::Config&gt;::RuntimeCall,
-    Signature,
+    &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::Signature,
     SignedExtraFor&lt;Runtime&gt;,
 &gt;;
 
 <span class="kw">type </span>BalanceOf&lt;T&gt; = &lt;&lt;T <span class="kw">as </span>pallet_transaction_payment::Config&gt;::OnChargeTransaction <span class="kw">as </span>pallet_transaction_payment::OnChargeTransaction&lt;T&gt;&gt;::Balance;
 
-<span class="kw">fn </span>construct_extrinsic_raw_payload&lt;Runtime, Client&gt;(
+<span class="kw">pub fn </span>construct_extrinsic_raw_payload&lt;Runtime, Client&gt;(
     client: <span class="kw">impl </span>AsRef&lt;Client&gt;,
     function: &lt;Runtime <span class="kw">as </span>frame_system::Config&gt;::RuntimeCall,
     immortal: bool,
@@ -536,49 +578,87 @@
     )
 }
 
-<span class="doccomment">/// Construct a generic extrinsic signed by custom key
-</span><span class="kw">pub fn </span>construct_extrinsic_generic_with_custom_key&lt;Runtime, Client&gt;(
-    client: <span class="kw">impl </span>AsRef&lt;Client&gt;,
-    function: <span class="kw">impl </span>Into&lt;&lt;Runtime <span class="kw">as </span>frame_system::Config&gt;::RuntimeCall&gt;,
-    caller: ecdsa::Pair,
-    immortal: bool,
-    nonce: u32,
-    tip: BalanceOf&lt;Runtime&gt;,
-) -&gt; UncheckedExtrinsicFor&lt;Runtime&gt;
-<span class="kw">where
-    </span>Runtime: frame_system::Config&lt;Hash = H256&gt; + pallet_transaction_payment::Config + Send + Sync,
-    Runtime::RuntimeCall:
-        Dispatchable&lt;Info = DispatchInfo, PostInfo = PostDispatchInfo&gt; + Send + Sync,
-    BalanceOf&lt;Runtime&gt;: Send + Sync + From&lt;u64&gt; + sp_runtime::FixedPointOperand,
-    u64: From&lt;BlockNumberFor&lt;Runtime&gt;&gt;,
-    Client: HeaderBackend&lt;Block&gt;,
-{
-    <span class="kw">let </span>function = function.into();
-    <span class="kw">let </span>(raw_payload, extra) =
-        construct_extrinsic_raw_payload(client, function.clone(), immortal, nonce, tip);
-    <span class="kw">let </span>signature = raw_payload.using_encoded(|e| {
-        <span class="kw">let </span>msg = keccak_256(e);
-        caller.sign_prehashed(<span class="kw-2">&amp;</span>msg)
-    });
-    UncheckedExtrinsicFor::&lt;Runtime&gt;::new_signed(
-        function.clone(),
-        caller.public().into(),
-        Signature::new(signature),
-        extra,
-    )
+<span class="kw">pub trait </span>DomainRuntime {
+    <span class="kw">type </span>Keyring: Copy;
+    <span class="kw">type </span>AccountId: DeserializeOwned
+        + Encode
+        + Decode
+        + Clone
+        + Debug
+        + Display
+        + FromStr
+        + Sync
+        + Send
+        + <span class="lifetime">'static</span>;
+    <span class="kw">type </span>Address: Encode + Decode;
+    <span class="kw">type </span>Signature: Encode + Decode;
+    <span class="kw">fn </span>sign(key: <span class="self">Self</span>::Keyring, payload: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="self">Self</span>::Signature;
+    <span class="kw">fn </span>account_id(key: <span class="self">Self</span>::Keyring) -&gt; <span class="self">Self</span>::AccountId;
+    <span class="kw">fn </span>address(key: <span class="self">Self</span>::Keyring) -&gt; <span class="self">Self</span>::Address;
+    <span class="kw">fn </span>to_seed(key: <span class="self">Self</span>::Keyring) -&gt; String;
+}
+
+<span class="kw">impl </span>DomainRuntime <span class="kw">for </span>evm_domain_test_runtime::Runtime {
+    <span class="kw">type </span>Keyring = EcdsaKeyring;
+    <span class="kw">type </span>AccountId = evm_domain_test_runtime::AccountId;
+    <span class="kw">type </span>Address = evm_domain_test_runtime::Address;
+    <span class="kw">type </span>Signature = evm_domain_test_runtime::Signature;
+
+    <span class="kw">fn </span>sign(key: <span class="self">Self</span>::Keyring, payload: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="self">Self</span>::Signature {
+        evm_domain_test_runtime::Signature::new(key.sign(payload))
+    }
+
+    <span class="kw">fn </span>account_id(key: <span class="self">Self</span>::Keyring) -&gt; <span class="self">Self</span>::AccountId {
+        key.to_account_id()
+    }
+
+    <span class="kw">fn </span>address(key: <span class="self">Self</span>::Keyring) -&gt; <span class="self">Self</span>::Address {
+        key.to_account_id()
+    }
+
+    <span class="kw">fn </span>to_seed(key: <span class="self">Self</span>::Keyring) -&gt; String {
+        key.to_seed()
+    }
+}
+
+<span class="kw">impl </span>DomainRuntime <span class="kw">for </span>auto_id_domain_test_runtime::Runtime {
+    <span class="kw">type </span>Keyring = Sr25519Keyring;
+    <span class="kw">type </span>AccountId = auto_id_domain_test_runtime::AccountId;
+    <span class="kw">type </span>Address = auto_id_domain_test_runtime::Address;
+    <span class="kw">type </span>Signature = auto_id_domain_test_runtime::Signature;
+
+    <span class="kw">fn </span>sign(key: <span class="self">Self</span>::Keyring, payload: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="self">Self</span>::Signature {
+        key.sign(payload).into()
+    }
+
+    <span class="kw">fn </span>account_id(key: <span class="self">Self</span>::Keyring) -&gt; <span class="self">Self</span>::AccountId {
+        key.to_account_id()
+    }
+
+    <span class="kw">fn </span>address(key: <span class="self">Self</span>::Keyring) -&gt; <span class="self">Self</span>::Address {
+        sp_runtime::MultiAddress::Id(key.to_account_id())
+    }
+
+    <span class="kw">fn </span>to_seed(key: <span class="self">Self</span>::Keyring) -&gt; String {
+        key.to_seed()
+    }
 }
 
 <span class="doccomment">/// Construct an extrinsic that can be applied to the test runtime.
 </span><span class="kw">pub fn </span>construct_extrinsic_generic&lt;Runtime, Client&gt;(
     client: <span class="kw">impl </span>AsRef&lt;Client&gt;,
     function: <span class="kw">impl </span>Into&lt;&lt;Runtime <span class="kw">as </span>frame_system::Config&gt;::RuntimeCall&gt;,
-    caller: EcdsaKeyring,
+    caller: &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::Keyring,
     immortal: bool,
     nonce: u32,
     tip: BalanceOf&lt;Runtime&gt;,
 ) -&gt; UncheckedExtrinsicFor&lt;Runtime&gt;
 <span class="kw">where
-    </span>Runtime: frame_system::Config&lt;Hash = H256&gt; + pallet_transaction_payment::Config + Send + Sync,
+    </span>Runtime: frame_system::Config&lt;Hash = H256&gt;
+        + pallet_transaction_payment::Config
+        + DomainRuntime
+        + Send
+        + Sync,
     Runtime::RuntimeCall:
         Dispatchable&lt;Info = DispatchInfo, PostInfo = PostDispatchInfo&gt; + Send + Sync,
     BalanceOf&lt;Runtime&gt;: Send + Sync + From&lt;u64&gt; + sp_runtime::FixedPointOperand,
@@ -588,13 +668,9 @@
     <span class="kw">let </span>function = function.into();
     <span class="kw">let </span>(raw_payload, extra) =
         construct_extrinsic_raw_payload(client, function.clone(), immortal, nonce, tip);
-    <span class="kw">let </span>signature = raw_payload.using_encoded(|e| caller.sign(e));
-    UncheckedExtrinsicFor::&lt;Runtime&gt;::new_signed(
-        function,
-        caller.to_account_id(),
-        Signature::new(signature),
-        extra,
-    )
+    <span class="kw">let </span>signature = raw_payload.using_encoded(|e| &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::sign(caller, e));
+    <span class="kw">let </span>address = &lt;Runtime <span class="kw">as </span>DomainRuntime&gt;::address(caller);
+    UncheckedExtrinsicFor::&lt;Runtime&gt;::new_signed(function, address, signature, extra)
 }
 
 <span class="doccomment">/// Construct an unsigned extrinsic that can be applied to the test runtime.
@@ -602,7 +678,11 @@
     function: <span class="kw">impl </span>Into&lt;&lt;Runtime <span class="kw">as </span>frame_system::Config&gt;::RuntimeCall&gt;,
 ) -&gt; UncheckedExtrinsicFor&lt;Runtime&gt;
 <span class="kw">where
-    </span>Runtime: frame_system::Config&lt;Hash = H256&gt; + pallet_transaction_payment::Config + Send + Sync,
+    </span>Runtime: frame_system::Config&lt;Hash = H256&gt;
+        + pallet_transaction_payment::Config
+        + DomainRuntime
+        + Send
+        + Sync,
     Runtime::RuntimeCall:
         Dispatchable&lt;Info = DispatchInfo, PostInfo = PostDispatchInfo&gt; + Send + Sync,
     BalanceOf&lt;Runtime&gt;: Send + Sync + From&lt;u64&gt; + sp_runtime::FixedPointOperand,
