@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["CpuPlotter"],"type":["HandlerFn3"]};
+window.SIDEBAR_ITEMS = {"mod":["metrics"],"struct":["CpuPlotter"],"type":["HandlerFn3"]};

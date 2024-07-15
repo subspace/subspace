@@ -396,6 +396,36 @@
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
 <a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Farming-related utilities
 //!
 //! These utilities do not expose the whole farming workflow, but rather small bits of it that can
@@ -407,6 +437,7 @@
     AuditingDetails, FarmingError, FarmingNotification, ProvingDetails, ProvingResult,
 };
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
+<span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::metrics::SingleDiskFarmMetrics;
 <span class="kw">use </span><span class="kw">crate</span>::single_disk_farm::Handlers;
 <span class="kw">use </span>async_lock::{Mutex <span class="kw">as </span>AsyncMutex, RwLock <span class="kw">as </span>AsyncRwLock};
 <span class="kw">use </span>futures::channel::mpsc;
@@ -599,6 +630,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) thread_pool: ThreadPool,
     <span class="kw">pub</span>(<span class="kw">super</span>) read_sector_record_chunks_mode: ReadSectorRecordChunksMode,
     <span class="kw">pub</span>(<span class="kw">super</span>) global_mutex: Arc&lt;AsyncMutex&lt;()&gt;&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) metrics: <span class="prelude-ty">Option</span>&lt;Arc&lt;SingleDiskFarmMetrics&gt;&gt;,
 }
 
 <span class="doccomment">/// Starts farming process.
@@ -627,6 +659,7 @@
         thread_pool,
         read_sector_record_chunks_mode,
         global_mutex,
+        metrics,
     } = farming_options;
 
     <span class="kw">let </span>farmer_app_info = node_client
@@ -683,12 +716,18 @@
                 a_solution_distance.cmp(<span class="kw-2">&amp;</span>b_solution_distance)
             });
 
-            handlers
-                .farming_notification
-                .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Auditing(AuditingDetails {
-                    sectors_count: sectors_metadata.len() <span class="kw">as </span>SectorIndex,
-                    time: start.elapsed(),
-                }));
+            {
+                <span class="kw">let </span>time = start.elapsed();
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span>metrics {
+                    metrics.auditing_time.observe(time.as_secs_f64());
+                }
+                handlers
+                    .farming_notification
+                    .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Auditing(AuditingDetails {
+                        sectors_count: sectors_metadata.len() <span class="kw">as </span>SectorIndex,
+                        time,
+                    }));
+            }
 
             <span class="comment">// Take mutex and hold until proving end to make sure nothing else major happens at the
             // same time
@@ -707,6 +746,10 @@
                     <span class="kw">let </span>solution = <span class="kw">match </span>maybe_solution {
                         <span class="prelude-val">Ok</span>(solution) =&gt; solution,
                         <span class="prelude-val">Err</span>(error) =&gt; {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span>metrics {
+                                metrics
+                                    .observe_proving_time(<span class="kw-2">&amp;</span>start.elapsed(), ProvingResult::Failed);
+                            }
                             <span class="macro">error!</span>(%slot, %sector_index, %error, <span class="string">"Failed to prove"</span>);
                             <span class="comment">// Do not error completely as disk corruption or other reasons why
                             // proving might fail
@@ -718,20 +761,26 @@
                     <span class="macro">debug!</span>(%slot, %sector_index, <span class="string">"Solution found"</span>);
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>solution, <span class="string">"Solution found"</span>);
 
-                    <span class="kw">if </span>start.elapsed() &gt;= farming_timeout {
-                        handlers
-                            .farming_notification
-                            .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Proving(ProvingDetails {
-                                result: ProvingResult::Timeout,
-                                time: start.elapsed(),
-                            }));
-                        <span class="macro">warn!</span>(
-                            %slot,
-                            %sector_index,
-                            <span class="string">"Proving for solution skipped due to farming time limit"</span>,
-                        );
+                    {
+                        <span class="kw">let </span>time = start.elapsed();
+                        <span class="kw">if </span>time &gt;= farming_timeout {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span>metrics {
+                                metrics.observe_proving_time(<span class="kw-2">&amp;</span>time, ProvingResult::Timeout);
+                            }
+                            handlers.farming_notification.call_simple(
+                                <span class="kw-2">&amp;</span>FarmingNotification::Proving(ProvingDetails {
+                                    result: ProvingResult::Timeout,
+                                    time,
+                                }),
+                            );
+                            <span class="macro">warn!</span>(
+                                %slot,
+                                %sector_index,
+                                <span class="string">"Proving for solution skipped due to farming time limit"</span>,
+                            );
 
-                        <span class="kw">break </span><span class="lifetime">'solutions_processing</span>;
+                            <span class="kw">break </span><span class="lifetime">'solutions_processing</span>;
+                        }
                     }
 
                     <span class="kw">let </span>response = SolutionResponse {
@@ -742,11 +791,15 @@
                     handlers.solution.call_simple(<span class="kw-2">&amp;</span>response);
 
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = node_client.submit_solution_response(response).<span class="kw">await </span>{
+                        <span class="kw">let </span>time = start.elapsed();
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span>metrics {
+                            metrics.observe_proving_time(<span class="kw-2">&amp;</span>time, ProvingResult::Rejected);
+                        }
                         handlers
                             .farming_notification
                             .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Proving(ProvingDetails {
                                 result: ProvingResult::Rejected,
-                                time: start.elapsed(),
+                                time,
                             }));
                         <span class="macro">warn!</span>(
                             %slot,
@@ -757,11 +810,15 @@
                         <span class="kw">break </span><span class="lifetime">'solutions_processing</span>;
                     }
 
+                    <span class="kw">let </span>time = start.elapsed();
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span>metrics {
+                        metrics.observe_proving_time(<span class="kw-2">&amp;</span>time, ProvingResult::Success);
+                    }
                     handlers
                         .farming_notification
                         .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::Proving(ProvingDetails {
                             result: ProvingResult::Success,
-                            time: start.elapsed(),
+                            time,
                         }));
                     start = Instant::now();
                 }
@@ -784,6 +841,9 @@
                 <span class="string">"Non-fatal farming error"
             </span>);
 
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span>metrics {
+                metrics.note_farming_error(<span class="kw-2">&amp;</span>error);
+            }
             handlers
                 .farming_notification
                 .call_simple(<span class="kw-2">&amp;</span>FarmingNotification::NonFatalError(Arc::new(error)));
