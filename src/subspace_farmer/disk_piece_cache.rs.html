@@ -399,11 +399,51 @@
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
 <a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Disk piece cache implementation
 
-</span><span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>metrics;
+<span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests;
 
+<span class="kw">use </span><span class="kw">crate</span>::disk_piece_cache::metrics::DiskPieceCacheMetrics;
 <span class="kw">use </span><span class="kw">crate</span>::farm;
 <span class="kw">use </span><span class="kw">crate</span>::farm::{FarmError, PieceCacheId, PieceCacheOffset};
 <span class="attr">#[cfg(windows)]
@@ -415,6 +455,7 @@
 <span class="kw">use </span>futures::channel::mpsc;
 <span class="kw">use </span>futures::{stream, SinkExt, Stream, StreamExt};
 <span class="kw">use </span>parking_lot::Mutex;
+<span class="kw">use </span>prometheus_client::registry::Registry;
 <span class="attr">#[cfg(not(windows))]
 </span><span class="kw">use </span>std::fs::{File, OpenOptions};
 <span class="kw">use </span>std::path::Path;
@@ -468,6 +509,7 @@
     <span class="attr">#[cfg(windows)]
     </span>file: UnbufferedIoFileWindows,
     max_num_elements: u32,
+    metrics: <span class="prelude-ty">Option</span>&lt;DiskPieceCacheMetrics&gt;,
 }
 
 <span class="doccomment">/// Dedicated piece cache stored on one disk, is used both to accelerate DSN queries and to plot
@@ -583,7 +625,12 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>FILE_NAME: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"piece_cache.bin"</span>;
 
     <span class="doccomment">/// Open cache, capacity is measured in elements of [`DiskPieceCache::element_size()`] size
-    </span><span class="kw">pub fn </span>open(directory: <span class="kw-2">&amp;</span>Path, capacity: u32) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiskPieceCacheError&gt; {
+    </span><span class="kw">pub fn </span>open(
+        directory: <span class="kw-2">&amp;</span>Path,
+        capacity: u32,
+        id: <span class="prelude-ty">Option</span>&lt;PieceCacheId&gt;,
+        registry: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>Registry&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiskPieceCacheError&gt; {
         <span class="kw">if </span>capacity == <span class="number">0 </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(DiskPieceCacheError::ZeroCapacity);
         }
@@ -615,12 +662,16 @@
             </span>file.set_len(expected_size)<span class="question-mark">?</span>;
         }
 
+        <span class="comment">// ID for cache is ephemeral unless provided explicitly
+        </span><span class="kw">let </span>id = id.unwrap_or_else(PieceCacheId::new);
+        <span class="kw">let </span>metrics = registry.map(|registry| DiskPieceCacheMetrics::new(registry, <span class="kw-2">&amp;</span>id, capacity));
+
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             inner: Arc::new(Inner {
-                <span class="comment">// ID for cache is ephemeral
-                </span>id: PieceCacheId::new(),
+                id,
                 file,
                 max_num_elements: capacity,
+                metrics,
             }),
         })
     }
@@ -638,6 +689,15 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
     ) -&gt; <span class="kw">impl </span>ExactSizeIterator&lt;Item = (PieceCacheOffset, <span class="prelude-ty">Option</span>&lt;PieceIndex&gt;)&gt; + <span class="lifetime">'_ </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>element = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize];
+        <span class="kw">let </span>count_total = <span class="self">self
+            </span>.inner
+            .metrics
+            .as_ref()
+            .map(|metrics| {
+                metrics.contents.inc();
+                metrics.capacity_used.get() == <span class="number">0
+            </span>})
+            .unwrap_or_default();
         <span class="kw">let </span><span class="kw-2">mut </span>current_skip = <span class="number">0</span>;
 
         <span class="comment">// TODO: Parallelize or read in larger batches
@@ -651,6 +711,9 @@
                     <span class="kw">if </span>maybe_piece_index.is_none() {
                         current_skip += <span class="number">1</span>;
                     } <span class="kw">else </span>{
+                        <span class="kw">if </span>count_total &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.metrics {
+                            metrics.capacity_used.inc();
+                        }
                         current_skip = <span class="number">0</span>;
                     }
 
@@ -685,6 +748,13 @@
             });
         }
 
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.metrics {
+            metrics.write_piece.inc();
+            <span class="kw">let </span>capacity_used = i64::from(offset + <span class="number">1</span>);
+            <span class="kw">if </span>metrics.capacity_used.get() != capacity_used {
+                metrics.capacity_used.set(capacity_used);
+            }
+        }
         <span class="kw">let </span>element_offset = u64::from(offset) * u64::from(<span class="self">Self</span>::element_size());
 
         <span class="kw">let </span>piece_index_bytes = piece_index.to_bytes();
@@ -721,6 +791,9 @@
             });
         }
 
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.metrics {
+            metrics.read_piece_index.inc();
+        }
         <span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span><span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">Self</span>::element_size() <span class="kw">as </span>usize])
     }
 
@@ -743,6 +816,9 @@
             });
         }
 
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(metrics) = <span class="kw-2">&amp;</span><span class="self">self</span>.inner.metrics {
+            metrics.read_piece.inc();
+        }
         <span class="kw">let </span><span class="kw-2">mut </span>element = BytesMut::zeroed(<span class="self">Self</span>::element_size() <span class="kw">as </span>usize);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(piece_index) = <span class="self">self</span>.read_piece_internal(offset, <span class="kw-2">&amp;mut </span>element)<span class="question-mark">? </span>{
             <span class="kw">let </span>element = element.freeze();

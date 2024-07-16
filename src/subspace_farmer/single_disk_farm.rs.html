@@ -2478,6 +2478,26 @@
 <a href="#2478" id="2478">2478</a>
 <a href="#2479" id="2479">2479</a>
 <a href="#2480" id="2480">2480</a>
+<a href="#2481" id="2481">2481</a>
+<a href="#2482" id="2482">2482</a>
+<a href="#2483" id="2483">2483</a>
+<a href="#2484" id="2484">2484</a>
+<a href="#2485" id="2485">2485</a>
+<a href="#2486" id="2486">2486</a>
+<a href="#2487" id="2487">2487</a>
+<a href="#2488" id="2488">2488</a>
+<a href="#2489" id="2489">2489</a>
+<a href="#2490" id="2490">2490</a>
+<a href="#2491" id="2491">2491</a>
+<a href="#2492" id="2492">2492</a>
+<a href="#2493" id="2493">2493</a>
+<a href="#2494" id="2494">2494</a>
+<a href="#2495" id="2495">2495</a>
+<a href="#2496" id="2496">2496</a>
+<a href="#2497" id="2497">2497</a>
+<a href="#2498" id="2498">2498</a>
+<a href="#2499" id="2499">2499</a>
+<a href="#2500" id="2500">2500</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Primary [`Farm`] implementation that deals with hardware directly
 //!
 //! Single disk farm is an abstraction that contains an identity, associated plot with metadata and
@@ -2497,8 +2517,8 @@
 
 <span class="kw">use </span><span class="kw">crate</span>::disk_piece_cache::{DiskPieceCache, DiskPieceCacheError};
 <span class="kw">use </span><span class="kw">crate</span>::farm::{
-    Farm, FarmId, FarmingError, FarmingNotification, HandlerFn, PieceReader, PlottedSectors,
-    SectorUpdate,
+    Farm, FarmId, FarmingError, FarmingNotification, HandlerFn, PieceCacheId, PieceReader,
+    PlottedSectors, SectorUpdate,
 };
 <span class="kw">use </span><span class="kw">crate</span>::node_client::NodeClient;
 <span class="kw">use </span><span class="kw">crate</span>::plotter::Plotter;
@@ -2566,6 +2586,7 @@
 <span class="kw">use </span>thiserror::Error;
 <span class="kw">use </span>tokio::runtime::Handle;
 <span class="kw">use </span>tokio::sync::{broadcast, Barrier, Semaphore};
+<span class="kw">use </span>tokio::task;
 <span class="kw">use </span>tracing::{debug, error, info, trace, warn, Instrument, Span};
 
 <span class="comment">// Refuse to compile on non-64-bit platforms, offsets may fail on those when converting from u64 to
@@ -3164,7 +3185,7 @@
     metadata_header: PlotMetadataHeader,
     target_sector_count: u16,
     sectors_metadata: Arc&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
-    piece_cache: SingleDiskPieceCache,
+    piece_cache_capacity: u32,
     plot_cache: DiskPlotCache,
 }
 
@@ -3319,9 +3340,35 @@
             metadata_header,
             target_sector_count,
             sectors_metadata,
-            piece_cache,
+            piece_cache_capacity,
             plot_cache,
         } = single_disk_farm_init;
+
+        <span class="kw">let </span>piece_cache = {
+            <span class="comment">// Convert farm ID into cache ID for single disk farm
+            </span><span class="kw">let </span>FarmId::Ulid(id) = <span class="kw-2">*</span>single_disk_farm_info.id();
+            <span class="kw">let </span>id = PieceCacheId::Ulid(id);
+
+            SingleDiskPieceCache::new(
+                id,
+                <span class="kw">if </span>piece_cache_capacity == <span class="number">0 </span>{
+                    <span class="prelude-val">None
+                </span>} <span class="kw">else </span>{
+                    <span class="prelude-val">Some</span>(task::block_in_place(|| {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(registry) = registry {
+                            DiskPieceCache::open(
+                                <span class="kw-2">&amp;</span>directory,
+                                piece_cache_capacity,
+                                <span class="prelude-val">Some</span>(id),
+                                <span class="prelude-val">Some</span>(<span class="kw-2">*</span>registry.lock()),
+                            )
+                        } <span class="kw">else </span>{
+                            DiskPieceCache::open(<span class="kw-2">&amp;</span>directory, piece_cache_capacity, <span class="prelude-val">Some</span>(id), <span class="prelude-val">None</span>)
+                        }
+                    })<span class="question-mark">?</span>)
+                },
+            )
+        };
 
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>single_disk_farm_info.public_key();
         <span class="kw">let </span>pieces_in_sector = single_disk_farm_info.pieces_in_sector();
@@ -3523,9 +3570,10 @@
 
         tasks.push(Box::pin({
             <span class="kw">let </span>node_client = node_client.clone();
+            <span class="kw">let </span>metrics = metrics.clone();
 
             <span class="kw">async move </span>{
-                slot_notification_forwarder(<span class="kw-2">&amp;</span>node_client, slot_info_forwarder_sender)
+                slot_notification_forwarder(<span class="kw-2">&amp;</span>node_client, slot_info_forwarder_sender, metrics)
                     .<span class="kw">await
                     </span>.map_err(BackgroundTaskError::Farming)
             }
@@ -3877,7 +3925,7 @@
             plot_file_size.div_ceil(DISK_SECTOR_SIZE <span class="kw">as </span>u64) * DISK_SECTOR_SIZE <span class="kw">as </span>u64;
 
         <span class="comment">// Remaining space will be used for caching purposes
-        </span><span class="kw">let </span>cache_capacity = <span class="kw">if </span>cache_percentage &gt; <span class="number">0 </span>{
+        </span><span class="kw">let </span>piece_cache_capacity = <span class="kw">if </span>cache_percentage &gt; <span class="number">0 </span>{
             <span class="kw">let </span>cache_space = allocated_space
                 - fixed_space_usage
                 - plot_file_size
@@ -4033,14 +4081,6 @@
 
         <span class="kw">let </span>plot_file = Arc::new(plot_file);
 
-        <span class="kw">let </span>piece_cache = SingleDiskPieceCache::new(
-            <span class="kw-2">*</span>single_disk_farm_info.id(),
-            <span class="kw">if </span>cache_capacity == <span class="number">0 </span>{
-                <span class="prelude-val">None
-            </span>} <span class="kw">else </span>{
-                <span class="prelude-val">Some</span>(DiskPieceCache::open(directory, cache_capacity)<span class="question-mark">?</span>)
-            },
-        );
         <span class="kw">let </span>plot_cache = DiskPlotCache::new(
             <span class="kw-2">&amp;</span>plot_file,
             <span class="kw-2">&amp;</span>sectors_metadata,
@@ -4057,7 +4097,7 @@
             metadata_header,
             target_sector_count,
             sectors_metadata,
-            piece_cache,
+            piece_cache_capacity,
             plot_cache,
         })
     }
