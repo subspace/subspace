@@ -326,6 +326,23 @@
 <a href="#326" id="326">326</a>
 <a href="#327" id="327">327</a>
 <a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Plot cache for single disk farm
 
 </span><span class="attr">#[cfg(test)]
@@ -384,6 +401,7 @@
     </span>file: Weak&lt;UnbufferedIoFileWindows&gt;,
     sectors_metadata: Weak&lt;AsyncRwLock&lt;Vec&lt;SectorMetadataChecksummed&gt;&gt;&gt;,
     cached_pieces: Arc&lt;RwLock&lt;CachedPieces&gt;&gt;,
+    target_sector_count: SectorIndex,
     sector_size: u64,
 }
 
@@ -465,6 +483,7 @@
             file: Arc::downgrade(file),
             sectors_metadata: Arc::downgrade(sectors_metadata),
             cached_pieces: Arc::new(RwLock::new(cached_pieces)),
+            target_sector_count,
             sector_size,
         }
     }
@@ -532,14 +551,20 @@
 
         <span class="kw">let </span>element_offset = u64::from(offset) * u64::from(<span class="self">Self</span>::element_size());
         <span class="kw">let </span>sectors_metadata = sectors_metadata.read().<span class="kw">await</span>;
-        <span class="kw">let </span>plotted_bytes = <span class="self">self</span>.sector_size * sectors_metadata.len() <span class="kw">as </span>u64;
+        <span class="kw">let </span>plotted_sectors_count = sectors_metadata.len() <span class="kw">as </span>SectorIndex;
+        <span class="kw">let </span>plotted_bytes = <span class="self">self</span>.sector_size * u64::from(plotted_sectors_count);
 
         <span class="comment">// Make sure offset is after anything that is already plotted
         </span><span class="kw">if </span>element_offset &lt; plotted_bytes {
             <span class="comment">// Just to be safe, avoid any overlap of write locks
             </span>drop(sectors_metadata);
+            <span class="kw">let </span><span class="kw-2">mut </span>cached_pieces = <span class="self">self</span>.cached_pieces.write();
             <span class="comment">// No space to store more pieces anymore
-            </span><span class="self">self</span>.cached_pieces.write().next_offset.take();
+            </span>cached_pieces.next_offset.take();
+            <span class="kw">if </span>plotted_sectors_count == <span class="self">self</span>.target_sector_count {
+                <span class="comment">// Free allocated memory once fully plotted
+                </span>mem::take(<span class="kw-2">&amp;mut </span>cached_pieces.map);
+            }
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
         }
 
@@ -581,26 +606,18 @@
         <span class="kw">let </span>offset = <span class="self">self</span>.cached_pieces.read().map.get(key).copied()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>file = <span class="self">self</span>.file.upgrade()<span class="question-mark">?</span>;
-        <span class="kw">let </span>cached_pieces = Arc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.cached_pieces);
-        <span class="kw">let </span>key = key.clone();
 
         <span class="kw">let </span>read_fn = <span class="kw">move </span>|| {
             <span class="kw">let </span><span class="kw-2">mut </span>element = BytesMut::zeroed(<span class="self">Self</span>::element_size() <span class="kw">as </span>usize);
-            <span class="kw">match </span><span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span>file, offset, <span class="kw-2">&amp;mut </span>element) {
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(_piece_index)) =&gt; {
-                    <span class="kw">let </span>element = element.freeze();
-                    <span class="kw">let </span>piece = Piece::try_from(
-                        element.slice_ref(<span class="kw-2">&amp;</span>element[PieceIndex::SIZE..][..Piece::SIZE]),
-                    )
-                    .expect(<span class="string">"Correct length; qed"</span>);
-                    <span class="prelude-val">Some</span>(piece)
-                }
-                <span class="kw">_ </span>=&gt; {
-                    <span class="comment">// Remove entry just in case it was overridden with a sector already
-                    </span>cached_pieces.write().map.remove(<span class="kw-2">&amp;</span>key);
-                    <span class="prelude-val">None
-                </span>}
-            }
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(_piece_index)) = <span class="self">Self</span>::read_piece_internal(<span class="kw-2">&amp;</span>file, offset, <span class="kw-2">&amp;mut </span>element) {
+                <span class="kw">let </span>element = element.freeze();
+                <span class="kw">let </span>piece =
+                    Piece::try_from(element.slice_ref(<span class="kw-2">&amp;</span>element[PieceIndex::SIZE..][..Piece::SIZE]))
+                        .expect(<span class="string">"Correct length; qed"</span>);
+                <span class="prelude-val">Some</span>(piece)
+            } <span class="kw">else </span>{
+                <span class="prelude-val">None
+            </span>}
         };
         <span class="comment">// TODO: On Windows spawning blocking task that allows concurrent reads causes huge memory
         //  usage. No idea why it happens, but not spawning anything at all helps for some reason.
@@ -608,7 +625,7 @@
         //  (Nazar).
         //  See https://github.com/subspace/subspace/issues/2813 and linked forum post for details.
         //  This TODO exists in multiple files
-        </span><span class="kw">if </span><span class="macro">cfg!</span>(windows) {
+        </span><span class="kw">let </span>maybe_piece = <span class="kw">if </span><span class="macro">cfg!</span>(windows) {
             task::block_in_place(read_fn)
         } <span class="kw">else </span>{
             <span class="kw">let </span>read_fut = task::spawn_blocking(read_fn);
@@ -616,7 +633,24 @@
             AsyncJoinOnDrop::new(read_fut, <span class="bool-val">false</span>)
                 .<span class="kw">await
                 </span>.unwrap_or_default()
+        };
+
+        <span class="kw">if </span>maybe_piece.is_none()
+            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(sectors_metadata) = <span class="self">self</span>.sectors_metadata.upgrade()
+        {
+            <span class="kw">let </span>plotted_sectors_count = sectors_metadata.read().<span class="kw">await</span>.len() <span class="kw">as </span>SectorIndex;
+
+            <span class="kw">let </span><span class="kw-2">mut </span>cached_pieces = <span class="self">self</span>.cached_pieces.write();
+            <span class="kw">if </span>plotted_sectors_count == <span class="self">self</span>.target_sector_count {
+                <span class="comment">// Free allocated memory once fully plotted
+                </span>mem::take(<span class="kw-2">&amp;mut </span>cached_pieces.map);
+            } <span class="kw">else </span>{
+                <span class="comment">// Remove entry just in case it was overridden with a sector already
+                </span>cached_pieces.map.remove(key);
+            }
         }
+
+        maybe_piece
     }
 
     <span class="kw">fn </span>read_piece_internal(
