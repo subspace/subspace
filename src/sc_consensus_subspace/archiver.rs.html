@@ -1049,29 +1049,6 @@
 <a href="#1049" id="1049">1049</a>
 <a href="#1050" id="1050">1050</a>
 <a href="#1051" id="1051">1051</a>
-<a href="#1052" id="1052">1052</a>
-<a href="#1053" id="1053">1053</a>
-<a href="#1054" id="1054">1054</a>
-<a href="#1055" id="1055">1055</a>
-<a href="#1056" id="1056">1056</a>
-<a href="#1057" id="1057">1057</a>
-<a href="#1058" id="1058">1058</a>
-<a href="#1059" id="1059">1059</a>
-<a href="#1060" id="1060">1060</a>
-<a href="#1061" id="1061">1061</a>
-<a href="#1062" id="1062">1062</a>
-<a href="#1063" id="1063">1063</a>
-<a href="#1064" id="1064">1064</a>
-<a href="#1065" id="1065">1065</a>
-<a href="#1066" id="1066">1066</a>
-<a href="#1067" id="1067">1067</a>
-<a href="#1068" id="1068">1068</a>
-<a href="#1069" id="1069">1069</a>
-<a href="#1070" id="1070">1070</a>
-<a href="#1071" id="1071">1071</a>
-<a href="#1072" id="1072">1072</a>
-<a href="#1073" id="1073">1073</a>
-<a href="#1074" id="1074">1074</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later WITH Classpath-exception-2.0
 
@@ -1524,9 +1501,7 @@
 <span class="kw">where
     </span>Block: BlockT,
 {
-    confirmation_depth_k: BlockNumber,
     archiver: Archiver,
-    older_archived_segments: Vec&lt;NewArchivedSegment&gt;,
     best_archived_block: (Block::Hash, NumberFor&lt;Block&gt;),
 }
 
@@ -1616,12 +1591,8 @@
         .unwrap_or_else(|<span class="kw">_</span>| {
             <span class="macro">unreachable!</span>(<span class="string">"Block number fits into block number; qed"</span>);
         });
-    <span class="kw">let </span>best_block_hash = client_info.best_hash;
 
-    <span class="kw">let </span>confirmation_depth_k = client
-        .runtime_api()
-        .chain_constants(best_block_hash)<span class="question-mark">?
-        </span>.confirmation_depth_k();
+    <span class="kw">let </span>confirmation_depth_k = subspace_link.chain_constants.confirmation_depth_k();
 
     <span class="kw">let </span><span class="kw-2">mut </span>best_block_to_archive = best_block_number.saturating_sub(confirmation_depth_k);
     <span class="kw">if </span>(best_block_to_archive..best_block_number)
@@ -1673,8 +1644,6 @@
 
             Archiver::new(subspace_link.kzg().clone()).expect(<span class="string">"Incorrect parameters for archiver"</span>)
         };
-
-    <span class="kw">let </span><span class="kw-2">mut </span>older_archived_segments = Vec::new();
 
     <span class="comment">// Process blocks since last fully archived block up to the current head minus K
     </span>{
@@ -1765,8 +1734,6 @@
                     .map(|archived_segment| archived_segment.segment_header)
                     .collect();
 
-                older_archived_segments.extend(archived_segments);
-
                 <span class="kw">if </span>!new_segment_headers.is_empty() {
                     segment_headers_store.add_segment_headers(<span class="kw-2">&amp;</span>new_segment_headers)<span class="question-mark">?</span>;
                 }
@@ -1775,9 +1742,7 @@
     }
 
     <span class="prelude-val">Ok</span>(InitializedArchiver {
-        confirmation_depth_k,
         archiver,
-        older_archived_segments,
         best_archived_block: best_archived_block
             .expect(<span class="string">"Must always set if there is no logical error; qed"</span>),
     })
@@ -1882,7 +1847,8 @@
         <span class="prelude-val">None
     </span>};
 
-    <span class="kw">let </span><span class="kw-2">mut </span>block_importing_notification_stream = subspace_link
+    <span class="comment">// Subscribing synchronously before returning
+    </span><span class="kw">let </span><span class="kw-2">mut </span>block_importing_notification_stream = subspace_link
         .block_importing_notification_stream
         .subscribe();
 
@@ -1891,11 +1857,10 @@
             <span class="prelude-val">Some</span>(archiver) =&gt; archiver,
             <span class="prelude-val">None </span>=&gt; initialize_archiver(<span class="kw-2">&amp;</span>segment_headers_store, <span class="kw-2">&amp;</span>subspace_link, client.as_ref())<span class="question-mark">?</span>,
         };
+        <span class="kw">let </span>confirmation_depth_k = subspace_link.chain_constants.confirmation_depth_k().into();
 
         <span class="kw">let </span>InitializedArchiver {
-            confirmation_depth_k,
             <span class="kw-2">mut </span>archiver,
-            older_archived_segments,
             best_archived_block,
         } = archiver;
         <span class="kw">let </span>(<span class="kw-2">mut </span>best_archived_block_hash, <span class="kw-2">mut </span>best_archived_block_number) = best_archived_block;
@@ -1903,28 +1868,18 @@
         <span class="kw">let </span>archived_segment_notification_sender =
             subspace_link.archived_segment_notification_sender.clone();
 
-        <span class="comment">// Farmers may have not received all previous segments, send them now.
-        </span><span class="kw">for </span>archived_segment <span class="kw">in </span>older_archived_segments {
-            send_archived_segment_notification(
-                <span class="kw-2">&amp;</span>archived_segment_notification_sender,
-                archived_segment,
-            )
-            .<span class="kw">await</span>;
-        }
-
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>block_import_notification) =
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(block_importing_notification) =
             block_importing_notification_stream.next().<span class="kw">await
         </span>{
-            <span class="kw">let </span>block_number_to_archive = <span class="kw">match </span>block_import_notification
-                .block_number
-                .checked_sub(<span class="kw-2">&amp;</span>confirmation_depth_k.into())
-            {
-                <span class="prelude-val">Some</span>(block_number_to_archive) =&gt; block_number_to_archive,
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="comment">// Too early to archive blocks
-                    </span><span class="kw">continue</span>;
-                }
-            };
+            <span class="kw">let </span>importing_block_number = block_importing_notification.block_number;
+            <span class="kw">let </span>block_number_to_archive =
+                <span class="kw">match </span>importing_block_number.checked_sub(<span class="kw-2">&amp;</span>confirmation_depth_k) {
+                    <span class="prelude-val">Some</span>(block_number_to_archive) =&gt; block_number_to_archive,
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="comment">// Too early to archive blocks
+                        </span><span class="kw">continue</span>;
+                    }
+                };
 
             <span class="kw">if </span>best_archived_block_number &gt;= block_number_to_archive {
                 <span class="comment">// This block was already archived, skip
@@ -1937,9 +1892,7 @@
             // previously existing blocks
             </span><span class="kw">if </span>best_archived_block_number + One::one() != block_number_to_archive {
                 InitializedArchiver {
-                    confirmation_depth_k: <span class="kw">_</span>,
                     archiver,
-                    older_archived_segments: <span class="kw">_</span>,
                     best_archived_block: (best_archived_block_hash, best_archived_block_number),
                 } = initialize_archiver(<span class="kw-2">&amp;</span>segment_headers_store, <span class="kw-2">&amp;</span>subspace_link, client.as_ref())<span class="question-mark">?</span>;
 
@@ -1949,18 +1902,19 @@
                     <span class="comment">// Special sync mode where verified blocks were inserted into blockchain
                     // directly, archiving of this block will naturally happen later
                     </span><span class="kw">continue</span>;
-                } <span class="kw">else if </span>best_archived_block_number.is_zero() {
-                    <span class="comment">// We may have imported some block using special sync mode right after genesis,
-                    // in which case archiver will be stuck at genesis block
+                } <span class="kw">else if </span>client.hash(importing_block_number - One::one())<span class="question-mark">?</span>.is_none() {
+                    <span class="comment">// We may have imported some block using special sync mode and block we're about
+                    // to import is the first one after the gap at which archiver is supposed to be
+                    // initialized, but we are only about to import it, so wait for the next block
+                    // for now
                     </span><span class="kw">continue</span>;
                 } <span class="kw">else </span>{
                     <span class="kw">let </span>error = <span class="macro">format!</span>(
                         <span class="string">"There was a gap in blockchain history and the last contiguous series of \
                         blocks starting with doesn't start with archived segment (best archived \
                         block number {best_archived_block_number}, block number to archive \
-                        {block_number_to_archive}), block about to be imported {}), archiver can't \
-                        continue"</span>,
-                        block_import_notification.block_number
+                        {block_number_to_archive}), block about to be imported \
+                        {importing_block_number}), archiver can't continue"</span>,
                     );
                     <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::Consensus(sp_consensus::Error::Other(
                         error.into(),
