@@ -2498,6 +2498,9 @@
 <a href="#2498" id="2498">2498</a>
 <a href="#2499" id="2499">2499</a>
 <a href="#2500" id="2500">2500</a>
+<a href="#2501" id="2501">2501</a>
+<a href="#2502" id="2502">2502</a>
+<a href="#2503" id="2503">2503</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Primary [`Farm`] implementation that deals with hardware directly
 //!
 //! Single disk farm is an abstraction that contains an identity, associated plot with metadata and
@@ -3062,12 +3065,6 @@
     <span class="doccomment">/// Unexpected metadata version
     </span><span class="attr">#[error(<span class="string">"Unexpected metadata version {0}"</span>)]
     </span>UnexpectedMetadataVersion(u8),
-    <span class="doccomment">/// Cache file does not exist
-    </span><span class="attr">#[error(<span class="string">"Cache file does not exist at {file}"</span>)]
-    </span>CacheFileDoesNotExist {
-        <span class="doccomment">/// Cache file
-        </span>file: PathBuf,
-    },
     <span class="doccomment">/// Cache can't be opened
     </span><span class="attr">#[error(<span class="string">"Cache at {file} can't be opened: {error}"</span>)]
     </span>CacheCantBeOpened {
@@ -4784,114 +4781,123 @@
         }
 
         <span class="kw">if </span>target.cache() {
-            <span class="kw">let </span>file = directory.join(DiskPieceCache::FILE_NAME);
-            <span class="macro">info!</span>(path = %file.display(), <span class="string">"Checking cache file"</span>);
-
-            <span class="kw">let </span>cache_file = <span class="kw">match </span>OpenOptions::new().read(<span class="bool-val">true</span>).write(!dry_run).open(<span class="kw-2">&amp;</span>file) {
-                <span class="prelude-val">Ok</span>(plot_file) =&gt; plot_file,
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="kw">if </span>error.kind() == io::ErrorKind::NotFound {
-                        SingleDiskFarmScrubError::CacheFileDoesNotExist { file }
-                    } <span class="kw">else </span>{
-                        SingleDiskFarmScrubError::CacheCantBeOpened { file, error }
-                    });
-                }
-            };
-
-            <span class="comment">// Error doesn't matter here
-            </span><span class="kw">let _ </span>= cache_file.advise_sequential_access();
-
-            <span class="kw">let </span>cache_size = <span class="kw">match </span>cache_file.size() {
-                <span class="prelude-val">Ok</span>(metadata_size) =&gt; metadata_size,
-                <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToDetermineFileSize {
-                        file,
-                        error,
-                    });
-                }
-            };
-
-            <span class="kw">let </span>element_size = DiskPieceCache::element_size();
-            <span class="kw">let </span>number_of_cached_elements = cache_size / u64::from(element_size);
-            <span class="kw">let </span>dummy_element = <span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize];
-            (<span class="number">0</span>..number_of_cached_elements)
-                .into_par_iter()
-                .map_with(<span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize], |element, cache_offset| {
-                    <span class="kw">let </span>_span_guard = span.enter();
-
-                    <span class="kw">let </span>offset = cache_offset * u64::from(element_size);
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.read_exact_at(element, offset) {
-                        <span class="macro">warn!</span>(
-                            path = %file.display(),
-                            %cache_offset,
-                            size = %element.len() <span class="kw">as </span>u64,
-                            %offset,
-                            %error,
-                            <span class="string">"Failed to read cached piece, replacing with dummy element"
-                        </span>);
-
-                        <span class="kw">if </span>!dry_run {
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.write_all_at(<span class="kw-2">&amp;</span>dummy_element, offset) {
-                                <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToWriteBytes {
-                                    file: file.clone(),
-                                    size: u64::from(element_size),
-                                    offset,
-                                    error,
-                                });
-                            }
-                        }
-
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                    }
-
-                    <span class="kw">let </span>(index_and_piece_bytes, expected_checksum) =
-                        element.split_at(element_size <span class="kw">as </span>usize - mem::size_of::&lt;Blake3Hash&gt;());
-                    <span class="kw">let </span>actual_checksum = blake3_hash(index_and_piece_bytes);
-                    <span class="kw">if </span>actual_checksum != expected_checksum &amp;&amp; element != <span class="kw-2">&amp;</span>dummy_element {
-                        <span class="macro">warn!</span>(
-                            %cache_offset,
-                            actual_checksum = %hex::encode(actual_checksum),
-                            expected_checksum = %hex::encode(expected_checksum),
-                            <span class="string">"Cached piece checksum mismatch, replacing with dummy element"
-                        </span>);
-
-                        <span class="kw">if </span>!dry_run {
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.write_all_at(<span class="kw-2">&amp;</span>dummy_element, offset) {
-                                <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToWriteBytes {
-                                    file: file.clone(),
-                                    size: u64::from(element_size),
-                                    offset,
-                                    error,
-                                });
-                            }
-                        }
-
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                    }
-
-                    <span class="prelude-val">Ok</span>(())
-                })
-                .try_for_each({
-                    <span class="kw">let </span>span = <span class="kw-2">&amp;</span>span;
-                    <span class="kw">let </span>checked_elements = AtomicUsize::new(<span class="number">0</span>);
-
-                    <span class="kw">move </span>|result| {
-                        <span class="kw">let </span>_span_guard = span.enter();
-
-                        <span class="kw">let </span>checked_elements = checked_elements.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
-                        <span class="kw">if </span>checked_elements &gt; <span class="number">1 </span>&amp;&amp; checked_elements % <span class="number">1000 </span>== <span class="number">0 </span>{
-                            <span class="macro">info!</span>(
-                                <span class="string">"Checked {}/{} cache elements"</span>,
-                                checked_elements, number_of_cached_elements
-                            );
-                        }
-
-                        result
-                    }
-                })<span class="question-mark">?</span>;
+            <span class="self">Self</span>::scrub_cache(directory, dry_run)<span class="question-mark">?</span>;
         }
 
         <span class="macro">info!</span>(<span class="string">"Farm check completed"</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>scrub_cache(directory: <span class="kw-2">&amp;</span>Path, dry_run: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), SingleDiskFarmScrubError&gt; {
+        <span class="kw">let </span>span = Span::current();
+
+        <span class="kw">let </span>file = directory.join(DiskPieceCache::FILE_NAME);
+        <span class="macro">info!</span>(path = %file.display(), <span class="string">"Checking cache file"</span>);
+
+        <span class="kw">let </span>cache_file = <span class="kw">match </span>OpenOptions::new().read(<span class="bool-val">true</span>).write(!dry_run).open(<span class="kw-2">&amp;</span>file) {
+            <span class="prelude-val">Ok</span>(plot_file) =&gt; plot_file,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="kw">return if </span>error.kind() == io::ErrorKind::NotFound {
+                    <span class="macro">warn!</span>(
+                        file = %file.display(),
+                        <span class="string">"Cache file does not exist, this is expected in farming cluster"
+                    </span>);
+                    <span class="prelude-val">Ok</span>(())
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">Err</span>(SingleDiskFarmScrubError::CacheCantBeOpened { file, error })
+                };
+            }
+        };
+
+        <span class="comment">// Error doesn't matter here
+        </span><span class="kw">let _ </span>= cache_file.advise_sequential_access();
+
+        <span class="kw">let </span>cache_size = <span class="kw">match </span>cache_file.size() {
+            <span class="prelude-val">Ok</span>(metadata_size) =&gt; metadata_size,
+            <span class="prelude-val">Err</span>(error) =&gt; {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToDetermineFileSize { file, error });
+            }
+        };
+
+        <span class="kw">let </span>element_size = DiskPieceCache::element_size();
+        <span class="kw">let </span>number_of_cached_elements = cache_size / u64::from(element_size);
+        <span class="kw">let </span>dummy_element = <span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize];
+        (<span class="number">0</span>..number_of_cached_elements)
+            .into_par_iter()
+            .map_with(<span class="macro">vec!</span>[<span class="number">0</span>; element_size <span class="kw">as </span>usize], |element, cache_offset| {
+                <span class="kw">let </span>_span_guard = span.enter();
+
+                <span class="kw">let </span>offset = cache_offset * u64::from(element_size);
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.read_exact_at(element, offset) {
+                    <span class="macro">warn!</span>(
+                        path = %file.display(),
+                        %cache_offset,
+                        size = %element.len() <span class="kw">as </span>u64,
+                        %offset,
+                        %error,
+                        <span class="string">"Failed to read cached piece, replacing with dummy element"
+                    </span>);
+
+                    <span class="kw">if </span>!dry_run {
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.write_all_at(<span class="kw-2">&amp;</span>dummy_element, offset) {
+                            <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToWriteBytes {
+                                file: file.clone(),
+                                size: u64::from(element_size),
+                                offset,
+                                error,
+                            });
+                        }
+                    }
+
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                }
+
+                <span class="kw">let </span>(index_and_piece_bytes, expected_checksum) =
+                    element.split_at(element_size <span class="kw">as </span>usize - mem::size_of::&lt;Blake3Hash&gt;());
+                <span class="kw">let </span>actual_checksum = blake3_hash(index_and_piece_bytes);
+                <span class="kw">if </span>actual_checksum != expected_checksum &amp;&amp; element != <span class="kw-2">&amp;</span>dummy_element {
+                    <span class="macro">warn!</span>(
+                        %cache_offset,
+                        actual_checksum = %hex::encode(actual_checksum),
+                        expected_checksum = %hex::encode(expected_checksum),
+                        <span class="string">"Cached piece checksum mismatch, replacing with dummy element"
+                    </span>);
+
+                    <span class="kw">if </span>!dry_run {
+                        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = cache_file.write_all_at(<span class="kw-2">&amp;</span>dummy_element, offset) {
+                            <span class="kw">return </span><span class="prelude-val">Err</span>(SingleDiskFarmScrubError::FailedToWriteBytes {
+                                file: file.clone(),
+                                size: u64::from(element_size),
+                                offset,
+                                error,
+                            });
+                        }
+                    }
+
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                }
+
+                <span class="prelude-val">Ok</span>(())
+            })
+            .try_for_each({
+                <span class="kw">let </span>span = <span class="kw-2">&amp;</span>span;
+                <span class="kw">let </span>checked_elements = AtomicUsize::new(<span class="number">0</span>);
+
+                <span class="kw">move </span>|result| {
+                    <span class="kw">let </span>_span_guard = span.enter();
+
+                    <span class="kw">let </span>checked_elements = checked_elements.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+                    <span class="kw">if </span>checked_elements &gt; <span class="number">1 </span>&amp;&amp; checked_elements % <span class="number">1000 </span>== <span class="number">0 </span>{
+                        <span class="macro">info!</span>(
+                            <span class="string">"Checked {}/{} cache elements"</span>,
+                            checked_elements, number_of_cached_elements
+                        );
+                    }
+
+                    result
+                }
+            })<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
