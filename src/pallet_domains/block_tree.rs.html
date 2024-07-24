@@ -1279,6 +1279,24 @@
 <a href="#1279" id="1279">1279</a>
 <a href="#1280" id="1280">1280</a>
 <a href="#1281" id="1281">1281</a>
+<a href="#1282" id="1282">1282</a>
+<a href="#1283" id="1283">1283</a>
+<a href="#1284" id="1284">1284</a>
+<a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a>
+<a href="#1289" id="1289">1289</a>
+<a href="#1290" id="1290">1290</a>
+<a href="#1291" id="1291">1291</a>
+<a href="#1292" id="1292">1292</a>
+<a href="#1293" id="1293">1293</a>
+<a href="#1294" id="1294">1294</a>
+<a href="#1295" id="1295">1295</a>
+<a href="#1296" id="1296">1296</a>
+<a href="#1297" id="1297">1297</a>
+<a href="#1298" id="1298">1298</a>
+<a href="#1299" id="1299">1299</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Domain block tree
 
 </span><span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
@@ -1287,8 +1305,9 @@
 <span class="kw">use crate</span>::{
     BalanceOf, BlockTree, BlockTreeNodeFor, BlockTreeNodes, Config, ConsensusBlockHash,
     DomainBlockNumberFor, DomainHashingFor, DomainRuntimeUpgradeRecords, ExecutionInbox,
-    ExecutionReceiptOf, HeadReceiptExtended, HeadReceiptNumber, InboxedBundleAuthor,
-    LatestConfirmedDomainExecutionReceipt, LatestSubmittedER, Pallet, ReceiptHashFor,
+    ExecutionReceiptOf, HeadDomainNumber, HeadReceiptNumber, InboxedBundleAuthor,
+    LatestConfirmedDomainExecutionReceipt, LatestSubmittedER, NewAddedHeadReceipt, Pallet,
+    ReceiptHashFor,
 };
 <span class="attr">#[cfg(not(feature = <span class="string">"std"</span>))]
 </span><span class="kw">use </span>alloc::vec::Vec;
@@ -1330,6 +1349,8 @@
     OverwritingER,
     RuntimeNotFound,
     LastBlockNotFound,
+    UnmatchedNewHeadReceipt,
+    UnexpectedConfirmedDomainBlock,
 }
 
 <span class="attr">#[derive(TypeInfo, Debug, Encode, Decode, Clone, PartialEq, Eq)]
@@ -1402,7 +1423,7 @@
 ) -&gt; ReceiptType {
     <span class="kw">let </span>receipt_number = execution_receipt.domain_block_number;
     <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;T&gt;::get(domain_id);
-    <span class="kw">let </span>head_receipt_extended = HeadReceiptExtended::&lt;T&gt;::get(domain_id);
+    <span class="kw">let </span>head_receipt_extended = NewAddedHeadReceipt::&lt;T&gt;::get(domain_id).is_some();
     <span class="kw">let </span>next_receipt_number = head_receipt_number.saturating_add(One::one());
     <span class="kw">let </span>latest_confirmed_domain_block_number =
         Pallet::&lt;T&gt;::latest_confirmed_domain_block_number(domain_id);
@@ -1438,9 +1459,11 @@
             }
 
             <span class="comment">// Add confirm to the head receipt that added in the current block or it is
-            // the genesis receipt
-            </span><span class="kw">if </span>receipt_number == head_receipt_number
-                &amp;&amp; (head_receipt_extended || receipt_number.is_zero())
+            // the first genesis receipt
+            </span><span class="kw">let </span>is_first_genesis_receipt =
+                receipt_number.is_zero() &amp;&amp; HeadDomainNumber::&lt;T&gt;::get(domain_id).is_zero();
+            <span class="kw">if </span>receipt_number == head_receipt_number
+                &amp;&amp; (head_receipt_extended || is_first_genesis_receipt)
             {
                 <span class="kw">return </span>ReceiptType::Accepted(AcceptedReceiptType::CurrentHead);
             }
@@ -1473,6 +1496,19 @@
         execution_receipt_type::&lt;T&gt;(domain_id, execution_receipt)
     {
         <span class="kw">return </span><span class="prelude-val">Err</span>(rejected_receipt_type.into());
+    }
+
+    <span class="comment">// If there is new head receipt added in the current block, as long as the incoming
+    // receipt is the same as the new head receipt we can safely skip the following checks,
+    // if they are not the same, we just reject the incoming receipt and expecting a fraud
+    // proof will be submit if the new head receipt is fraudulent and then the incoming
+    // receipt will be re-submit.
+    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(new_added_head_receipt) = NewAddedHeadReceipt::&lt;T&gt;::get(domain_id) {
+        <span class="macro">ensure!</span>(
+            new_added_head_receipt == execution_receipt.hash::&lt;DomainHashingFor&lt;T&gt;&gt;(),
+            Error::UnmatchedNewHeadReceipt,
+        );
+        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
     }
 
     <span class="comment">// The genesis receipt is generated and added to the block tree by the runtime upon domain
@@ -1602,6 +1638,7 @@
     execution_receipt: ExecutionReceiptOf&lt;T&gt;,
     receipt_type: AcceptedReceiptType,
 ) -&gt; ProcessExecutionReceiptResult&lt;T&gt; {
+    <span class="kw">let </span>er_hash = execution_receipt.hash::&lt;DomainHashingFor&lt;T&gt;&gt;();
     <span class="kw">let </span>receipt_block_number = execution_receipt.domain_block_number;
     <span class="kw">match </span>receipt_type {
         AcceptedReceiptType::NewHead =&gt; {
@@ -1609,7 +1646,7 @@
 
             <span class="comment">// Update the head receipt number
             </span>HeadReceiptNumber::&lt;T&gt;::insert(domain_id, receipt_block_number);
-            HeadReceiptExtended::&lt;T&gt;::insert(domain_id, <span class="bool-val">true</span>);
+            NewAddedHeadReceipt::&lt;T&gt;::insert(domain_id, er_hash);
 
             <span class="comment">// Prune expired domain block
             </span><span class="kw">if let </span><span class="prelude-val">Some</span>(to_prune) =
@@ -1703,8 +1740,7 @@
         }
         AcceptedReceiptType::CurrentHead =&gt; {
             <span class="comment">// Add confirmation to the current head receipt
-            </span><span class="kw">let </span>er_hash = execution_receipt.hash::&lt;DomainHashingFor&lt;T&gt;&gt;();
-            BlockTreeNodes::&lt;T&gt;::mutate(er_hash, |maybe_node| {
+            </span>BlockTreeNodes::&lt;T&gt;::mutate(er_hash, |maybe_node| {
                 <span class="kw">let </span>node = maybe_node.as_mut().expect(
                     <span class="string">"The domain block of `CurrentHead` receipt is checked to be exist in `execution_receipt_type`; qed"
                 </span>);
@@ -2161,7 +2197,7 @@
             extend_block_tree_from_zero(domain_id, operator_id1, <span class="number">3</span>);
 
             <span class="comment">// No new receipt submitted in current block
-            </span><span class="macro">assert!</span>(!HeadReceiptExtended::&lt;Test&gt;::get(domain_id));
+            </span><span class="macro">assert!</span>(NewAddedHeadReceipt::&lt;Test&gt;::get(domain_id).is_none());
 
             <span class="comment">// Receipt that confirm a head receipt of the previous block is stale receipt
             </span><span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
@@ -2371,8 +2407,8 @@
             <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;Test&gt;::get(domain_id);
 
             <span class="comment">// reject extending receipt if the HeadReceiptNumber is already extended
-            </span><span class="macro">assert!</span>(!HeadReceiptExtended::&lt;Test&gt;::get(domain_id));
-            HeadReceiptExtended::&lt;Test&gt;::set(domain_id, <span class="bool-val">true</span>);
+            </span><span class="macro">assert!</span>(NewAddedHeadReceipt::&lt;Test&gt;::get(domain_id).is_none());
+            NewAddedHeadReceipt::&lt;Test&gt;::set(domain_id, <span class="prelude-val">Some</span>(H256::random()));
 
             <span class="comment">// Construct a future receipt
             </span><span class="kw">let </span><span class="kw-2">mut </span>future_receipt = next_receipt.clone();

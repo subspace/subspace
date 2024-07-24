@@ -440,16 +440,6 @@
 <a href="#440" id="440">440</a>
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::ExecutionReceiptFor;
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>futures::{select, FutureExt};
@@ -659,9 +649,11 @@
         proof_of_election: ProofOfElection&lt;CBlock::Hash&gt;,
         tx_range: U256,
         operator_id: OperatorId,
+        receipt: ExecutionReceiptFor&lt;Block, CBlock&gt;,
     ) -&gt; sp_blockchain::Result&lt;ProposeBundleOutput&lt;Block, CBlock&gt;&gt; {
-        <span class="kw">let </span>parent_number = <span class="self">self</span>.client.info().best_number;
-        <span class="kw">let </span>parent_hash = <span class="self">self</span>.client.info().best_hash;
+        <span class="comment">// NOTE: use the domain block that derive the ER to validate the extrinsic to be included
+        // in the bundle, so the validity of the extrinsic is committed to the ER that submited together.
+        </span><span class="kw">let </span>(parent_number, parent_hash) = (receipt.domain_block_number, receipt.domain_block_hash);
 
         <span class="kw">let </span><span class="kw-2">mut </span>t1 = <span class="self">self</span>.transaction_pool.ready_at(parent_number).fuse();
         <span class="comment">// TODO: proper timeout
@@ -683,8 +675,6 @@
         // bundle fail to submit to the consensus chain due to any reason.
         </span><span class="self">self</span>.previous_bundled_tx
             .maybe_clear(<span class="self">self</span>.consensus_client.info().best_hash);
-
-        <span class="kw">let </span>receipt = <span class="self">self</span>.load_bundle_receipt(parent_number)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>bundle_vrf_hash = U256::from_be_bytes(proof_of_election.vrf_hash());
 
@@ -847,33 +837,20 @@
     }
 
     <span class="doccomment">/// Returns the receipt in the next domain bundle.
-    </span><span class="kw">fn </span>load_bundle_receipt(
+    </span><span class="kw">pub fn </span>load_next_receipt(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        header_number: NumberFor&lt;Block&gt;,
+        head_domain_number: NumberFor&lt;Block&gt;,
+        head_receipt_number: NumberFor&lt;Block&gt;,
     ) -&gt; sp_blockchain::Result&lt;ExecutionReceiptFor&lt;Block, CBlock&gt;&gt; {
-        <span class="kw">let </span>consensus_chain_block_hash = <span class="self">self</span>.consensus_client.info().best_hash;
-        <span class="kw">let </span>head_receipt_number = <span class="self">self
-            </span>.consensus_client
-            .runtime_api()
-            .head_receipt_number(consensus_chain_block_hash, <span class="self">self</span>.domain_id)<span class="question-mark">?</span>;
-
-        <span class="comment">// TODO: the `receipt_number` may not be the best domain block number if there
-        // is fraud proof submitted and bad ERs pruned, thus the ER may not the one that
-        // derive from the latest domain block, which may cause the lagging operator able
-        // to submit invalid bundle accidentally.
-        //
-        // We need to resolve `https://github.com/subspace/subspace/issues/1673` to fix it
-        // completely.
-        </span><span class="kw">let </span>receipt_number = (head_receipt_number + One::one()).min(header_number);
-
         <span class="macro">tracing::trace!</span>(
-            <span class="question-mark">?</span>header_number,
+            <span class="question-mark">?</span>head_domain_number,
             <span class="question-mark">?</span>head_receipt_number,
-            <span class="question-mark">?</span>receipt_number,
-            <span class="string">"Collecting receipts at {consensus_chain_block_hash:?}"
+            <span class="string">"Collecting receipt"
         </span>);
 
-        <span class="kw">if </span>receipt_number.is_zero() {
+        <span class="comment">// Both `head_domain_number` and `head_receipt_number` are zero means the domain just
+        // instantiated and nothing have submitted yet so submit the genesis receipt
+        </span><span class="kw">if </span>head_domain_number.is_zero() &amp;&amp; head_receipt_number.is_zero() {
             <span class="kw">let </span>genesis_hash = <span class="self">self</span>.client.info().genesis_hash;
             <span class="kw">let </span>genesis_header = <span class="self">self</span>.client.header(genesis_hash)<span class="question-mark">?</span>.ok_or_else(|| {
                 sp_blockchain::Error::Backend(<span class="macro">format!</span>(
@@ -887,6 +864,9 @@
                 genesis_hash,
             ));
         }
+
+        <span class="comment">// The next receipt must extend the current head receipt
+        </span><span class="kw">let </span>receipt_number = head_receipt_number + One::one();
 
         <span class="comment">// Get the domain block hash corresponding to `receipt_number` in the domain canonical chain
         </span><span class="kw">let </span>domain_hash = <span class="self">self</span>.client.hash(receipt_number)<span class="question-mark">?</span>.ok_or_else(|| {

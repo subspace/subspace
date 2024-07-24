@@ -416,6 +416,40 @@
 <a href="#416" id="416">416</a>
 <a href="#417" id="417">417</a>
 <a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This crate provides a preprocessor for the domain block, which is used to construct
 //! domain extrinsics from the consensus block.
 //!
@@ -436,7 +470,7 @@
 <span class="kw">use </span>codec::Encode;
 <span class="kw">use </span>domain_runtime_primitives::opaque::AccountId;
 <span class="kw">use </span>sc_client_api::BlockBackend;
-<span class="kw">use </span>sp_api::{ApiError, ApiExt, ProvideRuntimeApi};
+<span class="kw">use </span>sp_api::{ApiError, ApiExt, Core, ProvideRuntimeApi};
 <span class="kw">use </span>sp_blockchain::HeaderBackend;
 <span class="kw">use </span>sp_core::H256;
 <span class="kw">use </span>sp_domains::core_api::DomainCoreApi;
@@ -621,27 +655,59 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         bundles: OpaqueBundles&lt;CBlock, Block::Header, Balance&gt;,
         tx_range: U256,
-        (domain_hash, domain_number): (Block::Hash, NumberFor&lt;Block&gt;),
+        (parent_domain_hash, parent_domain_number): (Block::Hash, NumberFor&lt;Block&gt;),
         at_consensus_hash: CBlock::Hash,
     ) -&gt; sp_blockchain::Result&lt;(
         Vec&lt;InboxedBundle&lt;Block::Hash&gt;&gt;,
         Vec&lt;(<span class="prelude-ty">Option</span>&lt;AccountId&gt;, Block::Extrinsic)&gt;,
     )&gt; {
+        <span class="kw">let </span>consensus_spec_version = <span class="self">self
+            </span>.consensus_client
+            .runtime_api()
+            .version(at_consensus_hash)
+            .map_err(sp_blockchain::Error::RuntimeApiError)<span class="question-mark">?
+            </span>.spec_version;
+
         <span class="kw">let </span><span class="kw-2">mut </span>inboxed_bundles = Vec::with_capacity(bundles.len());
         <span class="kw">let </span><span class="kw-2">mut </span>valid_extrinsics = Vec::new();
 
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
         <span class="kw">for </span>bundle <span class="kw">in </span>bundles {
+            <span class="comment">// For the honest operator the validity of the extrinsic of the bundle is committed
+            // to (or say verified against) the receipt that is submitted with the bundle, the
+            // consensus runtime should only accept the bundle if the receipt is derived from
+            // the parent domain block. If it is not then either there is a bug in the consensus
+            // runtime (for validating the bundle) or in the domain client (for finding the parent
+            // domain block).
+            //
+            // NOTE: The receipt's `domain_block_number` is verified by the consensus runtime while
+            // the `domain_block_hash` is not (which is take care of by the fraud proof) so we can't
+            // check the parent domain block hash here.
+            // TODO: remove consensus runtime version check before next network
+            </span><span class="kw">if </span>consensus_spec_version &gt;= <span class="number">6
+                </span>&amp;&amp; bundle.receipt().domain_block_number != parent_domain_number
+            {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(sp_blockchain::Error::RuntimeApiError(
+                    ApiError::Application(
+                        <span class="macro">format!</span>(
+                            <span class="string">"Unexpected bundle in consensus block: {:?}, something must be wrong"</span>,
+                            at_consensus_hash
+                        )
+                        .into(),
+                    ),
+                ));
+            }
+
             <span class="kw">let </span>extrinsic_root = bundle.extrinsics_root();
             <span class="kw">match </span><span class="self">self</span>.check_bundle_validity(
                 <span class="kw-2">&amp;</span>bundle,
                 <span class="kw-2">&amp;</span>tx_range,
-                (domain_hash, domain_number),
+                (parent_domain_hash, parent_domain_number),
                 at_consensus_hash,
             )<span class="question-mark">? </span>{
                 BundleValidity::Valid(extrinsics) =&gt; {
                     <span class="kw">let </span>extrinsics: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>runtime_api
-                        .extract_signer(domain_hash, extrinsics)
+                        .extract_signer(parent_domain_hash, extrinsics)
                     {
                         <span class="prelude-val">Ok</span>(res) =&gt; res,
                         <span class="prelude-val">Err</span>(e) =&gt; {
@@ -680,7 +746,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         bundle: <span class="kw-2">&amp;</span>OpaqueBundle&lt;NumberFor&lt;CBlock&gt;, CBlock::Hash, Block::Header, Balance&gt;,
         tx_range: <span class="kw-2">&amp;</span>U256,
-        (domain_hash, domain_number): (Block::Hash, NumberFor&lt;Block&gt;),
+        (parent_domain_hash, parent_domain_number): (Block::Hash, NumberFor&lt;Block&gt;),
         at_consensus_hash: CBlock::Hash,
     ) -&gt; sp_blockchain::Result&lt;BundleValidity&lt;Block::Extrinsic&gt;&gt; {
         <span class="kw">let </span>bundle_vrf_hash =
@@ -692,11 +758,13 @@
         <span class="kw">let </span>runtime_api = <span class="self">self</span>.client.runtime_api();
         <span class="kw">let </span>consensus_runtime_api = <span class="self">self</span>.consensus_client.runtime_api();
         <span class="kw">let </span>api_version = runtime_api
-            .api_version::&lt;<span class="kw">dyn </span>MessengerApi&lt;Block, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;&gt;(domain_hash)
+            .api_version::&lt;<span class="kw">dyn </span>MessengerApi&lt;Block, NumberFor&lt;CBlock&gt;, CBlock::Hash&gt;&gt;(
+                parent_domain_hash,
+            )
             .map_err(sp_blockchain::Error::RuntimeApiError)<span class="question-mark">?
             </span>.ok_or_else(|| {
                 sp_blockchain::Error::RuntimeApiError(ApiError::Application(
-                    <span class="macro">format!</span>(<span class="string">"MessengerApi not found at: {:?}"</span>, domain_hash).into(),
+                    <span class="macro">format!</span>(<span class="string">"MessengerApi not found at: {:?}"</span>, parent_domain_hash).into(),
                 ))
             })<span class="question-mark">?</span>;
 
@@ -705,7 +773,7 @@
         // NOTE: for each extrinsic the checking order must follow `InvalidBundleType::checking_order`
         </span><span class="kw">for </span>(index, opaque_extrinsic) <span class="kw">in </span>bundle.extrinsics.iter().enumerate() {
             <span class="kw">let </span>decode_result =
-                runtime_api.decode_extrinsic(domain_hash, opaque_extrinsic.clone())<span class="question-mark">?</span>;
+                runtime_api.decode_extrinsic(parent_domain_hash, opaque_extrinsic.clone())<span class="question-mark">?</span>;
             <span class="kw">let </span>extrinsic = <span class="kw">match </span>decode_result {
                 <span class="prelude-val">Ok</span>(extrinsic) =&gt; extrinsic,
                 <span class="prelude-val">Err</span>(err) =&gt; {
@@ -722,7 +790,7 @@
             };
 
             <span class="kw">let </span>is_within_tx_range = runtime_api.is_within_tx_range(
-                domain_hash,
+                parent_domain_hash,
                 <span class="kw-2">&amp;</span>extrinsic,
                 <span class="kw-2">&amp;</span>bundle_vrf_hash,
                 tx_range,
@@ -737,7 +805,7 @@
             <span class="comment">// Check if this extrinsic is an inherent extrinsic.
             // If so, this is an invalid bundle since these extrinsics should not be included in the
             // bundle. Extrinsic is always decodable due to the check above.
-            </span><span class="kw">if </span>runtime_api.is_inherent_extrinsic(domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">? </span>{
+            </span><span class="kw">if </span>runtime_api.is_inherent_extrinsic(parent_domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">? </span>{
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(BundleValidity::Invalid(
                     InvalidBundleType::InherentExtrinsic(index <span class="kw">as </span>u32),
                 ));
@@ -745,7 +813,7 @@
 
             <span class="kw">if </span>api_version &gt;= <span class="number">4 </span>{
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(xdm_mmr_proof) =
-                    runtime_api.extract_xdm_mmr_proof(domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?
+                    runtime_api.extract_xdm_mmr_proof(parent_domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?
                 </span>{
                     <span class="kw">let </span>ConsensusChainMmrLeafProof {
                         opaque_mmr_leaf,
@@ -770,10 +838,10 @@
             // to maintain side-effect in the storage buffer.
             </span><span class="kw">let </span>is_legal_tx = runtime_api
                 .check_extrinsics_and_do_pre_dispatch(
-                    domain_hash,
+                    parent_domain_hash,
                     <span class="macro">vec!</span>[extrinsic.clone()],
-                    domain_number,
-                    domain_hash,
+                    parent_domain_number,
+                    parent_domain_hash,
                 )<span class="question-mark">?
                 </span>.is_ok();
 
@@ -783,7 +851,7 @@
                 )));
             }
 
-            <span class="kw">let </span>tx_weight = runtime_api.extrinsic_weight(domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?</span>;
+            <span class="kw">let </span>tx_weight = runtime_api.extrinsic_weight(parent_domain_hash, <span class="kw-2">&amp;</span>extrinsic)<span class="question-mark">?</span>;
             estimated_bundle_weight = estimated_bundle_weight.saturating_add(tx_weight);
 
             extrinsics.push(extrinsic);

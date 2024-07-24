@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["DomainBundleProducer"]};
+window.SIDEBAR_ITEMS = {"enum":["DomainProposal"],"struct":["DomainBundleProducer"]};
