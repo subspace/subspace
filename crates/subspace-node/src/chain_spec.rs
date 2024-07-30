@@ -243,9 +243,7 @@ pub fn devnet_config_compiled() -> Result<GenericChainSpec, String> {
         properties
     })
     .with_genesis_config({
-        let sudo_account =
-            AccountId::from_ss58check("5CXTmJEusve5ixyJufqHThmy4qUrrm6FyLCR7QfE4bbyMTNC")
-                .expect("Wrong root account address");
+        let sudo_account = get_account_id_from_seed("Alice");
 
         let mut balances = vec![(sudo_account.clone(), Balance::MAX / 2)];
         let vesting_schedules = TOKEN_GRANTS
@@ -310,10 +308,10 @@ pub fn devnet_config_compiled() -> Result<GenericChainSpec, String> {
                     permissioned_action_allowed_by: PermissionedActionAllowedBy::Accounts(vec![
                         sudo_account.clone(),
                     ]),
-                    genesis_domains: vec![auto_id_chain_spec::get_genesis_domain(
-                        SpecId::DevNet,
-                        sudo_account,
-                    )?],
+                    genesis_domains: vec![
+                        evm_chain_spec::get_genesis_domain(SpecId::DevNet, sudo_account.clone())?,
+                        auto_id_chain_spec::get_genesis_domain(SpecId::DevNet, sudo_account)?,
+                    ],
                 },
             )?)
             .map_err(|error| format!("Failed to serialize genesis config: {error}"))?,
