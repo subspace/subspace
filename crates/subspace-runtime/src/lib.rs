@@ -18,6 +18,8 @@
 #![feature(const_option, const_trait_impl, variant_count)]
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 #![recursion_limit = "256"]
+// Silence a compiler warning in `construct_runtime!`
+#![allow(non_camel_case_types)]
 
 mod domains;
 mod fees;

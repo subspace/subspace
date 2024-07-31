@@ -1,3 +1,6 @@
+// Silence a compiler warning in `construct_runtime!`
+#![allow(non_camel_case_types)]
+
 use crate as pallet_executive;
 use crate::Config;
 use frame_support::dispatch::DispatchInfo;
