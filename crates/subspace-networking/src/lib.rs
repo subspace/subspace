@@ -50,5 +50,5 @@ pub use protocols::request_response::handlers::segment_header::{
 };
 pub use shared::PeerDiscovered;
 pub use utils::multihash::Multihash;
-pub use utils::unique_record_binary_heap::{KeyWrapper, UniqueRecordBinaryHeap};
+pub use utils::distance_for_key::{KeyWrapper, UniqueRecordBinaryHeap};
 pub use utils::PeerAddress;
