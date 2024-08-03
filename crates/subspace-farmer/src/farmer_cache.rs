@@ -269,8 +269,12 @@ where
         if let Some(WorkerCommand::ReplaceBackingCaches { new_piece_caches }) =
             worker_receiver.recv().await
         {
-            self.initialize(&piece_getter, &mut last_segment_index_internal, new_piece_caches)
-                .await;
+            self.initialize(
+                &piece_getter,
+                &mut last_segment_index_internal,
+                new_piece_caches,
+            )
+            .await;
         } else {
             // Piece cache is dropped before backing caches were sent
             return;
@@ -738,52 +742,50 @@ where
             let pieces_to_maybe_include = segment_index
                 .segment_piece_indexes()
                 .into_iter()
-                .map(|piece_index| {
-                    async move {
-                        let should_store_in_piece_cache = self
-                            .piece_caches
-                            .read()
-                            .await
-                            .should_include_key(self.peer_id, piece_index);
+                .map(|piece_index| async move {
+                    let should_store_in_piece_cache = self
+                        .piece_caches
+                        .read()
+                        .await
+                        .should_include_key(self.peer_id, piece_index);
 
-                        let key = RecordKey::from(piece_index.to_multihash());
-                        let should_store_in_plot_cache =
-                            self.plot_caches.should_store(piece_index, &key).await;
+                    let key = RecordKey::from(piece_index.to_multihash());
+                    let should_store_in_plot_cache =
+                        self.plot_caches.should_store(piece_index, &key).await;
 
-                        if !(should_store_in_piece_cache || should_store_in_plot_cache) {
-                            trace!(%piece_index, "Piece doesn't need to be cached #1");
+                    if !(should_store_in_piece_cache || should_store_in_plot_cache) {
+                        trace!(%piece_index, "Piece doesn't need to be cached #1");
 
-                            return None;
-                        }
+                        return None;
+                    }
 
-                        let maybe_piece = match self.node_client.piece(piece_index).await {
-                            Ok(maybe_piece) => maybe_piece,
-                            Err(error) => {
-                                error!(
-                                    %error,
-                                    %segment_index,
-                                    %piece_index,
-                                    "Failed to retrieve piece from node right after archiving, \
-                                    this should never happen and is an implementation bug"
-                                );
-
-                                return None;
-                            }
-                        };
-
-                        let Some(piece) = maybe_piece else {
+                    let maybe_piece = match self.node_client.piece(piece_index).await {
+                        Ok(maybe_piece) => maybe_piece,
+                        Err(error) => {
                             error!(
+                                %error,
                                 %segment_index,
                                 %piece_index,
-                                "Failed to retrieve piece from node right after archiving, this \
-                                should never happen and is an implementation bug"
+                                "Failed to retrieve piece from node right after archiving, \
+                                this should never happen and is an implementation bug"
                             );
 
                             return None;
-                        };
+                        }
+                    };
 
-                        Some((piece_index, piece))
-                    }
+                    let Some(piece) = maybe_piece else {
+                        error!(
+                            %segment_index,
+                            %piece_index,
+                            "Failed to retrieve piece from node right after archiving, this \
+                            should never happen and is an implementation bug"
+                        );
+
+                        return None;
+                    };
+
+                    Some((piece_index, piece))
                 })
                 .collect::<FuturesUnordered<_>>()
                 .filter_map(|maybe_piece| async move { maybe_piece })
@@ -923,11 +925,7 @@ where
 
     /// This assumes it was already checked that piece needs to be stored, no verification for this
     /// is done internally and invariants will break if this assumption doesn't hold true
-    async fn persist_piece_in_cache(
-        &self,
-        piece_index: PieceIndex,
-        piece: Piece,
-    ) {
+    async fn persist_piece_in_cache(&self, piece_index: PieceIndex, piece: Piece) {
         let key = DistanceForKey::new(self.peer_id, piece_index.to_multihash());
         let mut caches = self.piece_caches.write().await;
         match caches.insert(key) {
