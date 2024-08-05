@@ -3045,6 +3045,50 @@
 <a href="#3045" id="3045">3045</a>
 <a href="#3046" id="3046">3046</a>
 <a href="#3047" id="3047">3047</a>
+<a href="#3048" id="3048">3048</a>
+<a href="#3049" id="3049">3049</a>
+<a href="#3050" id="3050">3050</a>
+<a href="#3051" id="3051">3051</a>
+<a href="#3052" id="3052">3052</a>
+<a href="#3053" id="3053">3053</a>
+<a href="#3054" id="3054">3054</a>
+<a href="#3055" id="3055">3055</a>
+<a href="#3056" id="3056">3056</a>
+<a href="#3057" id="3057">3057</a>
+<a href="#3058" id="3058">3058</a>
+<a href="#3059" id="3059">3059</a>
+<a href="#3060" id="3060">3060</a>
+<a href="#3061" id="3061">3061</a>
+<a href="#3062" id="3062">3062</a>
+<a href="#3063" id="3063">3063</a>
+<a href="#3064" id="3064">3064</a>
+<a href="#3065" id="3065">3065</a>
+<a href="#3066" id="3066">3066</a>
+<a href="#3067" id="3067">3067</a>
+<a href="#3068" id="3068">3068</a>
+<a href="#3069" id="3069">3069</a>
+<a href="#3070" id="3070">3070</a>
+<a href="#3071" id="3071">3071</a>
+<a href="#3072" id="3072">3072</a>
+<a href="#3073" id="3073">3073</a>
+<a href="#3074" id="3074">3074</a>
+<a href="#3075" id="3075">3075</a>
+<a href="#3076" id="3076">3076</a>
+<a href="#3077" id="3077">3077</a>
+<a href="#3078" id="3078">3078</a>
+<a href="#3079" id="3079">3079</a>
+<a href="#3080" id="3080">3080</a>
+<a href="#3081" id="3081">3081</a>
+<a href="#3082" id="3082">3082</a>
+<a href="#3083" id="3083">3083</a>
+<a href="#3084" id="3084">3084</a>
+<a href="#3085" id="3085">3085</a>
+<a href="#3086" id="3086">3086</a>
+<a href="#3087" id="3087">3087</a>
+<a href="#3088" id="3088">3088</a>
+<a href="#3089" id="3089">3089</a>
+<a href="#3090" id="3090">3090</a>
+<a href="#3091" id="3091">3091</a>
 </pre></div><pre class="rust"><code><span class="comment">// Copyright (C) 2021 Subspace Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -3701,6 +3745,10 @@
     /// successfully submitted to current consensus block, which mean a new domain block with this block
     /// number will be produce. Used as a pointer in `ExecutionInbox` to identify the current under building
     /// domain block, also used as a mapping of consensus block number to domain block number.
+    </span><span class="comment">//
+    // NOTE: the `HeadDomainNumber` is lazily updated for the domain runtime upgrade block (which only include
+    // the runtime upgrade tx from the consensus chain and no any user submitted tx from the bundle), use
+    // `domain_best_number` for the actual best domain block
     </span><span class="attr">#[pallet::storage]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">type </span>HeadDomainNumber&lt;T: Config&gt; =
         StorageMap&lt;<span class="kw">_</span>, Identity, DomainId, DomainBlockNumberFor&lt;T&gt;, ValueQuery&gt;;
@@ -3810,6 +3858,8 @@
         </span>UnexpectedReceiptGap,
         <span class="doccomment">/// Expecting receipt gap when validating `submit_receipt`
         </span>ExpectingReceiptGap,
+        <span class="doccomment">/// Failed to get missed domain runtime upgrade count
+        </span>FailedToGetMissedUpgradeCount,
     }
 
     <span class="attr">#[derive(TypeInfo, Encode, Decode, PalletError, Debug, PartialEq)]
@@ -4767,12 +4817,35 @@
                     )
                     .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
 
-                    <span class="comment">// Singleton receipt are used to fill up the receipt gap and there should be no
-                    // new domain block being confirmed before the gap is fill up
-                    </span><span class="macro">ensure!</span>(
-                        maybe_confirmed_domain_block_info.is_none(),
-                        Error::&lt;T&gt;::BlockTree(BlockTreeError::UnexpectedConfirmedDomainBlock),
-                    );
+                    <span class="comment">// NOTE: Skip the following staking related operations when benchmarking the
+                    // `submit_receipt` call, these operations will be benchmarked separately.
+                    </span><span class="attr">#[cfg(not(feature = <span class="string">"runtime-benchmarks"</span>))]
+                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(confirmed_block_info) = maybe_confirmed_domain_block_info {
+                        actual_weight =
+                            actual_weight.saturating_add(T::WeightInfo::confirm_domain_block(
+                                confirmed_block_info.operator_ids.len() <span class="kw">as </span>u32,
+                                confirmed_block_info.invalid_bundle_authors.len() <span class="kw">as </span>u32,
+                            ));
+
+                        refund_storage_fee::&lt;T&gt;(
+                            confirmed_block_info.total_storage_fee,
+                            confirmed_block_info.paid_bundle_storage_fees,
+                        )
+                        .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+
+                        do_reward_operators::&lt;T&gt;(
+                            domain_id,
+                            confirmed_block_info.operator_ids.into_iter(),
+                            confirmed_block_info.rewards,
+                        )
+                        .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+
+                        do_mark_operators_as_slashed::&lt;T&gt;(
+                            confirmed_block_info.invalid_bundle_authors.into_iter(),
+                            SlashedReason::InvalidBundle(confirmed_block_info.domain_block_number),
+                        )
+                        .map_err(Error::&lt;T&gt;::from)<span class="question-mark">?</span>;
+                    }
                 }
             }
 
@@ -5067,8 +5140,13 @@
             .and_then(|<span class="kw-2">mut </span>runtime_object| runtime_object.raw_genesis.take_runtime_code())
     }
 
-    <span class="kw">pub fn </span>domain_best_number(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;DomainBlockNumberFor&lt;T&gt;&gt; {
-        <span class="prelude-val">Some</span>(HeadDomainNumber::&lt;T&gt;::get(domain_id))
+    <span class="kw">pub fn </span>domain_best_number(domain_id: DomainId) -&gt; <span class="prelude-ty">Result</span>&lt;DomainBlockNumberFor&lt;T&gt;, BundleError&gt; {
+        <span class="comment">// The missed domain runtime upgrades will derive domain blocks thus should be accountted
+        // into the domain best number
+        </span><span class="kw">let </span>missed_upgrade = <span class="self">Self</span>::missed_domain_runtime_upgrade(domain_id)
+            .map_err(|<span class="kw">_</span>| BundleError::FailedToGetMissedUpgradeCount)<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(HeadDomainNumber::&lt;T&gt;::get(domain_id) + missed_upgrade.into())
     }
 
     <span class="kw">pub fn </span>runtime_id(domain_id: DomainId) -&gt; <span class="prelude-ty">Option</span>&lt;RuntimeId&gt; {
@@ -5312,7 +5390,7 @@
         // derived from the latest domain block, and the stale bundle (that verified against an old
         // domain block) produced by a lagging honest operator will be rejected.
         </span><span class="macro">ensure!</span>(
-            <span class="self">Self</span>::receipt_gap(domain_id) &lt;= One::one(),
+            <span class="self">Self</span>::receipt_gap(domain_id)<span class="question-mark">? </span>&lt;= One::one(),
             BundleError::UnexpectedReceiptGap,
         );
 
@@ -5348,7 +5426,7 @@
 
         <span class="comment">// Singleton receipt is only allowed when there is a receipt gap
         </span><span class="macro">ensure!</span>(
-            <span class="self">Self</span>::receipt_gap(domain_id) &gt; One::one(),
+            <span class="self">Self</span>::receipt_gap(domain_id)<span class="question-mark">? </span>&gt; One::one(),
             BundleError::ExpectingReceiptGap,
         );
 
@@ -5722,7 +5800,12 @@
         <span class="comment">// Start from the oldest non-confirmed ER to the head domain number
         </span><span class="kw">let </span><span class="kw-2">mut </span>to_check =
             <span class="self">Self</span>::latest_confirmed_domain_block_number(domain_id).saturating_add(One::one());
-        <span class="kw">let </span>head_number = HeadDomainNumber::&lt;T&gt;::get(domain_id);
+
+        <span class="comment">// NOTE: we use the `HeadDomainNumber` here instead of the `domain_best_number`, which include the
+        // missed domain runtime upgrade block, because we don't want to trigger empty bundle production
+        // for confirming these blocks since they only include runtime upgrade extrinsic and no any user
+        // submitted extrinsic.
+        </span><span class="kw">let </span>head_number = HeadDomainNumber::&lt;T&gt;::get(domain_id);
 
         <span class="kw">while </span>to_check &lt;= head_number {
             <span class="kw">if </span>!ExecutionInbox::&lt;T&gt;::iter_prefix_values((domain_id, to_check)).all(|digests| {
@@ -5797,7 +5880,7 @@
             .saturating_add(
                 <span class="comment">// NOTE: within `submit_bundle`, only one of (or none) `handle_bad_receipt` and
                 // `confirm_domain_block` can happen, thus we use the `max` of them
-
+                //
                 // We use `MAX_BUNDLE_PER_BLOCK` number to assume the number of slashed operators.
                 // We do not expect so many operators to be slashed but nontheless, if it did happen
                 // we will limit the weight to 100 operators.
@@ -5812,10 +5895,15 @@
     <span class="kw">pub fn </span>max_submit_receipt_weight() -&gt; Weight {
         T::WeightInfo::submit_bundle()
             .saturating_add(
-                <span class="comment">// We use `MAX_BUNDLE_PER_BLOCK` number to assume the number of slashed operators.
+                <span class="comment">// NOTE: within `submit_bundle`, only one of (or none) `handle_bad_receipt` and
+                // `confirm_domain_block` can happen, thus we use the `max` of them
+                //
+                // We use `MAX_BUNDLE_PER_BLOCK` number to assume the number of slashed operators.
                 // We do not expect so many operators to be slashed but nontheless, if it did happen
                 // we will limit the weight to 100 operators.
-                </span>T::WeightInfo::handle_bad_receipt(MAX_BUNDLE_PER_BLOCK),
+                </span>T::WeightInfo::handle_bad_receipt(MAX_BUNDLE_PER_BLOCK).max(
+                    T::WeightInfo::confirm_domain_block(MAX_BUNDLE_PER_BLOCK, MAX_BUNDLE_PER_BLOCK),
+                ),
             )
             .saturating_add(T::WeightInfo::slash_operator(MAX_NOMINATORS_TO_SLASH))
     }
@@ -5989,13 +6077,13 @@
         DomainSudoCalls::&lt;T&gt;::get(domain_id).maybe_call
     }
 
-    <span class="comment">// The gap between `HeadDomainNumber` and `HeadReceiptNumber` represent the number
+    <span class="comment">// The gap between `domain_best_number` and `HeadReceiptNumber` represent the number
     // of receipt to be submitted
-    </span><span class="kw">pub fn </span>receipt_gap(domain_id: DomainId) -&gt; DomainBlockNumberFor&lt;T&gt; {
-        <span class="kw">let </span>head_domain_number = HeadDomainNumber::&lt;T&gt;::get(domain_id);
+    </span><span class="kw">pub fn </span>receipt_gap(domain_id: DomainId) -&gt; <span class="prelude-ty">Result</span>&lt;DomainBlockNumberFor&lt;T&gt;, BundleError&gt; {
+        <span class="kw">let </span>domain_best_number = <span class="self">Self</span>::domain_best_number(domain_id)<span class="question-mark">?</span>;
         <span class="kw">let </span>head_receipt_number = HeadReceiptNumber::&lt;T&gt;::get(domain_id);
 
-        head_domain_number.saturating_sub(head_receipt_number)
+        <span class="prelude-val">Ok</span>(domain_best_number.saturating_sub(head_receipt_number))
     }
 }
 
