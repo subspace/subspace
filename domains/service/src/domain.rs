@@ -466,20 +466,20 @@ where
     .await?;
 
     if is_authority {
-        let relayer_worker = domain_client_message_relayer::worker::relay_domain_messages(
-            domain_id,
-            consensus_client.clone(),
-            confirmation_depth_k,
-            consensus_state_pruning,
-            client.clone(),
-            domain_state_pruning,
-            // domain relayer will use consensus chain sync oracle instead of domain sync oracle
-            // since domain sync oracle will always return `synced` due to force sync being set.
-            consensus_network_sync_oracle.clone(),
-            gossip_message_sink.clone(),
-        );
+        // let relayer_worker = domain_client_message_relayer::worker::relay_domain_messages(
+        //     domain_id,
+        //     consensus_client.clone(),
+        //     confirmation_depth_k,
+        //     consensus_state_pruning,
+        //     client.clone(),
+        //     domain_state_pruning,
+        //     // domain relayer will use consensus chain sync oracle instead of domain sync oracle
+        //     // since domain sync oracle will always return `synced` due to force sync being set.
+        //     consensus_network_sync_oracle.clone(),
+        //     gossip_message_sink.clone(),
+        // );
 
-        spawn_essential.spawn_essential_blocking("domain-relayer", None, Box::pin(relayer_worker));
+        // spawn_essential.spawn_essential_blocking("domain-relayer", None, Box::pin(relayer_worker));
 
         let channel_update_worker =
             domain_client_message_relayer::worker::gossip_channel_updates::<_, _, CBlock, _>(
