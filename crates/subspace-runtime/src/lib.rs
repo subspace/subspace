@@ -787,6 +787,8 @@ impl pallet_subspace_mmr::Config for Runtime {
     type MmrRootHashCount = MmrRootHashCount;
 }
 
+impl pallet_object_mapping::Config for Runtime {}
+
 construct_runtime!(
     pub struct Runtime {
         System: frame_system = 0,
@@ -808,6 +810,8 @@ construct_runtime!(
 
         Mmr: pallet_mmr = 30,
         SubspaceMmr: pallet_subspace_mmr = 31,
+
+        ObjectMapping: pallet_object_mapping = 40,
 
         // messenger stuff
         // Note: Indexes should match with indexes on other chains and domains
