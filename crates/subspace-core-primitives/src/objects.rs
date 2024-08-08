@@ -121,7 +121,7 @@ impl PieceObject {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct PieceObjectMapping {
-    /// Objects stored inside of the block
+    /// Objects stored inside of the piece
     pub objects: Vec<PieceObject>,
 }
 
