@@ -954,6 +954,11 @@ impl FraudProofStorageKeyProvider<NumberFor<Block>> for StorageKeyProvider {
             FraudProofStorageKeyRequest::MmrRoot(block_number) => {
                 pallet_subspace_mmr::MmrRootHashes::<Runtime>::hashed_key_for(block_number)
             }
+            FraudProofStorageKeyRequest::LastConfirmedDomainBlockReceipt(domain_id) => {
+                pallet_domains::LatestConfirmedDomainExecutionReceipt::<Runtime>::hashed_key_for(
+                    domain_id,
+                )
+            }
         }
     }
 }
@@ -1281,6 +1286,10 @@ impl_runtime_apis! {
 
         fn domain_sudo_call(domain_id: DomainId) -> Option<Vec<u8>> {
             Domains::domain_sudo_call(domain_id)
+        }
+
+        fn last_confirmed_domain_block_receipt(domain_id: DomainId) -> Option<ExecutionReceiptFor<DomainHeader, Block, Balance>>{
+            Domains::latest_confirmed_domain_execution_receipt(domain_id)
         }
     }
 
